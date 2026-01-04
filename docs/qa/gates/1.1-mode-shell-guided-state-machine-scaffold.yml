@@ -1,0 +1,53 @@
+schema: 1
+story: '1.1'
+story_title: 'Mode Shell & Guided State Machine Scaffold'
+gate: PASS
+status_reason: 'STATE-001 and DOC-001 concerns are resolved, code-level smoke evidence is documented, and frontend build passes; remaining items are future improvements (test harness, runtime smoke when upstream is fully initialized).'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-02T10:34:20Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'Add automated smoke once testing harness exists'
+      - 'Run runtime smoke once upstream is fully initialized'
+
+quality_score: 92
+expires: '2026-01-16T10:34:20Z'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Hardcoded PIN \"0000\" is explicitly scoped for Story 1.1; hardening is planned for Story 1.2.'
+  performance:
+    status: PASS
+    notes: 'No perf-sensitive changes observed; Vite chunk warning appears pre-existing.'
+  reliability:
+    status: PASS
+    notes: 'Mode routing is simple; no new error-prone paths introduced.'
+  maintainability:
+    status: PASS
+    notes: 'State transitions are centralized and reset semantics are consistent with validation.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Add automated smoke for AppShell boot and mode switching'
+      refs:
+        - 'upstream/RapidRAW/src/AppShell.tsx'
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeIdle.tsx'
+    - action: 'Run runtime smoke on fully initialized upstream (AC4 open→adjust→export)'
+      refs: ['.ai/debug-log.md']

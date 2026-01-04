@@ -1,0 +1,53 @@
+schema: 1
+story: '1.5'
+story_title: 'Capture Screen Timer & Forced Transition'
+gate: PASS
+status_reason: 'Automated timer tests pass and time-compressed operator smoke is reported complete; forced ExportLock transition behavior matches Story 1.5 ACs.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-04T06:24:29Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'Consider adding hook-level unit tests for warning/expiry behavior using fake timers.'
+      - 'Capture operator smoke evidence in upstream/RapidRAW/MANUAL_SMOKE_TEST_1.5.md for audit trail.'
+
+quality_score: 100
+expires: '2026-01-18T06:24:35Z'
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'No auth/data handling changes; timer logic stays client-side and uses existing state-machine events.'
+  performance:
+    status: PASS
+    notes: 'Single interval timer (200ms) scoped to Setup/Capture only; acceptable for kiosk usage.'
+  reliability:
+    status: PASS
+    notes: 'Vitest suite passes; time-compressed operator smoke is reported complete for warning/expiry/forced transition and rollback.'
+  maintainability:
+    status: PASS
+    notes: 'Timer logic centralized in App Shell and hook; warning thresholds normalized and callbacks stabilized to avoid effect churn.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Add hook-level unit tests for warning/expiry behavior using fake timers'
+      refs:
+        - 'upstream/RapidRAW/src/modes/useSessionTimer.ts'
+    - action: 'Record operator smoke evidence (fill MANUAL_SMOKE_TEST_1.5.md and/or attach notes)'
+      refs:
+        - 'upstream/RapidRAW/MANUAL_SMOKE_TEST_1.5.md'

@@ -1,0 +1,49 @@
+schema: 1
+story: '1.6'
+story_title: 'Export Rules & Filename Templating'
+gate: PASS
+status_reason: 'Export rules, session export (progress + cancellation), rollback toggle, and filename templating (including `휴대폰뒤4자리` alias) are implemented with passing tests.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-04T09:04:53Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    monitor:
+      - 'Tighten template validation (detect invalid placeholders) to reduce operator misconfiguration.'
+      - 'Monitor UI responsiveness under large sessions; export is long-running but async with progress.'
+
+quality_score: 100
+expires: '2026-01-18T09:04:53Z'
+
+evidence:
+  tests_reviewed: 22
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Session export derives inputs from active session metadata and emits basename-only progress for customer safety.'
+  performance:
+    status: PASS
+    notes: 'Long-running work is executed in an async command with streamed progress; monitor very large sessions.'
+  reliability:
+    status: PASS
+    notes: 'Cancellation is implemented via an atomic flag checked between files; completion and cancellation events are emitted.'
+  maintainability:
+    status: PASS
+    notes: 'Template logic is reused and has unit coverage (including `휴대폰뒤4자리` alias); session export includes a JPEG validity + naming smoke test.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Tighten export filename template validation (invalid `{...}` placeholders)'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/kiosk_config.rs:199'

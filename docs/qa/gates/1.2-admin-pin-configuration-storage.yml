@@ -1,0 +1,52 @@
+schema: 1
+story: '1.2'
+story_title: 'Admin PIN & Configuration Storage'
+gate: PASS
+status_reason: 'Runtime smoke scenarios completed with no issues; ACs validated at code and runtime level.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-02T17:22:43Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'Add minimal automated coverage for config validation and PIN flows'
+
+quality_score: 100
+expires: '2026-01-16T17:22:43Z'
+
+evidence:
+  tests_reviewed: 4
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'PIN hashing/verification validated; wrong PIN rejection confirmed in smoke.'
+  performance:
+    status: PASS
+    notes: 'No performance issues observed during smoke.'
+  reliability:
+    status: PASS
+    notes: 'Config persistence and gating verified across restart.'
+  maintainability:
+    status: PASS
+    notes: 'Code structure is clear; automated tests still recommended for future hardening.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Add automated tests for config validation and PIN flows'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/kiosk_config.rs'
+        - 'upstream/RapidRAW/src/modes/KioskConfigForm.tsx'
+    - action: 'Consider loading/safe state before config validation completes'
+      refs: ['upstream/RapidRAW/src/AppShell.tsx']
