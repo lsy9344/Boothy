@@ -1,0 +1,62 @@
+schema: 1
+story: '1.7'
+story_title: 'Smart Export Pipeline (Background Queue)'
+gate: CONCERNS
+status_reason: 'Core Smart Export flow and reliability fixes are verified; remaining concern is lack of evidence-based performance validation under load (preview/live view responsiveness).'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-04T12:50:42Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'PERF-001'
+    severity: medium
+    finding: 'No evidence-based validation that background processing does not degrade preview/live view under load; throttle may need tuning.'
+    suggested_action: 'Add a load-heavy smoke (many images) and tune throttle/priority if UI responsiveness degrades.'
+    suggested_owner: qa
+
+risk_summary:
+  totals: { critical: 0, high: 1, medium: 0, low: 0 }
+  highest:
+    id: PERF-001
+    score: 6
+    title: 'Background processing may degrade preview/live view under load'
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'Validate preview/live view responsiveness under load; tune throttle/priority as needed'
+
+quality_score: 90
+expires: '2026-01-18T12:23:44Z'
+
+evidence:
+  tests_reviewed: 20
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 5, 6]
+    ac_gaps: [4]
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Session boundary validation canonicalizes when possible and falls back to parent boundary validation for newly-written files; customer payloads remain path-free.'
+  performance:
+    status: CONCERNS
+    notes: 'Background worker throttles between jobs (100ms), but responsiveness under load is not validated; consider tuning/monitoring.'
+  reliability:
+    status: PASS
+    notes: 'Drain stops background worker and waits for worker shutdown/in-progress completion before returning.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Unit tests cover queue primitives; higher-level perf/load and UI/flow validation remains manual.'
+
+recommendations:
+  immediate:
+    - action: 'Run a load-heavy manual smoke to validate preview/live view responsiveness under Smart Export load; tune throttle/priority if needed (PERF-001)'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/smart_export_queue.rs'
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeCapture.tsx'
+  future:
+    - action: 'Consider adding observability/metrics (job timings, queue depth over time) to make perf regressions diagnosable'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/smart_export_queue.rs'

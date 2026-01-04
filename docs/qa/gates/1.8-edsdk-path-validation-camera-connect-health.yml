@@ -1,0 +1,66 @@
+schema: 1
+story: '1.8'
+story_title: 'EDSDK Path Validation & Camera Connect/Health'
+gate: CONCERNS
+status_reason: 'Scope is clarified to scaffolding (AC2–3); implementation matches current ACs. Remaining concern is lack of Windows smoke evidence for EDSDK validation + gating flow and limited automated UI coverage.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-04T14:11:31Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'TEST-001'
+    severity: medium
+    finding: 'Windows-only behavior and customer/admin gating flow lack executable evidence; current confidence relies on code review + cross-platform unit tests.'
+    suggested_action: 'Run and capture Windows manual smoke evidence for EDSDK invalid/valid paths + customer gating + rollback; optionally add minimal UI tests with mocked `invoke()` for gating states.'
+    suggested_owner: dev
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 0 }
+  highest:
+    id: 'TEST-001'
+    score: 6
+    title: 'Windows-only tethering flow lacks evidence'
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'Capture Windows manual smoke evidence for invalid/valid EDSDK paths + gating + rollback'
+
+quality_score: 90
+expires: '2026-01-18T14:11:31Z'
+
+evidence:
+  tests_reviewed: 33
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'No customer-facing payloads include filesystem paths; diagnostics are intended for Admin UI only.'
+  performance:
+    status: PASS
+    notes: 'Commands are lightweight; scaffolding avoids long-running loops in this story.'
+  reliability:
+    status: PASS
+    notes: 'Within scope (scaffolding), gating defaults to safe state; real reconnect/health is deferred to Story 1.9.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Good module boundary and typed models; consider adding a small UI test for gating/diagnostics to reduce regression risk.'
+
+recommendations:
+  immediate:
+    - action: 'Run and capture Windows manual smoke evidence for EDSDK invalid/valid path validation + customer gating + rollback (TEST-001)'
+      refs:
+        - 'docs/stories/1.8.edsdk-path-validation-camera-connect-health.md'
+  future:
+    - action: 'Add minimal UI tests (mocked `invoke()`) for Admin diagnostics and customer gating states'
+      refs:
+        - 'upstream/RapidRAW/src/modes/CameraDiagnosticsPanel.tsx'
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeSetup.tsx'
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeCapture.tsx'
+    - action: 'Consider adding structured error codes and a small observability surface (last status timestamp, last error) to improve debuggability'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/tethering/camera_status.rs'

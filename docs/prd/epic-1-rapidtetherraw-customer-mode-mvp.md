@@ -146,15 +146,18 @@ so that the session cannot start in a broken hardware/software state.
 
 ### Acceptance Criteria
 1: Admin에서 EDSDK 경로를 설정하고, 필수 구성요소(DLL/런타임) 존재 여부를 검증한다(Windows).  
-2: EOS 700D 연결/해제/재연결을 지원하고, 상태를 UI에 표시한다(Customer는 단순, Admin은 상세).  
-3: 케이블 분리/절전/오류 시 안전 상태로 전환하고 재시도 경로를 제공한다.  
+2: EOS 700D 테더링을 위한 **카메라 상태 모델/진단 UI/게이팅 스캐폴딩**을 제공하고, 상태를 UI에 표시한다(Customer는 단순, Admin은 상세). (실제 연결/해제/재연결/헬스 모니터링은 Story 1.9에서 구현)  
+3: 카메라 상태가 not-ready/error일 때 안전 상태로 전환하고 재시도/도움 요청 경로를 제공한다. (실제 케이블 분리/절전 감지 및 자동 재연결은 Story 1.9에서 구현)  
 4: Customer Mode는 카메라가 준비되지 않으면 Capture로 진행할 수 없다(자동 점검 + 차단).  
 5: 테더 기능을 비활성화하면 파일 기반(수동) 모드로 롤백 가능하다(운영 플랜 B).  
 
 ### Integration Verification
 IV1: Windows 외 환경에서 빌드/개발이 막히지 않도록 스텁/피처 플래그 전략을 갖는다.  
 IV2: EDSDK 코드는 별도 모듈로 격리되어 기존 Rust/Tauri 커맨드 표면을 과도하게 오염시키지 않는다.  
-IV3: 연결/헬스체크가 UI/백그라운드 작업과 데드락/프리즈를 만들지 않는다.
+IV3: 상태 조회/진단/게이팅 로직이 UI/백그라운드 작업과 데드락/프리즈를 만들지 않는다. (실제 연결/헬스 모니터링 루프는 Story 1.9)
+
+### Implementation Notes
+- SDK_for_developers/Windows/EDSDK/Header/ 내의 헤더 파일들을 참조하여 카메라 관련 sdk 기능구현.
 
 ## Story 1.9 Capture Trigger, Ingestion, and Auto-Apply Capture Preset
 
@@ -168,6 +171,9 @@ so that I get instant feedback without manual importing or editing.
 3: sidecar가 없으면 “현재 캡처 프리셋”으로 초기값을 생성하고 sidecar를 생성한다.  
 4: 프리셋 변경 이후 촬영분부터 새 프리셋이 적용되며, 과거 촬영분은 자동 변경되지 않는다.  
 5: 이벤트 중복/누락/부분 전송 등 엣지 케이스에서 중복 처리 없이 안정적으로 동작한다(아이템포턴시).  
+6: EDSDK 기반 카메라 세션(연결/해제/재연결) + 기본 헬스 모니터링(백그라운드) 및 **이벤트 기반 상태 업데이트**를 구현한다. (Story 1.8에서 만든 상태 모델/진단 UI/게이팅 스캐폴딩을 “실제 상태”로 구동)  
+   - Admin Diagnostics의 Connect/Disconnect/Retry 액션을 실제 동작으로 연결한다.  
+   - Customer/Admin UI는 상태 변경을 자동 반영한다(수동 Refresh 의존 최소화).  
 
 ### Integration Verification
 IV1: 기존 sidecar 기반 편집/복원 동작이 유지된다.  
