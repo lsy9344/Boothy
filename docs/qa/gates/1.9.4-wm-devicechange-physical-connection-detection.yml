@@ -1,0 +1,69 @@
+schema: 1
+story: '1.9.4'
+story_title: 'WM_DEVICECHANGE Physical Camera Connection Detection (Windows)'
+gate: CONCERNS
+status_reason: 'Implementation exists and Rust tests pass; however Windows hardware regression is still pending and frontend tests/build could not be executed in this sandbox (spawn EPERM).'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-09T03:52:02Z'
+
+top_issues:
+  - id: 'MANUAL_REGRESSION_PENDING'
+    severity: medium
+    summary: 'Manual regression plan for WM_DEVICECHANGE connect/disconnect/startup/EDSDK-missing is not executed yet.'
+    refs:
+      - 'docs/qa/manual-tests/1.9.4-windows-devicechange-camera-detection.md'
+    suggested_owner: dev
+  - id: 'FRONTEND_BUILD_TEST_NOT_VERIFIED'
+    severity: medium
+    summary: 'Unable to run `npm test`/`vite build` in the current sandbox due to Node child_process spawn EPERM when stdio pipes are used (esbuild/vite).'
+    refs:
+      - 'upstream/RapidRAW/package.json'
+    suggested_owner: dev
+  - id: 'LIMITED_AUTOMATED_COVERAGE_FOR_WATCHER'
+    severity: low
+    summary: 'No automated tests validate WM_DEVICECHANGE watcher -> controller state transitions; relies on manual validation.'
+    refs:
+      - 'upstream/RapidRAW/src-tauri/src/tethering/physical_connection_watcher.rs'
+      - 'upstream/RapidRAW/src-tauri/src/tethering/controller.rs'
+    suggested_owner: dev
+
+waiver: { active: false }
+
+quality_score: 70
+expires: '2026-01-23T03:52:07Z'
+
+evidence:
+  tests_reviewed: 41
+  risks_identified: 3
+  trace:
+    ac_covered: [3, 4, 6, 7]
+    ac_gaps: [1, 2, 5]
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Customer-safe messaging preserved; admin details remain separate.'
+  performance:
+    status: PASS
+    notes: 'Watcher runs on a dedicated thread; enumeration only on startup/DBT_DEVNODES_CHANGED.'
+  reliability:
+    status: CONCERNS
+    notes: 'Requires on-device validation (unplug/replug, startup connected, sleep/wake) to confirm transitions and safe cleanup.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Windows-specific watcher is complex and lacks automated integration tests; keep filtering rule documentation in sync.'
+
+recommendations:
+  immediate:
+    - action: 'Execute manual regression checklist on Windows with EOS 700D and update gate with results.'
+      refs:
+        - 'docs/qa/manual-tests/1.9.4-windows-devicechange-camera-detection.md'
+    - action: 'Run `npm test` and `npm run build` outside the sandboxed environment to confirm frontend gating and event handling tests pass.'
+      refs:
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeCapture.test.tsx'
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeSetup.test.tsx'
+  future:
+    - action: 'Add unit tests around watcher filtering helpers and controller physical-state transitions (mocked events) to reduce manual-only coverage.'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/tethering/physical_connection_watcher.rs'
+        - 'upstream/RapidRAW/src-tauri/src/tethering/controller.rs'

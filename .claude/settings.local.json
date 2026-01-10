@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(winget:*)",
+      "Bash(reg query \"HKLM\\\\SOFTWARE\\\\WOW6432Node\\\\Microsoft\\\\EdgeUpdate\\\\Clients\\\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}\" /v pv)",
+      "Bash(reg query \"HKLM\\\\SOFTWARE\\\\Microsoft\\\\EdgeUpdate\\\\Clients\\\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}\" /v pv)",
+      "Bash(\"$USERPROFILE/.cargo/bin/rustc\" -V)",
+      "Bash(\"$USERPROFILE/.cargo/bin/cargo\" -V)",
+      "Bash(npm ci:*)",
+      "Bash(\"$USERPROFILE/.cargo/bin/cargo\" check)",
+      "Bash(node --version:*)",
+      "Bash(npm:*)",
+      "Bash(git submodule:*)",
+      "Bash(if [ -f .gitmodules ])",
+      "Bash(then cat .gitmodules)",
+      "Bash(else echo \"No .gitmodules file found\")",
+      "Bash(fi)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(timeout 30 cargo check:*)",
+      "Bash(test:*)",
+      "Bash(ls:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(start RapidRAW.exe)"
+    ]
+  }
+}

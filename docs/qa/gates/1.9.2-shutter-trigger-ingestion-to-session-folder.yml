@@ -1,0 +1,67 @@
+schema: 1
+story: '1.9.2'
+story_title: 'Shutter Trigger + Ingestion to Session Folder'
+gate: CONCERNS
+status_reason: 'Frontend build and cargo check/test now pass (with warnings), but Windows EOS 700D capture/ingest smoke and guard/emit coverage remain outstanding.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-08T02:22:08Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'QA-006'
+    severity: medium
+    finding: 'Validation evidence missing: Windows EOS 700D capture/ingest smoke not documented (NFR1 timing).'
+    suggested_action: 'Run required gates on supported environments and record results (including NFR1 timing).'
+    suggested_owner: 'dev'
+  - id: 'QA-007'
+    severity: medium
+    finding: 'Automated coverage gaps for backend tether capture guards and image-added emission completion (AC1/3/5/6).'
+    suggested_action: 'Add unit/integration tests for guard failures, non-Windows stub, and emit-after-download behavior.'
+    suggested_owner: 'dev'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 2, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - 'QA-006'
+      - 'QA-007'
+
+quality_score: 80
+expires: '2026-01-22T02:22:08Z'
+
+evidence:
+  tests_reviewed: 5
+  risks_identified: 2
+  trace:
+    ac_covered: [2, 4]
+    ac_gaps: [1, 3, 5, 6]
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Customer-facing errors remain sanitized; no path leakage observed in UI.'
+  performance:
+    status: CONCERNS
+    notes: 'NFR1 auto-select timing not validated; image-added handler waits on sidecar/export work before refresh.'
+  reliability:
+    status: CONCERNS
+    notes: 'npm run build PASS; cargo check/test PASS with warnings; Windows smoke remains unverified.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Backend guard/event behaviors lack direct automated tests.'
+
+recommendations:
+  immediate:
+    - action: 'Run Windows EOS 700D manual smoke and record NFR1 timing'
+      refs:
+        - 'docs/stories/1.9.2.shutter-trigger-and-ingestion-to-session-folder.md'
+    - action: 'Add backend tests for tether_take_picture guard errors and image-added emission after download'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/tethering/mod.rs'
+        - 'upstream/RapidRAW/src-tauri/src/tethering/controller.rs'
+  future:
+    - action: 'Consider prioritizing UI refresh before long-running sidecar/export work to meet NFR1'
+      refs:
+        - 'upstream/RapidRAW/src/modes/screens/CustomerModeSetup.tsx'

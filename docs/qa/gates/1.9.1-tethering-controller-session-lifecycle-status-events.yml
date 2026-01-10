@@ -1,0 +1,60 @@
+schema: 1
+story: "1.9.1"
+story_title: "Tethering Controller (Session Lifecycle + Status Events)"
+gate: PASS
+status_reason: "Re-review: prior concerns resolved (error-path status events added, dead code removed, unsafe Send documented); test logs in story show cargo check/test and npm build passing."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-08T02:07:02Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 2 }
+  highest:
+    id: "TECH-001"
+    score: 2
+    title: "EDSDK thread-affinity assumptions may still hide platform quirks"
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Run Windows + EOS 700D tethering smoke tests (connect/disconnect/retry, cable unplug, sleep/wake)."
+
+quality_score: 100
+expires: "2026-01-22T02:08:29Z"
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 2
+  builds:
+    cargo_check: "PASS (warnings only) - per dev log"
+    cargo_test: "PASS (39/39) - per dev log"
+    npm_build: "PASS (chunk-size warning only) - per dev log"
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]
+    ac_gaps: []
+
+nfr_validation:
+  _assessed: [security, performance, reliability, maintainability]
+  security:
+    status: PASS
+    notes: "Customer UI sanitizes admin-only fields; no new auth surface or sensitive data exposure."
+  performance:
+    status: PASS
+    notes: "Event-driven updates with 2s monitor loop; no heavy work in hot paths."
+  reliability:
+    status: PASS
+    notes: "Error-path status emission added; shutdown/disconnect cleanup and retry path in place."
+  maintainability:
+    status: PASS
+    notes: "Controller isolated, tests added, dead code removed, unsafe Send documented."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Run manual Windows + EOS 700D regression (connect/disconnect/retry, unplug cable, sleep/wake)."
+      refs:
+        - "upstream/RapidRAW/src-tauri/src/tethering/controller.rs"
+        - "upstream/RapidRAW/src/modes/CameraDiagnosticsPanel.tsx"
+        - "upstream/RapidRAW/src/modes/screens/CustomerModeSetup.tsx"

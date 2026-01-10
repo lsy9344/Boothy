@@ -1,37 +1,31 @@
 schema: 1
 story: '1.8'
 story_title: 'EDSDK Path Validation & Camera Connect/Health'
-gate: CONCERNS
-status_reason: 'Scope is clarified to scaffolding (AC2–3); implementation matches current ACs. Remaining concern is lack of Windows smoke evidence for EDSDK validation + gating flow and limited automated UI coverage.'
+gate: PASS
+status_reason: 'Windows manual smoke evidence (Scenarios A–E) confirms EDSDK validation, customer gating, and rollback behave as specified; story is within clarified scaffolding scope (AC2–3 deferred to 1.9 for real connect/health).'
 reviewer: 'Quinn (Test Architect)'
-updated: '2026-01-04T14:11:31Z'
+updated: '2026-01-06T00:00:00Z'
 
 waiver: { active: false }
 
-top_issues:
-  - id: 'TEST-001'
-    severity: medium
-    finding: 'Windows-only behavior and customer/admin gating flow lack executable evidence; current confidence relies on code review + cross-platform unit tests.'
-    suggested_action: 'Run and capture Windows manual smoke evidence for EDSDK invalid/valid paths + customer gating + rollback; optionally add minimal UI tests with mocked `invoke()` for gating states.'
-    suggested_owner: dev
+top_issues: []
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 1, low: 0 }
-  highest:
-    id: 'TEST-001'
-    score: 6
-    title: 'Windows-only tethering flow lacks evidence'
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
   recommendations:
     must_fix: []
-    monitor:
-      - 'Capture Windows manual smoke evidence for invalid/valid EDSDK paths + gating + rollback'
+    monitor: []
 
-quality_score: 90
-expires: '2026-01-18T14:11:31Z'
+quality_score: 100
+expires: '2026-01-20T00:00:00Z'
 
 evidence:
   tests_reviewed: 33
-  risks_identified: 1
+  risks_identified: 0
+  manual_smoke:
+    platform: windows
+    scenarios: ['A', 'B', 'C', 'D', 'E']
+    reference: 'docs/qa/manual-tests/1.8-windows-migration-and-validation.md'
   trace:
     ac_covered: [1, 2, 3, 4, 5]
     ac_gaps: []
@@ -47,14 +41,11 @@ nfr_validation:
     status: PASS
     notes: 'Within scope (scaffolding), gating defaults to safe state; real reconnect/health is deferred to Story 1.9.'
   maintainability:
-    status: CONCERNS
-    notes: 'Good module boundary and typed models; consider adding a small UI test for gating/diagnostics to reduce regression risk.'
+    status: PASS
+    notes: 'Good module boundary and typed models; optional UI tests (mocked invoke) remain a future improvement, not a release blocker.'
 
 recommendations:
-  immediate:
-    - action: 'Run and capture Windows manual smoke evidence for EDSDK invalid/valid path validation + customer gating + rollback (TEST-001)'
-      refs:
-        - 'docs/stories/1.8.edsdk-path-validation-camera-connect-health.md'
+  immediate: []
   future:
     - action: 'Add minimal UI tests (mocked `invoke()`) for Admin diagnostics and customer gating states'
       refs:

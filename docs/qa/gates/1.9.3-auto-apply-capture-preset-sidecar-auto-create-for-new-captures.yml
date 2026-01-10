@@ -1,0 +1,60 @@
+schema: 1
+story: '1.9.3'
+story_title: 'Auto-Apply Capture Preset (Sidecar Auto-Create for New Captures)'
+gate: CONCERNS
+status_reason: 'cargo check completed with warnings, but manual smoke validation and automated backend tests for capture sidecar creation are still missing.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-07T16:13:31Z'
+
+top_issues:
+  - id: 'MANUAL_SMOKE'
+    severity: medium
+    summary: 'Manual smoke for capture preset flow not recorded; visual confirmation of preset-applied preview pending.'
+    refs:
+      - 'docs/stories/1.9.3.auto-apply-capture-preset-sidecar-auto-create.md'
+    suggested_owner: dev
+  - id: 'TESTS'
+    severity: medium
+    summary: 'No automated backend tests for capture sidecar creation (preset found/not found) or preset-change semantics; AC2–AC4 rely on code review only.'
+    refs:
+      - 'upstream/RapidRAW/src-tauri/src/file_management.rs'
+    suggested_owner: dev
+
+waiver: { active: false }
+
+quality_score: 80
+expires: '2026-01-21T16:13:35Z'
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'No new auth/data exposure observed; customer-safe messaging preserved.'
+  performance:
+    status: PASS
+    notes: 'Sidecar creation uses atomic write; per-capture preset load acceptable.'
+  reliability:
+    status: PASS
+    notes: 'image-added now emits after sidecar creation in tethered capture flow.'
+  maintainability:
+    status: CONCERNS
+    notes: 'Automated backend tests missing for capture sidecar creation and preset-change semantics.'
+
+recommendations:
+  immediate:
+    - action: 'Run manual smoke for capture preset flow and record results.'
+      refs:
+        - 'docs/stories/1.9.3.auto-apply-capture-preset-sidecar-auto-create.md'
+    - action: 'Add backend tests for capture sidecar creation with preset/not found and preset-change semantics.'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/file_management.rs'
+  future:
+    - action: 'Consider caching presets to reduce per-capture IO if throughput becomes an issue.'
+      refs:
+        - 'upstream/RapidRAW/src-tauri/src/file_management.rs'

@@ -175,6 +175,20 @@ so that I get instant feedback without manual importing or editing.
    - Admin Diagnostics의 Connect/Disconnect/Retry 액션을 실제 동작으로 연결한다.  
    - Customer/Admin UI는 상태 변경을 자동 반영한다(수동 Refresh 의존 최소화).  
 
+### Story Split (Implementation Plan)
+
+Note: Story 1.9의 "연결/해제" 감지는 EDSDK가 아니라 Windows `WM_DEVICECHANGE`(물리 연결) 기반으로 구현하며, `get_camera_status`는 EDSDK를 호출해 "연결 여부"를 판단하지 않는다. (상세: Story 1.9.4)
+스토리 1.9는 기술/통합 작업량이 커서 아래 3개 스토리로 세분화해 진행한다. (AC는 합산 기준이며, 각 스토리에서 부분 집합을 충족한다)
+
+- **Story 1.9.1**: Tethering controller + camera session lifecycle + status events/health monitoring (주로 AC6, NFR4)  
+  (Story file: `docs/stories/1.9.1.tethering-controller-session-lifecycle-status-events.md`)
+- **Story 1.9.4**: Windows `WM_DEVICECHANGE` 기반 물리 연결 감지 + 상태 전이/이벤트 구동 (EDSDK로 "연결 여부"를 체크하지 않음)
+  (Story file: `docs/stories/1.9.4.wm-devicechange-physical-connection-detection.md`)
+- **Story 1.9.2**: Customer “Shoot” → shutter trigger + ingestion/download to active session folder + idempotency + `image-added` event (주로 AC1, AC2, AC5, NFR1, NFR5)  
+  (Story file: `docs/stories/1.9.2.shutter-trigger-and-ingestion-to-session-folder.md`)
+- **Story 1.9.3**: Capture preset selection + sidecar auto-create for newly captured images only + instant feedback semantics (주로 AC3, AC4, IV1)  
+  (Story file: `docs/stories/1.9.3.auto-apply-capture-preset-sidecar-auto-create.md`)
+
 ### Integration Verification
 IV1: 기존 sidecar 기반 편집/복원 동작이 유지된다.  
 IV2: 파일 수신 → 프리뷰/썸네일 → Smart Export 큐 enqueue 흐름이 일관되게 연결된다.  

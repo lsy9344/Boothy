@@ -11,7 +11,7 @@ These requirements are based on my understanding of your existing system. Please
 5. FR5: 예약 정보 소스는 최소 1개를 지원한다: `로컬 DB(JSON/SQLite)` (옵션: 외부 예약 시스템 API 어댑터).
 6. FR6: 세션 시작 시 앱이 예약 정보를 확인하고, 고객이 폴더명/경로를 입력하지 않으며 **세션 폴더를 자동 생성**한다(기본 예시: `YYYYMMDD_HH00_휴대폰뒤4자리_이름(선택)`, 규칙은 Admin에서 설정 가능).
 7. FR7: Customer Mode에서 파일/폴더 탐색은 **세션 폴더로 제한**되며, 파일 시스템/저장 경로/Export 상세 옵션을 고객 UI에 노출하지 않는다.
-8. FR8: Canon **EOS 700D** 테더링(EDSDK)을 지원한다: 연결/해제/재연결, 저장 위치 `PC(Host)` 강제, 촬영 이벤트 핸들러 등록/정리(Object/Property/State).
+8. FR8: Canon **EOS 700D** 테더링(EDSDK)을 지원한다: 연결/해제 감지는 Windows `WM_DEVICECHANGE` 기반(물리 연결), 재연결, 저장 위치 `PC(Host)` 강제, 촬영 이벤트 핸들러 등록/정리(Object/Property/State).
 9. FR9: **라이브뷰**는 Customer Mode에서 메인 화면 내 임베드를 우선하며, Admin Mode에서는 팝업 제공을 허용한다(가능 범위).
 10. FR10: Customer Mode 촬영은 **앱 트리거(큰 버튼/터치) 우선**으로 동작한다. (옵션) 물리 리모컨 촬영 감지는 운영 정책에 따라 on/off 가능하다.
 11. FR11: 촬영 파일 수신 후 앱은 다음을 수행한다: (1) 세션 폴더에 저장 (2) UI에 즉시 로드 및 최근 촬영본 자동 선택 (3) 현재 선택된 “캡처 프리셋”을 **이후 촬영분의 초기값**으로 자동 적용.
@@ -35,7 +35,7 @@ These requirements are based on my understanding of your existing system. Please
 1. NFR1: 촬영 후 “최근 촬영본 표시”는 목표 **2초 이내**를 달성한다(Windows 운영환경 기준).
 2. NFR2: Customer Mode에서 UI 프리즈(멈춤)를 허용하지 않는다. Export/Smart Export 큐는 백그라운드에서 처리한다.
 3. NFR3: 백그라운드 JPEG 생성이 프리뷰/라이브뷰를 방해하지 않도록 우선순위/쓰레드/스로틀링을 조정한다.
-4. NFR4: 케이블 분리/절전/오류 등 비정상 상태에서 명확한 상태 전환과 재연결 경로를 제공한다.
+4. NFR4: 케이블 분리/절전/오류 등 비정상 상태에서 명확한 상태 전환과 재연결 경로를 제공한다. (Windows 케이블 연결/해제 감지는 `WM_DEVICECHANGE`로 이벤트 기반 처리)
 5. NFR5: 촬영 이벤트 중복/누락을 방지한다(파일 전송 완료 확인 후 처리, 중복 이벤트 방어).
 6. NFR6: 충돌/강제 종료 후에도 마지막 sidecar 기준으로 복구 가능해야 한다(비파괴 편집 값 보존).
 7. NFR7: 무인 운영 프라이버시를 최우선으로 한다: 세션 격리, 자동 리셋, 캐시 정리, Customer Mode에서 OS 제어 최소화(가능 범위).
