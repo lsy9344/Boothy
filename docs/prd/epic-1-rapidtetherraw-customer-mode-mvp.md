@@ -178,7 +178,15 @@ so that I get instant feedback without manual importing or editing.
 ### Story Split (Implementation Plan)
 
 Note: Story 1.9의 "연결/해제" 감지는 EDSDK가 아니라 Windows `WM_DEVICECHANGE`(물리 연결) 기반으로 구현하며, `get_camera_status`는 EDSDK를 호출해 "연결 여부"를 판단하지 않는다. (상세: Story 1.9.4)
-스토리 1.9는 기술/통합 작업량이 커서 아래 3개 스토리로 세분화해 진행한다. (AC는 합산 기준이며, 각 스토리에서 부분 집합을 충족한다)
+
+(현재 구현 요약)
+- `WM_DEVICECHANGE` watcher: 메시지 전용 윈도우 + `RegisterDeviceNotificationW` (주로 `GUID_DEVINTERFACE_IMAGE`)
+- 이벤트 필터: Canon USB Vendor ID `VID_04A9` 포함(대소문자 무시)만 “카메라 이벤트”로 취급
+- 앱 시작/`DBT_DEVNODES_CHANGED` 시 SetupAPI 재열거로 “현재 연결 상태 스냅샷”을 계산(이미징 GUID 우선, USB GUID fallback)
+- 컨트롤러가 `physical_connected`/`CameraStatus`를 갱신하고 `camera-status-changed` 이벤트 emit
+- 물리 연결 상태는 EDSDK 미설정/오류 상황에서도 반영되며, 이 경우 `connected_not_ready`로 표시 (Customer-safe 메시지 + Admin 상세)
+- 작업 기록: `docs/changed/2026-01-10-rapidraw-camera-connection-detection.md`
+스토리 1.9는 기술/통합 작업량이 커서 아래 4개 스토리로 세분화해 진행한다. (AC는 합산 기준이며, 각 스토리에서 부분 집합을 충족한다)
 
 - **Story 1.9.1**: Tethering controller + camera session lifecycle + status events/health monitoring (주로 AC6, NFR4)  
   (Story file: `docs/stories/1.9.1.tethering-controller-session-lifecycle-status-events.md`)
