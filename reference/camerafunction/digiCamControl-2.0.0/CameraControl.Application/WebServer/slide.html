@@ -1,0 +1,102 @@
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="css/style.css" type="text/css" media="all">
+  <link rel="stylesheet" href="js/jquery-ui-1.11.2.custom/jquery-ui.min.css" type="text/css" media="all">
+  <title>digiCamControl slide show</title>
+</head>
+<body>
+<style>
+#progress { position: absolute; height: 2px; width: 0px; background: #c00; z-index: 500; }
+#caption { position: absolute; z-index: 500; }
+</style>
+
+<!-- include jQuery -->
+<script src="js/jquery-1.11.2.min.js"></script>
+<!-- include Cycle2 -->
+<script src="js/jquery.cycle2.min.js"></script>
+<script src="js/jquery.cycle2.swipe.min.js"></script>
+<script src="js/jquery.cycle2.center.js"></script>
+<script>
+function toggleFullScreen(elem) {
+    // ## The below if statement seems to work better ## if ((document.fullScreenElement && document.fullScreenElement !== null) || (document.msfullscreenElement && document.msfullscreenElement !== null) || (!document.mozFullScreen && !document.webkitIsFullScreen)) {
+    if ((document.fullScreenElement !== undefined && document.fullScreenElement === null) || (document.msFullscreenElement !== undefined && document.msFullscreenElement === null) || (document.mozFullScreen !== undefined && !document.mozFullScreen) || (document.webkitIsFullScreen !== undefined && !document.webkitIsFullScreen)) {
+        if (elem.requestFullScreen) {
+            elem.requestFullScreen();
+        } else if (elem.mozRequestFullScreen) {
+            elem.mozRequestFullScreen();
+        } else if (elem.webkitRequestFullScreen) {
+            elem.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
+        } else if (elem.msRequestFullscreen) {
+            elem.msRequestFullscreen();
+        }
+    } else {
+        if (document.cancelFullScreen) {
+            document.cancelFullScreen();
+        } else if (document.mozCancelFullScreen) {
+            document.mozCancelFullScreen();
+        } else if (document.webkitCancelFullScreen) {
+            document.webkitCancelFullScreen();
+        } else if (document.msExitFullscreen) {
+            document.msExitFullscreen();
+        }
+    }
+}
+</script>
+<div class="submenu submenu2">
+   <ul>
+      <li>
+		<fieldset><legend>Navigation</legend>
+		  <input type="button" value="Full screen" onclick="toggleFullScreen(document.body)">
+		  <button data-cycle-cmd="pause">Pause</button>
+		  <button data-cycle-cmd="resume">Resume</button>
+		  <button data-cycle-cmd="prev">Prev</button>
+		  <button data-cycle-cmd="next">Next</button>
+          <button data-cycle-cmd="reinit">Reinit</button>
+		</fieldset>
+      </li>
+	 </ul>
+</div>
+
+    
+	
+<div class="cycle-slideshow" 
+    data-cycle-swipe=true
+    data-cycle-swipe-fx=scrollHorz
+    data-cycle-timeout=4000
+	data-cycle-fx=scrollHorz
+	data-cycle-center-horz=true
+    data-cycle-center-vert=true
+	data-cycle-auto-height="4:3"
+    >
+	<div id="progress"></div>	
+	<div id="caption" class="cycle-caption" style="z-index: 500;"></div>
+	@@image_list@@
+</div>
+
+		<script>
+			var progress = $('#progress'),
+				slideshow = $( '.cycle-slideshow' );
+
+			slideshow.on( 'cycle-initialized cycle-before', function( e, opts ) {
+				progress.stop(true).css( 'width', 0 );
+			});
+
+			slideshow.on( 'cycle-initialized cycle-after', function( e, opts ) {
+				if ( ! slideshow.is('.cycle-paused') )
+					progress.animate({ width: '100%' }, opts.timeout, 'linear' );
+			});
+
+			slideshow.on( 'cycle-paused', function( e, opts ) {
+			   progress.stop(); 
+			});
+
+			slideshow.on( 'cycle-resumed', function( e, opts, timeoutRemaining ) {
+				progress.animate({ width: '100%' }, timeoutRemaining, 'linear' );
+			});
+		</script>
+
+</body>
+</html>

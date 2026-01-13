@@ -1,0 +1,81 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="css/style.css" type="text/css" media="all">
+  <link rel="stylesheet" href="js/jquery-ui-1.11.2.custom/jquery-ui.min.css" type="text/css" media="all">
+  <title>remote digiCamControl</title>
+</head>
+<body>
+  <header>
+    <div class="menu">
+      <table>
+		<tr>
+		  <td id="logoholder"><span id="logo">digiCamControl<span class="remote">remote</span></span></td>
+		  <td><span id="capture">Capture</span></td>
+		  <td><span id="browse">Control</span></td>
+		  <td><span id="slideshow">Slideshow</span></td>
+		  <td><span id="live">Live</span></td>
+		</tr>
+      </table>
+    </div>
+  </header>
+  <div style="clear: both"></div>
+  <div id="contentwrapper">
+	<div id="content">
+	  <div style="padding:20px">Welcome to <i>remote</i> digiCamControl</div>
+	</div>
+  </div>
+
+<script type="text/javascript" src="js/jquery-1.11.2.min.js"></script>
+<script type="text/javascript" src="js/jquery-ui-1.11.2.custom/jquery-ui.min.js"></script>
+<script type="text/javascript" src="js/jquery.cycle.all.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){
+  $.ajaxSetup({ cache: false });
+  $("#capture").click(function(){
+    $.ajax({
+      method: "GET",
+      url: "/?CMD=Capture"
+    });
+    return false;
+  });
+  $("#live").click(function(){
+    $("#content").children().remove().addClass("loading");
+    $("#content").load("/liveview.html?CMD=LiveViewWnd_Show", function(){
+      $(this).removeClass("loading");
+    });
+  });
+  $("#browse").click(function(){
+    $("#content").children().remove().addClass("loading");
+    $("#content").load("/browse.html", function(){
+      $(this).removeClass("loading");
+    });
+  });   
+  $("#slideshow").click(function(){
+    $(".showmenu").click();
+    window.open("slide.html");  
+  });
+  $("body").delegate("button","click", function(){
+    var action = $(this).attr("action");
+    if (action !== undefined) {
+      $.ajax({
+		method: "GET",
+		dataType: "html",
+		url: action
+      });
+    }
+    return false;
+  });
+  $(window).trigger('resize');
+});
+$(window).resize(function() {
+  var top = $('header').height();
+  var remaining_height = parseInt($(window).height() - top); 
+  $('#contentwrapper').height(remaining_height);
+});
+</script>
+</body>
+</html>
