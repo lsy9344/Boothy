@@ -25,7 +25,6 @@ import {
   RefreshCw,
   SortAsc,
   Trash2,
-  Users,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AddPresetModal from '../../modals/AddPresetModal';
@@ -77,7 +76,6 @@ interface PresetsPanelProps {
   adjustments: Adjustments;
   selectedImage: SelectedImage;
   setAdjustments(adjustments: Partial<Adjustments>): void;
-  onNavigateToCommunity(): void;
 }
 
 const itemVariants = {
@@ -256,7 +254,6 @@ export default function PresetsPanel({
   adjustments,
   selectedImage,
   setAdjustments,
-  onNavigateToCommunity,
 }: PresetsPanelProps) {
   const {
     addFolder,
@@ -822,13 +819,6 @@ export default function PresetsPanel({
           <div className="flex items-center gap-1">
             <button
               className="p-2 rounded-full hover:bg-surface transition-colors"
-              onClick={onNavigateToCommunity}
-              title="Explore Community Presets"
-            >
-              <Users size={18} />
-            </button>
-            <button
-              className="p-2 rounded-full hover:bg-surface transition-colors"
               disabled={isLoading}
               onClick={handleImportPresets}
               title="Import presets from .rrpreset file"
@@ -868,13 +858,7 @@ export default function PresetsPanel({
           )}
           {!isLoading && presets.length === 0 ? (
             <div className="text-center text-text-secondary py-8 flex flex-col items-center gap-4">
-              <p className="max-w-xs">
-                No presets saved yet. Create your own, import from a file, or explore community presets.
-              </p>
-              <Button variant="secondary" onClick={onNavigateToCommunity}>
-                <Users size={16} className="mr-2" />
-                Get Community Presets
-              </Button>
+              <p className="max-w-xs">No presets saved yet. Create your own or import from a file.</p>
             </div>
           ) : (
             <>

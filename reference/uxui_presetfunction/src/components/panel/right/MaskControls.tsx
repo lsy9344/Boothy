@@ -50,14 +50,10 @@ interface MaskControlsProps {
   activeMaskId: string | null;
   activeSubMask: SubMask | null;
   adjustments: Adjustments;
-  aiModelDownloadStatus: string | null;
   appSettings: AppSettings | null;
   brushSettings: BrushSettings | null;
   editingMask: MaskContainer;
   histogram: string;
-  isGeneratingAiMask: boolean;
-  onGenerateAiForegroundMask(id: string): void;
-  onGenerateAiSkyMask(id: string): void;
   onSelectMask(id: string | null): void;
   selectedImage: SelectedImage;
   setAdjustments(updater: (prev: Adjustments) => Adjustments): void;
@@ -69,15 +65,6 @@ interface MaskControlsProps {
 }
 
 function formatMaskTypeName(type: string) {
-  if (type === Mask.AiSubject) {
-    return 'AI Subject';
-  }
-  if (type === Mask.AiForeground) {
-    return 'AI Foreground';
-  }
-  if (type === Mask.AiSky) {
-    return 'AI Sky';
-  }
   if (type === Mask.All) {
     return 'Whole Image';
   }
@@ -93,24 +80,6 @@ const SUB_MASK_CONFIG: Record<Mask, any> = {
   [Mask.Color]: { parameters: [] },
   [Mask.Luminance]: { parameters: [] },
   [Mask.All]: { parameters: [] },
-  [Mask.AiSubject]: {
-    parameters: [
-      { key: 'grow', label: 'Grow', min: -100, max: 100, step: 1, defaultValue: 0 },
-      { key: 'feather', label: 'Feather', min: 0, max: 100, step: 1, defaultValue: 0 },
-    ],
-  },
-  [Mask.AiForeground]: {
-    parameters: [
-      { key: 'grow', label: 'Grow', min: -100, max: 100, step: 1, defaultValue: 0 },
-      { key: 'feather', label: 'Feather', min: 0, max: 100, step: 1, defaultValue: 0 },
-    ],
-  },
-  [Mask.AiSky]: {
-    parameters: [
-      { key: 'grow', label: 'Grow', min: -100, max: 100, step: 1, defaultValue: 0 },
-      { key: 'feather', label: 'Feather', min: 0, max: 100, step: 1, defaultValue: 0 },
-    ],
-  },
 };
 
 const BrushTools = ({ settings, onSettingsChange }: BrushToolsProps) => (
@@ -162,14 +131,10 @@ export default function MaskControls({
   activeMaskId,
   activeSubMask,
   adjustments,
-  aiModelDownloadStatus,
   appSettings,
   brushSettings,
   editingMask,
   histogram,
-  isGeneratingAiMask,
-  onGenerateAiForegroundMask,
-  onGenerateAiSkyMask,
   onSelectMask,
   selectedImage,
   setAdjustments,
@@ -190,27 +155,12 @@ export default function MaskControls({
     details: false,
     effects: false,
   });
-  const [showAnalyzingMessage, setShowAnalyzingMessage] = useState(false);
-  const analyzingTimeoutRef = useRef<number | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const presetButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setCollapsibleState({ basic: true, curves: false, color: false, details: false, effects: false });
   }, [editingMask?.id]);
-
-  useEffect(() => {
-    if (isGeneratingAiMask) {
-      analyzingTimeoutRef.current = setTimeout(() => setShowAnalyzingMessage(true), 1000);
-    } else {
-      if (analyzingTimeoutRef.current) clearTimeout(analyzingTimeoutRef.current);
-      setShowAnalyzingMessage(false);
-    }
-
-    return () => {
-      if (analyzingTimeoutRef.current) clearTimeout(analyzingTimeoutRef.current);
-    };
-  }, [isGeneratingAiMask]);
 
   const handleAddSubMask = (containerId: string, type: Mask) => {
     const subMask = createSubMask(type, selectedImage);
@@ -252,12 +202,6 @@ export default function MaskControls({
     }));
 
     onSelectMask(subMask.id);
-
-    if (type === Mask.AiForeground) {
-      onGenerateAiForegroundMask(subMask.id);
-    } else if (type === Mask.AiSky) {
-      onGenerateAiSkyMask(subMask.id);
-    }
   };
 
   const handleAddOthersSubMask = (event: React.MouseEvent) => {
@@ -471,11 +415,6 @@ export default function MaskControls({
     showContextMenu(event.clientX, event.clientY, options);
   };
 
-  const isAiMask =
-    activeSubMask &&
-    (activeSubMask.type === Mask.AiSubject ||
-      activeSubMask.type === Mask.AiForeground ||
-      activeSubMask.type === Mask.AiSky);
   const sectionVisibility = editingMask.adjustments.sectionVisibility || INITIAL_MASK_ADJUSTMENTS.sectionVisibility;
 
   return (
@@ -486,9 +425,9 @@ export default function MaskControls({
           {SUB_MASK_COMPONENT_TYPES.map((maskType: MaskType) => (
             <button
               className={`bg-surface text-text-primary rounded-lg p-2 flex flex-col items-center justify-center gap-1.5 aspect-square transition-colors ${
-                maskType.disabled || isGeneratingAiMask ? 'opacity-50 cursor-not-allowed' : 'hover:bg-card-active'
+                maskType.disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-card-active'
               }`}
-              disabled={maskType.disabled || isGeneratingAiMask}
+              disabled={maskType.disabled}
               key={maskType.type || maskType.id}
               onClick={(e) => {
                 if (maskType.id === 'others') {
@@ -617,20 +556,6 @@ export default function MaskControls({
             />
             {activeSubMask && (
               <>
-                {isAiMask && (
-                  <>
-                    {aiModelDownloadStatus && (
-                      <div className="text-sm text-text-secondary p-2 bg-surface rounded-md text-center">
-                        Downloading AI Model ({aiModelDownloadStatus})...
-                      </div>
-                    )}
-                    {showAnalyzingMessage && !aiModelDownloadStatus && (
-                      <div className="text-sm text-text-secondary p-2 bg-surface rounded-md text-center animate-pulse">
-                        Analyzing Image...
-                      </div>
-                    )}
-                  </>
-                )}
                 {subMaskConfig.parameters?.map((param: any) => (
                   <Slider
                     defaultValue={param.defaultValue}

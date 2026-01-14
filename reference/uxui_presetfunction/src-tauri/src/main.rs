@@ -4,8 +4,6 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod ai_processing;
-mod comfyui_connector;
 mod culling;
 mod denoising;
 mod file_management;
@@ -21,7 +19,6 @@ mod panorama_utils;
 mod preset_converter;
 mod raw_processing;
 mod tagging;
-mod tagging_utils;
 
 use log;
 use std::collections::{HashMap, hash_map::DefaultHasher};
@@ -48,27 +45,20 @@ use little_exif::exif_tag::ExifTag;
 use little_exif::filetype::FileExtension;
 use little_exif::metadata::Metadata;
 use rayon::prelude::*;
-use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Manager, ipc::Response};
 use tempfile::NamedTempFile;
-use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 use wgpu::{Texture, TextureView};
 
-use crate::ai_processing::{
-    AiForegroundMaskParameters, AiSkyMaskParameters, AiState, AiSubjectMaskParameters,
-    generate_image_embeddings, get_or_init_ai_models, run_sam_decoder, run_sky_seg_model,
-    run_u2netp_model,
-};
 use crate::file_management::{
     AppSettings, load_settings, parse_virtual_path,
     read_file_mapped,
 };
 use crate::formats::is_raw_file;
 use crate::image_loader::{
-    composite_patches_on_image, load_and_composite, load_base_image_from_bytes,
+    load_and_composite, load_base_image_from_bytes,
 };
 use crate::image_processing::{
     Crop, GpuContext, ImageMetadata, apply_coarse_rotation, apply_crop, apply_flip, apply_rotation,
@@ -76,8 +66,7 @@ use crate::image_processing::{
     downscale_f32_image, apply_cpu_default_raw_processing,
 };
 use crate::lut_processing::Lut;
-use crate::mask_generation::{AiPatchDefinition, MaskDefinition, generate_mask_bitmap};
-use tagging_utils::{candidates, hierarchy};
+use crate::mask_generation::{MaskDefinition, generate_mask_bitmap};
 
 #[derive(Clone)]
 pub struct LoadedImage {
@@ -120,18 +109,14 @@ pub struct AppState {
     gpu_context: Mutex<Option<GpuContext>>,
     gpu_image_cache: Mutex<Option<GpuImageCache>>,
     gpu_processor: Mutex<Option<GpuProcessorState>>,
-    ai_state: Mutex<Option<AiState>>,
-    ai_init_lock: TokioMutex<()>,
     export_task_handle: Mutex<Option<JoinHandle<()>>>,
     panorama_result: Arc<Mutex<Option<DynamicImage>>>,
     denoise_result: Arc<Mutex<Option<DynamicImage>>>,
-    indexing_task_handle: Mutex<Option<JoinHandle<()>>>,
     pub lut_cache: Mutex<HashMap<String, Arc<Lut>>>,
     initial_file_path: Mutex<Option<String>>,
     thumbnail_cancellation_token: Arc<AtomicBool>,
     preview_worker_tx: Mutex<Option<Sender<PreviewJob>>>,
     pub mask_cache: Mutex<HashMap<u64, GrayImage>>,
-    pub patch_cache: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(serde::Serialize)]
@@ -169,13 +154,6 @@ struct ExportSettings {
     strip_gps: bool,
     filename_template: Option<String>,
     watermark: Option<WatermarkSettings>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CommunityPreset {
-    pub name: String,
-    pub creator: String,
-    pub adjustments: Value,
 }
 
 #[derive(Serialize)]
@@ -260,57 +238,6 @@ fn calculate_transform_hash(adjustments: &serde_json::Value) -> u64 {
         }
     }
 
-    if let Some(patches_val) = adjustments.get("aiPatches") {
-        if let Some(patches_arr) = patches_val.as_array() {
-            patches_arr.len().hash(&mut hasher);
-
-            for patch in patches_arr {
-                if let Some(id) = patch.get("id").and_then(|v| v.as_str()) {
-                    id.hash(&mut hasher);
-                }
-
-                let is_visible = patch
-                    .get("visible")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                is_visible.hash(&mut hasher);
-
-                if let Some(patch_data) = patch.get("patchData") {
-                    let color_len = patch_data
-                        .get("color")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .len();
-                    color_len.hash(&mut hasher);
-
-                    let mask_len = patch_data
-                        .get("mask")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .len();
-                    mask_len.hash(&mut hasher);
-                } else {
-                    let data_len = patch
-                        .get("patchDataBase64")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .len();
-                    data_len.hash(&mut hasher);
-                }
-
-                if let Some(sub_masks_val) = patch.get("subMasks") {
-                    sub_masks_val.to_string().hash(&mut hasher);
-                }
-
-                let invert = patch
-                    .get("invert")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                invert.hash(&mut hasher);
-            }
-        }
-    }
-
     hasher.finish()
 }
 
@@ -321,63 +248,13 @@ fn calculate_full_job_hash(path: &str, adjustments: &serde_json::Value) -> u64 {
     hasher.finish()
 }
 
-fn hydrate_adjustments(state: &tauri::State<AppState>, adjustments: &mut serde_json::Value) {
-    let mut cache = state.patch_cache.lock().unwrap();
-
-    if let Some(patches) = adjustments.get_mut("aiPatches").and_then(|v| v.as_array_mut()) {
-        for patch in patches {
-            let id = patch.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            if id.is_empty() { continue; }
-
-            let has_data = patch.get("patchData").map_or(false, |v| !v.is_null());
-
-            if has_data {
-                if let Some(data) = patch.get("patchData") {
-                    cache.insert(id.clone(), data.clone());
-                }
-            } else {
-                if let Some(cached_data) = cache.get(&id) {
-                    patch["patchData"] = cached_data.clone();
-                }
-            }
-        }
-    }
-
-    if let Some(masks) = adjustments.get_mut("masks").and_then(|v| v.as_array_mut()) {
-        for mask_container in masks {
-            if let Some(sub_masks) = mask_container.get_mut("subMasks").and_then(|v| v.as_array_mut()) {
-                for sub_mask in sub_masks {
-                    let id = sub_mask.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    if id.is_empty() { continue; }
-
-                    if let Some(params) = sub_mask.get_mut("parameters").and_then(|p| p.as_object_mut()) {
-                        if params.contains_key("mask_data_base64") {
-                            let val = params.get("mask_data_base64").unwrap();
-                            if !val.is_null() {
-                                cache.insert(id.clone(), val.clone());
-                            } else {
-                                if let Some(cached_data) = cache.get(&id) {
-                                    params.insert("mask_data_base64".to_string(), cached_data.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn generate_transformed_preview(
     loaded_image: &LoadedImage,
     adjustments: &serde_json::Value,
     app_handle: &tauri::AppHandle,
 ) -> Result<(DynamicImage, f32, (f32, f32)), String> {
-    let patched_original_image = composite_patches_on_image(&loaded_image.image, adjustments)
-        .map_err(|e| format!("Failed to composite AI patches: {}", e))?;
-
     let (transformed_full_res, unscaled_crop_offset) =
-        apply_all_transformations(&patched_original_image, adjustments);
+        apply_all_transformations(&loaded_image.image, adjustments);
 
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let final_preview_dim = settings.editor_preview_resolution.unwrap_or(1920);
@@ -401,15 +278,6 @@ fn generate_transformed_preview(
     };
 
     Ok((final_preview_base, scale_for_gpu, unscaled_crop_offset))
-}
-
-fn encode_to_base64_png(image: &GrayImage) -> Result<String, String> {
-    let mut buf = Cursor::new(Vec::new());
-    image
-        .write_to(&mut buf, ImageFormat::Png)
-        .map_err(|e| e.to_string())?;
-    let base64_str = general_purpose::STANDARD.encode(buf.get_ref());
-    Ok(format!("data:image/png;base64,{}", base64_str))
 }
 
 fn read_exif_data(file_bytes: &[u8]) -> HashMap<String, String> {
@@ -500,7 +368,6 @@ async fn load_image(
     *state.cached_preview.lock().unwrap() = None;
     *state.gpu_image_cache.lock().unwrap() = None;
     state.mask_cache.lock().unwrap().clear();
-    state.patch_cache.lock().unwrap().clear();
 
     *state.original_image.lock().unwrap() = Some(LoadedImage {
         path: source_path_str.clone(),
@@ -641,9 +508,7 @@ fn process_preview_job(
     job: PreviewJob,
 ) -> Result<(), String> {
     let context = get_or_init_gpu_context(&state)?;
-    let mut adjustments_json = job.adjustments;
-    hydrate_adjustments(&state, &mut adjustments_json);
-    let adjustments_clone = adjustments_json;
+    let adjustments_clone = job.adjustments;
 
     let loaded_image_guard = state.original_image.lock().unwrap();
     let loaded_image = loaded_image_guard.as_ref().ok_or("No original image loaded")?.clone();
@@ -846,8 +711,7 @@ fn generate_uncropped_preview(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let context = get_or_init_gpu_context(&state)?;
-    let mut adjustments_clone = js_adjustments.clone();
-    hydrate_adjustments(&state, &mut adjustments_clone);
+    let adjustments_clone = js_adjustments;
 
     let loaded_image = state
         .original_image
@@ -861,14 +725,7 @@ fn generate_uncropped_preview(
         let path = loaded_image.path.clone();
         let is_raw = loaded_image.is_raw;
         let unique_hash = calculate_full_job_hash(&path, &adjustments_clone);
-        let patched_image =
-            match composite_patches_on_image(&loaded_image.image, &adjustments_clone) {
-                Ok(img) => img,
-                Err(e) => {
-                    eprintln!("Failed to composite patches for uncropped preview: {}", e);
-                    loaded_image.image
-                }
-            };
+        let patched_image = loaded_image.image;
 
         let orientation_steps = adjustments_clone["orientationSteps"].as_u64().unwrap_or(0) as u8;
         let coarse_rotated_image = apply_coarse_rotation(patched_image, orientation_steps);
@@ -953,8 +810,7 @@ fn generate_original_transformed_preview(
         .clone()
         .ok_or("No original image loaded")?;
 
-    let mut adjustments_clone = js_adjustments.clone();
-    hydrate_adjustments(&state, &mut adjustments_clone);
+    let adjustments_clone = js_adjustments;
 
     let mut image_for_preview = loaded_image.image.clone();
     if loaded_image.is_raw {
@@ -1000,8 +856,7 @@ fn generate_fullscreen_preview(
 ) -> Result<Response, String> {
     let context = get_or_init_gpu_context(&state)?;
 
-    let mut adjustments_clone = js_adjustments.clone();
-    hydrate_adjustments(&state, &mut adjustments_clone);
+    let adjustments_clone = js_adjustments;
 
     let (original_image, is_raw) = get_full_image_for_processing(&state)?;
     let path = state
@@ -1013,11 +868,9 @@ fn generate_fullscreen_preview(
         .path
         .clone();
     let unique_hash = calculate_full_job_hash(&path, &adjustments_clone);
-    let base_image = composite_patches_on_image(&original_image, &adjustments_clone)
-        .map_err(|e| format!("Failed to composite AI patches for fullscreen: {}", e))?;
 
     let (transformed_image, unscaled_crop_offset) =
-        apply_all_transformations(&base_image, &adjustments_clone);
+        apply_all_transformations(&original_image, &adjustments_clone);
     let (img_w, img_h) = transformed_image.dimensions();
 
     let mask_definitions: Vec<MaskDefinition> = adjustments_clone
@@ -1220,12 +1073,9 @@ async fn export_image(
             let (source_path, _) = parse_virtual_path(&original_path);
             let source_path_str = source_path.to_string_lossy().to_string();
 
-            let base_image = composite_patches_on_image(&original_image_data, &js_adjustments)
-                .map_err(|e| format!("Failed to composite AI patches for export: {}", e))?;
-
             let final_image = process_image_for_export(
                 &source_path_str,
-                &base_image,
+                &original_image_data,
                 &js_adjustments,
                 &export_settings,
                 &context,
@@ -2064,200 +1914,6 @@ fn generate_mask_overlay(
 }
 
 #[tauri::command]
-async fn generate_ai_foreground_mask(
-    rotation: f32,
-    flip_horizontal: bool,
-    flip_vertical: bool,
-    orientation_steps: u8,
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<AiForegroundMaskParameters, String> {
-    let models = get_or_init_ai_models(&app_handle, &state.ai_state, &state.ai_init_lock)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let (full_image, _) = get_full_image_for_processing(&state)?;
-    let full_mask_image =
-        run_u2netp_model(&full_image, &models.u2netp).map_err(|e| e.to_string())?;
-    let base64_data = encode_to_base64_png(&full_mask_image)?;
-
-    Ok(AiForegroundMaskParameters {
-        mask_data_base64: Some(base64_data),
-        rotation: Some(rotation),
-        flip_horizontal: Some(flip_horizontal),
-        flip_vertical: Some(flip_vertical),
-        orientation_steps: Some(orientation_steps),
-    })
-}
-
-#[tauri::command]
-async fn generate_ai_sky_mask(
-    rotation: f32,
-    flip_horizontal: bool,
-    flip_vertical: bool,
-    orientation_steps: u8,
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<AiSkyMaskParameters, String> {
-    let models = get_or_init_ai_models(&app_handle, &state.ai_state, &state.ai_init_lock)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let (full_image, _) = get_full_image_for_processing(&state)?;
-    let full_mask_image =
-        run_sky_seg_model(&full_image, &models.sky_seg).map_err(|e| e.to_string())?;
-    let base64_data = encode_to_base64_png(&full_mask_image)?;
-
-    Ok(AiSkyMaskParameters {
-        mask_data_base64: Some(base64_data),
-        rotation: Some(rotation),
-        flip_horizontal: Some(flip_horizontal),
-        flip_vertical: Some(flip_vertical),
-        orientation_steps: Some(orientation_steps),
-    })
-}
-
-#[tauri::command]
-async fn generate_ai_subject_mask(
-    path: String,
-    start_point: (f64, f64),
-    end_point: (f64, f64),
-    rotation: f32,
-    flip_horizontal: bool,
-    flip_vertical: bool,
-    orientation_steps: u8,
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<AiSubjectMaskParameters, String> {
-    let models = get_or_init_ai_models(&app_handle, &state.ai_state, &state.ai_init_lock)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let embeddings = {
-        let mut ai_state_lock = state.ai_state.lock().unwrap();
-        let ai_state = ai_state_lock.as_mut().unwrap();
-
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(path.as_bytes());
-        let path_hash = hasher.finalize().to_hex().to_string();
-
-        if let Some(cached_embeddings) = &ai_state.embeddings {
-            if cached_embeddings.path_hash == path_hash {
-                cached_embeddings.clone()
-            } else {
-                let (full_image, _) = get_full_image_for_processing(&state)?;
-                let mut new_embeddings =
-                    generate_image_embeddings(&full_image, &models.sam_encoder)
-                        .map_err(|e| e.to_string())?;
-                new_embeddings.path_hash = path_hash;
-                ai_state.embeddings = Some(new_embeddings.clone());
-                new_embeddings
-            }
-        } else {
-            let (full_image, _) = get_full_image_for_processing(&state)?;
-            let mut new_embeddings = generate_image_embeddings(&full_image, &models.sam_encoder)
-                .map_err(|e| e.to_string())?;
-            new_embeddings.path_hash = path_hash;
-            ai_state.embeddings = Some(new_embeddings.clone());
-            new_embeddings
-        }
-    };
-
-    let (img_w, img_h) = embeddings.original_size;
-
-    let (coarse_rotated_w, coarse_rotated_h) = if orientation_steps % 2 == 1 {
-        (img_h as f64, img_w as f64)
-    } else {
-        (img_w as f64, img_h as f64)
-    };
-
-    let center = (coarse_rotated_w / 2.0, coarse_rotated_h / 2.0);
-
-    let p1 = start_point;
-    let p2 = (start_point.0, end_point.1);
-    let p3 = end_point;
-    let p4 = (end_point.0, start_point.1);
-
-    let angle_rad = (rotation as f64).to_radians();
-    let cos_a = angle_rad.cos();
-    let sin_a = angle_rad.sin();
-
-    let unrotate = |p: (f64, f64)| {
-        let px = p.0 - center.0;
-        let py = p.1 - center.1;
-        let new_px = px * cos_a + py * sin_a + center.0;
-        let new_py = -px * sin_a + py * cos_a + center.1;
-        (new_px, new_py)
-    };
-
-    let up1 = unrotate(p1);
-    let up2 = unrotate(p2);
-    let up3 = unrotate(p3);
-    let up4 = unrotate(p4);
-
-    let unflip = |p: (f64, f64)| {
-        let mut new_px = p.0;
-        let mut new_py = p.1;
-        if flip_horizontal {
-            new_px = coarse_rotated_w - p.0;
-        }
-        if flip_vertical {
-            new_py = coarse_rotated_h - p.1;
-        }
-        (new_px, new_py)
-    };
-
-    let ufp1 = unflip(up1);
-    let ufp2 = unflip(up2);
-    let ufp3 = unflip(up3);
-    let ufp4 = unflip(up4);
-
-    let un_coarse_rotate = |p: (f64, f64)| -> (f64, f64) {
-        match orientation_steps {
-            0 => p,
-            1 => (p.1, img_h as f64 - p.0),
-            2 => (img_w as f64 - p.0, img_h as f64 - p.1),
-            3 => (img_w as f64 - p.1, p.0),
-            _ => p,
-        }
-    };
-
-    let ucrp1 = un_coarse_rotate(ufp1);
-    let ucrp2 = un_coarse_rotate(ufp2);
-    let ucrp3 = un_coarse_rotate(ufp3);
-    let ucrp4 = un_coarse_rotate(ufp4);
-
-    let min_x = ucrp1.0.min(ucrp2.0).min(ucrp3.0).min(ucrp4.0);
-    let min_y = ucrp1.1.min(ucrp2.1).min(ucrp3.1).min(ucrp4.1);
-    let max_x = ucrp1.0.max(ucrp2.0).max(ucrp3.0).max(ucrp4.0);
-    let max_y = ucrp1.1.max(ucrp2.1).max(ucrp3.1).max(ucrp4.1);
-
-    let unrotated_start_point = (min_x, min_y);
-    let unrotated_end_point = (max_x, max_y);
-
-    let mask_bitmap = run_sam_decoder(
-        &models.sam_decoder,
-        &embeddings,
-        unrotated_start_point,
-        unrotated_end_point,
-    )
-    .map_err(|e| e.to_string())?;
-    let base64_data = encode_to_base64_png(&mask_bitmap)?;
-
-    Ok(AiSubjectMaskParameters {
-        start_x: start_point.0,
-        start_y: start_point.1,
-        end_x: end_point.0,
-        end_y: end_point.1,
-        mask_data_base64: Some(base64_data),
-        rotation: Some(rotation),
-        flip_horizontal: Some(flip_horizontal),
-        flip_vertical: Some(flip_vertical),
-        orientation_steps: Some(orientation_steps),
-    })
-}
-
-#[tauri::command]
 fn generate_preset_preview(
     js_adjustments: serde_json::Value,
     state: tauri::State<AppState>,
@@ -2322,203 +1978,6 @@ fn update_window_effect(theme: String, window: tauri::Window) {
 }
 
 #[tauri::command]
-async fn check_comfyui_status(app_handle: tauri::AppHandle) {
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let is_connected = if let Some(address) = settings.comfyui_address {
-        comfyui_connector::ping_server(&address).await.is_ok()
-    } else {
-        false
-    };
-    let _ = app_handle.emit(
-        "comfyui-status-update",
-        serde_json::json!({ "connected": is_connected }),
-    );
-}
-
-#[tauri::command]
-async fn test_comfyui_connection(address: String) -> Result<(), String> {
-    comfyui_connector::ping_server(&address)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-fn calculate_dynamic_patch_radius(width: u32, height: u32) -> u32 {
-    const MIN_RADIUS: u32 = 2;
-    const MAX_RADIUS: u32 = 32;
-    const BASE_DIMENSION: f32 = 192.0;
-
-    let min_dim = width.min(height) as f32;
-    let scaled_radius = (min_dim / BASE_DIMENSION).round() as u32;
-    scaled_radius.clamp(MIN_RADIUS, MAX_RADIUS)
-}
-
-#[tauri::command]
-async fn invoke_generative_replace_with_mask_def(
-    _path: String,
-    patch_definition: AiPatchDefinition,
-    current_adjustments: Value,
-    use_fast_inpaint: bool,
-    token: Option<String>,
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<String, String> {
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-
-    let mut source_image_adjustments = current_adjustments.clone();
-    if let Some(patches) = source_image_adjustments
-        .get_mut("aiPatches")
-        .and_then(|v| v.as_array_mut())
-    {
-        patches.retain(|p| p.get("id").and_then(|id| id.as_str()) != Some(&patch_definition.id));
-    }
-
-    let (base_image, _) = get_full_image_for_processing(&state)?;
-    let source_image = composite_patches_on_image(&base_image, &source_image_adjustments)
-        .map_err(|e| format!("Failed to prepare source image: {}", e))?;
-
-    let (img_w, img_h) = source_image.dimensions();
-    let mask_def_for_generation = MaskDefinition {
-        id: patch_definition.id.clone(),
-        name: patch_definition.name.clone(),
-        visible: patch_definition.visible,
-        invert: patch_definition.invert,
-        opacity: 100.0,
-        adjustments: serde_json::Value::Null,
-        sub_masks: patch_definition.sub_masks,
-    };
-
-    let mask_bitmap = generate_mask_bitmap(&mask_def_for_generation, img_w, img_h, 1.0, (0.0, 0.0))
-        .ok_or("Failed to generate mask bitmap for AI replace")?;
-
-    let patch_rgba = if use_fast_inpaint {
-        // cpu based inpainting, low quality but no setup required
-        let patch_radius = calculate_dynamic_patch_radius(img_w, img_h);
-        inpainting::perform_fast_inpaint(&source_image, &mask_bitmap, patch_radius)?
-    } else if let Some(address) = settings.comfyui_address {
-        // self hosted generative ai service
-        let comfy_config = settings.comfyui_workflow_config;
-
-        let mut rgba_mask = RgbaImage::new(img_w, img_h);
-        for (x, y, luma_pixel) in mask_bitmap.enumerate_pixels() {
-            let intensity = luma_pixel[0];
-            rgba_mask.put_pixel(x, y, Rgba([0, 0, 0, intensity]));
-        }
-        let mask_image = DynamicImage::ImageRgba8(rgba_mask);
-
-        let result_png_bytes = comfyui_connector::execute_workflow(
-            &address,
-            &comfy_config,
-            source_image,
-            Some(mask_image),
-            Some(patch_definition.prompt),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-        image::load_from_memory(&result_png_bytes)
-            .map_err(|e| e.to_string())?
-            .to_rgba8()
-    } else if let Some(auth_token) = token {
-        // convenience cloud service
-        let client = reqwest::Client::new();
-        let api_url = "https://api.letshopeitcompiles.com/inpaint"; // endpoint not yet built
-
-        let mut source_buf = Cursor::new(Vec::new());
-        source_image
-            .write_to(&mut source_buf, ImageFormat::Png)
-            .map_err(|e| e.to_string())?;
-        let source_base64 = general_purpose::STANDARD.encode(source_buf.get_ref());
-
-        let mut mask_buf = Cursor::new(Vec::new());
-        mask_bitmap
-            .write_to(&mut mask_buf, ImageFormat::Png)
-            .map_err(|e| e.to_string())?;
-        let mask_base64 = general_purpose::STANDARD.encode(mask_buf.get_ref());
-
-        let request_body = serde_json::json!({
-            "prompt": patch_definition.prompt,
-            "image": source_base64,
-            "mask": mask_base64,
-        });
-
-        let response = client
-            .post(api_url)
-            .header("Authorization", format!("Bearer {}", auth_token))
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send request to cloud service: {}", e))?;
-
-        if response.status().is_success() {
-            let response_bytes = response.bytes().await.map_err(|e| e.to_string())?;
-            image::load_from_memory(&response_bytes)
-                .map_err(|e| format!("Failed to decode cloud service response: {}", e))?
-                .to_rgba8()
-        } else {
-            let status = response.status();
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Could not read error body".to_string());
-            return Err(format!(
-                "Cloud service returned an error ({}): {}",
-                status, error_body
-            ));
-        }
-    } else {
-        return Err(
-            "No generative backend available. Connect to ComfyUI or upgrade to Pro for Cloud AI."
-                .to_string(),
-        );
-    };
-
-    let (patch_w, patch_h) = patch_rgba.dimensions();
-    let scaled_mask_bitmap = image::imageops::resize(
-        &mask_bitmap,
-        patch_w,
-        patch_h,
-        image::imageops::FilterType::Lanczos3,
-    );
-    let mut color_image = RgbImage::new(patch_w, patch_h);
-    let mask_image = scaled_mask_bitmap.clone();
-
-    for y in 0..patch_h {
-        for x in 0..patch_w {
-            let mask_value = scaled_mask_bitmap.get_pixel(x, y)[0];
-
-            if mask_value > 0 {
-                let patch_pixel = patch_rgba.get_pixel(x, y);
-                color_image.put_pixel(x, y, Rgb([patch_pixel[0], patch_pixel[1], patch_pixel[2]]));
-            } else {
-                color_image.put_pixel(x, y, Rgb([0, 0, 0]));
-            }
-        }
-    }
-
-    let quality = 92;
-
-    let mut color_buf = Cursor::new(Vec::new());
-    color_image
-        .write_with_encoder(JpegEncoder::new_with_quality(&mut color_buf, quality))
-        .map_err(|e| e.to_string())?;
-    let color_base64 = general_purpose::STANDARD.encode(color_buf.get_ref());
-
-    let mut mask_buf = Cursor::new(Vec::new());
-    mask_image
-        .write_with_encoder(JpegEncoder::new_with_quality(&mut mask_buf, quality))
-        .map_err(|e| e.to_string())?;
-    let mask_base64 = general_purpose::STANDARD.encode(mask_buf.get_ref());
-
-    let result_json = serde_json::json!({
-        "color": color_base64,
-        "mask": mask_base64
-    })
-    .to_string();
-
-    Ok(result_json)
-}
-
-#[tauri::command]
 fn get_supported_file_types() -> Result<serde_json::Value, String> {
     let raw_extensions: Vec<&str> = crate::formats::RAW_EXTENSIONS
         .iter()
@@ -2530,161 +1989,6 @@ fn get_supported_file_types() -> Result<serde_json::Value, String> {
         "raw": raw_extensions,
         "nonRaw": non_raw_extensions
     }))
-}
-
-#[tauri::command]
-async fn fetch_community_presets() -> Result<Vec<CommunityPreset>, String> {
-    let client = reqwest::Client::new();
-    let url = "https://raw.githubusercontent.com/CyberTimon/RapidRAW-Presets/main/manifest.json";
-
-    let response = client
-        .get(url)
-        .header("User-Agent", "RapidRAW-App")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch manifest from GitHub: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("GitHub returned an error: {}", response.status()));
-    }
-
-    let presets: Vec<CommunityPreset> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse manifest.json: {}", e))?;
-
-    Ok(presets)
-}
-
-#[tauri::command]
-async fn generate_all_community_previews(
-    image_paths: Vec<String>,
-    presets: Vec<CommunityPreset>,
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<HashMap<String, Vec<u8>>, String> {
-    let context = crate::image_processing::get_or_init_gpu_context(&state)?;
-    let mut results: HashMap<String, Vec<u8>> = HashMap::new();
-
-    const TILE_DIM: u32 = 360;
-    const PROCESSING_DIM: u32 = TILE_DIM * 2;
-
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let highlight_compression = settings.raw_highlight_compression.unwrap_or(2.5);
-
-    let mut base_thumbnails: Vec<(DynamicImage, bool)> = Vec::new();
-    for image_path in image_paths.iter() {
-        let (source_path, _) = parse_virtual_path(image_path);
-        let source_path_str = source_path.to_string_lossy().to_string();
-        let image_bytes = fs::read(&source_path).map_err(|e| e.to_string())?;
-        let original_image =
-            crate::image_loader::load_base_image_from_bytes(&image_bytes, &source_path_str, true, highlight_compression )
-                .map_err(|e| e.to_string())?;
-        let is_raw = is_raw_file(&source_path_str);
-        base_thumbnails.push((
-            downscale_f32_image(&original_image, PROCESSING_DIM, PROCESSING_DIM),
-            is_raw,
-        ));
-    }
-
-    for preset in presets.iter() {
-        let mut processed_tiles: Vec<RgbImage> = Vec::new();
-        let js_adjustments = &preset.adjustments;
-
-        let mut preset_hasher = DefaultHasher::new();
-        preset.name.hash(&mut preset_hasher);
-        let preset_hash = preset_hasher.finish();
-
-        for (i, (base_image, is_raw)) in base_thumbnails.iter().enumerate() {
-            let (transformed_image, unscaled_crop_offset) =
-                crate::apply_all_transformations(&base_image, &js_adjustments);
-            let (img_w, img_h) = transformed_image.dimensions();
-
-            let mask_definitions: Vec<MaskDefinition> = js_adjustments
-                .get("masks")
-                .and_then(|m| serde_json::from_value(m.clone()).ok())
-                .unwrap_or_else(Vec::new);
-
-            let mask_bitmaps: Vec<ImageBuffer<Luma<u8>, Vec<u8>>> = mask_definitions
-                .iter()
-                .filter_map(|def| {
-                    generate_mask_bitmap(def, img_w, img_h, 1.0, unscaled_crop_offset)
-                })
-                .collect();
-
-            let all_adjustments = get_all_adjustments_from_json(&js_adjustments, *is_raw);
-            let lut_path = js_adjustments["lutPath"].as_str();
-            let lut = lut_path.and_then(|p| get_or_load_lut(&state, p).ok());
-
-            let unique_hash = preset_hash.wrapping_add(i as u64);
-
-            let processed_image_dynamic = crate::image_processing::process_and_get_dynamic_image(
-                &context,
-                &state,
-                &transformed_image,
-                unique_hash,
-                all_adjustments,
-                &mask_bitmaps,
-                lut,
-                "generate_all_community_previews",
-            )?;
-
-            let processed_image = processed_image_dynamic.to_rgb8();
-
-            let (proc_w, proc_h) = processed_image.dimensions();
-            let size = proc_w.min(proc_h);
-            let cropped_processed_image = image::imageops::crop_imm(
-                &processed_image,
-                (proc_w - size) / 2,
-                (proc_h - size) / 2,
-                size,
-                size,
-            )
-            .to_image();
-
-            let final_tile = image::imageops::resize(
-                &cropped_processed_image,
-                TILE_DIM,
-                TILE_DIM,
-                image::imageops::FilterType::Lanczos3,
-            );
-            processed_tiles.push(final_tile);
-        }
-
-        let final_image_buffer = match processed_tiles.len() {
-            1 => processed_tiles.remove(0),
-            2 => {
-                let mut canvas = RgbImage::new(TILE_DIM * 2, TILE_DIM);
-                image::imageops::overlay(&mut canvas, &processed_tiles[0], 0, 0);
-                image::imageops::overlay(&mut canvas, &processed_tiles[1], TILE_DIM as i64, 0);
-                canvas
-            }
-            4 => {
-                let mut canvas = RgbImage::new(TILE_DIM * 2, TILE_DIM * 2);
-                image::imageops::overlay(&mut canvas, &processed_tiles[0], 0, 0);
-                image::imageops::overlay(&mut canvas, &processed_tiles[1], TILE_DIM as i64, 0);
-                image::imageops::overlay(&mut canvas, &processed_tiles[2], 0, TILE_DIM as i64);
-                image::imageops::overlay(
-                    &mut canvas,
-                    &processed_tiles[3],
-                    TILE_DIM as i64,
-                    TILE_DIM as i64,
-                );
-                canvas
-            }
-            _ => continue,
-        };
-
-        let mut buf = Cursor::new(Vec::new());
-        if final_image_buffer
-            .write_with_encoder(JpegEncoder::new_with_quality(&mut buf, 75))
-            .is_ok()
-        {
-            results.insert(preset.name.clone(), buf.into_inner());
-        }
-    }
-
-    Ok(results)
 }
 
 #[tauri::command]
@@ -3163,7 +2467,6 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
@@ -3192,20 +2495,6 @@ fn main() {
                         std::env::set_var("NODEVICE_SELECT", "1");
                     }
                 }
-
-                let resource_path = app_handle
-                    .path()
-                    .resolve("resources", tauri::path::BaseDirectory::Resource)
-                    .expect("failed to resolve resource directory");
-
-                let ort_library_name = {
-                    #[cfg(target_os = "windows")] { "onnxruntime.dll" }
-                    #[cfg(target_os = "linux")] { "libonnxruntime.so" }
-                    #[cfg(target_os = "macos")] { "libonnxruntime.dylib" }
-                };
-                let ort_library_path = resource_path.join(ort_library_name);
-                std::env::set_var("ORT_DYLIB_PATH", &ort_library_path);
-                println!("Set ORT_DYLIB_PATH to: {}", ort_library_path.display());
             }
 
             setup_logging(&app_handle);
@@ -3248,18 +2537,14 @@ fn main() {
             gpu_context: Mutex::new(None),
             gpu_image_cache: Mutex::new(None),
             gpu_processor: Mutex::new(None),
-            ai_state: Mutex::new(None),
-            ai_init_lock: TokioMutex::new(()),
             export_task_handle: Mutex::new(None),
             panorama_result: Arc::new(Mutex::new(None)),
             denoise_result: Arc::new(Mutex::new(None)),
-            indexing_task_handle: Mutex::new(None),
             lut_cache: Mutex::new(HashMap::new()),
             initial_file_path: Mutex::new(None),
             thumbnail_cancellation_token: Arc::new(AtomicBool::new(false)),
             preview_worker_tx: Mutex::new(None),
             mask_cache: Mutex::new(HashMap::new()),
-            patch_cache: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             load_image,
@@ -3275,13 +2560,7 @@ fn main() {
             generate_preset_preview,
             generate_uncropped_preview,
             generate_mask_overlay,
-            generate_ai_subject_mask,
-            generate_ai_foreground_mask,
-            generate_ai_sky_mask,
             update_window_effect,
-            check_comfyui_status,
-            test_comfyui_connection,
-            invoke_generative_replace_with_mask_def,
             get_supported_file_types,
             get_log_file_path,
             save_collage,
@@ -3290,8 +2569,6 @@ fn main() {
             apply_denoising,
             save_denoised_image,
             load_and_parse_lut,
-            fetch_community_presets,
-            generate_all_community_previews,
             save_temp_file,
             get_image_dimensions,
             frontend_ready,
@@ -3328,14 +2605,11 @@ fn main() {
             file_management::handle_import_presets_from_file,
             file_management::handle_import_legacy_presets_from_file,
             file_management::handle_export_presets_to_file,
-            file_management::save_community_preset,
             file_management::clear_all_sidecars,
             file_management::clear_thumbnail_cache,
             file_management::set_color_label_for_paths,
             file_management::import_files,
             file_management::create_virtual_copy,
-            tagging::start_background_indexing,
-            tagging::clear_ai_tags,
             tagging::clear_all_tags,
             tagging::add_tag_for_paths,
             tagging::remove_tag_for_paths,

@@ -7,7 +7,6 @@ import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import debounce from 'lodash.debounce';
 import throttle from 'lodash.throttle';
-import { ClerkProvider } from '@clerk/clerk-react';
 import clsx from 'clsx';
 import {
   Aperture,
@@ -33,12 +32,10 @@ import {
   X,
   Pin,
   PinOff,
-  Users,
   Gauge,
   Grip,
 } from 'lucide-react';
 import TitleBar from './window/TitleBar';
-import CommunityPage from './components/panel/CommunityPage';
 import MainLibrary from './components/panel/MainLibrary';
 import FolderTree from './components/panel/FolderTree';
 import Editor from './components/panel/Editor';
@@ -49,7 +46,6 @@ import RightPanelSwitcher from './components/panel/right/RightPanelSwitcher';
 import MetadataPanel from './components/panel/right/MetadataPanel';
 import CropPanel from './components/panel/right/CropPanel';
 import PresetsPanel from './components/panel/right/PresetsPanel';
-import AIPanel from './components/panel/right/AIPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
 import LibraryExportPanel from './components/panel/right/LibraryExportPanel';
 import MasksPanel from './components/panel/right/MasksPanel';
@@ -70,7 +66,6 @@ import { useHistoryState } from './hooks/useHistoryState';
 import Resizer from './components/ui/Resizer';
 import {
   Adjustments,
-  AiPatch,
   Color,
   COLOR_LABELS,
   Coord,
@@ -118,8 +113,6 @@ import {
   CullingSuggestions,
 } from './components/ui/AppProperties';
 import { ChannelConfig } from './components/adjustments/Curves';
-
-const CLERK_PUBLISHABLE_KEY = 'pk_test_YnJpZWYtc2Vhc25haWwtMTIuY2xlcmsuYWNjb3VudHMuZGV2JA'; // local dev key
 
 interface CollapsibleSectionsState {
   basic: boolean;
@@ -275,7 +268,6 @@ const useAsyncThrottle = <T extends unknown[]>(
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
-  const [activeView, setActiveView] = useState('library');
   const [isWindowFullScreen, setIsWindowFullScreen] = useState(false);
   const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set<string>());
@@ -330,8 +322,6 @@ function App() {
   const [activeRightPanel, setActiveRightPanel] = useState<Panel | null>(Panel.Adjustments);
   const [activeMaskContainerId, setActiveMaskContainerId] = useState<string | null>(null);
   const [activeMaskId, setActiveMaskId] = useState<string | null>(null);
-  const [activeAiPatchContainerId, setActiveAiPatchContainerId] = useState<string | null>(null);
-  const [activeAiSubMaskId, setActiveAiSubMaskId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [displaySize, setDisplaySize] = useState<ImageDimensions>({ width: 0, height: 0 });
   const [previewSize, setPreviewSize] = useState<ImageDimensions>({ width: 0, height: 0 });
@@ -343,7 +333,6 @@ function App() {
   const [transformedOriginalUrl, setTransformedOriginalUrl] = useState<string | null>(null);
   const fullResRequestRef = useRef<any>(null);
   const fullResCacheKeyRef = useRef<string | null>(null);
-  const patchesSentToBackend = useRef<Set<string>>(new Set());
 
   useDelayedRevokeBlobUrl(finalPreviewUrl);
   useDelayedRevokeBlobUrl(uncroppedAdjustedPreviewUrl);
@@ -383,13 +372,10 @@ function App() {
   const [isStraightenActive, setIsStraightenActive] = useState(false);
   const [isWbPickerActive, setIsWbPickerActive] = useState(false);
   const [copiedFilePaths, setCopiedFilePaths] = useState<Array<string>>([]);
-  const [aiModelDownloadStatus, setAiModelDownloadStatus] = useState<string | null>(null);
   const [copiedSectionAdjustments, setCopiedSectionAdjustments] = useState(null);
   const [copiedMask, setCopiedMask] = useState<MaskContainer | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isPasted, setIsPasted] = useState(false);
-  const [isIndexing, setIsIndexing] = useState(false);
-  const [indexingProgress, setIndexingProgress] = useState<Progress>({ current: 0, total: 0 });
   const [searchCriteria, setSearchCriteria] = useState<SearchCriteria>({
     tags: [],
     text: '',
@@ -437,9 +423,6 @@ function App() {
     sourceImages: [],
   });
   const [customEscapeHandler, setCustomEscapeHandler] = useState(null);
-  const [isGeneratingAiMask, setIsGeneratingAiMask] = useState(false);
-  const [isComfyUiConnected, setIsComfyUiConnected] = useState(false);
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [isMaskControlHovered, setIsMaskControlHovered] = useState(false);
   const [libraryScrollTop, setLibraryScrollTop] = useState<number>(0);
   const { showContextMenu } = useContextMenu();
@@ -525,12 +508,11 @@ function App() {
 
   useEffect(() => {
     if (
-      (activeRightPanel !== Panel.Masks || !activeMaskContainerId) &&
-      (activeRightPanel !== Panel.Ai || !activeAiPatchContainerId)
+      activeRightPanel !== Panel.Masks || !activeMaskContainerId
     ) {
       setIsMaskControlHovered(false);
     }
-  }, [activeRightPanel, activeMaskContainerId, activeAiPatchContainerId]);
+  }, [activeRightPanel, activeMaskContainerId]);
 
   const geometricAdjustmentsKey = useMemo(() => {
     if (!adjustments) return '';
@@ -605,18 +587,6 @@ function App() {
     }
   }, [libraryViewMode]);
 
-  useEffect(() => {
-    const unlisten = listen('comfyui-status-update', (event: any) => {
-      setIsComfyUiConnected(event.payload.connected);
-    });
-    invoke(Invokes.CheckComfyuiStatus);
-    const interval = setInterval(() => invoke(Invokes.CheckComfyuiStatus), 3000);
-    return () => {
-      clearInterval(interval);
-      unlisten.then((f) => f());
-    };
-  }, []);
-
   const updateSubMask = (subMaskId: string, updatedData: any) => {
     setAdjustments((prev: Adjustments) => ({
       ...prev,
@@ -624,180 +594,8 @@ function App() {
         ...c,
         subMasks: c.subMasks.map((sm: SubMask) => (sm.id === subMaskId ? { ...sm, ...updatedData } : sm)),
       })),
-      aiPatches: (prev.aiPatches || []).map((p: AiPatch) => ({
-        ...p,
-        subMasks: p.subMasks.map((sm: SubMask) => (sm.id === subMaskId ? { ...sm, ...updatedData } : sm)),
-      })),
     }));
   };
-
-  const handleGenerativeReplace = useCallback(
-    async (patchId: string, prompt: string, useFastInpaint: boolean) => {
-      if (!selectedImage?.path || isGeneratingAi) {
-        return;
-      }
-
-      const patch: AiPatch | undefined = adjustments.aiPatches.find((p: AiPatch) => p.id === patchId);
-      if (!patch) {
-        console.error('Could not find AI patch to generate for:', patchId);
-        return;
-      }
-
-      const patchDefinition = { ...patch, prompt };
-
-      setAdjustments((prev: Adjustments) => ({
-        ...prev,
-        aiPatches: prev.aiPatches.map((p: AiPatch) => (p.id === patchId ? { ...p, isLoading: true, prompt } : p)),
-      }));
-
-      setIsGeneratingAi(true);
-
-      try {
-        const newPatchDataJson: any = await invoke(Invokes.InvokeGenerativeReplaseWithMaskDef, {
-          currentAdjustments: adjustments,
-          patchDefinition: patchDefinition,
-          path: selectedImage.path,
-          useFastInpaint: useFastInpaint,
-        });
-
-        const newPatchData = JSON.parse(newPatchDataJson);
-        patchesSentToBackend.current.delete(patchId);
-        setAdjustments((prev: Adjustments) => ({
-          ...prev,
-          aiPatches: prev.aiPatches.map((p: AiPatch) =>
-            p.id === patchId
-              ? {
-                  ...p,
-                  patchData: newPatchData,
-                  isLoading: false,
-                  name: useFastInpaint ? 'Inpaint' : prompt && prompt.trim() ? prompt.trim() : p.name,
-                }
-              : p,
-          ),
-        }));
-        setActiveAiPatchContainerId(null);
-        setActiveAiSubMaskId(null);
-      } catch (err) {
-        console.error('Generative replace failed:', err);
-        setError(`AI Replace Failed: ${err}`);
-        setAdjustments((prev: Adjustments) => ({
-          ...prev,
-          aiPatches: prev.aiPatches.map((p: AiPatch) => (p.id === patchId ? { ...p, isLoading: false } : p)),
-        }));
-      } finally {
-        setIsGeneratingAi(false);
-      }
-    },
-    [
-      selectedImage?.path,
-      isGeneratingAi,
-      adjustments,
-      setAdjustments,
-      setActiveAiPatchContainerId,
-      setActiveAiSubMaskId,
-    ],
-  );
-
-  const handleQuickErase = useCallback(
-    async (subMaskId: string | null, startPoint: Coord, endPoint: Coord) => {
-      if (!selectedImage?.path || isGeneratingAi) {
-        return;
-      }
-
-      const patchId = adjustments.aiPatches.find((p: AiPatch) =>
-        p.subMasks.some((sm: SubMask) => sm.id === subMaskId),
-      )?.id;
-      if (!patchId) {
-        console.error('Could not find AI patch container for Quick Erase.');
-        return;
-      }
-
-      setIsGeneratingAi(true);
-      setAdjustments((prev: Partial<Adjustments>) => ({
-        ...prev,
-        aiPatches: prev.aiPatches?.map((p: AiPatch) => (p.id === patchId ? { ...p, isLoading: true } : p)),
-      }));
-
-      try {
-        const newMaskParams: any = await invoke(Invokes.GenerateAiSubjectMask, {
-          endPoint: [endPoint.x, endPoint.y],
-          flipHorizontal: adjustments.flipHorizontal,
-          flipVertical: adjustments.flipVertical,
-          orientationSteps: adjustments.orientationSteps,
-          path: selectedImage.path,
-          rotation: adjustments.rotation,
-          startPoint: [startPoint.x, startPoint.y],
-        });
-
-        const subMaskToUpdate = adjustments.aiPatches
-          ?.find((p: AiPatch) => p.id === patchId)
-          ?.subMasks.find((sm: SubMask) => sm.id === subMaskId);
-        const finalSubMaskParams: any = { ...subMaskToUpdate?.parameters, ...newMaskParams };
-        const updatedAdjustmentsForBackend = {
-          ...adjustments,
-          aiPatches: adjustments.aiPatches.map((p: AiPatch) =>
-            p.id === patchId
-              ? {
-                  ...p,
-                  subMasks: p.subMasks.map((sm: SubMask) =>
-                    sm.id === subMaskId ? { ...sm, parameters: finalSubMaskParams } : sm,
-                  ),
-                }
-              : p,
-          ),
-        };
-
-        const patchDefinitionForBackend = updatedAdjustmentsForBackend.aiPatches.find((p: AiPatch) => p.id === patchId);
-        const newPatchDataJson: any = await invoke(Invokes.InvokeGenerativeReplaseWithMaskDef, {
-          currentAdjustments: updatedAdjustmentsForBackend,
-          patchDefinition: { ...patchDefinitionForBackend, prompt: '' },
-          path: selectedImage.path,
-          useFastInpaint: true,
-        });
-
-        const newPatchData = JSON.parse(newPatchDataJson);
-        if (!newPatchData?.color || !newPatchData?.mask) {
-          throw new Error('Inpainting failed to return a valid result.');
-        }
-        patchesSentToBackend.current.delete(patchId);
-
-        setAdjustments((prev: Partial<Adjustments>) => ({
-          ...prev,
-          aiPatches: prev.aiPatches?.map((p: AiPatch) =>
-            p.id === patchId
-              ? {
-                  ...p,
-                  patchData: newPatchData,
-                  isLoading: false,
-                  subMasks: p.subMasks.map((sm: SubMask) =>
-                    sm.id === subMaskId ? { ...sm, parameters: finalSubMaskParams } : sm,
-                  ),
-                }
-              : p,
-          ),
-        }));
-        setActiveAiPatchContainerId(null);
-        setActiveAiSubMaskId(null);
-      } catch (err: any) {
-        console.error('Quick Erase failed:', err);
-        setError(`Quick Erase Failed: ${err.message || String(err)}`);
-        setAdjustments((prev: Partial<Adjustments>) => ({
-          ...prev,
-          aiPatches: prev.aiPatches?.map((p: AiPatch) => (p.id === patchId ? { ...p, isLoading: false } : p)),
-        }));
-      } finally {
-        setIsGeneratingAi(false);
-      }
-    },
-    [
-      selectedImage?.path,
-      isGeneratingAi,
-      adjustments,
-      setAdjustments,
-      setActiveAiPatchContainerId,
-      setActiveAiSubMaskId,
-    ],
-  );
 
   const handleDeleteMaskContainer = useCallback(
     (containerId: string) => {
@@ -812,120 +610,6 @@ function App() {
     },
     [setAdjustments, activeMaskContainerId],
   );
-
-  const handleDeleteAiPatch = useCallback(
-    (patchId: string) => {
-      setAdjustments((prev: Adjustments) => ({
-        ...prev,
-        aiPatches: (prev.aiPatches || []).filter((p) => p.id !== patchId),
-      }));
-      if (activeAiPatchContainerId === patchId) {
-        setActiveAiPatchContainerId(null);
-        setActiveAiSubMaskId(null);
-      }
-    },
-    [setAdjustments, activeAiPatchContainerId],
-  );
-
-  const handleToggleAiPatchVisibility = useCallback(
-    (patchId: string) => {
-      setAdjustments((prev: Adjustments) => ({
-        ...prev,
-        aiPatches: (prev.aiPatches || []).map((p: AiPatch) => (p.id === patchId ? { ...p, visible: !p.visible } : p)),
-      }));
-    },
-    [setAdjustments],
-  );
-
-  const handleGenerateAiMask = async (subMaskId: string, startPoint: Coord, endPoint: Coord) => {
-    if (!selectedImage?.path) {
-      console.error('Cannot generate AI mask: No image selected.');
-      return;
-    }
-    setIsGeneratingAiMask(true);
-    try {
-      const newParameters = await invoke(Invokes.GenerateAiSubjectMask, {
-        endPoint: [endPoint.x, endPoint.y],
-        flipHorizontal: adjustments.flipHorizontal,
-        flipVertical: adjustments.flipVertical,
-        orientationSteps: adjustments.orientationSteps,
-        path: selectedImage.path,
-        rotation: adjustments.rotation,
-        startPoint: [startPoint.x, startPoint.y],
-      });
-
-      const subMask = adjustments.aiPatches
-        ?.flatMap((p: AiPatch) => p.subMasks)
-        .find((sm: SubMask) => sm.id === subMaskId);
-
-      const mergedParameters = { ...(subMask?.parameters || {}), ...newParameters };
-      patchesSentToBackend.current.delete(subMaskId);
-      updateSubMask(subMaskId, { parameters: mergedParameters });
-    } catch (error) {
-      console.error('Failed to generate AI subject mask:', error);
-      setError(`AI Mask Failed: ${error}`);
-    } finally {
-      setIsGeneratingAiMask(false);
-    }
-  };
-
-  const handleGenerateAiForegroundMask = async (subMaskId: string) => {
-    if (!selectedImage?.path) {
-      console.error('Cannot generate AI mask: No image selected.');
-      return;
-    }
-    setIsGeneratingAiMask(true);
-    try {
-      const newParameters = await invoke(Invokes.GenerateAiForegroundMask, {
-        flipHorizontal: adjustments.flipHorizontal,
-        flipVertical: adjustments.flipVertical,
-        orientationSteps: adjustments.orientationSteps,
-        rotation: adjustments.rotation,
-      });
-
-      const subMask = adjustments.aiPatches
-        ?.flatMap((p: AiPatch) => p.subMasks)
-        .find((sm: SubMask) => sm.id === subMaskId);
-
-      const mergedParameters = { ...(subMask?.parameters || {}), ...newParameters };
-      patchesSentToBackend.current.delete(subMaskId);
-      updateSubMask(subMaskId, { parameters: mergedParameters });
-    } catch (error) {
-      console.error('Failed to generate AI foreground mask:', error);
-      setError(`AI Mask Failed: ${error}`);
-    } finally {
-      setIsGeneratingAiMask(false);
-    }
-  };
-
-  const handleGenerateAiSkyMask = async (subMaskId: string) => {
-    if (!selectedImage?.path) {
-      console.error('Cannot generate AI mask: No image selected.');
-      return;
-    }
-    setIsGeneratingAiMask(true);
-    try {
-      const newParameters = await invoke(Invokes.GenerateAiSkyMask, {
-        flipHorizontal: adjustments.flipHorizontal,
-        flipVertical: adjustments.flipVertical,
-        orientationSteps: adjustments.orientationSteps,
-        rotation: adjustments.rotation,
-      });
-
-      const subMask = adjustments.aiPatches
-        ?.flatMap((p: AiPatch) => p.subMasks)
-        .find((sm: SubMask) => sm.id === subMaskId);
-
-      const mergedParameters = { ...(subMask?.parameters || {}), ...newParameters };
-      patchesSentToBackend.current.delete(subMaskId);
-      updateSubMask(subMaskId, { parameters: mergedParameters });
-    } catch (error) {
-      console.error('Failed to generate AI sky mask:', error);
-      setError(`AI Mask Failed: ${error}`);
-    } finally {
-      setIsGeneratingAiMask(false);
-    }
-  };
 
   const sortedImageList = useMemo(() => {
     let processedList = imageList;
@@ -1152,39 +836,8 @@ function App() {
 
       const payload = JSON.parse(JSON.stringify(currentAdjustments));
 
-      if (payload.aiPatches && Array.isArray(payload.aiPatches)) {
-        payload.aiPatches.forEach((p: any) => {
-          if (p.id && p.patchData && !p.isLoading) {
-            if (patchesSentToBackend.current.has(p.id)) {
-              p.patchData = null; 
-            } else {
-              patchesSentToBackend.current.add(p.id);
-            }
-          }
-        });
-      }
-
-      if (payload.masks && Array.isArray(payload.masks)) {
-        payload.masks.forEach((container: any) => {
-          if (container.subMasks && Array.isArray(container.subMasks)) {
-            container.subMasks.forEach((sm: any) => {
-              if (sm.id && sm.parameters && sm.parameters.mask_data_base64) {
-                if (patchesSentToBackend.current.has(sm.id)) {
-                  sm.parameters.mask_data_base64 = null;
-                } else {
-                  patchesSentToBackend.current.add(sm.id);
-                }
-              }
-            });
-          }
-        });
-      }
-
       try {
-        await invoke(Invokes.ApplyAdjustments, { 
-          jsAdjustments: payload, 
-          isInteractive: dragging 
-        });
+        await invoke(Invokes.ApplyAdjustments, { jsAdjustments: payload, isInteractive: dragging });
       } catch (err) {
         console.error('Failed to invoke apply_adjustments:', err);
       }
@@ -1293,7 +946,6 @@ function App() {
         setRenderedRightPanel(panelId);
       }
       setActiveMaskId(null);
-      setActiveAiSubMaskId(null);
     },
     [activeRightPanel],
   );
@@ -1545,7 +1197,6 @@ function App() {
       setThumbnails({});
       try {
         setCurrentFolderPath(path);
-        setActiveView('library');
 
         if (isNewRoot) {
           setExpandedFolders(new Set([path]));
@@ -1640,10 +1291,6 @@ function App() {
         } else {
           setImageList(files);
         }
-
-        invoke(Invokes.StartBackgroundIndexing, { folderPath: path }).catch((err) => {
-          console.error('Failed to start background indexing:', err);
-        });
       } catch (err) {
         console.error('Failed to load folder contents:', err);
         setError('Failed to load images from the selected folder.');
@@ -1772,9 +1419,7 @@ function App() {
     setIsWaveformVisible(false);
     setActiveMaskId(null);
     setActiveMaskContainerId(null);
-    setActiveAiPatchContainerId(null);
     setIsWbPickerActive(false);
-    setActiveAiSubMaskId(null);
     setLibraryActivePath(lastActivePath);
   }, [selectedImage?.path]);
 
@@ -1785,7 +1430,6 @@ function App() {
       }
       applyAdjustments.cancel();
       debouncedSave.cancel();
-      patchesSentToBackend.current.clear(); 
 
       setSelectedImage({
         exif: null,
@@ -1815,8 +1459,6 @@ function App() {
       setShowOriginal(false);
       setActiveMaskId(null);
       setActiveMaskContainerId(null);
-      setActiveAiPatchContainerId(null);
-      setActiveAiSubMaskId(null);
       setIsWbPickerActive(false); 
 
       if (transformWrapperRef.current) {
@@ -2395,8 +2037,6 @@ function App() {
 
   useKeyboardShortcuts({
     isModalOpen: isAnyModalOpen,
-    activeAiPatchContainerId,
-    activeAiSubMaskId,
     activeMaskContainerId,
     activeMaskId,
     activeRightPanel,
@@ -2406,7 +2046,6 @@ function App() {
     customEscapeHandler,
     handleBackToLibrary,
     handleCopyAdjustments,
-    handleDeleteAiPatch,
     handleDeleteMaskContainer,
     handleDeleteSelected,
     handleImageSelect,
@@ -2424,7 +2063,6 @@ function App() {
     multiSelectedPaths,
     redo,
     selectedImage,
-    setActiveAiSubMaskId,
     setActiveMaskContainerId,
     setActiveMaskId,
     setCopiedFilePaths,
@@ -2483,46 +2121,6 @@ function App() {
           }
           if (rating !== undefined) {
             setImageRatings((prev) => ({ ...prev, [path]: rating }));
-          }
-        }
-      }),
-      listen('ai-model-download-start', (event: any) => {
-        if (isEffectActive) {
-          setAiModelDownloadStatus(event.payload);
-        }
-      }),
-      listen('ai-model-download-finish', () => {
-        if (isEffectActive) {
-          setAiModelDownloadStatus(null);
-        }
-      }),
-      listen('indexing-started', () => {
-        if (isEffectActive) {
-          setIsIndexing(true);
-          setIndexingProgress({ current: 0, total: 0 });
-        }
-      }),
-      listen('indexing-progress', (event: any) => {
-        if (isEffectActive) {
-          setIndexingProgress(event.payload);
-        }
-      }),
-      listen('indexing-finished', () => {
-        if (isEffectActive) {
-          setIsIndexing(false);
-          setIndexingProgress({ current: 0, total: 0 });
-          if (currentFolderPathRef.current) {
-            const refreshImageList = async () => {
-              try {
-                const list: ImageFile[] = await invoke(Invokes.ListImagesInDir, { path: currentFolderPathRef.current });
-                if (Array.isArray(list)) {
-                  setImageList(list);
-                }
-              } catch (err) {
-                console.error('Failed to refresh after indexing:', err);
-              }
-            };
-            refreshImageList();
           }
         }
       }),
@@ -3233,7 +2831,7 @@ function App() {
           }
           if (selectedImage && pathsToReset.includes(selectedImage.path)) {
             const currentRating = adjustments.rating;
-            resetAdjustmentsHistory({ ...INITIAL_ADJUSTMENTS, rating: currentRating, aiPatches: [] });
+            resetAdjustmentsHistory({ ...INITIAL_ADJUSTMENTS, rating: currentRating });
           }
         })
         .catch((err) => {
@@ -3364,7 +2962,7 @@ function App() {
         onClick: () => {
           debouncedSetHistory.cancel();
           const currentRating = adjustments.rating;
-          resetAdjustmentsHistory({ ...INITIAL_ADJUSTMENTS, rating: currentRating, aiPatches: [] });
+          resetAdjustmentsHistory({ ...INITIAL_ADJUSTMENTS, rating: currentRating });
         },
       },
     ];
@@ -3633,7 +3231,7 @@ function App() {
           },
           {
             label: cullLabel,
-            icon: Users,
+            icon: Star,
             onClick: () =>
               setCullingModalState({
                 isOpen: true,
@@ -3987,28 +3585,18 @@ function App() {
     activeTreeSection
   ]);
 
-  const memoizedLibraryView = useMemo(() => (
-    <div className="flex flex-row flex-grow h-full min-h-0">
-      <div className="flex-1 flex flex-col min-w-0 gap-2">
-        {activeView === 'community' ? (
-          <CommunityPage
-            onBackToLibrary={() => setActiveView('library')}
-            supportedTypes={supportedTypes}
-            imageList={sortedImageList}
-            currentFolderPath={currentFolderPath}
-          />
-        ) : (
+  const memoizedLibraryView = useMemo(
+    () => (
+      <div className="flex flex-row flex-grow h-full min-h-0">
+        <div className="flex-1 flex flex-col min-w-0 gap-2">
           <MainLibrary
             activePath={libraryActivePath}
-            aiModelDownloadStatus={aiModelDownloadStatus}
             appSettings={appSettings}
             currentFolderPath={currentFolderPath}
             filterCriteria={filterCriteria}
             imageList={sortedImageList}
             imageRatings={imageRatings}
             importState={importState}
-            indexingProgress={indexingProgress}
-            isIndexing={isIndexing}
             isThumbnailsLoading={isThumbnailsLoading}
             isLoading={isViewLoading}
             isTreeLoading={isTreeLoading}
@@ -4039,63 +3627,58 @@ function App() {
             thumbnailAspectRatio={thumbnailAspectRatio}
             thumbnails={thumbnails}
             thumbnailSize={thumbnailSize}
-            onNavigateToCommunity={() => setActiveView('community')}
           />
-        )}
-        {rootPath && (
-          <BottomBar
-            isCopied={isCopied}
-            isCopyDisabled={multiSelectedPaths.length !== 1}
-            isExportDisabled={multiSelectedPaths.length === 0}
-            isLibraryView={true}
-            isPasted={isPasted}
-            isPasteDisabled={copiedAdjustments === null || multiSelectedPaths.length === 0}
-            isRatingDisabled={multiSelectedPaths.length === 0}
-            isResetDisabled={multiSelectedPaths.length === 0}
-            multiSelectedPaths={multiSelectedPaths}
-            onCopy={handleCopyAdjustments}
-            onExportClick={() => setIsLibraryExportPanelVisible((prev) => !prev)}
-            onOpenCopyPasteSettings={() => setIsCopyPasteSettingsModalOpen(true)}
-            onPaste={() => handlePasteAdjustments()}
-            onRate={handleRate}
-            onReset={() => handleResetAdjustments()}
-            rating={libraryActiveAdjustments.rating || 0}
-            thumbnailAspectRatio={thumbnailAspectRatio}
-          />
-        )}
+          {rootPath && (
+            <BottomBar
+              isCopied={isCopied}
+              isCopyDisabled={multiSelectedPaths.length !== 1}
+              isExportDisabled={multiSelectedPaths.length === 0}
+              isLibraryView={true}
+              isPasted={isPasted}
+              isPasteDisabled={copiedAdjustments === null || multiSelectedPaths.length === 0}
+              isRatingDisabled={multiSelectedPaths.length === 0}
+              isResetDisabled={multiSelectedPaths.length === 0}
+              multiSelectedPaths={multiSelectedPaths}
+              onCopy={handleCopyAdjustments}
+              onExportClick={() => setIsLibraryExportPanelVisible((prev) => !prev)}
+              onOpenCopyPasteSettings={() => setIsCopyPasteSettingsModalOpen(true)}
+              onPaste={() => handlePasteAdjustments()}
+              onRate={handleRate}
+              onReset={() => handleResetAdjustments()}
+              rating={libraryActiveAdjustments.rating || 0}
+              thumbnailAspectRatio={thumbnailAspectRatio}
+            />
+          )}
+        </div>
       </div>
-    </div>
-  ), [
-    activeView,
-    sortedImageList,
-    currentFolderPath,
-    libraryActivePath,
-    aiModelDownloadStatus,
-    appSettings,
-    filterCriteria,
-    imageRatings,
-    importState,
-    indexingProgress,
-    isIndexing,
-    isThumbnailsLoading,
-    isViewLoading,
-    isTreeLoading,
-    libraryScrollTop,
-    libraryViewMode,
-    multiSelectedPaths,
-    rootPath,
-    searchCriteria,
-    sortCriteria,
-    theme,
-    thumbnailAspectRatio,
-    thumbnails,
-    thumbnailSize,
-    isCopied,
-    isPasted,
-    copiedAdjustments,
-    libraryActiveAdjustments,
-    supportedTypes
-  ]);
+    ),
+    [
+      sortedImageList,
+      currentFolderPath,
+      libraryActivePath,
+      appSettings,
+      filterCriteria,
+      imageRatings,
+      importState,
+      isThumbnailsLoading,
+      isViewLoading,
+      isTreeLoading,
+      libraryScrollTop,
+      libraryViewMode,
+      multiSelectedPaths,
+      rootPath,
+      searchCriteria,
+      sortCriteria,
+      theme,
+      thumbnailAspectRatio,
+      thumbnails,
+      thumbnailSize,
+      isCopied,
+      isPasted,
+      copiedAdjustments,
+      libraryActiveAdjustments,
+    ],
+  );
 
   const renderMainView = () => {
     const panelVariants: any = {
@@ -4109,8 +3692,6 @@ function App() {
         <div className="flex flex-row flex-grow h-full min-h-0">
           <div className="flex-1 flex flex-col min-w-0">
             <Editor
-              activeAiPatchContainerId={activeAiPatchContainerId}
-              activeAiSubMaskId={activeAiSubMaskId}
               activeMaskContainerId={activeMaskContainerId}
               activeMaskId={activeMaskId}
               activeRightPanel={activeRightPanel}
@@ -4129,10 +3710,7 @@ function App() {
               onBackToLibrary={handleBackToLibrary}
               onCloseWaveform={() => setIsWaveformVisible(false)}
               onContextMenu={handleEditorContextMenu}
-              onGenerateAiMask={handleGenerateAiMask}
-              onQuickErase={handleQuickErase}
               onRedo={redo}
-              onSelectAiSubMask={setActiveAiSubMaskId}
               onSelectMask={setActiveMaskId}
               onStraighten={handleStraighten}
               onToggleFullScreen={handleToggleFullScreen}
@@ -4155,9 +3733,7 @@ function App() {
               waveform={waveform}
               onDisplaySizeChange={handleDisplaySizeChange}
               onInitialFitScale={setInitialFitScale}
-              onZoomChange={handleZoomChange}
               originalSize={originalSize}
-              baseRenderSize={baseRenderSize}
               isFullResolution={isFullResolution}
               fullResolutionUrl={fullResolutionUrl}
               isLoadingFullRes={isLoadingFullRes}
@@ -4255,14 +3831,10 @@ function App() {
                           activeMaskContainerId={activeMaskContainerId}
                           activeMaskId={activeMaskId}
                           adjustments={adjustments}
-                          aiModelDownloadStatus={aiModelDownloadStatus}
                           appSettings={appSettings}
                           brushSettings={brushSettings}
                           copiedMask={copiedMask}
                           histogram={histogram}
-                          isGeneratingAiMask={isGeneratingAiMask}
-                          onGenerateAiForegroundMask={handleGenerateAiForegroundMask}
-                          onGenerateAiSkyMask={handleGenerateAiSkyMask}
                           onSelectContainer={setActiveMaskContainerId}
                           onSelectMask={setActiveMaskId}
                           selectedImage={selectedImage}
@@ -4279,10 +3851,6 @@ function App() {
                           activePanel={activeRightPanel}
                           adjustments={adjustments}
                           selectedImage={selectedImage}
-                          onNavigateToCommunity={() => {
-                            handleBackToLibrary();
-                            setActiveView('community');
-                          }}
                           setAdjustments={setAdjustments}
                         />
                       )}
@@ -4293,28 +3861,6 @@ function App() {
                           multiSelectedPaths={multiSelectedPaths}
                           selectedImage={selectedImage}
                           setExportState={setExportState}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.Ai && (
-                        <AIPanel
-                          activePatchContainerId={activeAiPatchContainerId}
-                          activeSubMaskId={activeAiSubMaskId}
-                          adjustments={adjustments}
-                          aiModelDownloadStatus={aiModelDownloadStatus}
-                          brushSettings={brushSettings}
-                          isComfyUiConnected={isComfyUiConnected}
-                          isGeneratingAi={isGeneratingAi}
-                          isGeneratingAiMask={isGeneratingAiMask}
-                          onDeletePatch={handleDeleteAiPatch}
-                          onGenerateAiForegroundMask={handleGenerateAiForegroundMask}
-                          onGenerativeReplace={handleGenerativeReplace}
-                          onSelectPatchContainer={setActiveAiPatchContainerId}
-                          onSelectSubMask={setActiveAiSubMaskId}
-                          onTogglePatchVisibility={handleToggleAiPatchVisibility}
-                          selectedImage={selectedImage}
-                          setAdjustments={setAdjustments}
-                          setBrushSettings={setBrushSettings}
-                          setCustomEscapeHandler={setCustomEscapeHandler}
                         />
                       )}
                     </motion.div>
@@ -4482,11 +4028,9 @@ function App() {
 }
 
 const AppWrapper = () => (
-  <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
-    <ContextMenuProvider>
-      <App />
-    </ContextMenuProvider>
-  </ClerkProvider>
+  <ContextMenuProvider>
+    <App />
+  </ContextMenuProvider>
 );
 
 export default AppWrapper;

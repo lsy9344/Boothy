@@ -26,12 +26,6 @@ export const createSubMask = (type: Mask, imageDimensions: ImageDimensions) => {
       };
     case Mask.Brush:
       return { ...common, parameters: { lines: [] } };
-    case Mask.AiSubject:
-      return { ...common, parameters: { maskDataBase64: null, grow: 0, feather: 0 } };
-    case Mask.AiForeground:
-      return { ...common, parameters: { maskDataBase64: null, grow: 0, feather: 0 } };
-    case Mask.QuickEraser:
-      return { ...common, parameters: { maskDataBase64: null, grow: 50, feather: 50 } };
     default:
       return { ...common, parameters: {} };
   }

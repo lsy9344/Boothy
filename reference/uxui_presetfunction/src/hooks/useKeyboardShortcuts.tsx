@@ -2,8 +2,6 @@ import { useEffect } from 'react';
 import { ImageFile, Panel, SelectedImage } from '../components/ui/AppProperties';
 
 interface KeyboardShortcutsProps {
-  activeAiPatchContainerId?: string | null;
-  activeAiSubMaskId: string | null;
   activeMaskContainerId: string | null;
   activeMaskId: string | null;
   activeRightPanel: Panel | null;
@@ -13,7 +11,6 @@ interface KeyboardShortcutsProps {
   customEscapeHandler: any;
   handleBackToLibrary(): void;
   handleCopyAdjustments(): void;
-  handleDeleteAiPatch(patchId: string): void;
   handleDeleteMaskContainer(containerId: string): void;
   handleDeleteSelected(): void;
   handleImageSelect(path: string): void;
@@ -30,10 +27,8 @@ interface KeyboardShortcutsProps {
   isViewLoading: boolean;
   libraryActivePath: string | null;
   multiSelectedPaths: Array<string>;
-  onSelectPatchContainer?(container: string | null): void;
   redo(): void;
   selectedImage: SelectedImage | null;
-  setActiveAiSubMaskId(id: string | null): void;
   setActiveMaskContainerId(id: string | null): void;
   setActiveMaskId(id: string | null): void;
   setCopiedFilePaths(paths: Array<string>): void;
@@ -51,8 +46,6 @@ interface KeyboardShortcutsProps {
 }
 
 export const useKeyboardShortcuts = ({
-  activeAiPatchContainerId,
-  activeAiSubMaskId,
   activeMaskContainerId,
   activeMaskId,
   activeRightPanel,
@@ -62,7 +55,6 @@ export const useKeyboardShortcuts = ({
   customEscapeHandler,
   handleBackToLibrary,
   handleCopyAdjustments,
-  handleDeleteAiPatch,
   handleDeleteMaskContainer,
   handleDeleteSelected,
   handleImageSelect,
@@ -79,10 +71,8 @@ export const useKeyboardShortcuts = ({
   isViewLoading,
   libraryActivePath,
   multiSelectedPaths,
-  onSelectPatchContainer,
   redo,
   selectedImage,
-  setActiveAiSubMaskId,
   setActiveMaskContainerId,
   setActiveMaskId,
   setCopiedFilePaths,
@@ -121,10 +111,6 @@ export const useKeyboardShortcuts = ({
             setIsStraightenActive(false);
           } else if (customEscapeHandler) {
             customEscapeHandler();
-          } else if (activeAiSubMaskId) {
-            setActiveAiSubMaskId(null);
-          } else if (activeAiPatchContainerId && onSelectPatchContainer) {
-            onSelectPatchContainer(null);
           } else if (activeMaskId) {
             setActiveMaskId(null);
           } else if (activeMaskContainerId) {
@@ -201,10 +187,6 @@ export const useKeyboardShortcuts = ({
         if (key === 'm' && !isCtrl) {
           event.preventDefault();
           handleRightPanelSelect(Panel.Masks);
-        }
-        if (key === 'k' && !isCtrl) {
-          event.preventDefault();
-          handleRightPanelSelect(Panel.Ai);
         }
         if (key === 'p' && !isCtrl) {
           event.preventDefault();
@@ -317,8 +299,6 @@ export const useKeyboardShortcuts = ({
         event.preventDefault();
         if (activeMaskContainerId) {
           handleDeleteMaskContainer(activeMaskContainerId);
-        } else if (activeAiPatchContainerId) {
-          handleDeleteAiPatch(activeAiPatchContainerId);
         } else {
           handleDeleteSelected();
         }
@@ -400,8 +380,6 @@ export const useKeyboardShortcuts = ({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [
-    activeAiPatchContainerId,
-    activeAiSubMaskId,
     activeMaskContainerId,
     activeMaskId,
     activeRightPanel,
@@ -411,7 +389,6 @@ export const useKeyboardShortcuts = ({
     customEscapeHandler,
     handleBackToLibrary,
     handleCopyAdjustments,
-    handleDeleteAiPatch,
     handleDeleteMaskContainer,
     handleDeleteSelected,
     handleImageSelect,
@@ -427,10 +404,8 @@ export const useKeyboardShortcuts = ({
     isViewLoading,
     libraryActivePath,
     multiSelectedPaths,
-    onSelectPatchContainer,
     redo,
     selectedImage,
-    setActiveAiSubMaskId,
     setActiveMaskContainerId,
     setActiveMaskId,
     setCopiedFilePaths,

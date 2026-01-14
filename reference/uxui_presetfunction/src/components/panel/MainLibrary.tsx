@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, forwardRef, useMemo, useCallback } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
 import {
   AlertTriangle,
   Check,
@@ -16,7 +15,6 @@ import {
   SlidersHorizontal,
   Star as StarIcon,
   Search,
-  Users,
   X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -31,7 +29,6 @@ import {
   ImageFile,
   Invokes,
   LibraryViewMode,
-  Progress,
   RawStatus,
   SortCriteria,
   SortDirection,
@@ -68,17 +65,14 @@ interface SearchCriteria {
 
 interface MainLibraryProps {
   activePath: string | null;
-  aiModelDownloadStatus: string | null;
   appSettings: AppSettings | null;
   currentFolderPath: string | null;
   filterCriteria: FilterCriteria;
   imageList: Array<ImageFile>;
   imageRatings: Record<string, number>;
   importState: ImportState;
-  indexingProgress: Progress;
   isLoading: boolean;
   isThumbnailsLoading?: boolean;
-  isIndexing: boolean;
   isTreeLoading: boolean;
   libraryScrollTop: number;
   libraryViewMode: LibraryViewMode;
@@ -107,12 +101,9 @@ interface MainLibraryProps {
   thumbnailAspectRatio: ThumbnailAspectRatio;
   thumbnails: Record<string, string>;
   thumbnailSize: ThumbnailSize;
-  onNavigateToCommunity(): void;
 }
 
 interface SearchInputProps {
-  indexingProgress: Progress;
-  isIndexing: boolean;
   searchCriteria: SearchCriteria;
   setSearchCriteria(criteria: SearchCriteria | ((prev: SearchCriteria) => SearchCriteria)): void;
 }
@@ -249,7 +240,7 @@ const groupImagesByFolder = (images: ImageFile[], rootPath: string | null) => {
   }));
 };
 
-function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCriteria }: SearchInputProps) {
+function SearchInput({ searchCriteria, setSearchCriteria }: SearchInputProps) {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -332,11 +323,7 @@ function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCr
 
   const isActive = isSearchActive || tags.length > 0 || !!text;
   const placeholderText =
-    isIndexing && indexingProgress.total > 0
-      ? `Indexing... (${indexingProgress.current}/${indexingProgress.total})`
-      : isIndexing
-      ? 'Indexing Images...'
-      : tags.length > 0
+    tags.length > 0
       ? 'Add another tag...'
       : 'Search by tag or filename...';
 
@@ -396,7 +383,6 @@ function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCr
           ))}
           <input
             className="flex-grow w-full h-full bg-transparent text-text-primary placeholder-text-secondary border-none focus:outline-none"
-            disabled={isIndexing}
             onBlur={() => {
               if (tags.length === 0 && !text) {
                 setIsSearchActive(false);
@@ -418,7 +404,7 @@ function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCr
         style={{ opacity: isActive ? 1 : 0, pointerEvents: isActive ? 'auto' : 'none', transition: 'opacity 0.2s' }}
       >
         <AnimatePresence>
-          {text.trim().length > 0 && tags.length === 0 && text.trim().length < 6 && !isIndexing && (
+          {text.trim().length > 0 && tags.length === 0 && text.trim().length < 6 && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -440,7 +426,7 @@ function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCr
             {mode}
           </button>
         )}
-        {(tags.length > 0 || text) && !isIndexing && (
+        {(tags.length > 0 || text) && (
           <button
             onClick={clearSearch}
             className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-primary flex-shrink-0"
@@ -448,11 +434,6 @@ function SearchInput({ indexingProgress, isIndexing, searchCriteria, setSearchCr
           >
             <X className="h-5 w-5" />
           </button>
-        )}
-        {isIndexing && (
-          <div className="flex items-center pr-1 pointer-events-none flex-shrink-0">
-            <Loader2 className="h-5 w-5 text-text-secondary animate-spin" />
-          </div>
         )}
       </div>
     </motion.div>
@@ -1109,15 +1090,12 @@ const Row = ({ index, style, data }: any) => {
 
 export default function MainLibrary({
   activePath,
-  aiModelDownloadStatus,
   appSettings,
   currentFolderPath,
   filterCriteria,
   imageList,
   imageRatings,
   importState,
-  indexingProgress,
-  isIndexing,
   isLoading,
   isThumbnailsLoading,
   isTreeLoading,
@@ -1148,7 +1126,6 @@ export default function MainLibrary({
   thumbnailAspectRatio,
   thumbnails,
   thumbnailSize,
-  onNavigateToCommunity,
 }: MainLibraryProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
@@ -1156,8 +1133,6 @@ export default function MainLibrary({
   const libraryContainerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<List>(null);
   const outerRef = useRef<HTMLDivElement>(null);
-  const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
-  const [latestVersion, setLatestVersion] = useState('');
   const [isLoaderVisible, setIsLoaderVisible] = useState(false);
   const loadedThumbnailsRef = useRef(new Set<string>());
 
@@ -1284,45 +1259,9 @@ export default function MainLibrary({
   }, [isThumbnailsLoading, isLoading]);
 
   useEffect(() => {
-    const compareVersions = (v1: string, v2: string) => {
-      const parts1 = v1.split('.').map(Number);
-      const parts2 = v2.split('.').map(Number);
-      const len = Math.max(parts1.length, parts2.length);
-      for (let i = 0; i < len; i++) {
-        const p1 = parts1[i] || 0;
-        const p2 = parts2[i] || 0;
-        if (p1 < p2) return -1;
-        if (p1 > p2) return 1;
-      }
-      return 0;
-    };
-
-    const checkVersion = async () => {
-      try {
-        const currentVersion = await getVersion();
-        setAppVersion(currentVersion);
-
-        const response = await fetch('https://api.github.com/repos/CyberTimon/RapidRAW/releases/latest');
-        if (!response.ok) {
-          console.error('Failed to fetch latest release info from GitHub.');
-          return;
-        }
-        const data = await response.json();
-        const latestTag = data.tag_name;
-        if (!latestTag) return;
-
-        const latestVersionStr = latestTag.startsWith('v') ? latestTag.substring(1) : latestTag;
-        setLatestVersion(latestVersionStr);
-
-        if (compareVersions(currentVersion, latestVersionStr) < 0) {
-          setIsUpdateAvailable(true);
-        }
-      } catch (error) {
-        console.error('Error checking for updates:', error);
-      }
-    };
-
-    checkVersion();
+    getVersion()
+      .then((currentVersion) => setAppVersion(currentVersion))
+      .catch((error) => console.error('Error reading app version:', error));
   }, []);
 
   useEffect(() => {
@@ -1450,67 +1389,11 @@ export default function MainLibrary({
                   </div>
                 </div>
               </div>
-              <div className="absolute bottom-8 left-8 lg:left-16 text-xs text-text-secondary space-y-1">
-                <p>
-                  Images by{' '}
-                  <a
-                    href="https://instagram.com/timonkaech.photography"
-                    className="hover:underline"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Timon Käch
-                  </a>
-                </p>
-                {appVersion && (
-                  <div className="flex items-center space-x-2">
-                    <p>
-                      <span
-                        className={`group transition-all duration-300 ease-in-out rounded-md py-1 ${
-                          isUpdateAvailable
-                            ? 'cursor-pointer border border-yellow-500 px-2 hover:bg-yellow-500/20'
-                            : ''
-                        }`}
-                        onClick={() => {
-                          if (isUpdateAvailable) {
-                            open('https://github.com/CyberTimon/RapidRAW/releases/latest');
-                          }
-                        }}
-                        title={
-                          isUpdateAvailable
-                            ? `Click to download version ${latestVersion}`
-                            : `You are on the latest version`
-                        }
-                      >
-                        <span className={isUpdateAvailable ? 'group-hover:hidden' : ''}>Version {appVersion}</span>
-                        {isUpdateAvailable && (
-                          <span className="hidden group-hover:inline text-yellow-400">New version available!</span>
-                        )}
-                      </span>
-                    </p>
-                    <span>-</span>
-                    <p>
-                      <a
-                        href="https://ko-fi.com/cybertimon"
-                        className="hover:underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Donate on Ko-Fi
-                      </a>
-                      <span className="mx-1">or</span>
-                      <a
-                        href="https://github.com/CyberTimon/RapidRAW"
-                        className="hover:underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Contribute on GitHub
-                      </a>
-                    </p>
-                  </div>
-                )}
-              </div>
+              {appVersion && (
+                <div className="absolute bottom-8 left-8 lg:left-16 text-xs text-text-secondary">
+                  Version {appVersion}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1558,12 +1441,7 @@ export default function MainLibrary({
               <span>Import Failed!</span>
             </div>
           )}
-          <SearchInput
-            indexingProgress={indexingProgress}
-            isIndexing={isIndexing}
-            searchCriteria={searchCriteria}
-            setSearchCriteria={setSearchCriteria}
-          />
+          <SearchInput searchCriteria={searchCriteria} setSearchCriteria={setSearchCriteria} />
           <ViewOptionsDropdown
             filterCriteria={filterCriteria}
             libraryViewMode={libraryViewMode}
@@ -1577,13 +1455,6 @@ export default function MainLibrary({
             thumbnailSize={thumbnailSize}
             thumbnailAspectRatio={thumbnailAspectRatio}
           />
-          <Button
-            className="h-12 w-12 bg-surface text-text-primary shadow-none p-0 flex items-center justify-center"
-            onClick={onNavigateToCommunity}
-            title="Community Presets"
-          >
-            <Users className="w-8 h-8" />
-          </Button>
           <Button
             className="h-12 w-12 bg-surface text-text-primary shadow-none p-0 flex items-center justify-center"
             onClick={onOpenFolder}
@@ -1680,22 +1551,16 @@ export default function MainLibrary({
             }}
           </AutoSizer>
         </div>
-      ) : isIndexing || aiModelDownloadStatus || importState.status === Status.Importing ? (
+      ) : importState.status === Status.Importing ? (
         <div
           className="flex-1 flex flex-col items-center justify-center text-text-secondary"
           onContextMenu={onEmptyAreaContextMenu}
         >
           <Loader2 className="h-12 w-12 text-secondary animate-spin mb-4" />
           <p className="text-lg font-semibold">
-            {aiModelDownloadStatus
-              ? `Downloading ${aiModelDownloadStatus}...`
-              : isIndexing && indexingProgress.total > 0
-              ? `Indexing images... (${indexingProgress.current}/${indexingProgress.total})`
-              : importState.status === Status.Importing &&
-                importState?.progress?.total &&
-                importState.progress.total > 0
+            {importState?.progress?.total && importState.progress.total > 0
               ? `Importing images... (${importState.progress?.current}/${importState.progress?.total})`
-              : 'Processing images...'}
+              : 'Importing images...'}
           </p>
           <p className="text-sm mt-2">This may take a moment.</p>
         </div>
@@ -1706,11 +1571,7 @@ export default function MainLibrary({
         >
           <Search className="h-12 w-12 text-secondary mb-4" />
           <p className="text-lg font-semibold">No Results Found</p>
-          <p className="text-sm mt-2 max-w-sm">
-            Could not find an image based on filename or tags.
-            {!appSettings?.enableAiTagging &&
-              ' For a more comprehensive search, enable automatic tagging in Settings.'}
-          </p>
+          <p className="text-sm mt-2 max-w-sm">Could not find an image based on filename or tags.</p>
         </div>
       ) : (
         <div

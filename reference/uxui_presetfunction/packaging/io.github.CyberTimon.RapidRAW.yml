@@ -29,20 +29,6 @@ modules:
           type: git
           tag-pattern: ^v([\d.]+)$
 
-      - type: file
-        url: https://huggingface.co/CyberTimon/RapidRAW-Models/resolve/main/onnxruntimes/libonnxruntime-linux-x86_64.so?download=true
-        sha256: a6f4b5dc4312d72488d108ad8cbc555c1c52ac58f7f79eb67aa9f73331745192
-        dest-filename: libonnxruntime.so
-        only-arches:
-          - x86_64
-
-      - type: file
-        url: https://huggingface.co/CyberTimon/RapidRAW-Models/resolve/main/onnxruntimes/libonnxruntime-linux-aarch64.so?download=true
-        sha256: a423523eb36b843d33c642169f5fd76af586401b440feb199d868d5edfb30b0d
-        dest-filename: libonnxruntime.so
-        only-arches:
-          - aarch64
-
       - node-sources.json
       - cargo-sources.json
 
@@ -52,12 +38,8 @@ modules:
         XDG_CACHE_HOME: /run/build/RapidRAW/flatpak-node/cache
         npm_config_cache: /run/build/RapidRAW/flatpak-node/npm-cache
         npm_config_offline: 'true'
-        ORT_STRATEGY: system
 
     build-commands:
-      - mkdir -p /run/build/RapidRAW/src-tauri/resources
-      - cp -rf libonnxruntime.so /run/build/RapidRAW/src-tauri/resources
-
       - npm ci --offline --legacy-peer-deps
       - cargo --offline fetch --manifest-path src-tauri/Cargo.toml --verbose
       - npm run --offline tauri build -- --no-bundle
@@ -75,6 +57,5 @@ modules:
 
       - mkdir -p /app/lib/RapidRAW
       - cp -rf src-tauri/resources /app/lib/RapidRAW
-      - cp -rf src-tauri/workflows /app/lib/RapidRAW
 
       - install -Dm644 LICENSE /app/share/licenses/io.github.CyberTimon.RapidRAW/LICENSE

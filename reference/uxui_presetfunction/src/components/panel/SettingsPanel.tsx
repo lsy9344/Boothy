@@ -2,16 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Check,
-  ChevronDown,
-  Cloud,
   Cpu,
-  ExternalLink as ExternalLinkIcon,
-  Save,
-  Server,
   Info,
   Trash2,
-  Wifi,
-  WifiOff,
   Plus,
   X,
   SlidersHorizontal,
@@ -19,11 +12,8 @@ import {
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { open } from '@tauri-apps/plugin-dialog';
-import { open as openLink } from '@tauri-apps/plugin-shell';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
-import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from '@clerk/clerk-react';
 import Button from '../ui/Button';
 import ConfirmModal from '../modals/ConfirmModal';
 import Dropdown, { OptionItem } from '../ui/Dropdown';
@@ -89,22 +79,6 @@ const adjustmentVisibilityDefaults = {
   vignette: true,
   colorCalibration: false,
   grain: true,
-};
-
-const DEFAULT_WORKFLOW_CONFIG = {
-  workflowPath: null,
-  modelCheckpoints: { '1': 'XL_RealVisXL_V5.0_Lightning.safetensors' },
-  vaeLoaders: { '49': 'sdxl_vae.safetensors' },
-  controlnetLoaders: { '12': 'diffusion_pytorch_model_promax.safetensors' },
-  sourceImageNodeId: '30',
-  maskImageNodeId: '47',
-  textPromptNodeId: '7',
-  finalOutputNodeId: '41',
-  samplerNodeId: '28',
-  samplerSteps: 10,
-  transferResolution: 3072,
-  inpaintResolutionNodeId: '37',
-  inpaintResolution: 1280,
 };
 
 const resolutions: Array<OptionItem> = [
@@ -174,102 +148,6 @@ const DataActionItem = ({
   </div>
 );
 
-const ExternalLink = ({ href, children, className }: { href: string; children: any; className?: string }) => {
-  const handleClick = async (e: any) => {
-    e.preventDefault();
-    try {
-      await openLink(href);
-    } catch (err) {
-      console.error(`Failed to open link: ${href}`, err);
-    }
-  };
-
-  return (
-    <a
-      href={href}
-      onClick={handleClick}
-      className={clsx('text-accent hover:underline inline-flex items-center gap-1', className)}
-    >
-      {children}
-      <ExternalLinkIcon size={12} />
-    </a>
-  );
-};
-
-const ModelConfigItem = ({ label, data, onChange, description }: any) => {
-  const [[key, value] = ['', '']] = Object.entries(data || {});
-
-  const handleKeyChange = (newKey: any) => {
-    onChange({ [newKey]: value });
-  };
-
-  const handleValueChange = (newValue: any) => {
-    onChange({ [key]: newValue });
-  };
-
-  return (
-    <div>
-      <label className="block text-sm font-medium text-text-primary mb-2">{label}</label>
-      <div className="flex items-center gap-4 bg-bg-primary p-3 rounded-lg border border-border-color">
-        <div className="flex-1">
-          <label className="block text-xs text-text-secondary mb-1">Node ID</label>
-          <Input type="number" value={key} onChange={(e) => handleKeyChange(e.target.value)} />
-        </div>
-        <div className="flex-1">
-          <label className="block text-xs text-text-secondary mb-1">Model Name</label>
-          <Input value={value as string} onChange={(e) => handleValueChange(e.target.value)} />
-        </div>
-      </div>
-      {description && <div className="text-xs text-text-secondary mt-2">{description}</div>}
-    </div>
-  );
-};
-
-const aiProviders = [
-  { id: 'cpu', label: 'CPU', icon: Cpu },
-  { id: 'comfyui', label: 'ComfyUI', icon: Server },
-  { id: 'cloud', label: 'Cloud', icon: Cloud },
-];
-
-interface AiProviderSwitchProps {
-  selectedProvider: string;
-  onProviderChange: (provider: string) => void;
-}
-
-const AiProviderSwitch = ({ selectedProvider, onProviderChange }: AiProviderSwitchProps) => {
-  return (
-    <div className="relative flex w-full p-1 bg-bg-primary rounded-md border border-border-color">
-      {aiProviders.map((provider) => (
-        <button
-          key={provider.id}
-          onClick={() => onProviderChange(provider.id)}
-          className={clsx(
-            'relative flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-            {
-              'text-text-primary hover:bg-surface': selectedProvider !== provider.id,
-              'text-button-text': selectedProvider === provider.id,
-            },
-          )}
-          style={{ WebkitTapHighlightColor: 'transparent' }}
-        >
-          {selectedProvider === provider.id && (
-            <motion.span
-              layoutId="ai-provider-switch-bubble"
-              className="absolute inset-0 z-0 bg-accent"
-              style={{ borderRadius: 6 }}
-              transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
-            />
-          )}
-          <span className="relative z-10 flex items-center">
-            <provider.icon size={16} className="mr-2" />
-            {provider.label}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-};
-
 export default function SettingsPanel({
   appSettings,
   onBack,
@@ -277,13 +155,10 @@ export default function SettingsPanel({
   onSettingsChange,
   rootPath,
 }: SettingsPanelProps) {
-  const { user } = useUser();
   const [isClearing, setIsClearing] = useState(false);
   const [clearMessage, setClearMessage] = useState('');
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheClearMessage, setCacheClearMessage] = useState('');
-  const [isClearingAiTags, setIsClearingAiTags] = useState(false);
-  const [aiTagsClearMessage, setAiTagsClearMessage] = useState('');
   const [isClearingTags, setIsClearingTags] = useState(false);
   const [tagsClearMessage, setTagsClearMessage] = useState('');
   const [confirmModalState, setConfirmModalState] = useState<ConfirmModalState>({
@@ -294,14 +169,7 @@ export default function SettingsPanel({
     onConfirm: () => {},
     title: '',
   });
-  const [testStatus, setTestStatus] = useState<TestStatus>({ message: '', success: null, testing: false });
-  const [saveStatus, setSaveStatus] = useState({ saving: false, message: '' });
-  const [isConfigExpanded, setIsConfigExpanded] = useState(false);
   const [hasInteractedWithLivePreview, setHasInteractedWithLivePreview] = useState(false);
-
-  const [aiProvider, setAiProvider] = useState(appSettings?.aiProvider || 'cpu');
-  const [comfyUiAddress, setComfyUiAddress] = useState<string>(appSettings?.comfyuiAddress || '');
-  const [comfyConfig, setComfyConfig] = useState(appSettings?.comfyuiWorkflowConfig || DEFAULT_WORKFLOW_CONFIG);
   const [newShortcut, setNewShortcut] = useState('');
 
   const [processingSettings, setProcessingSettings] = useState({
@@ -315,13 +183,6 @@ export default function SettingsPanel({
   const [logPath, setLogPath] = useState('');
 
   useEffect(() => {
-    if (appSettings?.comfyuiAddress !== comfyUiAddress) {
-      setComfyUiAddress(appSettings?.comfyuiAddress || '');
-    }
-    if (appSettings?.aiProvider !== aiProvider) {
-      setAiProvider(appSettings?.aiProvider || 'cpu');
-    }
-    setComfyConfig(appSettings?.comfyuiWorkflowConfig || DEFAULT_WORKFLOW_CONFIG);
     setProcessingSettings({
       editorPreviewResolution: appSettings?.editorPreviewResolution || 1920,
       rawHighlightCompression: appSettings?.rawHighlightCompression ?? 2.5,
@@ -362,43 +223,6 @@ export default function SettingsPanel({
     await relaunch();
   };
 
-  const resetToDefaults = () => {
-    setComfyConfig(DEFAULT_WORKFLOW_CONFIG);
-  };
-
-  const handleProviderChange = (provider: string) => {
-    setAiProvider(provider);
-    onSettingsChange({ ...appSettings, aiProvider: provider });
-  };
-
-  const handleConfigChange = (field: any, value: any) => {
-    setComfyConfig((prev: any) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSaveComfyConfig = () => {
-    setSaveStatus({ saving: true, message: 'Saving...' });
-    const newConfig = { ...comfyConfig };
-    onSettingsChange({ ...appSettings, comfyuiWorkflowConfig: newConfig });
-    setTimeout(() => {
-      setSaveStatus({ saving: false, message: 'Saved!' });
-      setTimeout(() => setSaveStatus({ saving: false, message: '' }), EXECUTE_TIMEOUT - 500);
-    }, 500);
-  };
-
-  const handleSelectWorkflowFile = async () => {
-    try {
-      const selected = await open({
-        filters: [{ name: 'ComfyUI Workflow', extensions: ['json'] }],
-        multiple: false,
-      });
-      if (typeof selected === 'string') {
-        handleConfigChange('workflowPath', selected);
-      }
-    } catch (err) {
-      console.error('Failed to open workflow file dialog:', err);
-    }
-  };
-
   const effectiveRootPath = rootPath || appSettings?.lastRootPath;
 
   const executeClearSidecars = async () => {
@@ -431,36 +255,6 @@ export default function SettingsPanel({
     });
   };
 
-  const executeClearAiTags = async () => {
-    setIsClearingAiTags(true);
-    setAiTagsClearMessage('Clearing AI tags from all sidecar files...');
-    try {
-      const count: number = await invoke(Invokes.ClearAiTags, { rootPath: effectiveRootPath });
-      setAiTagsClearMessage(`${count} files updated. AI tags removed.`);
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear AI tags:', err);
-      setAiTagsClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingAiTags(false);
-        setAiTagsClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearAiTags = () => {
-    setConfirmModalState({
-      confirmText: 'Clear AI Tags',
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message:
-        'Are you sure you want to remove all AI-generated tags from all images in the current base folder?\n\nThis will not affect user-added tags. This action cannot be undone.',
-      onConfirm: executeClearAiTags,
-      title: 'Confirm AI Tag Deletion',
-    });
-  };
-
   const executeClearTags = async () => {
     setIsClearingTags(true);
     setTagsClearMessage('Clearing all tags from sidecar files...');
@@ -481,13 +275,13 @@ export default function SettingsPanel({
 
   const handleClearTags = () => {
     setConfirmModalState({
-      confirmText: 'Clear All Tags',
+      confirmText: 'Clear Tags',
       confirmVariant: 'destructive',
       isOpen: true,
       message:
-        'Are you sure you want to remove all AI-generated and user-added tags from all images in the current base folder?\n\nThis action cannot be undone.',
+        'Are you sure you want to remove all non-color tags from all images in the current base folder?\n\nColor labels will be kept. This action cannot be undone.',
       onConfirm: executeClearTags,
-      title: 'Confirm All Tag Deletion',
+      title: 'Confirm Tag Deletion',
     });
   };
 
@@ -542,22 +336,6 @@ export default function SettingsPanel({
       onConfirm: executeClearCache,
       title: 'Confirm Cache Deletion',
     });
-  };
-
-  const handleTestConnection = async () => {
-    if (!comfyUiAddress) {
-      return;
-    }
-    setTestStatus({ testing: true, message: 'Testing...', success: null });
-    try {
-      await invoke(Invokes.TestComfyuiConnection, { address: comfyUiAddress });
-      setTestStatus({ testing: false, message: 'Connection successful!', success: true });
-    } catch (err) {
-      setTestStatus({ testing: false, message: `Connection failed.`, success: false });
-      console.error('ComfyUI connection test failed:', err);
-    } finally {
-      setTimeout(() => setTestStatus({ testing: false, message: '', success: null }), EXECUTE_TIMEOUT);
-    }
   };
 
   const closeConfirmModal = () => {
@@ -776,17 +554,6 @@ export default function SettingsPanel({
                   <h2 className="text-xl font-semibold mb-6 text-accent">Tagging</h2>
                   <div className="space-y-6">
                     <SettingItem
-                      description="Enables automatic image tagging using an AI (CLIP) model. This will download an additional model and impact performance while browsing folders. Tags are used for searching a folder."
-                      label="AI Tagging"
-                    >
-                      <Switch
-                        checked={appSettings?.enableAiTagging ?? false}
-                        id="ai-tagging-toggle"
-                        label="Automatic AI Tagging"
-                        onChange={(checked) => onSettingsChange({ ...appSettings, enableAiTagging: checked })}
-                      />
-                    </SettingItem>
-                    <SettingItem
                       label="Tagging Shortcuts"
                       description="A list of tags that will appear as shortcuts in the tagging context menu."
                     >
@@ -849,24 +616,14 @@ export default function SettingsPanel({
                     <div className="pt-6 border-t border-border-color">
                       <div className="space-y-6">
                         <DataActionItem
-                          buttonAction={handleClearAiTags}
-                          buttonText="Clear AI Tags"
-                          description="This will remove all AI-generated tags from your .rrdata files in the current base folder. User-added tags will be kept."
-                          disabled={!effectiveRootPath}
-                          icon={<Trash2 size={16} className="mr-2" />}
-                          isProcessing={isClearingAiTags}
-                          message={aiTagsClearMessage}
-                          title="Clear AI Tags"
-                        />
-                        <DataActionItem
                           buttonAction={handleClearTags}
-                          buttonText="Clear All Tags"
-                          description="This will remove all AI-generated and user-added tags from your .rrdata files in the current base folder. Color labels will be kept."
+                          buttonText="Clear Tags"
+                          description="This will remove all non-color tags from your .rrdata files in the current base folder. Color labels will be kept."
                           disabled={!effectiveRootPath}
                           icon={<Trash2 size={16} className="mr-2" />}
                           isProcessing={isClearingTags}
                           message={tagsClearMessage}
-                          title="Clear All Tags"
+                          title="Clear Tags"
                         />
                       </div>
                     </div>
@@ -1009,370 +766,6 @@ export default function SettingsPanel({
                   </div>
                 </div>
 
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Generative AI</h2>
-                  <p className="text-sm text-text-secondary mb-4">
-                    RapidRAW's AI is built for flexibility. Choose your ideal workflow, from fast local tools to
-                    powerful self-hosting.
-                  </p>
-
-                  <AiProviderSwitch selectedProvider={aiProvider} onProviderChange={handleProviderChange} />
-
-                  <div className="mt-6">
-                    <AnimatePresence mode="wait">
-                      {aiProvider === 'cpu' && (
-                        <motion.div
-                          key="cpu"
-                          initial={{ opacity: 0, x: 10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -10 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <h3 className="text-lg font-semibold text-text-primary">Built-in AI (CPU)</h3>
-                          <p className="text-sm text-text-secondary mt-1">
-                            Integrated directly into RapidRAW, these features run entirely on your computer. They are
-                            fast, free, and require no setup, making them ideal for everyday workflow acceleration.
-                          </p>
-                          <ul className="mt-3 space-y-1 list-disc list-inside text-sm text-text-secondary">
-                            <li>AI Masking (Subject, Sky, Foreground)</li>
-                            <li>Automatic Image Tagging</li>
-                            <li>Simple Generative Replace</li>
-                          </ul>
-                        </motion.div>
-                      )}
-
-                      {aiProvider === 'comfyui' && (
-                        <motion.div
-                          key="comfyui"
-                          initial={{ opacity: 0, x: 10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -10 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <h3 className="text-lg font-semibold text-text-primary">Self-Hosted (ComfyUI)</h3>
-                          <p className="text-sm text-text-secondary mt-1">
-                            For users with a capable GPU who want maximum control, connect RapidRAW to your own local
-                            ComfyUI server. This gives you full control for technical workflows.
-                          </p>
-                          <ul className="mt-3 mb-6 space-y-1 list-disc list-inside text-sm text-text-secondary">
-                            <li>Use your own hardware & models</li>
-                            <li>Cost-free advanced generative edits</li>
-                            <li>Custom workflow selection</li>
-                          </ul>
-                          <div className="space-y-6">
-                            <SettingItem
-                              label="ComfyUI Address"
-                              description="Enter the address and port of your running ComfyUI instance. Required for generative AI features."
-                            >
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  className="flex-grow"
-                                  id="comfyui-address"
-                                  onBlur={() => onSettingsChange({ ...appSettings, comfyuiAddress: comfyUiAddress })}
-                                  onChange={(e: any) => setComfyUiAddress(e.target.value)}
-                                  onKeyDown={(e: any) => e.stopPropagation()}
-                                  placeholder="127.0.0.1:8188"
-                                  type="text"
-                                  value={comfyUiAddress}
-                                />
-                                <Button
-                                  className="w-32"
-                                  disabled={testStatus.testing || !comfyUiAddress}
-                                  onClick={handleTestConnection}
-                                >
-                                  {testStatus.testing ? 'Testing...' : 'Test'}
-                                </Button>
-                              </div>
-                              {testStatus.message && (
-                                <p
-                                  className={`text-sm mt-2 flex items-center gap-2 ${
-                                    testStatus.success ? 'text-green-400' : 'text-red-400'
-                                  }`}
-                                >
-                                  {testStatus.success === true && <Wifi size={16} />}
-                                  {testStatus.success === false && <WifiOff size={16} />}
-                                  {testStatus.message}
-                                </p>
-                              )}
-                            </SettingItem>
-
-                            <SettingItem
-                              label="Custom Workflow File"
-                              description="Select a custom ComfyUI API format JSON file. If not set, the built-in workflow will be used."
-                            >
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  readOnly
-                                  value={comfyConfig.workflowPath || 'Using built-in workflow'}
-                                  className="flex-grow"
-                                />
-                                <Button onClick={handleSelectWorkflowFile}>Select</Button>
-                                <Button variant="secondary" onClick={resetToDefaults}>
-                                  Reset
-                                </Button>
-                              </div>
-                            </SettingItem>
-
-                            <div
-                              className="flex items-center justify-between cursor-pointer"
-                              onClick={() => setIsConfigExpanded(!isConfigExpanded)}
-                            >
-                              <h3 className="font-medium text-text-primary">Advanced Configuration</h3>
-                              <ChevronDown
-                                className={clsx('transition-transform', isConfigExpanded && 'rotate-180')}
-                                size={20}
-                              />
-                            </div>
-
-                            <AnimatePresence>
-                              {isConfigExpanded && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.3, ease: 'easeInOut' }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="pt-4 border-t border-border-color space-y-8">
-                                    <div className="text-xs text-text-secondary space-y-2">
-                                      <p className="font-semibold">How to find Node IDs:</p>
-                                      <ol className="list-decimal list-inside space-y-1 pl-2">
-                                        <li>
-                                          In ComfyUI, build your workflow, then click{' '}
-                                          <code className="bg-bg-primary px-1 rounded text-text-primary">
-                                            Save (API Format)
-                                          </code>
-                                          .
-                                        </li>
-                                        <li>Open the saved JSON file in a text editor. Each node has a number ID.</li>
-                                        <li>Find the IDs for the required nodes and enter them below.</li>
-                                      </ol>
-                                    </div>
-
-                                    {!comfyConfig.workflowPath && (
-                                      <div className="p-3 bg-bg-primary rounded-lg border border-border-color text-xs text-text-secondary space-y-2">
-                                        <p className="font-semibold text-text-primary">
-                                          Default Workflow Requirements:
-                                        </p>
-                                        <p>
-                                          The built-in workflow handles resolution scaling automatically and requires
-                                          the following custom nodes. Please install them using the ComfyUI Manager.
-                                        </p>
-                                        <ul className="list-disc list-inside space-y-1 pl-2">
-                                          <li>
-                                            <ExternalLink href="https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch">
-                                              ComfyUI Inpaint CropAndStitch
-                                            </ExternalLink>
-                                          </li>
-                                        </ul>
-                                      </div>
-                                    )}
-
-                                    <div>
-                                      <h4 className="text-base font-semibold text-accent-secondary mb-4">
-                                        Node Configuration
-                                      </h4>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-6">
-                                        <SettingItem label="Source Image Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.sourceImageNodeId || ''}
-                                            onChange={(e) => handleConfigChange('sourceImageNodeId', e.target.value)}
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Mask Image Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.maskImageNodeId || ''}
-                                            onChange={(e) => handleConfigChange('maskImageNodeId', e.target.value)}
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Text Prompt Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.textPromptNodeId || ''}
-                                            onChange={(e) => handleConfigChange('textPromptNodeId', e.target.value)}
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Final Output Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.finalOutputNodeId || ''}
-                                            onChange={(e) => handleConfigChange('finalOutputNodeId', e.target.value)}
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Sampler Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.samplerNodeId || ''}
-                                            onChange={(e) => handleConfigChange('samplerNodeId', e.target.value)}
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Inpaint Resolution Node ID">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.inpaintResolutionNodeId || ''}
-                                            onChange={(e) =>
-                                              handleConfigChange('inpaintResolutionNodeId', e.target.value)
-                                            }
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Sampler Steps">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.samplerSteps || 10}
-                                            onChange={(e) =>
-                                              handleConfigChange('samplerSteps', parseInt(e.target.value, 10) || 0)
-                                            }
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Transfer Resolution">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.transferResolution || 3072}
-                                            onChange={(e) =>
-                                              handleConfigChange(
-                                                'transferResolution',
-                                                parseInt(e.target.value, 10) || 0,
-                                              )
-                                            }
-                                          />
-                                        </SettingItem>
-                                        <SettingItem label="Inpaint Resolution">
-                                          <Input
-                                            type="number"
-                                            value={comfyConfig.inpaintResolution || 1280}
-                                            onChange={(e) =>
-                                              handleConfigChange(
-                                                'inpaintResolution',
-                                                parseInt(e.target.value, 10) || 0,
-                                              )
-                                            }
-                                          />
-                                        </SettingItem>
-                                      </div>
-                                    </div>
-
-                                    <div>
-                                      <h4 className="text-base font-semibold text-accent-secondary mb-4">
-                                        Model Configuration
-                                      </h4>
-                                      <div className="space-y-6">
-                                        <ModelConfigItem
-                                          label="Checkpoint"
-                                          data={comfyConfig.modelCheckpoints}
-                                          onChange={(newData: any) =>
-                                            handleConfigChange('modelCheckpoints', newData)
-                                          }
-                                          description={
-                                            !comfyConfig.workflowPath && (
-                                              <>
-                                                Recommended:{' '}
-                                                <ExternalLink href="https://civitai.com/models/139562/realvisxl-v50">
-                                                  RealVisXL V5.0
-                                                </ExternalLink>
-                                              </>
-                                            )
-                                          }
-                                        />
-                                        <ModelConfigItem
-                                          label="VAE"
-                                          data={comfyConfig.vaeLoaders}
-                                          onChange={(newData: any) => handleConfigChange('vaeLoaders', newData)}
-                                          description={
-                                            !comfyConfig.workflowPath && (
-                                              <>
-                                                Recommended:{' '}
-                                                <ExternalLink href="https://huggingface.co/stabilityai/sdxl-vae/blob/main/sdxl_vae.safetensors">
-                                                  SDXL VAE
-                                                </ExternalLink>
-                                              </>
-                                            )
-                                          }
-                                        />
-                                        <ModelConfigItem
-                                          label="ControlNet"
-                                          data={comfyConfig.controlnetLoaders}
-                                          onChange={(newData: any) =>
-                                            handleConfigChange('controlnetLoaders', newData)
-                                          }
-                                          description={
-                                            !comfyConfig.workflowPath && (
-                                              <>
-                                                Recommended:{' '}
-                                                <ExternalLink href="https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/blob/main/diffusion_pytorch_model_promax.safetensors">
-                                                  Promax ControlNet
-                                                </ExternalLink>
-                                              </>
-                                            )
-                                          }
-                                        />
-                                      </div>
-                                    </div>
-
-                                    <div className="flex justify-end items-center gap-4 pt-4">
-                                      {saveStatus.message && (
-                                        <p className="text-sm text-green-400 flex items-center gap-2">
-                                          <Check size={16} />
-                                          {saveStatus.message}
-                                        </p>
-                                      )}
-                                      <Button
-                                        onClick={handleSaveComfyConfig}
-                                        disabled={saveStatus.saving}
-                                        className="w-48"
-                                      >
-                                        {saveStatus.saving ? (
-                                          'Saving...'
-                                        ) : (
-                                          <>
-                                            <Save size={16} className="mr-2" />
-                                            Save Config
-                                          </>
-                                        )}
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        </motion.div>
-                      )}
-
-                      {aiProvider === 'cloud' && (
-                        <motion.div
-                          key="cloud"
-                          initial={{ opacity: 0, x: 10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -10 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <h3 className="text-lg font-semibold text-text-primary">Cloud Service</h3>
-                          <p className="text-sm text-text-secondary mt-1">
-                            For those who want a simpler solution, an optional subscription provides the same
-                            high-quality results as self-hosting without any hassle. This is the most convenient option
-                            and the best way to support the project.
-                          </p>
-                          <ul className="mt-3 space-y-1 list-disc list-inside text-sm text-text-secondary">
-                            <li>Maximum convenience, no setup</li>
-                            <li>Same results as self-hosting</li>
-                            <li>No powerful hardware required</li>
-                          </ul>
-
-                          <div className="mt-6 p-4 bg-bg-primary rounded-lg border border-border-color text-center space-y-3">
-                            <span className="inline-block bg-accent text-button-text text-xs font-semibold px-2 py-1 rounded-full">
-                              Coming Soon
-                            </span>
-                            <p className="text-sm text-text-secondary">
-                              Keep an eye on the GitHub page to be notified when the cloud service is available.
-                            </p>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </div>
 
                 <div className="p-6 bg-surface rounded-xl shadow-md">
                   <h2 className="text-xl font-semibold mb-6 text-accent">Data Management</h2>
@@ -1423,7 +816,7 @@ export default function SettingsPanel({
                         </>
                       }
                       disabled={!logPath || logPath.startsWith('Could not')}
-                      icon={<ExternalLinkIcon size={16} className="mr-2" />}
+                      icon={<Info size={16} className="mr-2" />}
                       isProcessing={false}
                       message=""
                       title="View Application Logs"
@@ -1483,7 +876,6 @@ export default function SettingsPanel({
                         <KeybindItem keys={['D']} description="Toggle Adjustments panel" />
                         <KeybindItem keys={['R']} description="Toggle Crop panel" />
                         <KeybindItem keys={['M']} description="Toggle Masks panel" />
-                        <KeybindItem keys={['K']} description="Toggle AI panel" />
                         <KeybindItem keys={['P']} description="Toggle Presets panel" />
                         <KeybindItem keys={['I']} description="Toggle Metadata panel" />
                         <KeybindItem keys={['W']} description="Toggle Waveform display" />

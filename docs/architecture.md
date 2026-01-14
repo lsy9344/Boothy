@@ -1,4 +1,4 @@
-# Boothy Brownfield Enhancement Architecture
+# Boothy TO-BE Architecture
 
 ## Introduction
 
@@ -32,7 +32,7 @@
 #### Current Project State
 
 - **Primary Purpose:** RapidRAW(편집/프리셋/익스포트)를 기반으로 **Boothy로 리브랜딩/변형**하고, 카메라 촬영 워크플로우를 통합한 Windows 포토부스 앱(Tauri+React)을 만들기 위한 브라운필드 베이스(레퍼런스 코드 + 문서).
-- **Current Tech Stack:** (레퍼런스) RapidRAW: React `19.2.3` + Vite `7.3.0` + Tauri `2.9.x` + Rust(edition `2024`, rust-version `1.92`), (레퍼런스) digiCamControl: C#/.NET Framework `4.0` + WPF + Canon EDSDK, (문서/프로세스) BMAD Method (`.bmad-core/`).
+- **Current Tech Stack:** (레퍼런스) RapidRAW: React `19.2.3` + Vite `7.3.0` + Tauri `2.9.x` + Rust(edition `2024`, rust-version `1.92`), (레퍼런스) digiCamControl: C#/.NET Framework `4.0` + WPF + Canon EDSDK, (문서) `docs/*.md`.
 - **Architecture Style:** 현재 리포는 “단일 앱” 아키텍처가 아니라, 서로 독립적인 두 앱(편집/카메라)을 같은 리포에 둔 형태입니다. RapidRAW는 Tauri(Rust) ↔ React(프론트) 커맨드/이벤트 중심 구조이고, digiCamControl은 전역 서비스 로케이터 + 이벤트 기반 디바이스 라이프사이클 + Named Pipe IPC 패턴이 관찰됩니다.
 - **Deployment Method:** 리포 루트에 1차 Boothy 앱 빌드/배포 파이프라인은 아직 없고, 레퍼런스 스택별로 빌드/패키징 방식이 다릅니다(RapidRAW: GitHub Actions 기반 릴리즈, digiCamControl: Visual Studio 솔루션 + Setup/NSIS).
 
@@ -53,27 +53,23 @@
 - **성능/반응성:** 프리셋 적용/RAW 처리/익스포트는 백그라운드 처리로 UI block 금지(NFR4)
 - **데이터 무결성:** 전송 완료 전 파일을 “수입(import) 완료”로 간주하면 안 됨, partial transfer로 손상된 import 방지(NFR5)
 - **보안:** admin 비밀번호는 salted hash로 안전 저장, 평문 저장/로그 금지(NFR6)
+- **오프라인/무계정 정책:** Boothy MVP는 **로그인 없이** 동작하고, **기본적으로 네트워크 호출을 하지 않음**(NFR7). RapidRAW 레퍼런스에 포함된 온라인 기능(예: Clerk/auth, 커뮤니티, 모델 다운로드 등)은 Boothy 제품 빌드에서 제거/비활성화가 필요합니다.
 - **관찰된 레거시/의존성:** 카메라 레퍼런스(digiCamControl)는 .NET Framework 4.0/WPF 기반이며, Canon EDSDK 등 네이티브/아키텍처(x86/x64) 의존성이 존재(브리징/이행 전략 필요)
-- **세션 폴더 계약(확정):**
-  - **기본 경로:** `C:\Users\<WindowsUser>\Pictures\dabi_shoot` (즉, `%USERPROFILE%\Pictures\dabi_shoot`, PC마다 사용자명은 상이)
-  - **세션 생성:** “세션 시작 시” 사용자가 휴대전화 **뒤 4자리**를 입력하면 해당 값으로 세션 폴더를 생성/활성화
-  - **중복 규칙:** 동일 4자리 세션 폴더가 이미 있으면 `YYYY_MM_DD_HH`를 suffix로 붙여 구분(예: `1234_2026_01_14_15`)
-  - **하위 폴더:** `Raw/`(촬영 원본 저장), `Jpg/`(Export 결과 저장)
+- **세션 폴더 계약(TO‑BE):**
+  - **세션 루트(`sessionsRoot`) 기본값:** `%USERPROFILE%\\Pictures\\Boothy` (admin에서 변경 가능, 세션 시작 화면에서 base directory 선택 옵션 제공 가능)
+  - **세션 생성/열기:** “세션 시작 시” 사용자가 `sessionName`을 입력하면 해당 값으로 세션 폴더를 생성/활성화(존재 시 열기) (FR3)
+  - **폴더명 규칙:** `sessionName`은 폴더명으로 안전하게 변환(sanitize)하여 `sessionFolderName`으로 저장(Windows 금지 문자 제거/치환, 길이 제한 등)
+  - **중복/충돌 처리:** 동일 `sessionFolderName`이 이미 있고 “새 세션”이 필요하면 `YYYY_MM_DD_HH` suffix로 새 폴더 생성(예: `Wedding_2026_01_14_15`) (선택 UX)
+- **하위 폴더:** `Raw/`(촬영 원본 저장), `Jpg/`(Export 결과 저장)
 - **리포 현실:** 대용량 벤더 바이너리 포함 및 중첩 git 등으로 운영/빌드/보안(공급망) 고려 필요(`docs/brownfield-architecture.md`)
-- **문서/표준 부재:** `.bmad-core/core-config.yaml`이 기대하는 `docs/architecture/*`(예: coding standards/tech stack/source tree) 파일은 아직 생성되지 않음(추후 이 문서에서 보완 필요)
-- **라이선스:** RapidRAW는 AGPL-3.0으로 표기되어 있어(참고: `reference/uxui_presetfunction/LICENSE`) 제품화/배포 전략에 라이선스 검토가 필요
+- **문서 상태:** 코딩 표준/소스 트리/개발환경/테스트 전략은 현재 `docs/architecture.md`에 포함되어 있으며, 필요 시 별도 문서로 분리합니다.
+- **라이선스/배포 게이트:** RapidRAW(AGPL-3.0) 및 Canon EDSDK(재배포 조건) 이슈로, **외부 배포 전 라이선스/재배포 정책 확정이 필수**입니다. 정책 확정 전에는 내부 테스트 배포만 허용하며, Canon SDK DLL 번들은 기본값으로 하지 않습니다(명시적 prerequisites 전제).
 
-**검증 체크포인트(수정/보완 요청):**
-Based on my analysis of your project, I've identified the following about your existing system: 위 “Current Project State / Constraints”가 현재 리포 현실을 잘 반영합니다. 다음을 확인/정정해 주세요(틀린 부분은 제가 이후 설계에서 바로 수정하겠습니다).
-1. 목표 1차 앱은 RapidRAW를 기반으로 **Boothy로 리브랜딩/변형**하는 방향이 맞나요, 아니면 RapidRAW는 참고만 하고 **새 Tauri 앱을 새로 시작**하나요?
-2. MVP에서 카메라 제어는 (A) 기존 digiCamControl을 **외부 프로세스/IPC로 래핑**하는 방식이 현실적인가요, 아니면 (B) Rust(Tauri backend)에서 **Canon EDSDK 직접 연동**을 목표로 하나요?
-3. 세션 폴더 “계약”(기본 경로/중복 규칙/`Raw/`·`Jpg/`)이 위와 같이 확정된 것으로 이해해도 될까요? (추가 규칙이 있으면 여기에 포함시키겠습니다)
+#### Key Architectural Decisions (TO‑BE)
 
-#### User-Confirmed Decisions (반영 완료)
-
-1. **앱 베이스:** RapidRAW를 기반으로 **Boothy로 리브랜딩/변형**(디자인 컨셉에 따라 UI는 수정/변형 가능).
-2. **카메라 통합 전략(선택):** (A) digiCamControl 기반 카메라 기능을 **외부 프로세스/IPC로 래핑**하여 Tauri 앱과 통합.
-3. **세션 폴더 생성 규칙:** 기본 경로 `%USERPROFILE%\Pictures\dabi_shoot` 아래에서, “세션 시작 시” **휴대전화 뒤 4자리**로 세션 폴더를 생성/활성화. 동일 4자리 폴더가 이미 있으면 `YYYY_MM_DD_HH` suffix로 구분(예: `1234_2026_01_14_15`). 세션 폴더 내부에 `Raw/`, `Jpg/`를 사용.
+1. **앱 베이스:** RapidRAW를 제품 베이스로 채택하고 Boothy로 리브랜딩/변형합니다(렌더/프리셋/Export 코어는 호환성 유지, CR1).
+2. **카메라 통합 전략(MVP):** digiCamControl을 기능 레퍼런스로 삼아, headless **Camera Sidecar Service**로 제공하고 Boothy(Tauri backend)가 Named Pipe IPC로 제어/이벤트를 수신합니다(FR19–FR21).
+3. **세션 계약:** 세션은 폴더로 표현되며 `sessionsRoot` 아래에서 “활성 세션 1개”만 유지합니다. 세션 폴더 내부에 `{Raw,Jpg}`를 사용합니다(FR3/FR6/FR12).
 
 #### Camera Integration: Option A 리스크 및 Option B 해석
 
@@ -101,7 +97,8 @@ Based on my analysis of your project, I've identified the following about your e
 
 | Change | Date | Version | Description | Author |
 | --- | --- | --- | --- | --- |
-| Initial draft | 2026-01-13 | 0.1 | Start target architecture (interactive) based on `docs/prd.md` and current repo analysis | Winston |
+| Initial draft | 2026-01-13 | 0.1 | Start target architecture based on `docs/prd.md` and current repo analysis | Winston |
+| PRD-aligned TO-BE | 2026-01-14 | 1.0 | Align session contract (`sessionName`, configurable `sessionsRoot`) and remove interactive checkpoints | Codex |
 
 ## Enhancement Scope and Integration Strategy
 
@@ -121,7 +118,7 @@ Based on my analysis of your project, I've identified the following about your e
 - 촬영→편집 통합의 1차 경계는 **세션 폴더 계약**이며, “전송 완료 이후”에만 import 처리합니다.
 
 **Database Integration:**
-- MVP는 **전용 DB를 도입하지 않고**, 사진별 비파괴 편집 상태는 RapidRAW의 기존 **이미지 옆 `.rrdata` 사이드카**(ImageMetadata.adjustments)에 저장하여 “프리셋 적용/회전 등”을 영속화합니다(FR10/FR14). 세션 레벨 정보(세션 코드/생성시각 등)가 필요하면 세션 폴더 루트에 `boothy.session.json`을 추가할 수 있습니다(선택).
+- MVP는 **전용 DB를 도입하지 않고**, 사진별 비파괴 편집 상태는 RapidRAW의 기존 **이미지 옆 `.rrdata` 사이드카**(ImageMetadata.adjustments)에 저장하여 “프리셋 적용/회전 등”을 영속화합니다(FR10/FR14). 세션 레벨 메타데이터(세션 이름/생성시각 등)가 필요하면 세션 폴더 루트에 `boothy.session.json`을 추가할 수 있습니다(선택).
 - 앱 전역 설정(예: admin 모드 설정/기본 경로 등)은 OS별 AppData 영역에 설정 파일로 저장하고, 추후 필요 시 SQLite + 마이그레이션(CR2)로 확장합니다.
 
 **API Integration:**
@@ -130,8 +127,9 @@ Based on my analysis of your project, I've identified the following about your e
 - 외부 네트워크 의존은 최소화하고(오프라인), 진단/로그는 로컬 파일로 남깁니다(NFR7/NFR8).
 
 **UI Integration:**
-- UI는 RapidRAW 스타일을 기준으로, Boothy의 **촬영/세션 시작(4자리 입력)/모드 토글** 플로우를 추가합니다.
+- UI는 RapidRAW 스타일을 기준으로, Boothy의 **촬영/세션 시작(세션 이름 입력)/모드 토글** 플로우를 추가합니다.
 - customer 모드는 기본이며, customer에서는 “숨김” 원칙으로 고급 기능을 제거하고, admin 모드에서만 전체 카메라 기능/고급 편집 기능을 노출합니다(FR15–FR19, `docs/design_concept.md`).
+- customer-facing 썸네일/리스트/프리뷰에는 카메라 메타데이터 오버레이(F/ISO/Exposure/히스토그램 등)를 표시하지 않습니다(FR18, `docs/design_concept.md`).
 
 ### Compatibility Requirements
 
@@ -140,8 +138,7 @@ Based on my analysis of your project, I've identified the following about your e
 - **UI/UX Consistency:** 신규 카메라 UX는 RapidRAW 디자인 시스템/컴포넌트 규칙을 따르며, customer/admin 모드 “숨김” 정책을 전역적으로 일관되게 적용합니다(CR3).
 - **Performance Impact:** 파일 전송 완료 후 세션 반영 ≤ 1s / 프리셋 적용 프리뷰 ≤ 3s 목표를 위해, import/프리셋 적용/썸네일 생성/Export는 백그라운드 처리 및 큐잉/취소를 지원해야 합니다(NFR3/NFR4).
 
-**VALIDATION CHECKPOINT**
-Based on my analysis, the integration approach I'm proposing takes into account these existing system characteristics: RapidRAW(Tauri/React) 기반 구조, digiCamControl(.NET/WPF) 레거시 특성, 그리고 “세션 폴더 중심 통합” 요구사항. 이 통합 경계(세션 폴더 + 카메라 사이드카 서비스)와 책임 분리가 현재 목표/현실과 일치하나요?
+이 통합 경계(세션 폴더 + 카메라 사이드카 서비스)는 RapidRAW의 command/event 패턴 및 `.rrdata` 사이드카 저장 모델, 그리고 digiCamControl의 IPC/이벤트 기반 카메라 패턴을 존중하도록 설계합니다.
 
 ## Tech Stack
 
@@ -159,7 +156,7 @@ Based on my analysis, the integration approach I'm proposing takes into account 
 | Async Runtime | tokio | `1.x` | **백그라운드 처리** | import/프리셋 적용/썸네일/Export 작업 큐잉 및 UI 비블로킹(NFR4) |
 | GPU/Image | wgpu, image, rawler 등 | `28.0`, `0.25.x`, (path) | **RAW 처리/프리셋 적용/Export** | RapidRAW 코어를 재사용(CR1), Boothy는 “언제/어떤 프리셋을 적용”만 제어 |
 | Camera Reference Stack | digiCamControl | `2.0.0` | **카메라 기능 기준/재사용 후보** | .NET Framework 4.0 + WPF(제품 UI는 사용 금지), 기능/SDK 연동은 재사용 가능 |
-| Canon SDK | Canon EDSDK | (vendored DLL) | **MVP Canon 지원** | 아키텍처/배포 시 DLL 포함 및 x86/x64 정합성 확인 필요 |
+| Canon SDK | Canon EDSDK | (license-dependent DLL) | **MVP Canon 지원** | DLL 번들링은 재배포 정책 확정 후 결정(기본 미포함), x86/x64 정합성 확인 필요 |
 | IPC (camera) | Windows Named Pipe | (N/A) | **Boothy ↔ Camera Sidecar 통신** | digiCamControl에 Named Pipe 패턴 관찰, Boothy는 버전드 IPC 계약으로 확장 |
 | Packaging | NSIS (Tauri bundler) | (config) | **Windows 설치 패키징** | `reference/uxui_presetfunction/src-tauri/tauri.conf.json`에 nsis 설정 존재 |
 | Logging | log + fern (Rust), log4net(.NET) | `0.4`, `0.7`, (legacy) | **진단/현장 디버깅** | correlation id 기반으로 end-to-end 로그 연결(NFR8) 필요 |
@@ -179,11 +176,11 @@ Based on my analysis, the integration approach I'm proposing takes into account 
 
 **Purpose:** “세션 1개만 활성화” 정책(FR3)을 시스템적으로 강제하기 위한 세션 컨텍스트(경로/이름/시간)를 정의합니다.
 
-**Integration:** 세션은 파일시스템 폴더로 표현되며, 세션 루트는 `%USERPROFILE%\\Pictures\\dabi_shoot` 아래에 생성됩니다. UI는 활성 세션의 `Raw/`만을 “현재 작업 폴더”로 사용하여, 세션 중에는 그 폴더만 보이도록 제한합니다. (필요 시 세션 폴더 루트에 `boothy.session.json`을 추가해 세션 메타데이터를 저장할 수 있습니다.)
+**Integration:** 세션은 파일시스템 폴더로 표현되며, 세션 루트(`sessionsRoot`) 아래에 생성됩니다. UI는 활성 세션의 `Raw/`만을 “현재 작업 폴더”로 사용하여, 세션 중에는 그 폴더만 보이도록 제한합니다. (필요 시 세션 폴더 루트에 `boothy.session.json`을 추가해 세션 메타데이터를 저장할 수 있습니다.)
 
 **Key Attributes:**
-- `sessionCode`: string (휴대전화 뒤 4자리)
-- `sessionFolderName`: string (`<4자리>` 또는 `<4자리>_YYYY_MM_DD_HH`)
+- `sessionName`: string (사용자 입력 세션 이름)
+- `sessionFolderName`: string (sanitize된 폴더명, 충돌 시 `_YYYY_MM_DD_HH` suffix 가능)
 - `createdAt`: string (ISO 8601)
 - `basePath`: string (세션 폴더 절대 경로)
 - `rawPath`: string (`basePath\\Raw`)
@@ -218,7 +215,7 @@ Based on my analysis, the integration approach I'm proposing takes into account 
 
 **Key Attributes:**
 - `boothy.schemaVersion`: number
-- `boothy.sessionsRoot`: string (기본 `%USERPROFILE%\\Pictures\\dabi_shoot`의 **절대 경로**)
+- `boothy.sessionsRoot`: string (기본 `%USERPROFILE%\\Pictures\\Boothy`의 **절대 경로**)
 - `boothy.defaultMode`: `"customer"` (FR15)
 - `boothy.adminPassword`: object (argon2id 파라미터 + salt + hash, NFR6)
 - `boothy.cameraSidecar`: object (exe 경로/자동 시작/pipeName 등)
@@ -251,10 +248,10 @@ Based on my analysis, the integration approach I'm proposing takes into account 
 
 **Responsibility:** 세션 생성/선택/종료를 관리하고, “활성 세션 1개” 정책(FR3)을 강제합니다. 세션 폴더 구조(`Raw/`, `Jpg/`)를 생성하고, UI/카메라 사이드카/파일 감지 컴포넌트에 “현재 세션 경로”를 배포합니다.
 
-**Integration Points:** 세션 루트 `%USERPROFILE%\\Pictures\\dabi_shoot` 아래에 세션 폴더를 생성하고, RapidRAW의 라이브러리 루트/현재 폴더를 `Raw/`로 고정합니다. 카메라 사이드카에는 “저장 대상 폴더 = Raw/”를 전달합니다.
+**Integration Points:** 세션 루트(`boothy.sessionsRoot`) 아래에 세션 폴더를 생성/활성화하고, RapidRAW의 라이브러리 루트/현재 폴더를 `Raw/`로 고정합니다. 카메라 사이드카에는 “저장 대상 폴더 = Raw/”를 전달합니다.
 
 **Key Interfaces:**
-- `tauri::command boothy_create_session(sessionCode: string) -> Session`
+- `tauri::command boothy_create_or_open_session(sessionName: string) -> Session`
 - `tauri::command boothy_set_active_session(sessionFolderName: string) -> Session`
 - `tauri::command boothy_get_active_session() -> Option<Session>`
 - `event boothy-session-changed { session }`
@@ -355,13 +352,13 @@ Based on my analysis, the integration approach I'm proposing takes into account 
 
 #### Boothy UI Extensions (React)
 
-**Responsibility:** RapidRAW UI 위에 “세션 시작(4자리 입력)”, “촬영(셔터)”, “카메라 상태”, “모드 토글”을 추가하고, customer 모드에서 필요한 최소 UI만 남기도록 재구성합니다.
+**Responsibility:** RapidRAW UI 위에 “세션 시작(세션 이름 입력)”, “촬영(셔터)”, “카메라 상태”, “모드 토글”을 추가하고, customer 모드에서 필요한 최소 UI만 남기도록 재구성합니다.
 
 **Integration Points:** 기존 RapidRAW의 폴더 선택/이미지 리스트/프리셋 패널/Export 기능을 재사용하되, 세션 모드에서는 “현재 폴더=활성 세션 Raw/”로 고정하고 신규 사진 이벤트 시 자동 refresh + 자동 선택(메인 뷰 즉시 표시)을 수행합니다.
 
 **Key Interfaces:**
 - `listen('boothy-new-photo', ...) -> refreshImageList() + selectImage(path)`
-- `invoke('boothy_create_session', ...)`
+- `invoke('boothy_create_or_open_session', ...)`
 - `invoke('boothy_capture', ...)` *(또는 camera client command)*
 
 **Dependencies:**
@@ -378,7 +375,7 @@ graph TD
   UI -->|invoke/listen| TB[Tauri Backend (Rust)]
 
   subgraph SessionFS[Filesystem]
-    ROOT[%USERPROFILE%\\Pictures\\dabi_shoot]
+    ROOT[%USERPROFILE%\\Pictures\\Boothy]
     RAW[Active Session\\Raw\\]
     JPG[Active Session\\Jpg\\]
     RR[.rrdata sidecars]
@@ -406,8 +403,7 @@ graph TD
   TB -->|write JPG outputs| JPG
 ```
 
-**MANDATORY VALIDATION**
-The new components I'm proposing follow the existing architectural patterns I identified in your codebase: RapidRAW의 Tauri command/event 패턴과 `.rrdata` 사이드카 기반 비파괴 편집 저장, 그리고 digiCamControl의 IPC/이벤트 기반 카메라 패턴을 존중합니다. 또한 통합 경계는 세션 폴더 계약(특히 `Raw/`, `Jpg/`)을 중심으로 구성했습니다. 이 컴포넌트 경계(Boothy backend orchestration + Camera sidecar + filesystem contract)가 현재 목표/현실과 일치하나요?
+이 컴포넌트 경계(Boothy backend orchestration + Camera sidecar + filesystem contract)는 RapidRAW의 command/event + `.rrdata` 패턴과, digiCamControl의 IPC/이벤트 기반 카메라 패턴을 결합하는 TO‑BE 구조입니다.
 
 ## API Design and Integration
 
@@ -433,25 +429,25 @@ The new components I'm proposing follow the existing architectural patterns I id
 
 ##### Create/Activate Session
 - **Method:** `invoke`
-- **Endpoint:** `boothy_create_session`
-- **Purpose:** 휴대전화 뒤 4자리로 세션 폴더를 생성/활성화하고, RapidRAW의 현재 작업 폴더를 세션 `Raw/`로 전환(FR3/FR6)
+- **Endpoint:** `boothy_create_or_open_session`
+- **Purpose:** `sessionName`으로 세션 폴더를 생성/활성화(존재 시 열기)하고, RapidRAW의 현재 작업 폴더를 세션 `Raw/`로 전환(FR3/FR6)
 - **Integration:** 폴더 생성(중복 규칙 포함) → `Raw/`, `Jpg/` 생성 → session 변경 이벤트 발행 → UI는 이미지 리스트를 `Raw/` 기준으로 refresh
 
 **Request**
 ```json
 {
-  "sessionCode": "1234"
+  "sessionName": "Wedding"
 }
 ```
 
 **Response**
 ```json
 {
-  "sessionCode": "1234",
-  "sessionFolderName": "1234_2026_01_14_15",
-  "basePath": "C:\\Users\\KimYS\\Pictures\\dabi_shoot\\1234_2026_01_14_15",
-  "rawPath": "C:\\Users\\KimYS\\Pictures\\dabi_shoot\\1234_2026_01_14_15\\Raw",
-  "jpgPath": "C:\\Users\\KimYS\\Pictures\\dabi_shoot\\1234_2026_01_14_15\\Jpg"
+  "sessionName": "Wedding",
+  "sessionFolderName": "Wedding_2026_01_14_15",
+  "basePath": "C:\\Users\\KimYS\\Pictures\\Boothy\\Wedding_2026_01_14_15",
+  "rawPath": "C:\\Users\\KimYS\\Pictures\\Boothy\\Wedding_2026_01_14_15\\Raw",
+  "jpgPath": "C:\\Users\\KimYS\\Pictures\\Boothy\\Wedding_2026_01_14_15\\Jpg"
 }
 ```
 
@@ -562,7 +558,7 @@ The new components I'm proposing follow the existing architectural patterns I id
   "id": "a3a8d6f2-1a2f-4b4d-9f4d-8f2c7a0b9d0e",
   "method": "camera.setSessionDestination",
   "params": {
-    "rawPath": "C:\\Users\\KimYS\\Pictures\\dabi_shoot\\1234_2026_01_14_15\\Raw"
+    "rawPath": "C:\\Users\\KimYS\\Pictures\\Boothy\\Wedding_2026_01_14_15\\Raw"
   },
   "meta": { "protocolVersion": 1, "correlationId": "..." }
 }
@@ -585,15 +581,14 @@ The new components I'm proposing follow the existing architectural patterns I id
   "jsonrpc": "2.0",
   "method": "event.camera.photoTransferred",
   "params": {
-    "path": "C:\\Users\\KimYS\\Pictures\\dabi_shoot\\1234_2026_01_14_15\\Raw\\IMG_0001.CR3",
+    "path": "C:\\Users\\KimYS\\Pictures\\Boothy\\Wedding_2026_01_14_15\\Raw\\IMG_0001.CR3",
     "capturedAt": "2026-01-14T15:02:33Z"
   },
   "meta": { "protocolVersion": 1, "correlationId": "..." }
 }
 ```
 
-**VALIDATION CHECKPOINT**
-이 API 분리(React↔Tauri는 command/event, Tauri↔sidecar는 Named Pipe RPC)와 메시지 구조(protocolVersion/requestId/correlationId 포함)가 구현/운영 현실에 맞나요? 특히 sidecar 인터페이스를 “JSON-RPC 스타일”로 새로 정의하는 것이 적절한지, 아니면 digiCamControl의 기존 pipe 프로토콜(`DCCPipe` 문자열 커맨드)을 최대한 그대로 재사용하는 쪽이 더 낫다고 보시나요?
+sidecar IPC는 구현/운영 상의 버전 관리와 진단을 위해 **JSON-RPC 스타일 메시지 + `protocolVersion`/`requestId`/`correlationId`**를 표준으로 사용합니다.
 
 ## Source Tree
 
@@ -601,7 +596,7 @@ The new components I'm proposing follow the existing architectural patterns I id
 
 ```plaintext
 Boothy/
-├── .bmad-core/                      # BMAD Method (문서/스토리/체크리스트 자동화)
+├── .bmad-core/                      # (옵션) 문서/체크리스트 자동화 도구 - 현재 리포에서는 VCS에서 제외됨(.gitignore)
 ├── docs/
 │   ├── prd.md
 │   ├── brownfield-architecture.md
@@ -659,7 +654,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 
 **Infrastructure Changes:**
 - 리포 루트에 Boothy 전용 CI 워크플로우를 추가(Windows build + NSIS output)하고, 카메라 sidecar 빌드 산출물을 Boothy 번들 리소스에 포함합니다.
-- sidecar에는 Canon EDSDK 등 네이티브 DLL이 필요할 수 있으므로, 설치 패키지에 포함하고 x86/x64 정합성을 엄격히 관리합니다.
+- sidecar에는 Canon EDSDK 등 네이티브 DLL이 필요할 수 있으므로 x86/x64 정합성을 엄격히 관리합니다. 단, **Canon EDSDK DLL은 재배포 정책 확인 전까지 설치 패키지에 포함하지 않는 것을 기본값**으로 하며(명시적 prerequisites + 사용자 설치/제공 전제), 정책 확정 후 번들링 여부를 결정합니다.
 
 **Pipeline Integration (권장 구성):**
 1. **Build boothy app** (`apps/boothy`)
@@ -675,11 +670,11 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - 설치 경로(예): `C:\\Program Files\\Boothy\\`  
   - `Boothy.exe` (Tauri)
   - `resources\\camera-sidecar\\Boothy.CameraSidecar.exe`
-  - `resources\\camera-sidecar\\*.dll` (EDSDK 등)
+  - `resources\\camera-sidecar\\*.dll` (옵션: EDSDK 등, 재배포 정책에 따름)
 - 사용자 데이터(예): `%APPDATA%\\Boothy\\`
   - `settings.json` (RapidRAW + boothy 확장)
   - `logs\\boothy.log`, `logs\\camera-sidecar.log`
-- 세션 데이터(확정): `%USERPROFILE%\\Pictures\\dabi_shoot\\<session>\\{Raw,Jpg}`
+- 세션 데이터: `%USERPROFILE%\\Pictures\\Boothy\\<session>\\{Raw,Jpg}`
 
 **Operational Concerns (필수):**
 - **버전 동기화:** Boothy 앱과 sidecar는 같은 릴리즈로 배포하고, sidecar는 `protocolVersion`/`appVersion` handshake로 불일치 시 명시적으로 실패(FR20, NFR8).
@@ -699,8 +694,6 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 **Monitoring:**
 - 원격 모니터링은 MVP 범위 밖(오프라인)으로 두고, 로컬 로그/진단 파일의 품질을 품질게이트로 설정합니다(NFR8).
 
-**VALIDATION CHECKPOINT**
-이 배포 전략(Tauri NSIS + sidecar 번들링 + 로컬 로그/오프라인 롤백)이 현장 운영(설치/업데이트/문제 대응) 방식에 맞나요? sidecar를 “같은 설치 패키지에 포함”하는 것이 필수이고, 별도 설치/서비스 등록이 필요한 운영 요구(예: 항상 실행되어야 함)가 있다면 알려주세요.
 
 ## Coding Standards
 
@@ -736,7 +729,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - **Existing API Compatibility:** RapidRAW 프리셋 포맷(`presets.json`의 `PresetItem`)과 렌더/Export 파이프라인을 변경하지 않습니다. Boothy는 “프리셋 선택/스냅샷 저장/세션 폴더 제약”만 추가합니다(CR1).
 - **Database Integration:** MVP는 DB를 사용하지 않습니다. DB 도입 시 `schemaVersion` + 마이그레이션을 제공하고, 세션 폴더/원본 파일을 DB에 넣지 않습니다(CR2, NFR5).
 - **Error Handling:** 카메라 연결/촬영/전송 실패는 앱 크래시로 이어지면 안 되며, 기존 세션 사진의 탐색/Export는 계속 가능해야 합니다(FR20).
-- **Logging Consistency:** capture→transfer→import→preset→export의 상관관계(`correlationId`)를 로그로 연결합니다(NFR8). 비밀번호/민감정보(세션 코드 등)는 기본 로그에 평문으로 남기지 않으며, 필요 시 진단 모드에서만 제한적으로 기록합니다(NFR6).
+- **Logging Consistency:** capture→transfer→import→preset→export의 상관관계(`correlationId`)를 로그로 연결합니다(NFR8). 비밀번호/민감정보(세션 이름 등)는 기본 로그에 평문으로 남기지 않으며, 필요 시 진단 모드에서만 제한적으로 기록합니다(NFR6).
 
 ## Testing Strategy
 
@@ -765,8 +758,8 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 
 - **Scope:** Tauri backend ↔ filesystem ↔ sidecar IPC 계약의 통합
 - **Existing System Verification:** RapidRAW의 “폴더 선택→이미지 리스트→메인 프리뷰→Export” 흐름이 Boothy 세션 모드에서도 유지되는지 확인(CR1)
-- **New Feature Testing:**
-  - 세션 시작(4자리) → 폴더 생성/중복 규칙(`YYYY_MM_DD_HH`) 적용
+  - **New Feature Testing:**
+  - 세션 시작(세션 이름) → 폴더 생성/열기/중복 처리(suffix 등) 적용
   - sidecar destination이 `Raw/`로 설정되는지
   - 파일 전송 완료 이벤트 또는 watcher로 신규 사진이 ≤1s 내 리스트에 반영되는지(NFR3)
   - 신규 사진에만 프리셋 스냅샷이 적용되는지(FR8/FR9/FR10)
@@ -780,19 +773,18 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - **Manual Testing Requirements (MVP Gate):**
   1) customer 모드 기본 진입, admin 토글+비밀번호, 숨김 정책 확인
   2) 세션 생성/중복 규칙 확인, `Raw/`/`Jpg/` 생성 확인
-  3) 촬영 → 전송 완료 후 자동 반영/자동 선택, 프리셋 자동 적용 확인
+  3) 촬영 → 전송 완료 후 자동 반영/자동 선택, 프리셋 자동 적용 + 썸네일 오버레이 미표시(FR18) 확인
   4) 프리셋 변경 후 신규 사진만 영향, 이전 사진 불변 확인
   5) Export가 `Jpg/`로 생성, 삭제/회전(admin) 반영 확인
   6) 카메라 분리/전송 실패 시 에러 표시 + 기존 사진 탐색/Export 가능 확인
+  7) 오프라인(네트워크 차단)에서도 core flow 동작하며, 로그인/클라우드 기능이 기본 동작에 관여하지 않는지 확인(NFR7)
 
-**VALIDATION CHECKPOINT**
-테스트 전략을 “초기에는 시나리오 기반(통합/회귀)”으로 두고, 고위험 로직부터 단위 테스트를 점진 도입하는 접근이 현재 일정/팀/품질 목표에 맞나요? 아니면 초기에 프론트/백엔드 테스트 프레임워크를 먼저 고정하는 것을 원하시나요?
 
 ## Security Integration
 
 ### Existing Security Measures
 
-**Authentication:** 기존 RapidRAW는 로컬 데스크톱 앱으로, “계정 로그인 기반 인증”이 필수 전제는 아닙니다(네트워크 없이도 동작). 제품 핵심 워크플로우(로컬 편집/Export)는 인증 없이 사용 가능한 구조입니다.
+**Authentication:** Boothy MVP는 **계정 로그인 없이** 동작하는 오프라인 앱입니다(NFR7). 참고로 RapidRAW 레퍼런스에는 계정/온라인 기능이 포함될 수 있으나, Boothy 제품 빌드에서는 제거/비활성화하여 “네트워크 없이 기본 기능이 완전 동작”하도록 고정합니다.
 
 **Authorization:** 기존 앱은 역할 기반 권한 모델이 핵심 개념은 아니며, UI 노출/기능 접근 제어는 앱 내부 설정/상태로 결정됩니다.
 
@@ -806,7 +798,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - **Admin 모드 인증:** admin 비밀번호는 **argon2id**(salt 포함)로 해시 저장하고, 평문 저장/로그를 금지합니다(NFR6).  
 - **접근 제한 목적(UX 중심):** customer/admin “숨김”은 “일반 사용자(비전문가)가 실수로 고급 기능을 사용하지 않도록” 하는 목적입니다. MVP 범위에서는 **UI 숨김 중심**으로 구현하고, 악의적/고급 사용자의 우회 호출(개발자 도구/IPC 직접 호출 등) 방지는 별도 보안 하드닝 범위로 둡니다.
 - **IPC 접근 제어:** Camera Sidecar의 Named Pipe는 **현재 사용자 세션만 접근** 가능하도록 ACL을 제한합니다(권장). 또한 메시지에 `protocolVersion`/`requestId`/`correlationId`를 포함해 오작동/조사 가능성을 높입니다(NFR8).
-- **경로/입력 검증:** sessionCode(4자리), 세션 폴더명, `Raw/`/`Jpg/` 경로는 backend에서 검증하며, 파일 삭제/이동은 **활성 세션 루트 하위**로 강제하여 path traversal/오작동을 방지합니다(FR13, NFR5).
+- **경로/입력 검증:** `sessionName`/세션 폴더명, `Raw/`/`Jpg/` 경로는 backend에서 검증하며, 파일 삭제/이동은 **활성 세션 루트 하위**로 강제하여 path traversal/오작동을 방지합니다(FR13, NFR5).
 - **Tauri Capability 최소화:** Boothy에서 필요 없는 `shell`/`process` 권한을 제거/축소하고, 파일/OS 접근도 필요한 범위만 허용합니다(least privilege).
 - **공급망/배포 신뢰:** Windows 배포(NSIS)는 가능하면 **코드 서명**을 적용하고, 번들에 포함되는 sidecar/SDK DLL의 출처/버전을 릴리즈 노트와 해시로 추적합니다(운영 안정성).
 
@@ -814,12 +806,12 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - `settings.json`(AppData)에 `boothy.adminPassword`(argon2 파라미터+salt+hash) 저장
 - UI 모드 토글 → backend `boothy_admin_login`/`boothy_set_mode` → **UI 노출(visibility) 제어**에 반영
 - Tauri backend ↔ sidecar IPC: pipe ACL + 버전드 프로토콜 + 에러 코드 표준화
-- 파일시스템 세션 계약: `%USERPROFILE%\\Pictures\\dabi_shoot\\<session>\\{Raw,Jpg}` 경로 검증/강제
+- 파일시스템 세션 계약: `%USERPROFILE%\\Pictures\\Boothy\\<session>\\{Raw,Jpg}` 경로 검증/강제
 
 **Compliance Requirements:**
 - **Offline-first:** 핵심 기능은 오프라인에서 완전 동작(NFR7)
 - **Windows-only:** 플랫폼 제약 준수(NFR1)
-- **License/Distribution:** RapidRAW(AGPL-3.0) 및 Canon SDK(EDSDK) 배포 조건, digiCamControl(MIT) 사용 조건을 릴리즈/배포 전략에서 명확히 준수해야 합니다(법무/라이선스 검토 필요).
+- **License/Distribution:** RapidRAW(AGPL-3.0) 및 Canon SDK(EDSDK) 배포 조건, digiCamControl(MIT) 사용 조건을 릴리즈/배포 전략에서 명확히 준수해야 합니다. 정책 확정 전에는 **외부 배포를 하지 않고 내부 테스트 배포로 제한**합니다.
 
 ### Security Testing
 
@@ -834,8 +826,6 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 
 **Penetration Testing:** MVP의 보안 목표는 “악의적 공격 방어”가 아니라 “일반 사용자 오사용 방지(UX)”이므로, 전통적 펜테스트는 MVP 범위 밖으로 둡니다. 대신 경로 안전성/크래시 내성/로그 품질을 우선 검증합니다.
 
-**VALIDATION CHECKPOINT**
-이 보안/컴플라이언스 접근(argon2id + pipe ACL + least-privilege capability + 경로 검증 + UI 숨김 중심)이 현재 운영/배포 현실과 요구사항(NFR6/FR17/FR20)에 맞나요? (우회 호출 방지는 MVP 범위 밖으로 둔 상태입니다)
 
 ## Development Environment
 
@@ -851,18 +841,24 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 - (Sidecar) .NET SDK / Visual Studio (sidecar 타겟 프레임워크에 맞춤)
 - (Camera) Canon EDSDK 배포/설치 정책에 따른 DLL 준비(프로젝트 정책에 따름)
 
-**Local Run (제안):**
-- Boothy 앱(개발): `apps/boothy`에서 `npm install` → `npm run start`(또는 `npm run tauri dev`)
-- Sidecar(개발): `apps/camera-sidecar`에서 빌드/실행 후, Boothy가 IPC로 연결
+**Human-only prerequisites (MVP):**
+- Canon EDSDK 재배포 정책 확정(번들링 vs 사용자 설치/제공)
+- 대상 PC에 카메라 드라이버/SDK 설치(오프라인 현장 설치 절차 포함)
+- 배포 형태 결정(내부 테스트 only vs 외부 배포) 및 라이선스 준수(AGPL 포함)
+
+**Local Run (현재 리포 상태 기준):**
+- RapidRAW 레퍼런스 실행: `reference/uxui_presetfunction`에서 `npm install` → `npm start`
+- Boothy 앱(타겟): `reference/uxui_presetfunction`을 `apps/boothy`로 승격한 뒤, `apps/boothy`에서 `npm install` → `npm run start`(또는 `npm run tauri dev`)
+- Sidecar(타겟): `apps/camera-sidecar`에서 빌드/실행 후, Boothy가 IPC로 연결
 
 **Diagnostics:**
 - 앱 로그: `%APPDATA%\\Boothy\\logs\\boothy.log`
 - sidecar 로그: `%APPDATA%\\Boothy\\logs\\camera-sidecar.log`
-- 세션 데이터: `%USERPROFILE%\\Pictures\\dabi_shoot\\<session>\\{Raw,Jpg}`
+- 세션 데이터: `%USERPROFILE%\\Pictures\\Boothy\\<session>\\{Raw,Jpg}`
 
-## Checklist Results Report
+## Checklist Results Report (참고)
 
-아래는 `.bmad-core/checklists/architect-checklist.md`를 기준으로, 현재 `docs/architecture.md`(본 문서)와 `docs/prd.md`에 대한 **종합(YOLO) 검증 결과**입니다. (브라운필드 통합 특성상 “레퍼런스 스택 vs 제품 코드 경계”와 “오프라인/현장 운영” 관점에 가중치를 두었습니다.)
+아래 내용은 내부 체크리스트 기반의 **참고용(히스토리) 검증 결과**입니다. 품질 게이트는 본 문서의 **Testing Strategy**를 기준으로 운영합니다.
 
 ### Overall Decision
 
@@ -883,7 +879,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 
 ### Key Concerns / Recommended Follow-ups
 
-1. **Sidecar 프로토콜 확정:** JSON-RPC 래핑 vs `DCCPipe` 재사용 중 하나를 빠르게 고정하고, `protocolVersion`/error code 표준을 문서로 확정
+1. **Sidecar 프로토콜 표준화:** JSON-RPC 스타일 + `protocolVersion`/error code 표준을 구현에 반영(운영 진단/호환성 확보)
 2. **세션 모드 UI 상세:** customer 화면에서 “딱 남길 컴포넌트”와 admin에서 노출할 패널/메뉴의 구체 리스트를 RapidRAW 컴포넌트 레벨로 매핑(구현 리스크↓)
 3. **라이선스/배포 검토:** RapidRAW(AGPL) 및 Canon EDSDK 배포 조건(재배포 가능 범위/설치 방식) 확정
 4. **성능 목표 검증:** NFR3(≤1s/≤3s)를 만족시키기 위한 watcher 안정화 파라미터(대기 시간/락 체크) 튜닝 계획 수립
@@ -895,7 +891,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 아래 프롬프트를 Story Manager(PO/SM)에게 전달해 첫 스토리를 생성하세요:
 
 > `docs/architecture.md`와 `docs/prd.md`를 기준으로 Boothy MVP 통합을 위한 첫 스토리를 작성해 주세요.  
-> 핵심 통합 경계는 (1) 세션 폴더 계약: `%USERPROFILE%\\Pictures\\dabi_shoot\\<session>\\{Raw,Jpg}` (세션명=휴대전화 뒤 4자리, 중복 시 `_YYYY_MM_DD_HH`) (2) RapidRAW 기반 앱에 “세션 모드” 추가 (3) 카메라 기능은 digiCamControl 기반 headless sidecar + Named Pipe IPC 입니다.  
+> 핵심 통합 경계는 (1) 세션 폴더 계약: `%USERPROFILE%\\Pictures\\Boothy\\<session>\\{Raw,Jpg}` (세션명=`sessionName` 입력, 폴더 충돌 시 `_YYYY_MM_DD_HH` suffix 또는 기존 세션 열기) (2) RapidRAW 기반 앱에 “세션 모드” 추가 (3) 카메라 기능은 digiCamControl 기반 headless sidecar + Named Pipe IPC 입니다.  
 > 첫 스토리는 “세션 생성/활성화 + Raw/Jpg 폴더 생성 + RapidRAW 현재 폴더를 Raw로 고정 + 신규 파일(수동 드롭/테스트 파일) 감지 시 자동 refresh/자동 선택”까지를 범위로 하고, NFR5(무결성)와 NFR3(실시간) 검증 포인트를 포함해 주세요.  
 > customer/admin 모드 정책은 UI 숨김 중심이며, 우회 호출 방지는 MVP 범위 밖입니다.
 
@@ -904,7 +900,7 @@ RapidRAW가 제품 베이스로 확정된 상태에서는, `reference/` 아래�
 개발자가 바로 착수할 수 있도록, 구현 순서를 다음처럼 권장합니다:
 
 1. **앱 베이스 승격:** `reference/uxui_presetfunction`을 `apps/boothy`로 승격하고(리브랜딩 포함), 빌드/실행 경로를 Boothy 기준으로 고정
-2. **세션 매니저:** 세션 폴더 생성 규칙(4자리/중복 suffix) + `Raw/`/`Jpg/` 생성 + RapidRAW 폴더 고정
+2. **세션 매니저:** 세션 폴더 생성/열기 규칙(`sessionName` sanitize + 충돌 처리) + `Raw/`/`Jpg/` 생성 + RapidRAW 폴더 고정
 3. **파일 감지→UI 반영:** `Raw/` 신규 파일 안정화 감지 → `.rrdata` 생성(프리셋 스냅샷) → 이미지 리스트 refresh + 자동 선택
 4. **프리셋 스냅샷:** “현재 프리셋”을 저장하고, 신규 사진에만 적용(FR8–FR10)
 5. **sidecar 통합:** 카메라 sidecar(IPC) 연결/상태/촬영/전송 완료 이벤트까지 확장

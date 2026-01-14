@@ -171,36 +171,10 @@ export default function MetadataPanel({ selectedImage }: MetaDataPanelProps) {
                 <h3 className="text-base font-bold text-text-primary mb-2 border-b border-surface pb-1">
                   GPS Location
                 </h3>
-                <div className="flex flex-col gap-2">
-                  <div className="relative rounded-md overflow-hidden border border-surface">
-                    <iframe
-                      className="pointer-events-none"
-                      frameBorder="0"
-                      height="180"
-                      loading="lazy"
-                      marginHeight={0}
-                      marginWidth={0}
-                      scrolling="no"
-                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${gpsData.lon - 0.01}%2C${
-                        gpsData.lat - 0.01
-                      }%2C${gpsData.lon + 0.01}%2C${gpsData.lat + 0.01}&layer=mapnik&marker=${gpsData.lat}%2C${
-                        gpsData.lon
-                      }`}
-                      width="100%"
-                    ></iframe>
-                    <a
-                      className="absolute inset-0 cursor-pointer"
-                      href={`https://www.openstreetmap.org/?mlat=${gpsData.lat}&mlon=${gpsData.lon}#map=15/${gpsData.lat}/${gpsData.lon}`}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                      title="Click to open map in a new tab"
-                    ></a>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <MetadataItem label="Latitude" value={gpsData.lat?.toFixed(6)} />
-                    <MetadataItem label="Longitude" value={gpsData.lon?.toFixed(6)} />
-                    {gpsData.altitude && <MetadataItem label="Altitude" value={gpsData.altitude} />}
-                  </div>
+                <div className="flex flex-col gap-1">
+                  <MetadataItem label="Latitude" value={gpsData.lat?.toFixed(6)} />
+                  <MetadataItem label="Longitude" value={gpsData.lon?.toFixed(6)} />
+                  {gpsData.altitude && <MetadataItem label="Altitude" value={gpsData.altitude} />}
                 </div>
               </div>
             )}

@@ -96,7 +96,6 @@ export interface ColorCalibration {
 
 export interface Adjustments {
   [index: string]: any;
-  aiPatches: Array<AiPatch>;
   aspectRatio: number | null;
   blacks: number;
   brightness: number;
@@ -149,16 +148,6 @@ export interface Adjustments {
   vignetteMidpoint: number;
   vignetteRoundness: number;
   whites: number;
-}
-
-export interface AiPatch {
-  id: string;
-  isLoading: boolean;
-  name: string;
-  patchData: any | null;
-  prompt: string;
-  subMasks: Array<SubMask>;
-  visible: boolean;
 }
 
 export interface Color {
@@ -352,7 +341,6 @@ export const INITIAL_MASK_CONTAINER: MaskContainer = {
 };
 
 export const INITIAL_ADJUSTMENTS: Adjustments = {
-  aiPatches: [],
   aspectRatio: null,
   blacks: 0,
   brightness: 0,
@@ -471,11 +459,6 @@ export const normalizeLoadedAdjustments = (loadedAdjustments: Adjustments): any 
     };
   });
 
-  const normalizedAiPatches = (loadedAdjustments.aiPatches || []).map((patch: any) => ({
-    visible: true,
-    ...patch,
-  }));
-
   return {
     ...INITIAL_ADJUSTMENTS,
     ...loadedAdjustments,
@@ -484,7 +467,6 @@ export const normalizeLoadedAdjustments = (loadedAdjustments: Adjustments): any 
     hsl: { ...INITIAL_ADJUSTMENTS.hsl, ...(loadedAdjustments.hsl || {}) },
     curves: { ...INITIAL_ADJUSTMENTS.curves, ...(loadedAdjustments.curves || {}) },
     masks: normalizedMasks,
-    aiPatches: normalizedAiPatches,
     sectionVisibility: {
       ...INITIAL_ADJUSTMENTS.sectionVisibility,
       ...(loadedAdjustments.sectionVisibility || {}),

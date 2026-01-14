@@ -130,59 +130,6 @@ pub struct LastFolderState {
     pub expanded_folders: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ComfyUIWorkflowConfig {
-    pub workflow_path: Option<String>,
-    pub model_checkpoints: HashMap<String, String>,
-    pub vae_loaders: HashMap<String, String>,
-    pub controlnet_loaders: HashMap<String, String>,
-    pub source_image_node_id: String,
-    pub mask_image_node_id: String,
-    pub text_prompt_node_id: String,
-    pub final_output_node_id: String,
-    pub sampler_node_id: String,
-    pub sampler_steps: u32,
-    pub transfer_resolution: Option<u32>,
-    pub inpaint_resolution_node_id: String,
-    pub inpaint_resolution: u32,
-}
-
-impl Default for ComfyUIWorkflowConfig {
-    fn default() -> Self {
-        let mut model_checkpoints = HashMap::new();
-        model_checkpoints.insert(
-            "1".to_string(),
-            "XL_RealVisXL_V5.0_Lightning.safetensors".to_string(),
-        );
-
-        let mut vae_loaders = HashMap::new();
-        vae_loaders.insert("49".to_string(), "sdxl_vae.safetensors".to_string());
-
-        let mut controlnet_loaders = HashMap::new();
-        controlnet_loaders.insert(
-            "12".to_string(),
-            "diffusion_pytorch_model_promax.safetensors".to_string(),
-        );
-
-        Self {
-            workflow_path: None,
-            model_checkpoints,
-            vae_loaders,
-            controlnet_loaders,
-            source_image_node_id: "30".to_string(),
-            mask_image_node_id: "47".to_string(),
-            text_prompt_node_id: "7".to_string(),
-            final_output_node_id: "41".to_string(),
-            sampler_node_id: "28".to_string(),
-            sampler_steps: 10,
-            transfer_resolution: Some(3072),
-            inpaint_resolution_node_id: "37".to_string(),
-            inpaint_resolution: 1280,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PasteMode {
@@ -256,19 +203,13 @@ pub struct AppSettings {
     pub theme: Option<String>,
     pub transparent: Option<bool>,
     pub decorations: Option<bool>,
-    pub comfyui_address: Option<String>,
-    #[serde(default)]
-    pub comfyui_workflow_config: ComfyUIWorkflowConfig,
     pub last_folder_state: Option<LastFolderState>,
     pub adaptive_editor_theme: Option<bool>,
     pub ui_visibility: Option<Value>,
-    pub enable_ai_tagging: Option<bool>,
-    pub tagging_thread_count: Option<u32>,
     #[serde(default = "default_tagging_shortcuts_option")]
     pub tagging_shortcuts: Option<Vec<String>>,
     pub thumbnail_size: Option<String>,
     pub thumbnail_aspect_ratio: Option<String>,
-    pub ai_provider: Option<String>,
     #[serde(default = "default_adjustment_visibility")]
     pub adjustment_visibility: HashMap<String, bool>,
     pub enable_exif_reading: Option<bool>,
@@ -314,17 +255,12 @@ impl Default for AppSettings {
             decorations: Some(true),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             decorations: Some(false),
-            comfyui_address: None,
-            comfyui_workflow_config: ComfyUIWorkflowConfig::default(),
             last_folder_state: None,
             adaptive_editor_theme: Some(false),
             ui_visibility: None,
-            enable_ai_tagging: Some(false),
-            tagging_thread_count: Some(3),
             tagging_shortcuts: default_tagging_shortcuts_option(),
             thumbnail_size: Some("medium".to_string()),
             thumbnail_aspect_ratio: Some("cover".to_string()),
-            ai_provider: Some("cpu".to_string()),
             adjustment_visibility: default_adjustment_visibility(),
             enable_exif_reading: Some(false),
             active_tree_section: Some("current".to_string()),
@@ -1902,55 +1838,6 @@ pub fn handle_export_presets_to_file(
     let json_string = serde_json::to_string_pretty(&preset_file)
         .map_err(|e| format!("Failed to serialize presets: {}", e))?;
     fs::write(file_path, json_string).map_err(|e| format!("Failed to write preset file: {}", e))
-}
-
-#[tauri::command]
-pub fn save_community_preset(
-    name: String,
-    adjustments: Value,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    let mut current_presets = load_presets(app_handle.clone())?;
-
-    let community_folder_name = "Community";
-    let community_folder_id = match current_presets.iter_mut().find(|item| {
-        if let PresetItem::Folder(f) = item {
-            f.name == community_folder_name
-        } else {
-            false
-        }
-    }) {
-        Some(PresetItem::Folder(folder)) => folder.id.clone(),
-        _ => {
-            let new_folder_id = Uuid::new_v4().to_string();
-            let new_folder = PresetItem::Folder(PresetFolder {
-                id: new_folder_id.clone(),
-                name: community_folder_name.to_string(),
-                children: Vec::new(),
-            });
-            current_presets.insert(0, new_folder);
-            new_folder_id
-        }
-    };
-
-    let new_preset = Preset {
-        id: Uuid::new_v4().to_string(),
-        name,
-        adjustments,
-    };
-
-    if let Some(PresetItem::Folder(folder)) = current_presets.iter_mut().find(|item| {
-        if let PresetItem::Folder(f) = item {
-            f.id == community_folder_id
-        } else {
-            false
-        }
-    }) {
-        folder.children.retain(|p| p.name != new_preset.name);
-        folder.children.push(new_preset);
-    }
-
-    save_presets(current_presets, app_handle)
 }
 
 #[tauri::command]

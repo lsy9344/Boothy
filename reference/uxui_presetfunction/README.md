@@ -1,3 +1,5 @@
+> Note (Boothy fork): This vendored RapidRAW code is modified for Boothy. All online features (accounts/community/update checks/external links) and all AI features have been removed/disabled in this build, so parts of the upstream README below may not apply.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/CyberTimon/RapidRAW/assets/.github/assets/editor.png" alt="RapidRAW Editor">
 </p>

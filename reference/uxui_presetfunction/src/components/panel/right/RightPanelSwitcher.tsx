@@ -1,4 +1,4 @@
-import { SlidersHorizontal, Info, Scaling, BrainCircuit, Bookmark, Save, Layers } from 'lucide-react';
+import { SlidersHorizontal, Info, Scaling, Bookmark, Save, Layers } from 'lucide-react';
 import { Panel } from '../../ui/AppProperties';
 
 interface PanelOptions {
@@ -18,7 +18,6 @@ const panelOptions: Array<PanelOptions> = [
   { id: Panel.Crop, icon: Scaling, title: 'Crop' },
   { id: Panel.Masks, icon: Layers, title: 'Masks' },
   { id: Panel.Presets, icon: Bookmark, title: 'Presets' },
-  { id: Panel.Ai, icon: BrainCircuit, title: 'AI Tools' },
   { id: Panel.Export, icon: Save, title: 'Export' },
 ];
 

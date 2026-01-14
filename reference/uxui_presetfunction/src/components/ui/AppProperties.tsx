@@ -1,5 +1,5 @@
 import React from 'react';
-import { Adjustments, Color } from '../../utils/adjustments';
+import { Adjustments, Color, CopyPasteSettings } from '../../utils/adjustments';
 import { ToolType } from '../panel/right/Masks';
 
 export const GLOBAL_KEYS = [' ', 'ArrowUp', 'ArrowDown', 'f', 'b', 'w'];
@@ -14,9 +14,7 @@ export enum Invokes {
   BatchExportImages = 'batch_export_images',
   CalculateAutoAdjustments = 'calculate_auto_adjustments',
   CancelExport = 'cancel_export',
-  CheckComfyuiStatus = 'check_comfyui_status',
   ClearAllSidecars = 'clear_all_sidecars',
-  ClearAiTags = 'clear_ai_tags',
   ClearAllTags = 'clear_all_tags',
   ClearThumbnailCache = 'clear_thumbnail_cache',
   CopyFiles = 'copy_files',
@@ -28,9 +26,6 @@ export enum Invokes {
   EstimateBatchExportSize = 'estimate_batch_export_size',
   EstimateExportSize = 'estimate_export_size',
   ExportImage = 'export_image',
-  GenerateAiForegroundMask = 'generate_ai_foreground_mask',
-  GenerateAiSkyMask = 'generate_ai_sky_mask',
-  GenerateAiSubjectMask = 'generate_ai_subject_mask',
   GenerateFullscreenPreview = 'generate_fullscreen_preview',
   GeneratePreviewForPath = 'generate_preview_for_path',
   GenerateHistogram = 'generate_histogram',
@@ -47,8 +42,6 @@ export enum Invokes {
   HandleImportPresetsFromFile = 'handle_import_presets_from_file',
   HandleImportLegacyPresetsFromFile = 'handle_import_legacy_presets_from_file',
   ImportFiles = 'import_files',
-  InvokeGenerativeReplace = 'invoke_generative_replace',
-  InvokeGenerativeReplaseWithMaskDef = 'invoke_generative_replace_with_mask_def',
   ListImagesInDir = 'list_images_in_dir',
   ListImagesRecursive = 'list_images_recursive',
   LoadImage = 'load_image',
@@ -69,19 +62,13 @@ export enum Invokes {
   SaveSettings = 'save_settings',
   SetColorLabelForPaths = 'set_color_label_for_paths',
   ShowInFinder = 'show_in_finder',
-  StartBackgroundIndexing = 'start_background_indexing',
   StitchPanorama = 'stitch_panorama',
-  TestComfyuiConnection = 'test_comfyui_connection',
   UpdateWindowEffect = 'update_window_effect',
-  FetchCommunityPresets = 'fetch_community_presets',
-  GenerateAllCommunityPreviews = 'generate_all_community_previews',
-  SaveCommunityPreset = 'save_community_preset',
   SaveTempFile = 'save_temp_file',
 }
 
 export enum Panel {
   Adjustments = 'adjustments',
-  Ai = 'ai',
   Crop = 'crop',
   Export = 'export',
   Masks = 'masks',
@@ -117,36 +104,21 @@ export enum ThumbnailAspectRatio {
   Contain = 'contain',
 }
 
-export interface ComfyUIWorkflowConfig {
-  workflowPath: string | null;
-  modelCheckpoints: { [nodeId: string]: string };
-  vaeLoaders: { [nodeId: string]: string };
-  controlnetLoaders: { [nodeId: string]: string };
-  sourceImageNodeId: string;
-  maskImageNodeId: string;
-  textPromptNodeId: string;
-  finalOutputNodeId: string;
-  samplerNodeId: string;
-  samplerSteps: number;
-  inpaintResolution?: number;
-}
-
 export interface AppSettings {
   adaptiveEditorTheme?: Theme;
-  comfyuiAddress?: string;
-  comfyuiWorkflowConfig?: ComfyUIWorkflowConfig;
+  copyPasteSettings?: CopyPasteSettings;
   decorations?: any;
   editorPreviewResolution?: number;
   enableZoomHifi?: boolean;
   enableLivePreviews?: boolean;
   enableHighQualityLivePreviews?: boolean;
-  enableAiTagging?: boolean;
   enableExifReading?: boolean;
   filterCriteria?: FilterCriteria;
   lastFolderState?: any;
   pinnedFolders?: any;
   lastRootPath: string | null;
   sortCriteria?: SortCriteria;
+  taggingShortcuts?: string[];
   theme: Theme;
   thumbnailSize?: ThumbnailSize;
   thumbnailAspectRatio?: ThumbnailAspectRatio;

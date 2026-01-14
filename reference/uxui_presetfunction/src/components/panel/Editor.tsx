@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
 import { AnimatePresence } from 'framer-motion';
 import { ImageDimensions, useImageRenderSize } from '../../hooks/useImageRenderSize';
-import { Adjustments, AiPatch, Coord, MaskContainer } from '../../utils/adjustments';
+import { Adjustments, MaskContainer } from '../../utils/adjustments';
 import FullScreenViewer from './editor/FullScreenViewer';
 import EditorToolbar from './editor/EditorToolbar';
 import ImageCanvas from './editor/ImageCanvas';
@@ -16,8 +16,6 @@ import { Mask, SubMask } from './right/Masks';
 import { BrushSettings, Invokes, Panel, SelectedImage, TransformState, WaveformData } from '../ui/AppProperties';
 
 interface EditorProps {
-  activeAiPatchContainerId: string | null;
-  activeAiSubMaskId: string | null;
   activeMaskContainerId: string | null;
   activeMaskId: string | null;
   activeRightPanel: Panel | null;
@@ -36,10 +34,7 @@ interface EditorProps {
   onBackToLibrary(): void;
   onCloseWaveform(): void;
   onContextMenu(event: any): void;
-  onGenerateAiMask(subMaskId: string, startPoint: Coord, endPoint: Coord): void;
-  onQuickErase(subMaskId: string | null, startPoint: Coord, endpoint: Coord): void;
   onRedo(): void;
-  onSelectAiSubMask(id: string | null): void;
   onSelectMask(id: string): void;
   onStraighten(val: number): void;
   onToggleFullScreen(): void;
@@ -69,8 +64,6 @@ interface EditorProps {
 }
 
 export default function Editor({
-  activeAiPatchContainerId,
-  activeAiSubMaskId,
   activeMaskContainerId,
   activeMaskId,
   activeRightPanel,
@@ -89,10 +82,7 @@ export default function Editor({
   onBackToLibrary,
   onCloseWaveform,
   onContextMenu,
-  onGenerateAiMask,
-  onQuickErase,
   onRedo,
-  onSelectAiSubMask,
   onSelectMask,
   onStraighten,
   onToggleFullScreen,
@@ -202,7 +192,6 @@ export default function Editor({
 
   const isCropping = activeRightPanel === Panel.Crop;
   const isMasking = activeRightPanel === Panel.Masks;
-  const isAiEditing = activeRightPanel === Panel.Ai;
 
   const hasDisplayableImage = finalPreviewUrl || selectedImage.originalUrl || selectedImage.thumbnailUrl;
   const showSpinner = isLoading && !hasDisplayableImage;
@@ -289,15 +278,6 @@ export default function Editor({
 
     if (activeRightPanel === Panel.Masks && activeMaskContainerId) {
       maskDefForOverlay = adjustments.masks.find((c: MaskContainer) => c.id === activeMaskContainerId);
-    } else if (activeRightPanel === Panel.Ai && activeAiPatchContainerId) {
-      const activePatch = adjustments.aiPatches.find((p: AiPatch) => p.id === activeAiPatchContainerId);
-      if (activePatch) {
-        maskDefForOverlay = {
-          ...activePatch,
-          adjustments: {},
-          opacity: 100,
-        };
-      }
     }
 
     debouncedGenerateMaskOverlay(maskDefForOverlay, imageRenderSize);
@@ -306,9 +286,7 @@ export default function Editor({
   }, [
     activeRightPanel,
     activeMaskContainerId,
-    activeAiPatchContainerId,
     adjustments.masks,
-    adjustments.aiPatches,
     imageRenderSize,
     debouncedGenerateMaskOverlay,
   ]);
@@ -436,7 +414,7 @@ export default function Editor({
   const toggleShowOriginal = useCallback(() => setShowOriginal((prev: boolean) => !prev), [setShowOriginal]);
 
   const doubleClickProps: any = useMemo(() => {
-    if (isCropping || isMasking || isAiEditing) {
+    if (isCropping || isMasking) {
       return {
         disabled: true,
       };
@@ -446,7 +424,7 @@ export default function Editor({
       animationType: 'easeOut',
       mode: transformState.scale >= 2 ? 'reset' : 'zoomIn',
     };
-  }, [isCropping, isMasking, isAiEditing, transformState.scale]);
+  }, [isCropping, isMasking, transformState.scale]);
 
   if (!selectedImage) {
     return (
@@ -463,23 +441,13 @@ export default function Editor({
       );
       return container?.subMasks.find((sm) => sm.id === activeMaskId);
     }
-    if (isAiEditing && activeAiSubMaskId) {
-      const container = adjustments.aiPatches.find((c: AiPatch) =>
-        c.subMasks.some((sm: SubMask) => sm.id === activeAiSubMaskId),
-      );
-      return container?.subMasks?.find((sm: SubMask) => sm.id === activeAiSubMaskId);
-    }
     return null;
-  }, [adjustments.masks, adjustments.aiPatches, activeMaskId, activeAiSubMaskId, isMasking, isAiEditing]);
+  }, [adjustments.masks, activeMaskId, isMasking]);
 
   const isPanningDisabled =
     isMaskHovered ||
     isCropping ||
-    (isMasking && (activeSubMask?.type === Mask.Brush || activeSubMask?.type === Mask.AiSubject)) ||
-    (isAiEditing &&
-      (activeSubMask?.type === Mask.Brush ||
-        activeSubMask?.type === Mask.AiSubject ||
-        activeSubMask?.type === Mask.QuickEraser));
+    (isMasking && activeSubMask?.type === Mask.Brush);
 
   const waveFormData: WaveformData = waveform || { blue: [], green: [], height: 0, luma: [], red: [], width: 0 };
 
@@ -554,8 +522,6 @@ export default function Editor({
               }}
             >
               <ImageCanvas
-                activeAiPatchContainerId={activeAiPatchContainerId}
-                activeAiSubMaskId={activeAiSubMaskId}
                 activeMaskContainerId={activeMaskContainerId}
                 activeMaskId={activeMaskId}
                 adjustments={adjustments}
@@ -564,15 +530,11 @@ export default function Editor({
                 finalPreviewUrl={finalPreviewUrl}
                 handleCropComplete={handleCropComplete}
                 imageRenderSize={imageRenderSize}
-                isAiEditing={isAiEditing}
                 isCropping={isCropping}
                 isMaskControlHovered={isMaskControlHovered}
                 isMasking={isMasking}
                 isStraightenActive={isStraightenActive}
                 maskOverlayUrl={maskOverlayUrl}
-                onGenerateAiMask={onGenerateAiMask}
-                onQuickErase={onQuickErase}
-                onSelectAiSubMask={onSelectAiSubMask}
                 onSelectMask={onSelectMask}
                 onStraighten={onStraighten}
                 selectedImage={selectedImage}

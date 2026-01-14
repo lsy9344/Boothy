@@ -11,7 +11,7 @@ Focused on the two open-source capability areas that will be merged into a new p
 - **Camera capture/control**: `reference/camerafunction/`
 - **RAW editing + presets + high-res JPG export**: `reference/uxui_presetfunction/` (currently a pointer to upstream; see below)
 
-No PRD exists in-repo yet (`docs/prd.md` is missing). The scope/purpose summary below comes from user-provided requirements (out-of-band).
+A Brownfield Enhancement PRD now exists at `docs/prd.md` (and target architecture at `docs/architecture.md`). Earlier versions of this document predated those artifacts.
 
 ### Change Log
 
@@ -19,6 +19,7 @@ No PRD exists in-repo yet (`docs/prd.md` is missing). The scope/purpose summary 
 | ---------- | ------- | --------------------------- | ------- |
 | 2026-01-13 | 1.0     | Initial brownfield analysis | Winston |
 | 2026-01-13 | 1.1     | Add merge-scope notes       | Winston |
+| 2026-01-14 | 1.2     | Note PRD/TO-BE docs exist   | Winston |
 
 ## Project Purpose (User-Provided Requirements)
 
@@ -171,7 +172,7 @@ From `reference/camerafunction/digiCamControl-2.0.0/CameraControl.sln`:
 
 ### Critical Technical Debt / Constraints
 
-1. **No PRD captured in-repo**: There is no `docs/prd.md`; requirements currently exist only out-of-band and should be formalized.
+1. **Keep PRD/Architecture in sync**: `docs/prd.md` and `docs/architecture.md` exist and must remain aligned with the actual repo/product decisions (offline/no-account policy, distribution/licensing constraints, and the “reference vs product code” boundary).
 2. **No first-party app code**: `Boothy/` root does not contain a runnable application; most code is vendored reference.
 3. **Legacy .NET Framework**: digiCamControl targets **.NET Framework v4.0** and uses WPF; modern .NET SDK workflows do not apply directly.
 4. **Large vendored binaries**: `CameraControl.Application/` contains `*.exe`/`*.dll` (e.g., `ffmpeg.exe`, `ngrok.exe`, camera SDK DLLs). This increases repo size and adds trust/supply-chain considerations.

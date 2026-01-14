@@ -33,14 +33,10 @@ interface MasksPanelProps {
   activeMaskContainerId: string | null;
   activeMaskId: string | null;
   adjustments: Adjustments;
-  aiModelDownloadStatus: string | null;
   appSettings: AppSettings | null;
   brushSettings: BrushSettings | null;
   copiedMask: MaskContainer | null;
   histogram: any;
-  isGeneratingAiMask: boolean;
-  onGenerateAiForegroundMask(id: string): void;
-  onGenerateAiSkyMask(id: string): void;
   onSelectContainer(id: string | null): void;
   onSelectMask(id: string | null): void;
   selectedImage: SelectedImage;
@@ -66,14 +62,10 @@ export default function MasksPanel({
   activeMaskContainerId,
   activeMaskId,
   adjustments,
-  aiModelDownloadStatus,
   appSettings,
   brushSettings,
   copiedMask,
   histogram,
-  isGeneratingAiMask,
-  onGenerateAiForegroundMask,
-  onGenerateAiSkyMask,
   onSelectContainer,
   onSelectMask,
   selectedImage,
@@ -167,11 +159,6 @@ export default function MasksPanel({
     setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, masks: [...(prev.masks || []), newContainer] }));
     onSelectContainer(newContainer.id);
     onSelectMask(subMask.id);
-    if (type === Mask.AiForeground) {
-      onGenerateAiForegroundMask(subMask.id);
-    } else if (type === Mask.AiSky) {
-      onGenerateAiSkyMask(subMask.id);
-    }
   };
 
   const handleAddOthersMask = (event: React.MouseEvent) => {
@@ -417,14 +404,10 @@ export default function MasksPanel({
             activeMaskId={activeMaskId}
             activeSubMask={activeSubMask}
             adjustments={adjustments}
-            aiModelDownloadStatus={aiModelDownloadStatus}
             appSettings={appSettings}
             brushSettings={brushSettings}
             editingMask={editingContainer}
             histogram={histogram}
-            isGeneratingAiMask={isGeneratingAiMask}
-            onGenerateAiForegroundMask={onGenerateAiForegroundMask}
-            onGenerateAiSkyMask={onGenerateAiSkyMask}
             onSelectMask={onSelectMask}
             selectedImage={selectedImage}
             setAdjustments={setAdjustments}
@@ -458,19 +441,14 @@ export default function MasksPanel({
         onContextMenu={handlePanelContextMenu}
       >
         <div onClick={(e: any) => e.stopPropagation()}>
-          {aiModelDownloadStatus && (
-            <div className="p-2 text-center text-xs text-text-secondary bg-surface rounded-md mb-4">
-              Downloading AI Model: {aiModelDownloadStatus}
-            </div>
-          )}
           <p className="text-sm mb-3 font-semibold text-text-primary">Create New Mask</p>
           <div className="grid grid-cols-3 gap-2">
             {MASK_PANEL_CREATION_TYPES.map((maskType: MaskType) => (
               <button
                 className={`bg-surface text-text-primary rounded-lg p-2 flex flex-col items-center justify-center gap-1.5 aspect-square transition-colors ${
-                  maskType.disabled || isGeneratingAiMask ? 'opacity-50 cursor-not-allowed' : 'hover:bg-card-active'
+                  maskType.disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-card-active'
                 }`}
-                disabled={maskType.disabled || isGeneratingAiMask}
+                disabled={maskType.disabled}
                 key={maskType.type || maskType.id}
                 onClick={(e) => {
                   if (maskType.id === 'others') {
