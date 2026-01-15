@@ -1,0 +1,411 @@
+# Story 1.3 Validation Checklist
+
+## Production Hardening + Admin Surface + Packaging/Diagnostics
+
+This checklist validates all acceptance criteria for Story 1.3.
+
+---
+
+## Test Environment
+
+- [ ] **OS**: Windows 11 x64
+- [ ] **Build**: Fresh installer from `npm run tauri build`
+- [ ] **Network**: Can be disabled for offline testing
+- [ ] **Camera**: Canon camera with EDSDK support (or mock for failure testing)
+
+---
+
+## AC1: Camera Failure Tolerance
+
+### Test 1.1: Offline Smoke Scenario
+
+**Objective**: Verify app functions offline without network or camera
+
+**Prerequisites**:
+- Boothy installed
+- At least one session with existing photos in `%USERPROFILE%\Pictures\dabi_shoot\`
+
+**Steps**:
+1. Disable network adapter (Wi-Fi off, ethernet unplugged)
+2. Ensure camera is NOT connected
+3. Launch Boothy
+4. Open existing session
+5. Browse existing photos (gallery view)
+6. Select a photo
+7. Export to JPEG
+8. Check logs written to `%APPDATA%\Boothy\logs\`
+
+**Expected Results**:
+- [ ] App launches without network
+- [ ] Existing session loads successfully
+- [ ] Photos are visible in gallery
+- [ ] Photo preview works
+- [ ] Export completes successfully
+- [ ] Logs are written locally
+- [ ] No network-related errors block core functionality
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 1.2: Camera Failure - Sidecar Not Running
+
+**Objective**: Verify graceful handling when sidecar is not running
+
+**Prerequisites**:
+- Boothy installed
+- Camera sidecar NOT running (kill process or don't bundle it)
+- Existing session with photos
+
+**Steps**:
+1. Launch Boothy
+2. Attempt to start a session
+3. Try to capture (if UI allows)
+4. Observe error messaging
+5. Navigate to existing session
+6. Browse existing photos
+7. Export an existing photo
+
+**Expected Results**:
+- [ ] App does NOT crash
+- [ ] **Customer-safe error** displayed: "Camera not detected. Please check connection."
+- [ ] No technical jargon or stack traces shown to customer
+- [ ] Existing photos remain accessible
+- [ ] Export of existing photos works
+- [ ] Logs contain diagnostic details (admin-level)
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 1.3: Camera Failure - Sidecar Crash
+
+**Objective**: Verify app survives sidecar crash during operation
+
+**Prerequisites**:
+- Boothy running
+- Camera sidecar running
+- Active session
+
+**Steps**:
+1. Launch Boothy and start session
+2. Manually kill sidecar process (Task Manager → camera-sidecar.exe → End Task)
+3. Observe app behavior
+4. Try to capture (should fail gracefully)
+5. Navigate to existing photos
+6. Export an existing photo
+
+**Expected Results**:
+- [ ] App does NOT crash when sidecar dies
+- [ ] **Customer-safe error** displayed: "Camera service stopped. Please restart Boothy."
+- [ ] No panic or unhandled exceptions
+- [ ] Existing photos remain accessible
+- [ ] Export works for existing photos
+- [ ] Logs show sidecar disconnect with correlation ID
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+## AC2: Admin Surface Explicit
+
+### Test 2.1: Customer Mode UI
+
+**Objective**: Verify customer mode hides advanced controls
+
+**Prerequisites**:
+- Boothy installed
+- Not authenticated as admin
+
+**Steps**:
+1. Launch Boothy
+2. Verify current mode is "Customer"
+3. Inspect UI elements
+
+**Expected Results - Customer Mode Shows ONLY**:
+- [ ] Preset selection dropdown
+- [ ] Capture trigger button
+- [ ] Thumbnail gallery
+- [ ] Photo selection
+- [ ] Export Image button
+- [ ] Delete button
+
+**Expected Results - Customer Mode HIDES** (not disables):
+- [ ] Advanced camera controls (ISO, shutter speed, aperture, white balance, etc.)
+- [ ] RapidRAW advanced panels (curves, layers, rotate, etc.)
+- [ ] Admin-only settings
+- [ ] Diagnostic information
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 2.2: Admin Mode Authentication
+
+**Objective**: Verify admin password authentication and mode switching
+
+**Prerequisites**:
+- Boothy launched in customer mode
+- Admin password not yet set
+
+**Steps**:
+1. Call `boothy_set_admin_password` with test password "admin123"
+2. Call `boothy_authenticate_admin` with correct password "admin123"
+3. Verify `boothy-mode-changed` event emitted
+4. Check `boothy_get_mode_state` returns `{mode: "admin", has_admin_password: true}`
+5. Try incorrect password "wrong"
+6. Call `boothy_switch_to_customer_mode`
+
+**Expected Results**:
+- [ ] Password set successfully
+- [ ] Correct password grants admin access
+- [ ] Mode change event emitted
+- [ ] Incorrect password is rejected (returns false)
+- [ ] Switching to customer mode succeeds
+- [ ] Password is hashed (not stored in plaintext)
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 2.3: Admin Mode UI
+
+**Objective**: Verify admin mode reveals advanced controls
+
+**Prerequisites**:
+- Boothy running
+- Authenticated as admin
+
+**Steps**:
+1. Authenticate as admin
+2. Verify mode indicator shows "Admin"
+3. Inspect UI elements
+
+**Expected Results - Admin Mode Shows**:
+- [ ] All customer mode features (preset, capture, gallery, export, delete)
+- [ ] **+ Full camera controls** (ISO, shutter, aperture, WB, focus mode, etc.)
+- [ ] **+ RapidRAW advanced panels** (curves, rotate, layers, inpainting, etc.)
+- [ ] **+ Diagnostic information** (logs, error details, correlation IDs)
+- [ ] **+ Admin settings**
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+## AC3: Packaging & Installer
+
+### Test 3.1: NSIS Installer Production
+
+**Objective**: Verify NSIS installer is produced by build
+
+**Steps**:
+1. Run `npm run tauri build` in `apps/boothy`
+2. Check `apps/boothy/src-tauri/target/release/bundle/nsis/` directory
+
+**Expected Results**:
+- [ ] NSIS installer (`.exe`) is produced
+- [ ] Installer name follows pattern `boothy_<version>_x64_en-US.exe`
+- [ ] File size is reasonable (>10MB with bundled sidecar)
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 3.2: Installer Contents
+
+**Objective**: Verify installed files match requirements
+
+**Prerequisites**:
+- NSIS installer built
+
+**Steps**:
+1. Run installer
+2. Install to default location `C:\Program Files\Boothy\`
+3. Verify installation directory structure
+
+**Expected Results**:
+- [ ] `Boothy.exe` present
+- [ ] `resources/camera-sidecar/camera-sidecar.exe` present
+- [ ] `resources/camera-sidecar/edsdk/` present (for internal build with EDSDK)
+  - [ ] `EDSDK.dll`
+  - [ ] `EdsImage.dll`
+- [ ] Uninstaller present
+- [ ] License file (`THIRD_PARTY_NOTICES.md`) included
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 3.3: EDSDK Entitlement Check (Internal Builds Only)
+
+⚠️ **ONLY for builds that include EDSDK DLLs**
+
+**Objective**: Verify entitlement record exists before EDSDK bundling
+
+**Steps**:
+1. Check `docs/compliance/canon-edsdk-entitlement.md` exists
+2. Verify owner confirmation section is complete
+3. Verify technical details section specifies DLL versions
+4. Confirm deployment scope is "internal only"
+
+**Expected Results**:
+- [ ] Entitlement file exists and is complete
+- [ ] Owner name and Canon account documented
+- [ ] DLL versions and bitness (x86/x64) documented
+- [ ] "Internal deployment only" explicitly stated
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked | ⬜ N/A (no EDSDK)
+
+---
+
+### Test 3.4: AGPL Compliance
+
+**Objective**: Verify AGPL compliance for distributed build
+
+**Steps**:
+1. Check installer includes `THIRD_PARTY_NOTICES.md`
+2. Verify source code archive created (`boothy-<version>-source.zip`)
+3. Check release notes link to source code
+
+**Expected Results**:
+- [ ] `THIRD_PARTY_NOTICES.md` bundled in installer
+- [ ] Source code archive matches binary version
+- [ ] Release notes include link to source
+- [ ] All third-party licenses documented
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+## AC4: Rollback Safety
+
+### Test 4.1: Rollback - No Photo Loss
+
+**Objective**: Verify rollback doesn't lose session photos
+
+**Prerequisites**:
+- Two versions of Boothy installer (N-1 and N)
+
+**Steps**:
+1. Install version N-1
+2. Launch and create session "rollback-test-<timestamp>"
+3. Capture or import 3 photos
+4. Apply preset to one photo
+5. Export one JPEG
+6. Note session folder path: `%USERPROFILE%\Pictures\dabi_shoot\rollback-test-<timestamp>\`
+7. Install version N (upgrade)
+8. Verify photos still accessible in N
+9. Uninstall version N
+10. Reinstall version N-1 (rollback)
+11. Launch version N-1
+12. Open session "rollback-test-<timestamp>"
+
+**Expected Results**:
+- [ ] Session folder exists after upgrade to N
+- [ ] Session folder exists after rollback to N-1
+- [ ] All 3 photos present in `Raw/` directory
+- [ ] Exported JPEG present in `Jpg/` directory
+- [ ] Version N-1 can browse photos
+- [ ] Version N-1 can preview photos
+- [ ] Version N-1 can export photos
+- [ ] No data corruption or loss
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+## Diagnostics & Logging Validation
+
+### Test 5.1: Correlation ID Propagation
+
+**Objective**: Verify correlation IDs are logged across components
+
+**Prerequisites**:
+- Boothy running with sidecar
+- Logs enabled
+
+**Steps**:
+1. Trigger a capture operation
+2. Check logs in `%APPDATA%\Boothy\logs\`
+3. Search for correlation ID format `corr-`
+
+**Expected Results**:
+- [ ] Correlation ID generated for capture operation
+- [ ] Same correlation ID appears in multiple log entries:
+  - [ ] Capture started
+  - [ ] Transfer initiated
+  - [ ] Import detected
+  - [ ] Preset applied (if applicable)
+- [ ] Correlation ID included in error logs
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+### Test 5.2: Offline Diagnostics
+
+**Objective**: Verify logs are written locally without network
+
+**Prerequisites**:
+- Network disabled
+
+**Steps**:
+1. Disable network
+2. Launch Boothy
+3. Perform operations (browse, export)
+4. Check `%APPDATA%\Boothy\logs\boothy-<date>.log`
+
+**Expected Results**:
+- [ ] Log file created
+- [ ] Operations logged with timestamps
+- [ ] No errors related to remote logging
+- [ ] Logs are human-readable
+- [ ] Logs include diagnostic context (file paths, error codes)
+
+**Actual Result**: _____________
+
+**Status**: ⬜ Pass | ⬜ Fail | ⬜ Blocked
+
+---
+
+## Summary
+
+**Total Tests**: 13
+**Passed**: ___
+**Failed**: ___
+**Blocked**: ___
+
+**Ready for Review**: ⬜ Yes | ⬜ No
+
+**Tested By**: _______________
+**Date**: _______________
+**Build Version**: _______________
+
+**Notes**:
+_____________________________________________
+_____________________________________________
+_____________________________________________

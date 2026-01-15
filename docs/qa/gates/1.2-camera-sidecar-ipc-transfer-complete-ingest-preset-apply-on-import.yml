@@ -1,0 +1,83 @@
+schema: 1
+story: "1.2"
+story_title: "Camera Sidecar IPC -> Transfer Complete -> Ingest + Preset Apply on Import"
+gate: FAIL
+status_reason: "Core IPC/ingest/preset flow is incomplete and current wiring does not compile, so AC1/2/4 are not met; integration/regression tests are missing."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-14T09:59:08Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "BUILD-001"
+    severity: high
+    finding: "main.rs clones CameraIpcClient/FileArrivalWatcher without Clone implementations, causing compile errors."
+    suggested_action: "Remove `.cloned()` usage or wrap in Arc and implement safe Clone semantics."
+    suggested_owner: dev
+  - id: "IPC-001"
+    severity: high
+    finding: "IPC event listener opens a second pipe connection, but server allows only one instance; events likely never arrive."
+    suggested_action: "Use a single duplex pipe for requests and events or allow multiple server instances."
+    suggested_owner: dev
+  - id: "PRESET-001"
+    severity: high
+    finding: "PresetManager is never invoked on import and UI does not call boothy_set_current_preset."
+    suggested_action: "Wire preset selection to boothy_set_current_preset and apply_preset_on_import during ingest."
+    suggested_owner: dev
+  - id: "UI-001"
+    severity: medium
+    finding: "UI does not handle boothy-photo-transferred/boothy-camera-error events or trigger ingest."
+    suggested_action: "Add UI listeners to call boothy_handle_photo_transferred and show customer-safe errors."
+    suggested_owner: dev
+  - id: "TEST-001"
+    severity: medium
+    finding: "Integration/regression tests for sidecar ingest and offline/crash flows are missing."
+    suggested_action: "Add mock sidecar integration test and regression checks per testing strategy."
+    suggested_owner: qa
+
+risk_summary:
+  totals: { critical: 0, high: 3, medium: 2, low: 0 }
+  recommendations:
+    must_fix:
+      - "Fix compile errors and wire IPC/ingest/preset flow end-to-end."
+    monitor:
+      - "Add integration/regression tests and UI error handling."
+
+quality_score: 20
+expires: "2026-01-28T09:59:12Z"
+
+evidence:
+  tests_reviewed: 2
+  risks_identified: 5
+  trace:
+    ac_covered: []
+    ac_gaps: [1, 2, 3, 4]
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Named Pipe ACL hardening added via PipeSecurity."
+  performance:
+    status: CONCERNS
+    notes: "Blocking IO inside tokio task may impact responsiveness."
+  reliability:
+    status: FAIL
+    notes: "IPC events and ingest/preset flow are not wired end-to-end and build does not compile."
+  maintainability:
+    status: CONCERNS
+    notes: "Duplicate watcher paths and incomplete wiring increase complexity."
+
+recommendations:
+  immediate:
+    - action: "Fix compile errors and unify IPC event handling on a single duplex pipe."
+      refs:
+        - "apps/boothy/src-tauri/src/camera/ipc_client.rs"
+        - "apps/boothy/src-tauri/src/main.rs"
+    - action: "Wire ingest + preset snapshot flow to import pipeline and UI."
+      refs:
+        - "apps/boothy/src-tauri/src/ingest/file_watcher.rs"
+        - "apps/boothy/src-tauri/src/preset/preset_manager.rs"
+  future:
+    - action: "Add mock sidecar integration test and regression coverage for offline/crash flows."
+      refs:
+        - "docs/architecture/testing-strategy.md"
