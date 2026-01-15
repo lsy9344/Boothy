@@ -18,6 +18,7 @@ namespace Boothy.CameraSidecar
         {
             // Set up logging
             Logger.SetMinLevel(LogLevel.Debug);
+            Logger.Initialize();
             string startupCorrelationId = IpcHelpers.GenerateCorrelationId();
             Logger.Info(startupCorrelationId, "========================================");
             Logger.Info(startupCorrelationId, "Boothy Camera Sidecar Starting...");
@@ -96,6 +97,10 @@ namespace Boothy.CameraSidecar
                         await HandleCaptureAsync(message);
                         break;
 
+                    case "system.shutdown":
+                        await HandleShutdownAsync(message);
+                        break;
+
                     default:
                         Logger.Warning(message.CorrelationId, $"Unknown method: {message.Method}");
                         var errorResponse = IpcMessage.NewError(
@@ -155,6 +160,21 @@ namespace Boothy.CameraSidecar
             );
 
             await pipeServer!.SendMessageAsync(response);
+        }
+
+        private static async Task HandleShutdownAsync(IpcMessage message)
+        {
+            Logger.Info(message.CorrelationId, "Shutdown requested");
+
+            var response = IpcMessage.NewResponse(
+                message.Method,
+                message.CorrelationId,
+                message.RequestId ?? "",
+                new { success = true }
+            );
+
+            await pipeServer!.SendMessageAsync(response);
+            isRunning = false;
         }
 
         private static async Task HandleGetStatusAsync(IpcMessage message)

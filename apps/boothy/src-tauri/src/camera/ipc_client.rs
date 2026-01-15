@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -25,6 +26,9 @@ pub struct CameraIpcClient {
 
     /// Channel for sending IPC messages
     tx_pipe: Arc<Mutex<Option<std::fs::File>>>,
+
+    /// Prevent concurrent start attempts
+    starting: Arc<AtomicBool>,
 }
 
 impl CameraIpcClient {
@@ -35,6 +39,7 @@ impl CameraIpcClient {
             connected: Arc::new(Mutex::new(false)),
             app_handle,
             tx_pipe: Arc::new(Mutex::new(None)),
+            starting: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -48,10 +53,80 @@ impl CameraIpcClient {
         let correlation_id = generate_correlation_id();
         info!("[{}] Starting camera sidecar...", correlation_id);
 
+        if self.starting.swap(true, Ordering::SeqCst) {
+            warn!("[{}] Sidecar start already in progress", correlation_id);
+            return Ok(());
+        }
+
+        struct StartGuard {
+            flag: Arc<AtomicBool>,
+        }
+
+        impl Drop for StartGuard {
+            fn drop(&mut self) {
+                self.flag.store(false, Ordering::SeqCst);
+            }
+        }
+
+        let _start_guard = StartGuard {
+            flag: Arc::clone(&self.starting),
+        };
+
         // Check if already running
         if self.is_connected() {
             warn!("[{}] Sidecar already running", correlation_id);
             return Ok(());
+        }
+
+        if self
+            .connect_to_pipe_with_retries(2, Duration::from_millis(100))
+            .await
+            .is_ok()
+        {
+            self.start_event_listener();
+            info!("[{}] Connected to existing sidecar pipe", correlation_id);
+            return Ok(());
+        }
+
+        // If a process is already running, try to connect before spawning another
+        let process_running = {
+            let mut process_guard = self.sidecar_process.lock().unwrap();
+            if let Some(child) = process_guard.as_mut() {
+                match child.try_wait() {
+                    Ok(None) => true,
+                    Ok(Some(status)) => {
+                        warn!(
+                            "[{}] Previous sidecar process exited: {}",
+                            correlation_id, status
+                        );
+                        *process_guard = None;
+                        false
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[{}] Failed to check sidecar process status: {}",
+                            correlation_id, e
+                        );
+                        false
+                    }
+                }
+            } else {
+                false
+            }
+        };
+
+        if process_running {
+            if self.connect_to_pipe_with_retries(3, Duration::from_millis(200)).await.is_ok() {
+                self.start_event_listener();
+                info!("[{}] Connected to existing sidecar", correlation_id);
+                return Ok(());
+            }
+
+            warn!(
+                "[{}] Existing sidecar unresponsive, restarting",
+                correlation_id
+            );
+            self.stop_sidecar();
         }
 
         // Get sidecar executable path
@@ -108,7 +183,10 @@ impl CameraIpcClient {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Connect to Named Pipe
-        self.connect_to_pipe().await?;
+        if let Err(err) = self.connect_to_pipe().await {
+            self.stop_sidecar();
+            return Err(err);
+        }
 
         // Start event listener
         self.start_event_listener();
@@ -121,6 +199,8 @@ impl CameraIpcClient {
     pub fn stop_sidecar(&self) {
         let correlation_id = generate_correlation_id();
         info!("[{}] Stopping camera sidecar...", correlation_id);
+
+        self.send_shutdown_signal(&correlation_id);
 
         // Mark as disconnected
         if let Ok(mut guard) = self.connected.lock() {
@@ -138,6 +218,42 @@ impl CameraIpcClient {
                 let _ = child.kill();
                 let _ = child.wait();
                 info!("[{}] Sidecar process terminated", correlation_id);
+            }
+        }
+    }
+
+    fn send_shutdown_signal(&self, correlation_id: &str) {
+        if !self.is_connected() {
+            return;
+        }
+
+        let request_id = generate_request_id();
+        let message = IpcMessage::new_request(
+            "system.shutdown".to_string(),
+            correlation_id.to_string(),
+            request_id,
+            serde_json::json!({}),
+        );
+
+        let json = match serde_json::to_string(&message) {
+            Ok(json) => json,
+            Err(e) => {
+                warn!("[{}] Failed to serialize shutdown request: {}", correlation_id, e);
+                return;
+            }
+        };
+
+        let mut pipe_guard = match self.tx_pipe.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+
+        if let Some(pipe) = pipe_guard.as_mut() {
+            if pipe.write_all(json.as_bytes()).is_err()
+                || pipe.write_all(b"\n").is_err()
+                || pipe.flush().is_err()
+            {
+                warn!("[{}] Failed to send shutdown request", correlation_id);
             }
         }
     }
@@ -193,6 +309,15 @@ impl CameraIpcClient {
 
     /// Connect to the Named Pipe
     async fn connect_to_pipe(&self) -> Result<(), String> {
+        self.connect_to_pipe_with_retries(10, Duration::from_millis(200))
+            .await
+    }
+
+    async fn connect_to_pipe_with_retries(
+        &self,
+        max_retries: usize,
+        retry_delay: Duration,
+    ) -> Result<(), String> {
         use std::fs::OpenOptions;
         use std::os::windows::fs::OpenOptionsExt;
 
@@ -203,7 +328,6 @@ impl CameraIpcClient {
         );
 
         // Retry connection with timeout
-        let max_retries = 10;
         let mut last_error = String::new();
 
         for i in 0..max_retries {
@@ -234,7 +358,7 @@ impl CameraIpcClient {
                 Err(e) => {
                     last_error = format!("{}", e);
                     if i < max_retries - 1 {
-                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        tokio::time::sleep(retry_delay).await;
                     }
                 }
             }

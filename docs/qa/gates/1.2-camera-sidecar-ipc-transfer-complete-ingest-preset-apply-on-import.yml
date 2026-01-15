@@ -1,83 +1,61 @@
 schema: 1
-story: "1.2"
-story_title: "Camera Sidecar IPC -> Transfer Complete -> Ingest + Preset Apply on Import"
-gate: FAIL
-status_reason: "Core IPC/ingest/preset flow is incomplete and current wiring does not compile, so AC1/2/4 are not met; integration/regression tests are missing."
-reviewer: "Quinn (Test Architect)"
-updated: "2026-01-14T09:59:08Z"
+story: '1.2'
+story_title: 'Camera Sidecar IPC -> Transfer Complete -> Ingest + Preset Apply on Import'
+gate: CONCERNS
+status_reason: 'Rust tests pass and IPC/ingest/preset wiring appears complete, but offline and sidecar-crash/regression validation evidence is not documented.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-16T04:04:46.2527465+09:00'
 
 waiver: { active: false }
 
 top_issues:
-  - id: "BUILD-001"
-    severity: high
-    finding: "main.rs clones CameraIpcClient/FileArrivalWatcher without Clone implementations, causing compile errors."
-    suggested_action: "Remove `.cloned()` usage or wrap in Arc and implement safe Clone semantics."
-    suggested_owner: dev
-  - id: "IPC-001"
-    severity: high
-    finding: "IPC event listener opens a second pipe connection, but server allows only one instance; events likely never arrive."
-    suggested_action: "Use a single duplex pipe for requests and events or allow multiple server instances."
-    suggested_owner: dev
-  - id: "PRESET-001"
-    severity: high
-    finding: "PresetManager is never invoked on import and UI does not call boothy_set_current_preset."
-    suggested_action: "Wire preset selection to boothy_set_current_preset and apply_preset_on_import during ingest."
-    suggested_owner: dev
-  - id: "UI-001"
+  - id: 'VALIDATION-AC3'
     severity: medium
-    finding: "UI does not handle boothy-photo-transferred/boothy-camera-error events or trigger ingest."
-    suggested_action: "Add UI listeners to call boothy_handle_photo_transferred and show customer-safe errors."
-    suggested_owner: dev
-  - id: "TEST-001"
+    finding: 'Offline/no-network validation evidence for ingest + preset flow is not documented.'
+    suggested_action: 'Provide manual validation evidence or add a repeatable offline test.'
+    suggested_owner: qa
+  - id: 'VALIDATION-AC4'
     severity: medium
-    finding: "Integration/regression tests for sidecar ingest and offline/crash flows are missing."
-    suggested_action: "Add mock sidecar integration test and regression checks per testing strategy."
+    finding: 'Sidecar crash/not-running behavior (customer-safe error + browse/export availability) is not documented.'
+    suggested_action: 'Provide manual validation evidence or add a regression checklist/test.'
     suggested_owner: qa
 
 risk_summary:
-  totals: { critical: 0, high: 3, medium: 2, low: 0 }
+  totals: { critical: 0, high: 0, medium: 2, low: 0 }
   recommendations:
     must_fix:
-      - "Fix compile errors and wire IPC/ingest/preset flow end-to-end."
-    monitor:
-      - "Add integration/regression tests and UI error handling."
+      - 'Document offline/no-network validation for AC3.'
+      - 'Document sidecar crash/not-running validation for AC4 including browse/export behavior.'
+    monitor: []
 
-quality_score: 20
-expires: "2026-01-28T09:59:12Z"
+quality_score: 80
+expires: '2026-01-30T00:00:00Z'
 
 evidence:
-  tests_reviewed: 2
-  risks_identified: 5
+  tests_reviewed: 27
+  risks_identified: 2
   trace:
-    ac_covered: []
-    ac_gaps: [1, 2, 3, 4]
+    ac_covered: [1, 2]
+    ac_gaps: [3, 4]
 
 nfr_validation:
   security:
     status: PASS
-    notes: "Named Pipe ACL hardening added via PipeSecurity."
+    notes: 'Named Pipe ACL hardening present; no plaintext logging observed.'
   performance:
     status: CONCERNS
-    notes: "Blocking IO inside tokio task may impact responsiveness."
+    notes: 'NFR3 latency target not measured in this review.'
   reliability:
-    status: FAIL
-    notes: "IPC events and ingest/preset flow are not wired end-to-end and build does not compile."
-  maintainability:
     status: CONCERNS
-    notes: "Duplicate watcher paths and incomplete wiring increase complexity."
+    notes: 'Offline and sidecar-crash behaviors lack validation evidence.'
+  maintainability:
+    status: PASS
+    notes: 'IPC/ingest/preset modules are organized with unit tests.'
 
 recommendations:
   immediate:
-    - action: "Fix compile errors and unify IPC event handling on a single duplex pipe."
-      refs:
-        - "apps/boothy/src-tauri/src/camera/ipc_client.rs"
-        - "apps/boothy/src-tauri/src/main.rs"
-    - action: "Wire ingest + preset snapshot flow to import pipeline and UI."
-      refs:
-        - "apps/boothy/src-tauri/src/ingest/file_watcher.rs"
-        - "apps/boothy/src-tauri/src/preset/preset_manager.rs"
+    - action: 'Provide offline and sidecar-crash validation evidence (manual steps or automated checks).' 
+      refs: ['docs/stories/1.2.camera-sidecar-ipc-transfer-ingest-preset-apply.md']
   future:
-    - action: "Add mock sidecar integration test and regression coverage for offline/crash flows."
-      refs:
-        - "docs/architecture/testing-strategy.md"
+    - action: 'Add repeatable regression checklist/test for offline + crash flows.'
+      refs: ['docs/architecture/testing-strategy.md']

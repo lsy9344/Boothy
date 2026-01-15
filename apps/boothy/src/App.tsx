@@ -527,6 +527,8 @@ function App() {
   const isInitialMount = useRef(true);
   const currentFolderPathRef = useRef<string>(currentFolderPath);
   const pendingSessionRef = useRef<BoothySession | null>(null);
+  const lastAppliedSessionRef = useRef<string | null>(null);
+  const selectSubfolderRequestRef = useRef(0);
   const isCustomerMode = boothyMode === 'customer';
 
   const [exportState, setExportState] = useState<ExportState>({
@@ -1324,7 +1326,14 @@ function App() {
 
   const handleSelectSubfolder = useCallback(
     async (path: string | null, isNewRoot = false) => {
+      const requestId = selectSubfolderRequestRef.current + 1;
+      selectSubfolderRequestRef.current = requestId;
+      const isLatestRequest = () => selectSubfolderRequestRef.current === requestId;
+
       await invoke('cancel_thumbnail_generation');
+      if (!isLatestRequest()) {
+        return;
+      }
       setIsViewLoading(true);
       setSearchCriteria({ tags: [], text: '', mode: 'OR' });
       setLibraryScrollTop(0);
@@ -1369,12 +1378,19 @@ function App() {
           handleSettingsChange({ ...appSettings, lastRootPath: path } as AppSettings);
           try {
             const treeData = await invoke(Invokes.GetFolderTree, { path });
+            if (!isLatestRequest()) {
+              return;
+            }
             setFolderTree(treeData);
           } catch (err) {
-            console.error('Failed to load folder tree:', err);
-            setError(`Failed to load folder tree: ${err}. Some sub-folders might be inaccessible.`);
+            if (isLatestRequest()) {
+              console.error('Failed to load folder tree:', err);
+              setError(`Failed to load folder tree: ${err}. Some sub-folders might be inaccessible.`);
+            }
           } finally {
-            setIsTreeLoading(false);
+            if (isLatestRequest()) {
+              setIsTreeLoading(false);
+            }
           }
           // Note: File watcher is started by backend when session is created/restored
           // No need to call StartFolderWatcher from frontend
@@ -1395,6 +1411,9 @@ function App() {
           libraryViewMode === LibraryViewMode.Recursive ? Invokes.ListImagesRecursive : Invokes.ListImagesInDir;
 
         const files: ImageFile[] = await invoke(command, { path });
+        if (!isLatestRequest()) {
+          return;
+        }
         const exifSortKeys = ['date_taken', 'iso', 'shutter_speed', 'aperture', 'focal_length'];
         const isExifSortActive = exifSortKeys.includes(sortCriteria.key);
         const shouldReadExif = appSettings?.enableExifReading ?? false;
@@ -1404,6 +1423,9 @@ function App() {
 
           if (isExifSortActive) {
             const exifDataMap: Record<string, any> = await invoke(Invokes.ReadExifForPaths, { paths });
+            if (!isLatestRequest()) {
+              return;
+            }
             const finalImageList = files.map((image) => ({
               ...image,
               exif: exifDataMap[image.path] || image.exif || null,
@@ -1413,12 +1435,14 @@ function App() {
             setImageList(files);
             invoke(Invokes.ReadExifForPaths, { paths })
               .then((exifDataMap: any) => {
-                setImageList((currentImageList) =>
-                  currentImageList.map((image) => ({
-                    ...image,
-                    exif: exifDataMap[image.path] || image.exif || null,
-                  })),
-                );
+                if (isLatestRequest()) {
+                  setImageList((currentImageList) =>
+                    currentImageList.map((image) => ({
+                      ...image,
+                      exif: exifDataMap[image.path] || image.exif || null,
+                    })),
+                  );
+                }
               })
               .catch((err) => {
                 console.error('Failed to read EXIF data in background:', err);
@@ -1428,11 +1452,15 @@ function App() {
           setImageList(files);
         }
       } catch (err) {
-        console.error('Failed to load folder contents:', err);
-        setError('Failed to load images from the selected folder.');
-        setIsTreeLoading(false);
+        if (isLatestRequest()) {
+          console.error('Failed to load folder contents:', err);
+          setError('Failed to load images from the selected folder.');
+          setIsTreeLoading(false);
+        }
       } finally {
-        setIsViewLoading(false);
+        if (isLatestRequest()) {
+          setIsViewLoading(false);
+        }
       }
     },
     [
@@ -1467,6 +1495,13 @@ function App() {
         return;
       }
 
+      const sessionKey = session.session_folder_name || rawPath;
+      if (sessionKey && lastAppliedSessionRef.current === sessionKey) {
+        pendingSessionRef.current = null;
+        return;
+      }
+
+      lastAppliedSessionRef.current = sessionKey || null;
       pendingSessionRef.current = null;
       setRootPath(rawPath);
       handleSelectSubfolder(rawPath, true);

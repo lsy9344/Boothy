@@ -29,9 +29,10 @@ pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     let stdout_config = Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
-                "[{}][{}] {}",
+                "[{}][{}][{}] {}",
                 Local::now().format("%H:%M:%S"),
                 record.level(),
+                record.target(),
                 message
             ))
         })
