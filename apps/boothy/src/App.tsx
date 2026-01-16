@@ -49,7 +49,10 @@ import PresetsPanel from './components/panel/right/PresetsPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
 import LibraryExportPanel from './components/panel/right/LibraryExportPanel';
 import MasksPanel from './components/panel/right/MasksPanel';
+import CameraControlsPanel from './components/panel/CameraControlsPanel';
 import BottomBar from './components/panel/BottomBar';
+import ExportDecisionModal from './components/session/ExportDecisionModal';
+import ExportProgressBar from './components/session/ExportProgressBar';
 import { ContextMenuProvider, useContextMenu } from './context/ContextMenuContext';
 import TaggingSubMenu from './context/TaggingSubMenu';
 import AdminModeModal from './components/modals/AdminModeModal';
@@ -63,6 +66,10 @@ import DenoiseModal from './components/modals/DenoiseModal';
 import CollageModal from './components/modals/CollageModal';
 import CopyPasteSettingsModal from './components/modals/CopyPasteSettingsModal';
 import CullingModal from './components/modals/CullingModal';
+import EndScreenModal from './components/modals/EndScreenModal';
+import TimelineLockoutModal from './components/modals/TimelineLockoutModal';
+import TimelineResetModal from './components/modals/TimelineResetModal';
+import SessionWarningModal from './components/modals/SessionWarningModal';
 import { useHistoryState } from './hooks/useHistoryState';
 import Resizer from './components/ui/Resizer';
 import {
@@ -79,7 +86,13 @@ import {
 } from './utils/adjustments';
 import { generatePaletteFromImage } from './utils/palette';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useExportProgress } from './hooks/useExportProgress';
 import { THEMES, DEFAULT_THEME_ID, ThemeProps } from './utils/themes';
+import {
+  getBoothyEndScreenMessage,
+  getBoothyResetGracePeriodSeconds,
+  getBoothyTMinus5WarningMessage,
+} from './utils/boothySettings';
 import { SubMask, ToolType } from './components/panel/right/Masks';
 import {
   EXPORT_TIMEOUT,
@@ -199,6 +212,19 @@ interface BoothyModeState {
   has_admin_password: boolean;
 }
 
+interface BoothySessionTimerTickPayload {
+  remaining_seconds: number;
+}
+
+interface BoothyCameraErrorPayload {
+  code?: string;
+  message?: string;
+  diagnostic?: string | null;
+  correlationId?: string;
+  context?: Record<string, any>;
+  severity?: string;
+}
+
 const DEBUG = false;
 const REVOCATION_DELAY = 5000;
 
@@ -294,6 +320,14 @@ const sanitizeSettingsForSave = (settings: any) => {
     }
   }
 
+  if (typeof next.boothy_end_screen_message === 'string') {
+    next.boothy_end_screen_message = next.boothy_end_screen_message.trim();
+  }
+
+  if (typeof next.boothy_t_minus_5_warning_message === 'string') {
+    next.boothy_t_minus_5_warning_message = next.boothy_t_minus_5_warning_message.trim();
+  }
+
   return next;
 };
 
@@ -344,8 +378,10 @@ function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [boothySession, setBoothySession] = useState<BoothySession | null>(null);
+  const [sessionRemainingSeconds, setSessionRemainingSeconds] = useState<number | null>(null);
   const [boothyMode, setBoothyMode] = useState<'customer' | 'admin'>('customer');
   const [boothyHasAdminPassword, setBoothyHasAdminPassword] = useState(false);
+  const hasBoothySession = Boolean(boothySession?.session_name || boothySession?.session_folder_name);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isAdminActionRunning, setIsAdminActionRunning] = useState(false);
   const [adminModalError, setAdminModalError] = useState<string | null>(null);
@@ -442,6 +478,7 @@ function App() {
     effects: false,
   });
   const [isLibraryExportPanelVisible, setIsLibraryExportPanelVisible] = useState(false);
+  const [isExportDecisionModalOpen, setIsExportDecisionModalOpen] = useState(false);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>(LibraryViewMode.Flat);
   const [leftPanelWidth, setLeftPanelWidth] = useState<number>(256);
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(320);
@@ -453,6 +490,18 @@ function App() {
   const [copiedAdjustments, setCopiedAdjustments] = useState<Adjustments | null>(null);
   const [isStraightenActive, setIsStraightenActive] = useState(false);
   const [isWbPickerActive, setIsWbPickerActive] = useState(false);
+  const [isSessionLocked, setIsSessionLocked] = useState(false);
+  const [isLockoutModalOpen, setIsLockoutModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isEndScreenVisible, setIsEndScreenVisible] = useState(false);
+  const [isTMinus5ModalOpen, setIsTMinus5ModalOpen] = useState(false);
+  const [tMinus5Message, setTMinus5Message] = useState<string | null>(null);
+  const [adminOverrideActive, setAdminOverrideActive] = useState(false);
+  const [pendingReset, setPendingReset] = useState(false);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEditingLockedRef = useRef(false);
+  const pendingResetRef = useRef(false);
+  const resetPostponedRef = useRef(false);
 
   const sendFrontendLog = useCallback(
     (level: 'debug' | 'info' | 'warn' | 'error', message: string, context?: Record<string, any>) => {
@@ -464,6 +513,19 @@ function App() {
     },
     [],
   );
+  const logAdminOverride = useCallback(
+    (action: string) => {
+      sendFrontendLog('info', 'timeline-admin-override', {
+        action,
+        timestamp: new Date().toISOString(),
+      });
+      setAdminOverrideActive(true);
+    },
+    [sendFrontendLog],
+  );
+  const reportLockoutBlockedAction = useCallback(() => {
+    setError('Session is locked. Editing is disabled.');
+  }, []);
   const [copiedFilePaths, setCopiedFilePaths] = useState<Array<string>>([]);
   const [copiedSectionAdjustments, setCopiedSectionAdjustments] = useState(null);
   const [copiedMask, setCopiedMask] = useState<MaskContainer | null>(null);
@@ -530,6 +592,12 @@ function App() {
   const lastAppliedSessionRef = useRef<string | null>(null);
   const selectSubfolderRequestRef = useRef(0);
   const isCustomerMode = boothyMode === 'customer';
+  const isEditingLocked = isSessionLocked || (isCustomerMode && isTMinus5ModalOpen);
+  const {
+    state: boothyExportProgress,
+    reset: resetBoothyExportProgress,
+    setError: setBoothyExportError,
+  } = useExportProgress();
 
   const [exportState, setExportState] = useState<ExportState>({
     errorMessage: '',
@@ -563,6 +631,14 @@ function App() {
     return () => clearTimeout(timer);
   }, [isPasted]);
 
+  useEffect(() => {
+    isEditingLockedRef.current = isEditingLocked;
+  }, [isEditingLocked]);
+
+  useEffect(() => {
+    pendingResetRef.current = pendingReset;
+  }, [pendingReset]);
+
   const debouncedSetHistory = useMemo(
     () => debounce((newAdjustments) => setHistoryAdjustments(newAdjustments), 300),
     [setHistoryAdjustments],
@@ -581,6 +657,10 @@ function App() {
 
   const handleStraighten = useCallback(
     (angleCorrection: number) => {
+      if (isEditingLockedRef.current) {
+        reportLockoutBlockedAction();
+        return;
+      }
       setAdjustments((prev: Partial<Adjustments>) => {
         const newRotation = (prev.rotation || 0) + angleCorrection;
         return { ...prev, rotation: newRotation, crop: null };
@@ -588,7 +668,7 @@ function App() {
 
       setIsStraightenActive(false);
     },
-    [setAdjustments],
+    [setAdjustments, reportLockoutBlockedAction],
   );
 
   const toggleWbPicker = useCallback(() => {
@@ -1048,7 +1128,7 @@ function App() {
   );
 
   const allowedRightPanels = useMemo(
-    () => (isCustomerMode ? [Panel.Presets, Panel.Export] : null),
+    () => (isCustomerMode ? [Panel.Presets, Panel.Export] : null), // null = all panels including CameraControls
     [isCustomerMode],
   );
 
@@ -1503,6 +1583,19 @@ function App() {
 
       lastAppliedSessionRef.current = sessionKey || null;
       pendingSessionRef.current = null;
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = null;
+      }
+      pendingResetRef.current = false;
+      resetPostponedRef.current = false;
+      setPendingReset(false);
+      setIsSessionLocked(false);
+      setIsLockoutModalOpen(false);
+      setIsResetModalOpen(false);
+      setIsTMinus5ModalOpen(false);
+      setIsEndScreenVisible(false);
+      setAdminOverrideActive(false);
       setRootPath(rawPath);
       handleSelectSubfolder(rawPath, true);
     },
@@ -1531,15 +1624,17 @@ function App() {
         console.error('Failed to load Boothy mode state:', err);
       });
 
-    invoke(Invokes.BoothyGetActiveSession)
-      .then((session: BoothySession | null) => {
-        if (session) {
-          applyBoothySession(session);
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load active Boothy session:', err);
-      });
+    // Disabled: Auto-restore session on startup
+    // Users must always enter a session name to begin
+    // invoke(Invokes.BoothyGetActiveSession)
+    //   .then((session: BoothySession | null) => {
+    //     if (session) {
+    //       applyBoothySession(session);
+    //     }
+    //   })
+    //   .catch((err) => {
+    //     console.error('Failed to load active Boothy session:', err);
+    //   });
   }, [appSettings, applyBoothySession]);
 
   const isMissingFileError = (err: unknown) => {
@@ -1753,6 +1848,10 @@ function App() {
 
   const executeDelete = useCallback(
     async (pathsToDelete: Array<string>, options = { includeAssociated: false }) => {
+      if (isEditingLockedRef.current) {
+        reportLockoutBlockedAction();
+        return;
+      }
       if (!pathsToDelete || pathsToDelete.length === 0) {
         return;
       }
@@ -1837,10 +1936,15 @@ function App() {
       libraryActivePath,
       sortedImageList,
       handleImageSelect,
+      reportLockoutBlockedAction,
     ],
   );
 
   const handleDeleteSelected = useCallback(() => {
+    if (isEditingLockedRef.current) {
+      reportLockoutBlockedAction();
+      return;
+    }
     const pathsToDelete = multiSelectedPaths;
     if (pathsToDelete.length === 0) {
       return;
@@ -1877,7 +1981,7 @@ function App() {
       onConfirm: () => executeDelete(pathsToDelete, { includeAssociated: false }),
       title: modalTitle,
     });
-  }, [multiSelectedPaths, executeDelete, imageList]);
+  }, [multiSelectedPaths, executeDelete, imageList, reportLockoutBlockedAction]);
 
   const handleToggleFullScreen = useCallback(() => {
     if (isFullScreen) {
@@ -2326,7 +2430,12 @@ function App() {
     confirmModalState.isOpen ||
     panoramaModalState.isOpen ||
     cullingModalState.isOpen ||
-    collageModalState.isOpen;
+    collageModalState.isOpen ||
+    isLockoutModalOpen ||
+    isResetModalOpen ||
+    isEndScreenVisible ||
+    isEditingLocked ||
+    (isCustomerMode && isTMinus5ModalOpen);
 
   useKeyboardShortcuts({
     isModalOpen: isAnyModalOpen,
@@ -2371,6 +2480,152 @@ function App() {
     baseRenderSize,
     originalSize,
   });
+
+  const clearResetTimer = useCallback(() => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+  }, []);
+
+  const resetSessionContext = useCallback(() => {
+    clearResetTimer();
+    setPendingReset(false);
+    pendingResetRef.current = false;
+    resetPostponedRef.current = false;
+    setIsSessionLocked(false);
+    setIsLockoutModalOpen(false);
+    setIsResetModalOpen(false);
+    setIsTMinus5ModalOpen(false);
+    setIsEndScreenVisible(false);
+    setAdminOverrideActive(false);
+    setBoothySession(null);
+    setSessionRemainingSeconds(null);
+    pendingSessionRef.current = null;
+    lastAppliedSessionRef.current = null;
+    setRootPath(null);
+    setCurrentFolderPath(null);
+    setImageList([]);
+    setImageRatings({});
+    setFolderTree(null);
+    setMultiSelectedPaths([]);
+    setLibraryActivePath(null);
+    setIsLibraryExportPanelVisible(false);
+    setExpandedFolders(new Set());
+  }, [clearResetTimer]);
+
+  const startResetFlow = useCallback(() => {
+    const graceSeconds = getBoothyResetGracePeriodSeconds(appSettings);
+    const isBoothyExporting = boothyExportProgress.status === 'exporting';
+    const isBusy =
+      exportState.status === Status.Exporting ||
+      importState.status === Status.Importing ||
+      isBoothyExporting;
+
+    resetPostponedRef.current = false;
+
+    if (!isBusy) {
+      resetSessionContext();
+      return;
+    }
+
+    setPendingReset(true);
+    clearResetTimer();
+    resetTimerRef.current = setTimeout(() => {
+      if (resetPostponedRef.current || !pendingResetRef.current) {
+        return;
+      }
+      sendFrontendLog('warn', 'timeline-reset-grace-exceeded', { graceSeconds });
+      invoke(Invokes.CancelExport).catch(() => { });
+      resetSessionContext();
+    }, graceSeconds * 1000);
+  }, [
+    appSettings,
+    boothyExportProgress.status,
+    clearResetTimer,
+    exportState.status,
+    importState.status,
+    resetSessionContext,
+    sendFrontendLog,
+  ]);
+
+  const handleSessionLockout = useCallback(() => {
+    if (isCustomerMode) {
+      setIsSessionLocked(true);
+      setIsLockoutModalOpen(false);
+    } else {
+      setIsSessionLocked(true);
+      setIsLockoutModalOpen(true);
+    }
+  }, [isCustomerMode]);
+
+  const handleAdminContinueWorking = useCallback(() => {
+    setIsSessionLocked(false);
+    setIsLockoutModalOpen(false);
+    logAdminOverride('t_zero_continue_working');
+  }, [logAdminOverride]);
+
+  const handleAdminDismissLockout = useCallback(() => {
+    setIsLockoutModalOpen(false);
+  }, []);
+
+  const handleAdminResetNow = useCallback(() => {
+    setIsResetModalOpen(false);
+    startResetFlow();
+  }, [startResetFlow]);
+
+  const handleAdminPostponeReset = useCallback(() => {
+    resetPostponedRef.current = true;
+    setPendingReset(false);
+    clearResetTimer();
+    setIsResetModalOpen(false);
+    logAdminOverride('n_59_reset_postpone');
+  }, [clearResetTimer, logAdminOverride]);
+
+  const handleTMinus5Confirm = useCallback(() => {
+    setIsTMinus5ModalOpen(false);
+  }, []);
+
+  const handleTMinus5Dismiss = useCallback(() => {
+    setIsTMinus5ModalOpen(false);
+    logAdminOverride('t_minus_5_dismiss');
+  }, [logAdminOverride]);
+
+  const handleTMinus5Event = useCallback(
+    (payload: any) => {
+      const fallbackMessage = getBoothyTMinus5WarningMessage(appSettings);
+      const message =
+        typeof payload?.message === 'string' && payload.message.trim().length > 0
+          ? payload.message
+          : fallbackMessage;
+      setTMinus5Message(message);
+      setIsTMinus5ModalOpen(true);
+    },
+    [appSettings],
+  );
+
+  const handleShowEndScreen = useCallback(() => {
+    setIsEndScreenVisible(true);
+  }, []);
+
+  const handleExportDecisionOpen = useCallback(() => {
+    if (!hasBoothySession) {
+      return;
+    }
+    setIsLibraryExportPanelVisible(false);
+    setIsExportDecisionModalOpen(true);
+  }, [hasBoothySession]);
+
+  const handleExportDecisionSelect = useCallback(
+    (choice: 'overwriteAll' | 'continueFromBackground') => {
+      setIsExportDecisionModalOpen(false);
+      invoke(Invokes.BoothyHandleExportDecision, { choice }).catch((err) => {
+        console.error('Failed to start Boothy export:', err);
+        setBoothyExportError(typeof err === 'string' ? err : 'Failed to start export.');
+      });
+    },
+    [setBoothyExportError],
+  );
 
   useEffect(() => {
     let isEffectActive = true;
@@ -2513,11 +2768,49 @@ function App() {
           const session = event.payload as BoothySession;
           if (session) {
             applyBoothySession(session);
+            setSessionRemainingSeconds(null);
           }
+        }
+      }),
+      listen('boothy-session-timer-tick', (event: any) => {
+        if (isEffectActive) {
+          const payload = event.payload as BoothySessionTimerTickPayload;
+          if (typeof payload?.remaining_seconds === 'number') {
+            setSessionRemainingSeconds(payload.remaining_seconds);
+          }
+        }
+      }),
+      listen('boothy-session-t-minus-5', (event: any) => {
+        if (isEffectActive) {
+          handleTMinus5Event(event.payload);
+        }
+      }),
+      listen('boothy-session-t-zero', () => {
+        if (isEffectActive) {
+          handleSessionLockout();
+          handleExportDecisionOpen();
+          handleShowEndScreen();
+        }
+      }),
+      listen('boothy-session-reset', () => {
+        if (isEffectActive) {
+          if (isCustomerMode) {
+            startResetFlow();
+          } else {
+            setIsResetModalOpen(true);
+          }
+        }
+      }),
+      listen('boothy-show-end-screen', () => {
+        if (isEffectActive) {
+          handleShowEndScreen();
         }
       }),
       listen('boothy-photo-transferred', (event: any) => {
         if (isEffectActive) {
+          if (isEditingLockedRef.current) {
+            return;
+          }
           const payload = event.payload;
           const path = typeof payload === 'string' ? payload : payload?.path;
           const correlationId = typeof payload === 'object' ? payload?.correlationId : undefined;
@@ -2537,6 +2830,9 @@ function App() {
       }),
       listen('boothy-new-photo', (event: any) => {
         if (isEffectActive) {
+          if (isEditingLockedRef.current) {
+            return;
+          }
           const payload = event.payload;
           const path = typeof payload === 'string' ? payload : payload?.path;
           if (!path) {
@@ -2564,13 +2860,29 @@ function App() {
       }),
       listen('boothy-camera-error', (event: any) => {
         if (isEffectActive) {
-          const payload = event.payload;
-          const message =
-            typeof payload === 'string'
-              ? payload
-              : typeof payload?.message === 'string'
-                ? payload.message
-                : 'Camera unavailable. Please check the connection.';
+          const payload = event.payload as BoothyCameraErrorPayload | string;
+          let message = 'Camera unavailable. Please check the connection.';
+
+          if (typeof payload === 'string') {
+            message = payload;
+          } else if (typeof payload?.message === 'string') {
+            message = payload.message;
+            if (
+              boothyMode === 'admin' &&
+              typeof payload.diagnostic === 'string' &&
+              payload.diagnostic.trim()
+            ) {
+              const details: string[] = [payload.diagnostic];
+              if (
+                typeof payload.correlationId === 'string' &&
+                payload.correlationId.trim()
+              ) {
+                details.push(`Correlation ID: ${payload.correlationId}`);
+              }
+              message = `${message} (Details: ${details.join(' | ')})`;
+            }
+          }
+
           setError(message);
         }
       }),
@@ -2595,8 +2907,27 @@ function App() {
     reconcileSelectionAfterRefresh,
     handleImageSelect,
     applyBoothySession,
+    handleSessionLockout,
+    handleExportDecisionOpen,
+    handleTMinus5Event,
+    handleShowEndScreen,
+    startResetFlow,
     throttledSessionRefresh,
+    boothyMode,
+    isCustomerMode,
   ]);
+
+  useEffect(() => {
+    const isBoothyExporting = boothyExportProgress.status === 'exporting';
+    const isBusy =
+      exportState.status === Status.Exporting ||
+      importState.status === Status.Importing ||
+      isBoothyExporting;
+    if (!pendingResetRef.current || resetPostponedRef.current || isBusy) {
+      return;
+    }
+    resetSessionContext();
+  }, [boothyExportProgress.status, exportState.status, importState.status, resetSessionContext]);
 
   useEffect(() => {
     if ([Status.Success, Status.Error, Status.Cancelled].includes(exportState.status)) {
@@ -2608,6 +2939,17 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [exportState.status]);
+
+  useEffect(() => {
+    if (boothyExportProgress.status !== 'complete') {
+      return;
+    }
+    handleShowEndScreen();
+    const timer = setTimeout(() => {
+      resetBoothyExportProgress();
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [boothyExportProgress.status, handleShowEndScreen, resetBoothyExportProgress]);
 
   useEffect(() => {
     if ([Status.Success, Status.Error].includes(importState.status)) {
@@ -2900,23 +3242,44 @@ function App() {
     [applyBoothySession],
   );
 
+  const syncBoothyModeState = useCallback(() => {
+    return invoke(Invokes.BoothyGetModeState)
+      .then((state: BoothyModeState) => {
+        if (state?.mode) {
+          setBoothyMode(state.mode);
+        }
+        setBoothyHasAdminPassword(!!state?.has_admin_password);
+      })
+      .catch((err) => {
+        console.error('Failed to sync Boothy mode state:', err);
+      });
+  }, []);
+
   const handleAdminToggle = useCallback(() => {
     if (boothyMode === 'admin') {
-      invoke(Invokes.BoothySwitchToCustomerMode).catch((err) => {
-        console.error('Failed to switch to customer mode:', err);
-        setError('Failed to switch to customer mode.');
-      });
+      invoke(Invokes.BoothySwitchToCustomerMode)
+        .then(() => {
+          setBoothyMode('customer');
+          void syncBoothyModeState();
+        })
+        .catch((err) => {
+          console.error('Failed to switch to customer mode:', err);
+          setError('Failed to switch to customer mode.');
+        });
       return;
     }
     setAdminModalError(null);
     setIsAdminModalOpen(true);
-  }, [boothyMode]);
+  }, [boothyMode, syncBoothyModeState]);
 
   const handleSetAdminPassword = useCallback(async (password: string) => {
     setIsAdminActionRunning(true);
     setAdminModalError(null);
     try {
       await invoke(Invokes.BoothySetAdminPassword, { password });
+      setBoothyMode('admin');
+      setBoothyHasAdminPassword(true);
+      await syncBoothyModeState();
       setIsAdminModalOpen(false);
     } catch (err) {
       console.error('Failed to set admin password:', err);
@@ -2924,7 +3287,7 @@ function App() {
     } finally {
       setIsAdminActionRunning(false);
     }
-  }, []);
+  }, [syncBoothyModeState]);
 
   const handleUnlockAdmin = useCallback(async (password: string) => {
     setIsAdminActionRunning(true);
@@ -2935,6 +3298,9 @@ function App() {
         setAdminModalError('Incorrect password.');
         return;
       }
+      setBoothyMode('admin');
+      setBoothyHasAdminPassword(true);
+      await syncBoothyModeState();
       setIsAdminModalOpen(false);
     } catch (err) {
       console.error('Failed to unlock admin mode:', err);
@@ -2942,7 +3308,7 @@ function App() {
     } finally {
       setIsAdminActionRunning(false);
     }
-  }, []);
+  }, [syncBoothyModeState]);
 
   const handleContinueSession = () => {
     const restore = async () => {
@@ -3551,6 +3917,10 @@ function App() {
     };
 
     const onExportClick = () => {
+      if (hasBoothySession) {
+        handleExportDecisionOpen();
+        return;
+      }
       if (selectedImage) {
         if (selectedImage.path !== path) {
           handleImageSelect(path);
@@ -4039,6 +4409,14 @@ function App() {
   const boothySessionLabel =
     boothySession?.session_name || boothySession?.session_folder_name || null;
 
+  const handleLibraryExportClick = useCallback(() => {
+    if (hasBoothySession) {
+      handleExportDecisionOpen();
+      return;
+    }
+    setIsLibraryExportPanelVisible((prev) => !prev);
+  }, [handleExportDecisionOpen, hasBoothySession]);
+
   const memoizedLibraryView = useMemo(
     () => (
       <div className="flex flex-row flex-grow h-full min-h-0">
@@ -4047,6 +4425,7 @@ function App() {
             activePath={libraryActivePath}
             appSettings={appSettings}
             boothySessionName={boothySessionLabel}
+            sessionRemainingSeconds={sessionRemainingSeconds}
             currentFolderPath={currentFolderPath}
             filterCriteria={filterCriteria}
             imageList={sortedImageList}
@@ -4089,17 +4468,17 @@ function App() {
           {rootPath && (
             <BottomBar
               isCopied={isCopied}
-              isCopyDisabled={multiSelectedPaths.length !== 1}
-              isExportDisabled={multiSelectedPaths.length === 0}
+              isCopyDisabled={isEditingLocked || multiSelectedPaths.length !== 1}
+              isExportDisabled={isEditingLocked || multiSelectedPaths.length === 0}
               isCustomerMode={isCustomerMode}
               isLibraryView={true}
               isPasted={isPasted}
-              isPasteDisabled={copiedAdjustments === null || multiSelectedPaths.length === 0}
-              isRatingDisabled={multiSelectedPaths.length === 0}
-              isResetDisabled={multiSelectedPaths.length === 0}
+              isPasteDisabled={isEditingLocked || copiedAdjustments === null || multiSelectedPaths.length === 0}
+              isRatingDisabled={isEditingLocked || multiSelectedPaths.length === 0}
+              isResetDisabled={isEditingLocked || multiSelectedPaths.length === 0}
               multiSelectedPaths={multiSelectedPaths}
               onCopy={handleCopyAdjustments}
-              onExportClick={() => setIsLibraryExportPanelVisible((prev) => !prev)}
+              onExportClick={handleLibraryExportClick}
               onOpenCopyPasteSettings={() => setIsCopyPasteSettingsModalOpen(true)}
               onPaste={() => handlePasteAdjustments()}
               onRate={handleRate}
@@ -4133,12 +4512,15 @@ function App() {
       thumbnailAspectRatio,
       thumbnails,
       thumbnailSize,
+      sessionRemainingSeconds,
       isCopied,
       isPasted,
       copiedAdjustments,
       libraryActiveAdjustments,
       isCustomerMode,
+      isEditingLocked,
       isStartingSession,
+      handleLibraryExportClick,
       handleStartSession,
     ],
   );
@@ -4170,6 +4552,7 @@ function App() {
               isMaskControlHovered={isMaskControlHovered}
               isStraightenActive={isStraightenActive}
               isWaveformVisible={isWaveformVisible}
+              sessionRemainingSeconds={sessionRemainingSeconds}
               onBackToLibrary={handleBackToLibrary}
               onCloseWaveform={() => setIsWaveformVisible(false)}
               onContextMenu={handleEditorContextMenu}
@@ -4210,13 +4593,13 @@ function App() {
               imageList={sortedImageList}
               imageRatings={imageRatings}
               isCopied={isCopied}
-              isCopyDisabled={!selectedImage}
+              isCopyDisabled={isEditingLocked || !selectedImage}
               isCustomerMode={isCustomerMode}
               isFilmstripVisible={uiVisibility.filmstrip}
               isLoading={isViewLoading}
               isPasted={isPasted}
-              isPasteDisabled={copiedAdjustments === null}
-              isRatingDisabled={!selectedImage}
+              isPasteDisabled={isEditingLocked || copiedAdjustments === null}
+              isRatingDisabled={isEditingLocked || !selectedImage}
               isResizing={isResizing}
               multiSelectedPaths={multiSelectedPaths}
               displaySize={displaySize}
@@ -4285,6 +4668,7 @@ function App() {
                         <CropPanel
                           adjustments={adjustments}
                           isStraightenActive={isStraightenActive}
+                          isSessionLocked={isEditingLocked}
                           selectedImage={selectedImage}
                           setAdjustments={setAdjustments}
                           setIsStraightenActive={setIsStraightenActive}
@@ -4314,6 +4698,8 @@ function App() {
                         <PresetsPanel
                           activePanel={activeRightPanel}
                           adjustments={adjustments}
+                          isSessionLocked={isEditingLocked}
+                          onBlockedAction={reportLockoutBlockedAction}
                           selectedImage={selectedImage}
                           setAdjustments={setAdjustments}
                         />
@@ -4326,6 +4712,9 @@ function App() {
                           selectedImage={selectedImage}
                           setExportState={setExportState}
                         />
+                      )}
+                      {renderedRightPanel === Panel.CameraControls && (
+                        <CameraControlsPanel />
                       )}
                     </motion.div>
                   )}
@@ -4366,10 +4755,20 @@ function App() {
         <TitleBar
           boothyMode={boothyMode}
           boothyHasAdminPassword={boothyHasAdminPassword}
+          adminOverrideActive={adminOverrideActive}
           isAdminActionRunning={isAdminActionRunning}
           onAdminToggle={handleAdminToggle}
         />
       ))}
+
+      {isSessionLocked && (
+        <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="text-center bg-surface/80 rounded-2xl px-10 py-8 shadow-2xl">
+            <h2 className="text-2xl font-semibold text-text-primary mb-2">Session Locked</h2>
+            <p className="text-sm text-text-secondary">Editing is disabled until the next session.</p>
+          </div>
+        </div>
+      )}
 
       <div
         className={clsx('flex-1 flex flex-col min-h-0', [
@@ -4385,6 +4784,10 @@ function App() {
             </button>
           </div>
         )}
+        <ExportProgressBar
+          onDismissError={resetBoothyExportProgress}
+          state={boothyExportProgress}
+        />
         <div className="flex flex-row flex-grow h-full min-h-0">
           {memoizedFolderTree}
           <div className="flex-1 flex flex-col min-w-0">{renderContent()}</div>
@@ -4409,6 +4812,34 @@ function App() {
           </div>
         </div>
       </div>
+      <SessionWarningModal
+        isBlocking={isCustomerMode}
+        isOpen={isTMinus5ModalOpen}
+        message={tMinus5Message || getBoothyTMinus5WarningMessage(appSettings)}
+        onClose={isCustomerMode ? handleTMinus5Confirm : handleTMinus5Dismiss}
+      />
+      <TimelineLockoutModal
+        isOpen={isLockoutModalOpen}
+        onContinue={handleAdminContinueWorking}
+        onDismiss={handleAdminDismissLockout}
+      />
+      <TimelineResetModal
+        graceSeconds={getBoothyResetGracePeriodSeconds(appSettings)}
+        isExporting={exportState.status === Status.Exporting || importState.status === Status.Importing}
+        isOpen={isResetModalOpen}
+        onPostpone={handleAdminPostponeReset}
+        onResetNow={handleAdminResetNow}
+      />
+      <ExportDecisionModal
+        isOpen={isExportDecisionModalOpen}
+        onSelect={handleExportDecisionSelect}
+      />
+      <EndScreenModal
+        isAdmin={boothyMode === 'admin'}
+        isOpen={isEndScreenVisible}
+        message={getBoothyEndScreenMessage(appSettings)}
+        onExit={() => setIsEndScreenVisible(false)}
+      />
       <CopyPasteSettingsModal
         isOpen={isCopyPasteSettingsModalOpen}
         onClose={() => setIsCopyPasteSettingsModalOpen(false)}

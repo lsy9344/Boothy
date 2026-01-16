@@ -7,6 +7,7 @@ use crate::file_management::parse_virtual_path;
 use crate::image_processing::ImageMetadata;
 
 pub const COLOR_TAG_PREFIX: &str = "color:";
+#[allow(dead_code)]
 pub const USER_TAG_PREFIX: &str = "user:";
 
 fn modify_tags_for_path(

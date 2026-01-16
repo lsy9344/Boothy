@@ -22,6 +22,12 @@ import Input from '../ui/Input';
 import Slider from '../ui/Slider';
 import { ThemeProps, THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
 import { Invokes } from '../ui/AppProperties';
+import {
+  DEFAULT_END_SCREEN_MESSAGE,
+  DEFAULT_T_MINUS_5_WARNING_MESSAGE,
+  getBoothyEndScreenMessage,
+  getBoothyTMinus5WarningMessage,
+} from '../../utils/boothySettings';
 
 interface ConfirmModalState {
   confirmText: string;
@@ -178,6 +184,10 @@ export default function SettingsPanel({
     processingBackend: appSettings?.processingBackend || 'auto',
     linuxGpuOptimization: appSettings?.linuxGpuOptimization ?? false,
   });
+  const [timelineSettings, setTimelineSettings] = useState({
+    endScreenMessage: getBoothyEndScreenMessage(appSettings),
+    tMinus5WarningMessage: getBoothyTMinus5WarningMessage(appSettings),
+  });
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
   const [logPath, setLogPath] = useState('');
@@ -188,6 +198,10 @@ export default function SettingsPanel({
       rawHighlightCompression: appSettings?.rawHighlightCompression ?? 2.5,
       processingBackend: appSettings?.processingBackend || 'auto',
       linuxGpuOptimization: appSettings?.linuxGpuOptimization ?? false,
+    });
+    setTimelineSettings({
+      endScreenMessage: getBoothyEndScreenMessage(appSettings),
+      tMinus5WarningMessage: getBoothyTMinus5WarningMessage(appSettings),
     });
     setRestartRequired(false);
   }, [appSettings]);
@@ -350,6 +364,40 @@ export default function SettingsPanel({
       onSettingsChange({ ...appSettings, taggingShortcuts: newShortcuts });
       setNewShortcut('');
     }
+  };
+
+  const currentEndMessage = getBoothyEndScreenMessage(appSettings);
+  const currentTMinus5Message = getBoothyTMinus5WarningMessage(appSettings);
+  const trimmedEndMessage = timelineSettings.endScreenMessage.trim();
+  const trimmedTMinus5Message = timelineSettings.tMinus5WarningMessage.trim();
+  const isTimelineDirty =
+    timelineSettings.endScreenMessage !== currentEndMessage ||
+    timelineSettings.tMinus5WarningMessage !== currentTMinus5Message;
+  const isTimelineValid = trimmedEndMessage.length > 0 && trimmedTMinus5Message.length > 0;
+
+  const handleTimelineSave = () => {
+    if (!appSettings || !isTimelineValid) {
+      return;
+    }
+    onSettingsChange({
+      ...appSettings,
+      boothy_end_screen_message: trimmedEndMessage,
+      boothy_t_minus_5_warning_message: trimmedTMinus5Message,
+    });
+  };
+
+  const handleTimelineCancel = () => {
+    setTimelineSettings({
+      endScreenMessage: currentEndMessage,
+      tMinus5WarningMessage: currentTMinus5Message,
+    });
+  };
+
+  const handleTimelineRestoreDefaults = () => {
+    setTimelineSettings({
+      endScreenMessage: DEFAULT_END_SCREEN_MESSAGE,
+      tMinus5WarningMessage: DEFAULT_T_MINUS_5_WARNING_MESSAGE,
+    });
   };
 
   const handleRemoveShortcut = (shortcutToRemove: string) => {
@@ -626,6 +674,60 @@ export default function SettingsPanel({
                           title="Clear Tags"
                         />
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-surface rounded-xl shadow-md">
+                  <h2 className="text-xl font-semibold mb-6 text-accent">Session Timeline Messages</h2>
+                  <div className="space-y-6">
+                    <SettingItem
+                      label="End Screen Message"
+                      description="Displayed on the end screen after a session finishes."
+                    >
+                      <Input
+                        type="text"
+                        value={timelineSettings.endScreenMessage}
+                        onChange={(e) =>
+                          setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }))
+                        }
+                      />
+                    </SettingItem>
+
+                    <SettingItem
+                      label="T-5 Warning Message"
+                      description="Shown in the warning modal when five minutes remain."
+                    >
+                      <Input
+                        type="text"
+                        value={timelineSettings.tMinus5WarningMessage}
+                        onChange={(e) =>
+                          setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }))
+                        }
+                      />
+                    </SettingItem>
+
+                    {!isTimelineValid && (
+                      <p className="text-xs text-red-400">Messages cannot be empty.</p>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <Button
+                        className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
+                        onClick={handleTimelineRestoreDefaults}
+                      >
+                        Restore Defaults
+                      </Button>
+                      <Button
+                        className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
+                        disabled={!isTimelineDirty}
+                        onClick={handleTimelineCancel}
+                      >
+                        Cancel
+                      </Button>
+                      <Button disabled={!isTimelineDirty || !isTimelineValid} onClick={handleTimelineSave}>
+                        Save
+                      </Button>
                     </div>
                   </div>
                 </div>

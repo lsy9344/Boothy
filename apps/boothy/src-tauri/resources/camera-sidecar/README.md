@@ -6,7 +6,7 @@ This directory contains runtime resources bundled with the Boothy installer.
 
 ### Camera Sidecar Binary
 
-- `camera-sidecar.exe` - Headless camera service for Canon EDSDK integration
+- `Boothy.CameraSidecar.exe` - Headless camera service for Canon EDSDK integration
 - Copied from `apps/camera-sidecar/bin/Release/` during build
 
 ### Canon EDSDK DLLs (Internal Deployments Only)
@@ -44,7 +44,7 @@ edsdk/
 
 2. **Copy sidecar binary**:
    ```bash
-   cp ../../camera-sidecar/bin/Release/camera-sidecar.exe ./
+   cp ../../camera-sidecar/bin/Release/Boothy.CameraSidecar.exe ./
    ```
 
 3. **Copy EDSDK DLLs** (from Canon SDK download):

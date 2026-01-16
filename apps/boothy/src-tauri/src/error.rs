@@ -33,6 +33,18 @@ pub struct BoothyError {
     pub severity: ErrorSeverity,
 }
 
+/// Payload for UI-facing error events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiErrorPayload {
+    pub code: String,
+    pub message: String,
+    pub diagnostic: Option<String>,
+    pub context: serde_json::Value,
+    pub severity: ErrorSeverity,
+    pub correlation_id: String,
+}
+
 impl BoothyError {
     /// Create a new error with customer-safe message only
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
@@ -82,6 +94,18 @@ impl BoothyError {
             &self.message
         }
     }
+
+    /// Build a UI payload with both customer-safe and admin diagnostics
+    pub fn to_ui_payload(&self, correlation_id: impl Into<String>) -> UiErrorPayload {
+        UiErrorPayload {
+            code: self.code.clone(),
+            message: self.message.clone(),
+            diagnostic: self.diagnostic.clone(),
+            context: self.context.clone(),
+            severity: self.severity,
+            correlation_id: correlation_id.into(),
+        }
+    }
 }
 
 impl fmt::Display for BoothyError {
@@ -102,6 +126,7 @@ pub mod camera {
     pub const TRANSFER_FAILED: &str = "TRANSFER_FAILED";
     pub const CAMERA_BUSY: &str = "CAMERA_BUSY";
     pub const CAMERA_NOT_FOUND: &str = "CAMERA_NOT_FOUND";
+    pub const CAMERA_SETUP_FAILED: &str = "CAMERA_SETUP_FAILED";
 
     pub fn disconnect(diagnostic: impl Into<String>) -> BoothyError {
         BoothyError::with_diagnostic(
@@ -134,6 +159,15 @@ pub mod camera {
         BoothyError::new(
             CAMERA_NOT_FOUND,
             "No camera detected. Please connect a camera and restart Boothy.",
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn setup_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            CAMERA_SETUP_FAILED,
+            "Failed to configure the camera. Please restart Boothy.",
+            diagnostic,
         )
         .with_severity(ErrorSeverity::Error)
     }
@@ -171,6 +205,15 @@ pub mod ipc {
         BoothyError::with_diagnostic(
             SIDECAR_CRASH,
             "Camera service stopped unexpectedly. Please restart Boothy.",
+            diagnostic,
+        )
+        .with_severity(ErrorSeverity::Critical)
+    }
+
+    pub fn sidecar_start_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            SIDECAR_START_FAILED,
+            "Camera service failed to start. Please restart Boothy.",
             diagnostic,
         )
         .with_severity(ErrorSeverity::Critical)
@@ -290,7 +333,7 @@ pub mod session {
 /// Conversion from IpcError to BoothyError
 impl From<IpcError> for BoothyError {
     fn from(ipc_err: IpcError) -> Self {
-        let code = format!("{:?}", ipc_err.code).to_uppercase();
+        let code = to_screaming_snake(&format!("{:?}", ipc_err.code));
         let diagnostic = ipc_err.diagnostic_message();
         let customer_message = ipc_err.customer_safe_message();
 
@@ -314,6 +357,19 @@ impl From<IpcError> for BoothyError {
 
         error
     }
+}
+
+fn to_screaming_snake(input: &str) -> String {
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if ch.is_uppercase() && idx != 0 {
+            out.push('_');
+        }
+        for up in ch.to_uppercase() {
+            out.push(up);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

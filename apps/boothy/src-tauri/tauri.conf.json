@@ -35,7 +35,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": [
+      "resources/camera-sidecar/**/*",
+      "../../../THIRD_PARTY_NOTICES.md"
+    ],
     "category": "Photography",
     "fileAssociations": [
       {

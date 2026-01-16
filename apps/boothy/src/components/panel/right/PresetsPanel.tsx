@@ -74,6 +74,8 @@ interface PresetItemDisplayProps {
 interface PresetsPanelProps {
   activePanel: Panel | null;
   adjustments: Adjustments;
+  isSessionLocked?: boolean;
+  onBlockedAction?(): void;
   selectedImage: SelectedImage;
   setAdjustments(adjustments: Partial<Adjustments>): void;
 }
@@ -252,6 +254,8 @@ function DroppableFolderItem({ folder, onContextMenu, children, onToggle, isExpa
 export default function PresetsPanel({
   activePanel,
   adjustments,
+  isSessionLocked = false,
+  onBlockedAction,
   selectedImage,
   setAdjustments,
 }: PresetsPanelProps) {
@@ -528,6 +532,10 @@ export default function PresetsPanel({
   ]);
 
   const handleApplyPreset = async (preset: Preset) => {
+    if (isSessionLocked) {
+      onBlockedAction?.();
+      return;
+    }
     setAdjustments((prevAdjustments: Adjustments) => ({
       ...prevAdjustments,
       ...preset.adjustments,

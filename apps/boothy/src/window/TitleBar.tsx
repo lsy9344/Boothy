@@ -7,6 +7,7 @@ import clsx from 'clsx';
 interface TitleBarProps {
   boothyMode?: 'customer' | 'admin';
   boothyHasAdminPassword?: boolean;
+  adminOverrideActive?: boolean;
   isAdminActionRunning?: boolean;
   onAdminToggle?: () => void;
 }
@@ -14,6 +15,7 @@ interface TitleBarProps {
 export default function TitleBar({
   boothyMode = 'customer',
   boothyHasAdminPassword = false,
+  adminOverrideActive = false,
   isAdminActionRunning = false,
   onAdminToggle,
 }: TitleBarProps) {
@@ -90,7 +92,7 @@ export default function TitleBar({
 
       {/* Mode Toggle - Center aligned */}
       {onAdminToggle && (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <div
             className={clsx(
               'flex items-center gap-1.5 px-2 py-1 rounded-l-md text-xs font-medium transition-colors',
@@ -124,6 +126,11 @@ export default function TitleBar({
                   : 'Set Admin'}
             </span>
           </button>
+          {isAdmin && adminOverrideActive && (
+            <span className="ml-2 px-2 py-1 rounded-full text-xs font-semibold text-amber-300 bg-amber-500/20 border border-amber-400/40">
+              Override Active
+            </span>
+          )}
         </div>
       )}
 

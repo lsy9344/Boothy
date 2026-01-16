@@ -114,6 +114,7 @@ This enhancement adapts the existing session and export systems to support **tim
 |--------|------|---------|-------------|--------|
 | Enhancement PRD initiated | 2026-01-15 | 0.1 | Session timeline & smart export brownfield PRD drafted | John (PM) |
 | Human decisions resolved + requirements updated | 2026-01-15 | 0.2 | Added admin override capability, admin settings UI (FR17-18), export destination confirmed (`Jpg` folder), Story 2.2 scope expanded | John (PM) |
+| Naming alignment | 2026-01-15 | 0.3 | Aligned export decision command naming + naming conventions with Boothy standards (`boothy_*` commands, `boothy-*` events) | Sarah (PO) |
 
 ---
 
@@ -417,7 +418,7 @@ Timeline enforcement and export modals must respect existing admin/customer mode
 **Tauri Command Integration:**
 ```rust
 #[tauri::command]
-async fn handle_export_decision(choice: ExportChoice) -> Result<(), String> {
+async fn boothy_handle_export_decision(choice: ExportChoice) -> Result<(), String> {
   // choice: OverwriteAll | ContinueFromBackground
   match choice {
     OverwriteAll => export_all_photos().await,
@@ -483,8 +484,8 @@ src/
 
 **Naming Conventions:**
 - Follow existing RapidRAW patterns (PascalCase components, snake_case Rust modules)
-- Event names: `session:` prefix for all timeline events
-- Commands: `handle_export_decision`, `get_export_status`, etc.
+- Event names: `boothy-*` (hyphenated), consistent with Boothy standards
+- Commands: `boothy_*` (snake_case), e.g. `boothy_handle_export_decision`, `boothy_get_export_status`
 
 ---
 
@@ -844,7 +845,7 @@ Enable reliable unattended kiosk operation through strict time-boxed sessions (N
 
 **Scope:**
 - Create `<ExportDecisionModal>` with two buttons: "모두 덮어쓰기" / "이어서 내보내기"
-- Implement Tauri command `handle_export_decision(choice)` receiving user selection
+- Implement Tauri command `boothy_handle_export_decision(choice)` receiving user selection
 - Implement "Overwrite All" mode: re-export all Raw files, ignore background completion state
 - Implement "Continue" mode: filter to only non-background-exported photos, process remaining
 - Create `<ExportProgressBar>` component showing completion percentage and current file

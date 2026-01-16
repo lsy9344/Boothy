@@ -5,6 +5,13 @@
 - Baseline: Existing Boothy session management + export pipeline (from Epic 1)
 - Parent PRD: `docs/prd-session-timeline-smart-export.md`
 
+## Story Files
+
+- `docs/stories/2.1.session-timeline-core-warning-system.md`
+- `docs/stories/2.2.t-0-lockout-application-reset-admin-settings.md`
+- `docs/stories/2.3.background-export-queue-and-file-monitoring.md`
+- `docs/stories/2.4.smart-export-decision-and-progress-ui.md`
+
 ## Goal
 
 Enable reliable unattended kiosk operation through strict time-boxed sessions (N:00-N:50) with intelligent background export processing that minimizes user wait times while ensuring all photos are exported before session reset.

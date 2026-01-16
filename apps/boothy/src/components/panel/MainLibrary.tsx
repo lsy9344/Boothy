@@ -22,6 +22,7 @@ import { VariableSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
+import SessionCountdown from '../session/SessionCountdown';
 import SettingsPanel from './SettingsPanel';
 import { ThemeProps, THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
 import {
@@ -68,6 +69,7 @@ interface MainLibraryProps {
   activePath: string | null;
   appSettings: AppSettings | null;
   boothySessionName?: string | null;
+  sessionRemainingSeconds?: number | null;
   currentFolderPath: string | null;
   filterCriteria: FilterCriteria;
   imageList: Array<ImageFile>;
@@ -564,9 +566,8 @@ function ThumbnailSizeOptions({ selectedSize, onSelectSize }: ThumbnailSizeProps
         const isSelected = selectedSize === option.id;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-            }`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+              }`}
             key={option.id}
             onClick={() => onSelectSize(option.id)}
             role="menuitem"
@@ -588,9 +589,8 @@ function ThumbnailAspectRatioOptions({ selectedAspectRatio, onSelectAspectRatio 
         const isSelected = selectedAspectRatio === option.id;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-            }`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+              }`}
             key={option.id}
             onClick={() => onSelectAspectRatio(option.id)}
             role="menuitem"
@@ -622,11 +622,10 @@ function FilterOptions({ filterCriteria, setFilterCriteria }: FilterOptionProps)
             const isSelected = filterCriteria.rating === option.value;
             return (
               <button
-                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-                  isSelected
-                    ? 'bg-card-active text-text-primary font-semibold'
-                    : 'text-text-primary hover:bg-bg-primary'
-                }`}
+                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected
+                  ? 'bg-card-active text-text-primary font-semibold'
+                  : 'text-text-primary hover:bg-bg-primary'
+                  }`}
                 key={option.value}
                 onClick={() => handleRatingFilterChange(option.value)}
                 role="menuitem"
@@ -647,11 +646,10 @@ function FilterOptions({ filterCriteria, setFilterCriteria }: FilterOptionProps)
             const isSelected = (filterCriteria.rawStatus || RawStatus.All) === option.key;
             return (
               <button
-                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-                  isSelected
-                    ? 'bg-card-active text-text-primary font-semibold'
-                    : 'text-text-primary hover:bg-bg-primary'
-                }`}
+                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected
+                  ? 'bg-card-active text-text-primary font-semibold'
+                  : 'text-text-primary hover:bg-bg-primary'
+                  }`}
                 key={option.key}
                 onClick={() => handleRawStatusChange(option.key as RawStatus)}
                 role="menuitem"
@@ -725,9 +723,8 @@ function SortOptions({ sortCriteria, setSortCriteria, sortOptions }: SortOptions
         const isSelected = sortCriteria.key === option.key;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-            } ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+              } ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             key={option.key}
             onClick={() => !option.disabled && handleKeyChange(option.key)}
             role="menuitem"
@@ -748,11 +745,10 @@ function ViewModeOptions({ mode, setMode }: { mode: LibraryViewMode; setMode: (m
     <>
       <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase">Display Mode</div>
       <button
-        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-          mode === LibraryViewMode.Flat
-            ? 'bg-card-active text-text-primary font-semibold'
-            : 'text-text-primary hover:bg-bg-primary'
-        }`}
+        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${mode === LibraryViewMode.Flat
+          ? 'bg-card-active text-text-primary font-semibold'
+          : 'text-text-primary hover:bg-bg-primary'
+          }`}
         onClick={() => setMode(LibraryViewMode.Flat)}
         role="menuitem"
       >
@@ -760,11 +756,10 @@ function ViewModeOptions({ mode, setMode }: { mode: LibraryViewMode; setMode: (m
         {mode === LibraryViewMode.Flat && <Check size={16} />}
       </button>
       <button
-        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
-          mode === LibraryViewMode.Recursive
-            ? 'bg-card-active text-text-primary font-semibold'
-            : 'text-text-primary hover:bg-bg-primary'
-        }`}
+        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${mode === LibraryViewMode.Recursive
+          ? 'bg-card-active text-text-primary font-semibold'
+          : 'text-text-primary hover:bg-bg-primary'
+          }`}
         onClick={() => setMode(LibraryViewMode.Recursive)}
         role="menuitem"
       >
@@ -909,8 +904,8 @@ function Thumbnail({
   const ringClass = isActive
     ? 'ring-2 ring-accent'
     : isSelected
-    ? 'ring-2 ring-gray-400'
-    : 'hover:ring-2 hover:ring-hover-color';
+      ? 'ring-2 ring-gray-400'
+      : 'hover:ring-2 hover:ring-hover-color';
   const colorTag = tags?.find((t: string) => t.startsWith('color:'))?.substring(6);
   const colorLabel = COLOR_LABELS.find((c: Color) => c.name === colorTag);
 
@@ -942,9 +937,8 @@ function Thumbnail({
               )}
               <img
                 alt={path.split(/[\\/]/).pop()}
-                className={`w-full h-full group-hover:scale-[1.02] transition-transform duration-300 ${
-                  thumbnailAspectRatio === ThumbnailAspectRatio.Contain ? 'object-contain' : 'object-cover'
-                } relative`}
+                className={`w-full h-full group-hover:scale-[1.02] transition-transform duration-300 ${thumbnailAspectRatio === ThumbnailAspectRatio.Contain ? 'object-contain' : 'object-cover'
+                  } relative`}
                 decoding="async"
                 loading="lazy"
                 src={layer.url}
@@ -1097,6 +1091,7 @@ export default function MainLibrary({
   activePath,
   appSettings,
   boothySessionName,
+  sessionRemainingSeconds,
   currentFolderPath,
   filterCriteria,
   imageList,
@@ -1331,7 +1326,7 @@ export default function MainLibrary({
       return (
         <div className="flex-1 flex flex-col items-center justify-center h-full rounded-lg bg-bg-primary p-8 text-center">
           <ImageIcon size={80} className="text-accent opacity-20 mb-6 animate-pulse" />
-          <h1 className="text-3xl font-bold text-primary mb-2">RapidRAW</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">Dabi</h1>
           <p className="text-text-secondary mb-8">Loading settings...</p>
         </div>
       );
@@ -1370,7 +1365,7 @@ export default function MainLibrary({
           ) : (
             <>
               <div className="my-auto text-left">
-                <h1 className="text-5xl font-bold text-text-primary text-shadow-shiny mb-4">RapidRAW</h1>
+                <h1 className="text-5xl font-bold text-text-primary text-shadow-shiny mb-4">Dabi</h1>
                 <p className="text-text-secondary mb-10 max-w-md">
                   {hasLastPath ? (
                     <>
@@ -1428,9 +1423,8 @@ export default function MainLibrary({
                   {showAdvancedControls && (
                     <div className="flex items-center gap-2">
                       <Button
-                        className={`rounded-md flex-grow flex justify-start items-center h-11 ${
-                          hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
-                        }`}
+                        className={`rounded-md flex-grow flex justify-start items-center h-11 ${hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
+                          }`}
                         onClick={onOpenFolder}
                         size="lg"
                       >
@@ -1476,15 +1470,15 @@ export default function MainLibrary({
           <div className="flex items-center gap-2">
             <p className="text-sm text-text-secondary truncate">{currentFolderPath}</p>
             <div
-              className={`overflow-hidden transition-all duration-300 ${
-                isLoaderVisible ? 'max-w-[1rem] opacity-100' : 'max-w-0 opacity-0'
-              }`}
+              className={`overflow-hidden transition-all duration-300 ${isLoaderVisible ? 'max-w-[1rem] opacity-100' : 'max-w-0 opacity-0'
+                }`}
             >
               <Loader2 size={14} className="animate-spin text-text-secondary" />
             </div>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
+          <SessionCountdown remainingSeconds={sessionRemainingSeconds ?? null} />
           {importState.status === Status.Importing && (
             <div className="flex items-center gap-2 text-sm text-accent animate-pulse">
               <FolderInput size={16} />

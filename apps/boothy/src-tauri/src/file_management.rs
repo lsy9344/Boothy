@@ -25,7 +25,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -263,6 +263,12 @@ pub struct AppSettings {
     pub boothy_last_session: Option<String>,
     #[serde(default)]
     pub boothy_admin_password_hash: Option<String>,
+    #[serde(default, rename = "boothy_end_screen_message")]
+    pub boothy_end_screen_message: Option<String>,
+    #[serde(default, rename = "boothy_t_minus_5_warning_message")]
+    pub boothy_t_minus_5_warning_message: Option<String>,
+    #[serde(default, rename = "boothy_reset_grace_period_seconds")]
+    pub boothy_reset_grace_period_seconds: Option<u32>,
 }
 
 fn default_adjustment_visibility() -> HashMap<String, bool> {
@@ -313,6 +319,9 @@ impl Default for AppSettings {
             linux_gpu_optimization: Some(false),
             boothy_last_session: None,
             boothy_admin_password_hash: None,
+            boothy_end_screen_message: Some("이용해주셔서 감사합니다".to_string()),
+            boothy_t_minus_5_warning_message: Some("이용시간이 5분 남았습니다".to_string()),
+            boothy_reset_grace_period_seconds: Some(30),
         }
     }
 }
@@ -1748,7 +1757,7 @@ pub fn load_metadata(path: String) -> Result<ImageMetadata, String> {
     }
 }
 
-fn get_presets_path(app_handle: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn get_presets_path<R: Runtime>(app_handle: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
     let presets_dir = app_handle
         .path()
         .app_data_dir()
@@ -1779,7 +1788,7 @@ pub fn save_presets(presets: Vec<PresetItem>, app_handle: AppHandle) -> Result<(
     fs::write(path, json_string).map_err(|e| e.to_string())
 }
 
-fn get_settings_path(app_handle: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn get_settings_path<R: Runtime>(app_handle: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
     let settings_dir = app_handle
         .path()
         .app_data_dir()
@@ -1792,14 +1801,20 @@ fn get_settings_path(app_handle: &AppHandle) -> Result<std::path::PathBuf, Strin
     Ok(settings_dir.join("settings.json"))
 }
 
-#[tauri::command]
-pub fn load_settings(app_handle: AppHandle) -> Result<AppSettings, String> {
-    let path = get_settings_path(&app_handle)?;
+pub fn load_settings_for_handle<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<AppSettings, String> {
+    let path = get_settings_path(app_handle)?;
     if !path.exists() {
         return Ok(AppSettings::default());
     }
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn load_settings(app_handle: AppHandle) -> Result<AppSettings, String> {
+    load_settings_for_handle(&app_handle)
 }
 
 #[tauri::command]

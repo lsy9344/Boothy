@@ -67,6 +67,7 @@ export enum Invokes {
   BoothyAuthenticateAdmin = 'boothy_authenticate_admin',
   BoothySwitchToCustomerMode = 'boothy_switch_to_customer_mode',
   BoothyHandlePhotoTransferred = 'boothy_handle_photo_transferred',
+  BoothyHandleExportDecision = 'boothy_handle_export_decision',
   BoothySetCurrentPreset = 'boothy_set_current_preset',
   BoothyLogFrontend = 'boothy_log_frontend',
   SetColorLabelForPaths = 'set_color_label_for_paths',
@@ -79,6 +80,7 @@ export enum Invokes {
 
 export enum Panel {
   Adjustments = 'adjustments',
+  CameraControls = 'cameraControls',
   Crop = 'crop',
   Export = 'export',
   Masks = 'masks',
@@ -138,6 +140,9 @@ export interface AppSettings {
   rawHighlightCompression?: number;
   processingBackend?: string;
   linuxGpuOptimization?: boolean;
+  boothy_end_screen_message?: string;
+  boothy_t_minus_5_warning_message?: string;
+  boothy_reset_grace_period_seconds?: number;
 }
 
 export interface BrushSettings {

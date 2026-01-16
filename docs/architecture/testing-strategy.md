@@ -37,12 +37,12 @@
 
 - **Existing Feature Verification:** Boothy 변경으로 인해 RapidRAW의 편집/프리셋/Export 결과가 달라지지 않는지(동일 입력/동일 preset에 대한 결과 비교)(CR1)
 - **Automated Regression Suite:** MVP는 “핵심 시나리오 자동화”를 목표로 하고, 무거운 GPU 결과 비교는 초기에는 checksum/메타데이터 기반 또는 샘플 수동 검증으로 시작합니다.
-- **Manual Testing Requirements (MVP Gate):**
-  1) customer 모드 기본 진입, admin 토글+비밀번호, 숨김 정책 확인
-  2) 세션 생성/중복 규칙 확인, `Raw/`/`Jpg/` 생성 확인
-  3) 촬영 → 전송 완료 후 자동 반영/자동 선택, 프리셋 자동 적용 + 썸네일 오버레이 미표시(FR18) 확인
-  4) 프리셋 변경 후 신규 사진만 영향, 이전 사진 불변 확인
-  5) Export가 `Jpg/`로 생성, 삭제/회전(admin) 반영 확인
-  6) 카메라 분리/전송 실패 시 에러 표시 + 기존 사진 탐색/Export 가능 확인
-  7) 오프라인(네트워크 차단)에서도 core flow 동작하며, 로그인/클라우드 기능이 기본 동작에 관여하지 않는지 확인(NFR7)
+#### Manual Testing Requirements (MVP Gate)
 
+1) customer 모드 기본 진입, admin 토글+비밀번호, 숨김 정책 확인
+2) 세션 생성/중복 규칙 확인, `Raw/`/`Jpg/` 생성 확인
+3) 촬영 → 전송 완료 후 자동 반영/자동 선택, 프리셋 자동 적용 + 썸네일 오버레이 미표시(FR18) 확인
+4) 프리셋 변경 후 신규 사진만 영향, 이전 사진 불변 확인
+5) Export가 `Jpg/`로 생성, 삭제/회전(admin) 반영 확인
+6) 카메라 분리/전송 실패 시 에러 표시 + 기존 사진 탐색/Export 가능 확인
+7) 오프라인(네트워크 차단)에서도 core flow 동작하며, 로그인/클라우드 기능이 기본 동작에 관여하지 않는지 확인(NFR7)

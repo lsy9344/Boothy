@@ -73,28 +73,47 @@ impl<R: Runtime> FileArrivalWatcherInner<R> {
                     );
 
                     let state = app_handle.state::<AppState>();
-                    if let Err(err) = state
+                    let preset_applied = match state
                         .preset_manager
                         .apply_preset_on_import(&path, &correlation_id)
                     {
-                        error!(
-                            "[{}] Failed to apply preset on import: {}",
-                            correlation_id, err
-                        );
-                        let _ = app_handle.emit(
-                            "boothy-import-error",
-                            serde_json::json!({
-                                "path": path,
-                                "error": err,
-                                "correlationId": correlation_id,
-                            }),
-                        );
-                    }
+                        Ok(()) => true,
+                        Err(err) => {
+                            error!(
+                                "[{}] Failed to apply preset on import: {}",
+                                correlation_id, err
+                            );
+                            let _ = app_handle.emit(
+                                "boothy-import-error",
+                                serde_json::json!({
+                                    "path": path,
+                                    "error": err,
+                                    "correlationId": correlation_id,
+                                }),
+                            );
+                            false
+                        }
+                    };
 
                     // Remove from pending
                     {
                         let mut pending = pending_imports.lock().await;
                         pending.retain(|p| p != &path);
+                    }
+
+                    if preset_applied {
+                        if let Err(err) = state
+                            .background_export_queue
+                            .enqueue(&app_handle, path.clone(), correlation_id.clone())
+                            .await
+                        {
+                            warn!(
+                                "[{}] Failed to enqueue background export for {}: {}",
+                                correlation_id,
+                                path.display(),
+                                err
+                            );
+                        }
                     }
 
                     // Emit event to trigger library refresh and import
@@ -222,11 +241,15 @@ mod tests {
                 preview_worker_tx: Mutex::new(None),
                 mask_cache: Mutex::new(HashMap::new()),
                 session_manager: session::SessionManager::new(),
+                session_timer: session::SessionTimer::new(),
                 mode_manager: mode::ModeManager::new(),
                 file_watcher: watcher::FileWatcher::new(),
                 camera_client: Mutex::new(None),
                 file_arrival_watcher: Mutex::new(None),
                 preset_manager: crate::preset::preset_manager::PresetManager::new(),
+                background_export_queue: Arc::new(
+                    session::export_queue::BackgroundExportQueue::new(),
+                ),
             })
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap()

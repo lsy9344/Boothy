@@ -4,7 +4,8 @@ This folder is the workspace for QA-related artifacts referenced by BMAD configu
 
 ## Structure
 
-- `docs/qa/gates/` — QA gate decisions (PASS/CONCERNS/FAIL/WAIVED) per story
+- `docs/qa/assessments/` ??QA assessments (risk/test design/trace/NFR/other checklists)
+- `docs/qa/gates/` ??QA gate decisions (PASS/CONCERNS/FAIL/WAIVED) per story
 
 ## Gate File Naming (recommended)
 
@@ -25,3 +26,5 @@ For each story gate file, capture:
 - `rationale`: why (short, evidence-based)
 - `risks`: key risks and mitigations
 - `required_followups`: must-fix items before merge/release
+
+

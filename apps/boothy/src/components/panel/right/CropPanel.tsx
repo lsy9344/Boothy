@@ -19,6 +19,7 @@ const ORIGINAL_RATIO = 0;
 interface CropPanelProps {
   adjustments: Adjustments;
   isStraightenActive: boolean;
+  isSessionLocked?: boolean;
   selectedImage: SelectedImage;
   setAdjustments(adjustments: Partial<Adjustments>): void;
   setIsStraightenActive(active: any): void;
@@ -44,6 +45,7 @@ const PRESETS: Array<CropPreset> = [
 export default function CropPanel({
   adjustments,
   isStraightenActive,
+  isSessionLocked = false,
   selectedImage,
   setAdjustments,
   setIsStraightenActive,
@@ -117,12 +119,27 @@ export default function CropPanel({
     if (activePreset?.value === ORIGINAL_RATIO) {
       const newOriginalRatio = getEffectiveOriginalRatio();
       if (newOriginalRatio !== null && aspectRatio && Math.abs(aspectRatio - newOriginalRatio) > 0.001) {
-        setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newOriginalRatio, crop: null }));
+        if (!isSessionLocked) {
+          setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newOriginalRatio, crop: null }));
+        }
       }
     }
-  }, [orientationSteps, activePreset, aspectRatio, getEffectiveOriginalRatio, setAdjustments]);
+  }, [orientationSteps, activePreset, aspectRatio, getEffectiveOriginalRatio, isSessionLocked, setAdjustments]);
+
+  const applyAdjustments = useCallback(
+    (updater: (prev: Partial<Adjustments>) => Partial<Adjustments>) => {
+      if (isSessionLocked) {
+        return;
+      }
+      setAdjustments(updater);
+    },
+    [isSessionLocked, setAdjustments],
+  );
 
   const handleCustomInputChange = (e: any) => {
+    if (isSessionLocked) {
+      return;
+    }
     const { name, value } = e.target;
     if (name === 'customW') {
       setCustomW(value);
@@ -138,7 +155,7 @@ export default function CropPanel({
     if (numW > 0 && numH > 0) {
       const newAspectRatio = numW / numH;
       if (adjustments?.aspectRatio && Math.abs(adjustments.aspectRatio - newAspectRatio) > 0.001) {
-        setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newAspectRatio, crop: null }));
+        applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newAspectRatio, crop: null }));
       }
     }
   };
@@ -153,7 +170,7 @@ export default function CropPanel({
 
   const handlePresetClick = (preset: CropPreset) => {
     if (preset.value === ORIGINAL_RATIO) {
-      setAdjustments((prev: Partial<Adjustments>) => ({
+      applyAdjustments((prev: Partial<Adjustments>) => ({
         ...prev,
         aspectRatio: getEffectiveOriginalRatio(),
         crop: null,
@@ -163,7 +180,7 @@ export default function CropPanel({
 
     let targetRatio = preset.value;
     if (activePreset === preset && targetRatio && targetRatio !== 1) {
-      setAdjustments((prev: Partial<Adjustments>) => ({
+      applyAdjustments((prev: Partial<Adjustments>) => ({
         ...prev,
         aspectRatio: 1 / (prev.aspectRatio ? prev.aspectRatio : 1),
         crop: null,
@@ -179,24 +196,24 @@ export default function CropPanel({
       newAspectRatio = 1 / targetRatio;
     }
 
-    setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newAspectRatio, crop: null }));
+    applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, aspectRatio: newAspectRatio, crop: null }));
   };
 
   const handleOrientationToggle = useCallback(() => {
     if (aspectRatio && aspectRatio !== 1) {
-      setAdjustments((prev: Partial<Adjustments>) => ({
+      applyAdjustments((prev: Partial<Adjustments>) => ({
         ...prev,
         aspectRatio: 1 / (prev.aspectRatio ? prev.aspectRatio : 1),
         crop: null,
       }));
     }
-  }, [aspectRatio, setAdjustments]);
+  }, [aspectRatio, applyAdjustments]);
 
   const handleReset = () => {
     const originalAspectRatio =
       selectedImage?.width && selectedImage?.height ? selectedImage.width / selectedImage.height : null;
 
-    setAdjustments((prev: Partial<Adjustments>) => ({
+    applyAdjustments((prev: Partial<Adjustments>) => ({
       ...prev,
       aspectRatio: originalAspectRatio,
       crop: INITIAL_ADJUSTMENTS.crop,
@@ -216,12 +233,12 @@ export default function CropPanel({
 
   const handleFineRotationChange = (e: any) => {
     const newFineRotation = parseFloat(e.target.value);
-    setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: newFineRotation }));
+    applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: newFineRotation }));
   };
 
   const handleStepRotate = (degrees: number) => {
     const increment = degrees > 0 ? 1 : 3;
-    setAdjustments((prev: Partial<Adjustments>) => {
+    applyAdjustments((prev: Partial<Adjustments>) => {
       const newAspectRatio = prev.aspectRatio && prev.aspectRatio !== 0 ? 1 / prev.aspectRatio : null;
       return {
         ...prev,
@@ -234,14 +251,19 @@ export default function CropPanel({
   };
 
   const resetFineRotation = () => {
-    setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: 0 }));
+    applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: 0 }));
   };
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 flex justify-between items-center flex-shrink-0 border-b border-surface">
         <h2 className="text-xl font-bold text-primary text-shadow-shiny">Crop & Transform</h2>
-        <button className="p-2 rounded-full hover:bg-surface transition-colors" onClick={handleReset} title="Reset All">
+        <button
+          className="p-2 rounded-full hover:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={isSessionLocked}
+          onClick={handleReset}
+          title="Reset All"
+        >
           <RotateCcw size={18} />
         </button>
       </div>
@@ -254,7 +276,7 @@ export default function CropPanel({
                 <p className="text-sm mb-3 font-semibold text-text-primary">Aspect Ratio</p>
                 <button
                   className="p-1.5 rounded-md hover:bg-surface disabled:text-text-tertiary disabled:cursor-not-allowed"
-                  disabled={isOrientationToggleDisabled}
+                  disabled={isSessionLocked || isOrientationToggleDisabled}
                   onClick={handleOrientationToggle}
                   title="Switch Orientation"
                 >
@@ -271,7 +293,9 @@ export default function CropPanel({
                     className={clsx(
                       'px-2 py-1.5 text-sm rounded-md transition-colors',
                       isPresetActive(preset) ? 'bg-accent text-button-text' : 'bg-surface hover:bg-card-active',
+                      isSessionLocked && 'opacity-50 cursor-not-allowed',
                     )}
+                    disabled={isSessionLocked}
                     key={preset.name}
                     onClick={() => handlePresetClick(preset)}
                   >
@@ -284,14 +308,16 @@ export default function CropPanel({
                   className={clsx(
                     'w-full px-2 py-1.5 text-sm rounded-md transition-colors',
                     isCustomActive ? 'bg-accent text-button-text' : 'bg-surface hover:bg-card-active',
+                    isSessionLocked && 'opacity-50 cursor-not-allowed',
                   )}
+                  disabled={isSessionLocked}
                   onClick={() => {
                     const imageRatio = getEffectiveOriginalRatio();
                     let newAspectRatio = BASE_RATIO;
                     if (imageRatio && imageRatio < 1) {
                       newAspectRatio = 1 / BASE_RATIO;
                     }
-                    setAdjustments((prev: Partial<Adjustments>) => ({
+                    applyAdjustments((prev: Partial<Adjustments>) => ({
                       ...prev,
                       aspectRatio: newAspectRatio,
                       crop: null,
@@ -304,11 +330,13 @@ export default function CropPanel({
                   className={clsx(
                     'mt-2 bg-surface p-2 rounded-md transition-opacity',
                     isCustomActive ? 'opacity-100' : 'opacity-50 pointer-events-none',
+                    isSessionLocked && 'opacity-50 pointer-events-none',
                   )}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <input
                       className="w-full bg-bg-primary text-center rounded-md p-1 border border-surface focus:border-accent focus:ring-accent"
+                      disabled={isSessionLocked}
                       min="0"
                       name="customW"
                       onBlur={handleApplyCustomRatio}
@@ -321,6 +349,7 @@ export default function CropPanel({
                     <X size={16} className="text-text-tertiary flex-shrink-0" />
                     <input
                       className="w-full bg-bg-primary text-center rounded-md p-1 border border-surface focus:border-accent focus:ring-accent"
+                      disabled={isSessionLocked}
                       min="0"
                       name="customH"
                       onBlur={handleApplyCustomRatio}
@@ -340,7 +369,8 @@ export default function CropPanel({
               <div className="flex justify-between items-center">
                 <span className="font-mono text-lg text-text-primary">{rotation.toFixed(1)}°</span>
                 <button
-                  className="p-1.5 rounded-full hover:bg-surface"
+                  className="p-1.5 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isSessionLocked}
                   onClick={resetFineRotation}
                   title="Reset Fine Rotation"
                 >
@@ -349,6 +379,7 @@ export default function CropPanel({
               </div>
               <input
                 className="w-full h-2 bg-surface rounded-lg appearance-none cursor-pointer accent-accent"
+                disabled={isSessionLocked}
                 max="45"
                 min="-45"
                 onChange={handleFineRotationChange}
@@ -362,14 +393,16 @@ export default function CropPanel({
               <p className="text-sm mb-3 font-semibold text-text-primary">Tools</p>
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  className="flex flex-col items-center justify-center p-3 rounded-lg transition-colors bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary"
+                  className="flex flex-col items-center justify-center p-3 rounded-lg transition-colors bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isSessionLocked}
                   onClick={() => handleStepRotate(-90)}
                 >
                   <RotateCcw size={20} className="transition-none" />
                   <span className="text-xs mt-1.5 transition-none">Rotate Left</span>
                 </button>
                 <button
-                  className="flex flex-col items-center justify-center p-3 rounded-lg transition-colors bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary"
+                  className="flex flex-col items-center justify-center p-3 rounded-lg transition-colors bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isSessionLocked}
                   onClick={() => handleStepRotate(90)}
                 >
                   <RotateCw size={20} className="transition-none" />
@@ -381,9 +414,11 @@ export default function CropPanel({
                     flipHorizontal
                       ? 'bg-accent text-button-text'
                       : 'bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary',
+                    isSessionLocked && 'opacity-50 cursor-not-allowed',
                   )}
+                  disabled={isSessionLocked}
                   onClick={() =>
-                    setAdjustments((prev: Partial<Adjustments>) => ({
+                    applyAdjustments((prev: Partial<Adjustments>) => ({
                       ...prev,
                       flipHorizontal: !prev.flipHorizontal,
                     }))
@@ -398,9 +433,11 @@ export default function CropPanel({
                     flipVertical
                       ? 'bg-accent text-button-text'
                       : 'bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary',
+                    isSessionLocked && 'opacity-50 cursor-not-allowed',
                   )}
+                  disabled={isSessionLocked}
                   onClick={() =>
-                    setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, flipVertical: !prev.flipVertical }))
+                    applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, flipVertical: !prev.flipVertical }))
                   }
                 >
                   <FlipVertical size={20} className="transition-none" />
@@ -412,12 +449,14 @@ export default function CropPanel({
                     isStraightenActive
                       ? 'bg-accent text-button-text hover:bg-red-500'
                       : 'bg-surface text-text-secondary hover:bg-card-active hover:text-text-primary',
+                    isSessionLocked && 'opacity-50 cursor-not-allowed',
                   )}
+                  disabled={isSessionLocked}
                   onClick={() => {
                     setIsStraightenActive((isActive: boolean) => {
                       const willBeActive = !isActive;
                       if (willBeActive) {
-                        setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: 0 }));
+                        applyAdjustments((prev: Partial<Adjustments>) => ({ ...prev, rotation: 0 }));
                       }
                       return willBeActive;
                     });

@@ -70,6 +70,10 @@ use crate::image_processing::{
 };
 use crate::lut_processing::Lut;
 use crate::mask_generation::{MaskDefinition, generate_mask_bitmap};
+use crate::session::export::{
+    BoothyExportChoice, ExportProgressState, build_photo_state_map, collect_session_raw_files,
+    filter_export_paths, load_session_metadata,
+};
 
 #[derive(Clone)]
 pub struct LoadedImage {
@@ -122,11 +126,13 @@ pub struct AppState {
     pub mask_cache: Mutex<HashMap<u64, GrayImage>>,
     // Boothy-specific state
     pub session_manager: session::SessionManager,
+    pub session_timer: session::SessionTimer,
     pub mode_manager: mode::ModeManager,
     pub file_watcher: watcher::FileWatcher,
     pub camera_client: Mutex<Option<camera::ipc_client::CameraIpcClient>>,
     pub file_arrival_watcher: Mutex<Option<ingest::file_watcher::FileArrivalWatcher>>,
     pub preset_manager: preset::preset_manager::PresetManager,
+    pub background_export_queue: Arc<session::export_queue::BackgroundExportQueue>,
 }
 
 #[derive(serde::Serialize)]
@@ -1063,6 +1069,60 @@ fn encode_image_to_bytes(
     Ok(image_bytes)
 }
 
+fn export_photo(
+    source_path_str: &str,
+    output_path: &Path,
+    base_image: &DynamicImage,
+    js_adjustments: &Value,
+    export_settings: &ExportSettings,
+    context: &GpuContext,
+    state: &tauri::State<'_, AppState>,
+    is_raw: bool,
+    cancel_flag: Option<&AtomicBool>,
+) -> Result<(), String> {
+    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+        return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
+    }
+
+    let final_image = process_image_for_export(
+        source_path_str,
+        base_image,
+        js_adjustments,
+        export_settings,
+        context,
+        state,
+        is_raw,
+    )?;
+
+    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+        return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
+    }
+
+    let extension = output_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("jpg")
+        .to_lowercase();
+
+    let mut image_bytes =
+        encode_image_to_bytes(&final_image, &extension, export_settings.jpeg_quality)?;
+
+    write_image_with_metadata(
+        &mut image_bytes,
+        source_path_str,
+        &extension,
+        export_settings.keep_metadata,
+        export_settings.strip_gps,
+    )?;
+
+    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+        return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
+    }
+
+    fs::write(output_path, image_bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn export_image(
     original_path: String,
@@ -1076,9 +1136,12 @@ async fn export_image(
         return Err("An export is already in progress.".to_string());
     }
 
+    state.background_export_queue.pause_and_cancel().await;
+
     let context = get_or_init_gpu_context(&state)?;
     let (original_image_data, is_raw) = get_full_image_for_processing(&state)?;
     let context = Arc::new(context);
+    let background_queue = Arc::clone(&state.background_export_queue);
 
     let task = tokio::spawn(async move {
         let state = app_handle.state::<AppState>();
@@ -1086,35 +1149,18 @@ async fn export_image(
             let (source_path, _) = parse_virtual_path(&original_path);
             let source_path_str = source_path.to_string_lossy().to_string();
 
-            let final_image = process_image_for_export(
+            let output_path_obj = std::path::Path::new(&output_path);
+            export_photo(
                 &source_path_str,
+                output_path_obj,
                 &original_image_data,
                 &js_adjustments,
                 &export_settings,
                 &context,
                 &state,
                 is_raw,
+                None,
             )?;
-
-            let output_path_obj = std::path::Path::new(&output_path);
-            let extension = output_path_obj
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-
-            let mut image_bytes =
-                encode_image_to_bytes(&final_image, &extension, export_settings.jpeg_quality)?;
-
-            write_image_with_metadata(
-                &mut image_bytes,
-                &source_path_str,
-                &extension,
-                export_settings.keep_metadata,
-                export_settings.strip_gps,
-            )?;
-
-            fs::write(&output_path, image_bytes).map_err(|e| e.to_string())?;
 
             Ok(())
         })();
@@ -1125,6 +1171,7 @@ async fn export_image(
             let _ = app_handle.emit("export-complete", ());
         }
 
+        background_queue.resume();
         *app_handle
             .state::<AppState>()
             .export_task_handle
@@ -1149,9 +1196,12 @@ async fn batch_export_images(
         return Err("An export is already in progress.".to_string());
     }
 
+    state.background_export_queue.pause_and_cancel().await;
+
     let context = get_or_init_gpu_context(&state)?;
     let context = Arc::new(context);
     let progress_counter = Arc::new(AtomicUsize::new(0));
+    let background_queue = Arc::clone(&state.background_export_queue);
 
     let available_cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -1258,16 +1308,6 @@ async fn batch_export_images(
                             }
                         };
 
-                        let final_image = process_image_for_export(
-                            &source_path_str,
-                            &base_image,
-                            &js_adjustments,
-                            &export_settings,
-                            &context,
-                            &state,
-                            is_raw,
-                        )?;
-
                         let original_path = std::path::Path::new(&source_path_str);
 
                         let file_date: DateTime<Utc> = {
@@ -1308,22 +1348,17 @@ async fn batch_export_images(
                         let new_filename = format!("{}.{}", new_stem, output_format);
                         let output_path = output_folder_path.join(new_filename);
 
-                        let mut image_bytes = encode_image_to_bytes(
-                            &final_image,
-                            &output_format,
-                            export_settings.jpeg_quality,
-                        )?;
-
-                        write_image_with_metadata(
-                            &mut image_bytes,
+                        export_photo(
                             &source_path_str,
-                            &output_format,
-                            export_settings.keep_metadata,
-                            export_settings.strip_gps,
+                            &output_path,
+                            &base_image,
+                            &js_adjustments,
+                            &export_settings,
+                            &context,
+                            &state,
+                            is_raw,
+                            None,
                         )?;
-
-                        fs::write(&output_path, image_bytes)
-                            .map_err(|e| format!("Failed to write output: {}", e))?;
 
                         Ok(())
                     })();
@@ -1355,6 +1390,297 @@ async fn batch_export_images(
             let _ = app_handle.emit("export-complete", ());
         }
 
+        background_queue.resume();
+        *app_handle
+            .state::<AppState>()
+            .export_task_handle
+            .lock()
+            .unwrap() = None;
+    });
+
+    *state.export_task_handle.lock().unwrap() = Some(task);
+    Ok(())
+}
+
+fn start_boothy_batch_export(
+    output_folder: String,
+    paths: Vec<String>,
+    export_settings: ExportSettings,
+    output_format: String,
+    photo_states: HashMap<String, session::export::BoothyPhotoState>,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    if state.export_task_handle.lock().unwrap().is_some() {
+        return Err("An export is already in progress.".to_string());
+    }
+
+    let context = get_or_init_gpu_context(&state)?;
+    let context = Arc::new(context);
+    let progress_counter = Arc::new(AtomicUsize::new(0));
+    let progress_state = Arc::new(Mutex::new(ExportProgressState::new(paths.len())));
+    let photo_states = Arc::new(photo_states);
+
+    let available_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let num_threads = (available_cores / 2).clamp(1, 4);
+
+    log::info!(
+        "Starting Boothy export. System cores: {}, Export threads: {}",
+        available_cores,
+        num_threads
+    );
+
+    let task = tokio::spawn(async move {
+        let state = app_handle.state::<AppState>();
+        let output_folder_path = std::path::Path::new(&output_folder);
+        let total_paths = paths.len();
+        let settings = load_settings(app_handle.clone()).unwrap_or_default();
+        let highlight_compression = settings.raw_highlight_compression.unwrap_or(2.5);
+
+        {
+            let mut progress = progress_state.lock().unwrap();
+            progress.advance(0, "");
+            let _ = app_handle.emit("boothy-export-progress", progress.to_payload());
+        }
+
+        let pool_result = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build();
+
+        if let Err(e) = pool_result {
+            {
+                let mut progress = progress_state.lock().unwrap();
+                progress.mark_error();
+            }
+            let _ = app_handle.emit(
+                "boothy-export-error",
+                serde_json::json!({ "message": format!("Failed to initialize worker threads: {}", e) }),
+            );
+            *app_handle
+                .state::<AppState>()
+                .export_task_handle
+                .lock()
+                .unwrap() = None;
+            return;
+        }
+        let pool = pool_result.unwrap();
+
+        let results: Vec<Result<(), String>> = pool.install(|| {
+            paths
+                .par_iter()
+                .enumerate()
+                .map(|(global_index, image_path_str)| {
+                    if app_handle
+                        .state::<AppState>()
+                        .export_task_handle
+                        .lock()
+                        .unwrap()
+                        .is_none()
+                    {
+                        return Err("Export cancelled".to_string());
+                    }
+
+                    let filename = std::path::Path::new(image_path_str)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    let correlation_id = photo_states
+                        .get(filename)
+                        .and_then(|state| state.correlation_id.as_deref());
+
+                    log::info!(
+                        "Boothy export start: {}{}",
+                        filename,
+                        correlation_id
+                            .map(|id| format!(" (correlation_id={})", id))
+                            .unwrap_or_default()
+                    );
+
+                    {
+                        let current_completed = progress_counter.load(Ordering::SeqCst);
+                        let mut progress = progress_state.lock().unwrap();
+                        progress.advance(current_completed, image_path_str);
+                        let _ = app_handle.emit("boothy-export-progress", progress.to_payload());
+                    }
+
+                    let result: Result<(), String> = (|| {
+                        let (source_path, sidecar_path) = parse_virtual_path(image_path_str);
+                        let source_path_str = source_path.to_string_lossy().to_string();
+
+                        let metadata: ImageMetadata = if sidecar_path.exists() {
+                            let file_content = fs::read_to_string(sidecar_path)
+                                .map_err(|e| format!("Failed to read sidecar: {}", e))?;
+                            serde_json::from_str(&file_content).unwrap_or_default()
+                        } else {
+                            ImageMetadata::default()
+                        };
+                        let js_adjustments = metadata.adjustments;
+                        let is_raw = is_raw_file(&source_path_str);
+
+                        let base_image = match read_file_mapped(Path::new(&source_path_str)) {
+                            Ok(mmap) => load_and_composite(
+                                &mmap,
+                                &source_path_str,
+                                &js_adjustments,
+                                false,
+                                highlight_compression,
+                            )
+                            .map_err(|e| format!("Failed to load image from mmap: {}", e))?,
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to memory-map file '{}': {}. Falling back to standard read.",
+                                    source_path_str,
+                                    e
+                                );
+                                let bytes = fs::read(&source_path_str).map_err(|io_err| {
+                                    format!("Fallback read failed for {}: {}", source_path_str, io_err)
+                                })?;
+                                load_and_composite(
+                                    &bytes,
+                                    &source_path_str,
+                                    &js_adjustments,
+                                    false,
+                                    highlight_compression,
+                                )
+                                .map_err(|e| format!("Failed to load image from bytes: {}", e))?
+                            }
+                        };
+
+                        let final_image = process_image_for_export(
+                            &source_path_str,
+                            &base_image,
+                            &js_adjustments,
+                            &export_settings,
+                            &context,
+                            &state,
+                            is_raw,
+                        )?;
+
+                        let original_path = std::path::Path::new(&source_path_str);
+
+                        let file_date: DateTime<Utc> = {
+                            let mut date = None;
+                            if let Ok(file) = std::fs::File::open(original_path) {
+                                let mut bufreader = std::io::BufReader::new(&file);
+                                let exifreader = exif::Reader::new();
+                                if let Ok(exif_obj) = exifreader.read_from_container(&mut bufreader) {
+                                    if let Some(field) = exif_obj.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY) {
+                                        let s = field.display_value().to_string().replace("\"", "");
+                                        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y:%m:%d %H:%M:%S") {
+                                            date = Some(DateTime::from_naive_utc_and_offset(dt, Utc));
+                                        }
+                                    }
+                                }
+                            }
+
+                            date.unwrap_or_else(|| {
+                                fs::metadata(original_path)
+                                    .ok()
+                                    .and_then(|m| m.created().ok())
+                                    .map(DateTime::<Utc>::from)
+                                    .unwrap_or_else(Utc::now)
+                            })
+                        };
+
+                        let filename_template = export_settings
+                            .filename_template
+                            .as_deref()
+                            .unwrap_or("{original_filename}");
+                        let new_stem = crate::file_management::generate_filename_from_template(
+                            filename_template,
+                            original_path,
+                            global_index + 1,
+                            total_paths,
+                            &file_date,
+                        );
+                        let new_filename = format!("{}.{}", new_stem, output_format);
+                        let output_path = output_folder_path.join(new_filename);
+
+                        let mut image_bytes = encode_image_to_bytes(
+                            &final_image,
+                            &output_format,
+                            export_settings.jpeg_quality,
+                        )?;
+
+                        write_image_with_metadata(
+                            &mut image_bytes,
+                            &source_path_str,
+                            &output_format,
+                            export_settings.keep_metadata,
+                            export_settings.strip_gps,
+                        )?;
+
+                        fs::write(&output_path, image_bytes)
+                            .map_err(|e| format!("Failed to write output: {}", e))?;
+
+                        Ok(())
+                    })();
+
+                    let completed = progress_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                    {
+                        let mut progress = progress_state.lock().unwrap();
+                        let current_path = if progress.current_path.is_empty() {
+                            image_path_str.to_string()
+                        } else {
+                            progress.current_path.clone()
+                        };
+                        progress.advance(completed, current_path);
+                        let _ = app_handle.emit("boothy-export-progress", progress.to_payload());
+                    }
+
+                    match &result {
+                        Ok(_) => log::info!(
+                            "Boothy export complete: {}{}",
+                            filename,
+                            correlation_id
+                                .map(|id| format!(" (correlation_id={})", id))
+                                .unwrap_or_default()
+                        ),
+                        Err(err) => log::error!(
+                            "Boothy export failed: {}{} -> {}",
+                            filename,
+                            correlation_id
+                                .map(|id| format!(" (correlation_id={})", id))
+                                .unwrap_or_default(),
+                            err
+                        ),
+                    }
+
+                    result
+                })
+                .collect()
+        });
+
+        let mut error_count = 0;
+        for result in results {
+            if let Err(e) = result {
+                error_count += 1;
+                log::error!("Boothy export error: {}", e);
+            }
+        }
+
+        if error_count > 0 {
+            {
+                let mut progress = progress_state.lock().unwrap();
+                progress.mark_error();
+            }
+            let _ = app_handle.emit(
+                "boothy-export-error",
+                serde_json::json!({
+                    "message": format!("Export completed with {} error(s).", error_count),
+                }),
+            );
+        } else {
+            {
+                let mut progress = progress_state.lock().unwrap();
+                progress.mark_complete();
+                let _ = app_handle.emit("boothy-export-progress", progress.to_payload());
+            }
+            let _ = app_handle.emit("boothy-export-complete", ());
+        }
+
         *app_handle
             .state::<AppState>()
             .export_task_handle
@@ -1374,9 +1700,11 @@ fn cancel_export(state: tauri::State<'_, AppState>) -> Result<(), String> {
             println!("Export task cancellation requested.");
         }
         _ => {
+            state.background_export_queue.resume();
             return Err("No export task is currently running.".to_string());
         }
     }
+    state.background_export_queue.resume();
     Ok(())
 }
 
@@ -2574,11 +2902,13 @@ async fn boothy_create_or_open_session(
         let raw_path = session.raw_path.clone();
         if let Err(e) = client.start_sidecar().await {
             log::warn!("Failed to start camera sidecar: {}", e);
-            let _ = app_handle
-                .emit("boothy-camera-error", format!("Camera unavailable: {}", e));
+            let correlation_id = camera::generate_correlation_id();
+            let error = error::ipc::sidecar_start_failed(e);
+            let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
         } else {
             // Set the session destination for incoming captures
             let correlation_id = camera::generate_correlation_id();
+            let correlation_id_for_error = correlation_id.clone();
             let session_name = raw_path.parent()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
@@ -2587,9 +2917,10 @@ async fn boothy_create_or_open_session(
 
             if let Err(e) = client.set_session_destination(raw_path, session_name, correlation_id).await {
                 log::error!("Failed to set camera session destination: {}", e);
+                let error = error::camera::setup_failed(e);
                 let _ = app_handle.emit(
                     "boothy-camera-error",
-                    format!("Failed to configure camera destination: {}", e),
+                    error.to_ui_payload(correlation_id_for_error),
                 );
             }
         }
@@ -2603,6 +2934,8 @@ async fn boothy_create_or_open_session(
             *watcher_guard = Some(watcher);
         }
     }
+
+    state.session_timer.start_for_session(app_handle.clone());
 
     // NOTE: FileArrivalWatcher is initialized above and will be invoked via boothy_handle_photo_transferred command
     // The IPC client emits boothy-photo-transferred events which the UI catches and calls the command
@@ -2747,6 +3080,61 @@ async fn boothy_handle_photo_transferred(
 }
 
 #[tauri::command]
+async fn boothy_handle_export_decision(
+    choice: BoothyExportChoice,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let session = state
+        .session_manager
+        .get_active_session()
+        .ok_or("No active session available for export.".to_string())?;
+
+    let raw_files = collect_session_raw_files(&session.raw_path)?;
+    let metadata = load_session_metadata(&session.base_path);
+    let photo_states = metadata
+        .as_ref()
+        .map(build_photo_state_map)
+        .unwrap_or_default();
+    let selected_paths = filter_export_paths(raw_files, Some(&photo_states), choice);
+
+    log::info!("Boothy export decision: {:?} ({} files)", choice, selected_paths.len());
+
+    if selected_paths.is_empty() {
+        let mut progress = ExportProgressState::new(0);
+        progress.mark_complete();
+        let _ = app_handle.emit("boothy-export-progress", progress.to_payload());
+        let _ = app_handle.emit("boothy-export-complete", ());
+        return Ok(());
+    }
+
+    let export_settings = ExportSettings {
+        filename_template: Some("{original_filename}".to_string()),
+        jpeg_quality: 90,
+        keep_metadata: true,
+        resize: None,
+        strip_gps: true,
+        watermark: None,
+    };
+    let output_folder = session.jpg_path.to_string_lossy().to_string();
+    let output_format = "jpg".to_string();
+    let paths: Vec<String> = selected_paths
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
+    start_boothy_batch_export(
+        output_folder,
+        paths,
+        export_settings,
+        output_format,
+        photo_states,
+        state,
+        app_handle,
+    )
+}
+
+#[tauri::command]
 fn start_folder_watcher(
     path: String,
     app_handle: tauri::AppHandle,
@@ -2835,6 +3223,9 @@ fn main() {
             }
 
             setup_logging(&app_handle, logging_initialized);
+            app.state::<AppState>()
+                .background_export_queue
+                .start(app_handle.clone());
 
             if let Some(backend) = &settings.processing_backend {
                 if backend != "auto" {
@@ -2860,6 +3251,7 @@ fn main() {
                     {
                         log::warn!("Failed to start file watcher for restored session: {}", e);
                     }
+                    state.session_timer.start_for_session(app_handle.clone());
                     true
                 }
                 Ok(None) => false,
@@ -2921,11 +3313,13 @@ fn main() {
             preview_worker_tx: Mutex::new(None),
             mask_cache: Mutex::new(HashMap::new()),
             session_manager: session::SessionManager::new(),
+            session_timer: session::SessionTimer::new(),
             mode_manager: mode::ModeManager::new(),
             file_watcher: watcher::FileWatcher::new(),
             camera_client: Mutex::new(None),
             file_arrival_watcher: Mutex::new(None),
             preset_manager: preset::preset_manager::PresetManager::new(),
+            background_export_queue: Arc::new(session::export_queue::BackgroundExportQueue::new()),
         })
         .invoke_handler(tauri::generate_handler![
             load_image,
@@ -3003,6 +3397,7 @@ fn main() {
             boothy_switch_to_customer_mode,
             boothy_set_current_preset,
             boothy_handle_photo_transferred,
+            boothy_handle_export_decision,
             boothy_log_frontend,
             start_folder_watcher,
         ])

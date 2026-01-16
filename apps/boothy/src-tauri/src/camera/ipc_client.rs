@@ -1,4 +1,5 @@
 use super::ipc_models::*;
+use crate::error::{self, BoothyError};
 use log::{debug, error, info, warn};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -288,13 +289,13 @@ impl CameraIpcClient {
             );
         }
 
-        // Production: bundled with app (TODO: configure Tauri bundler)
+        // Production: bundled with app
         let sidecar_path = self
             .app_handle
             .path()
             .resource_dir()
             .map_err(|e| format!("Failed to get resource dir: {}", e))?
-            .join("sidecar")
+            .join("camera-sidecar")
             .join("Boothy.CameraSidecar.exe");
 
         if !sidecar_path.exists() {
@@ -319,7 +320,6 @@ impl CameraIpcClient {
         retry_delay: Duration,
     ) -> Result<(), String> {
         use std::fs::OpenOptions;
-        use std::os::windows::fs::OpenOptionsExt;
 
         let correlation_id = generate_correlation_id();
         info!(
@@ -334,7 +334,6 @@ impl CameraIpcClient {
             match OpenOptions::new()
                 .read(true)
                 .write(true)
-                .custom_flags(0x40000000) // FILE_FLAG_OVERLAPPED for async
                 .open(PIPE_NAME)
             {
                 Ok(pipe) => {
@@ -422,7 +421,8 @@ impl CameraIpcClient {
             let mut guard = connected.lock().unwrap();
             if *guard {
                 *guard = false;
-                let _ = app_handle.emit("boothy-camera-error", "Camera connection lost.");
+                let error = error::ipc::disconnect();
+                emit_camera_error(&app_handle, error, &correlation_id);
             }
         });
     }
@@ -516,6 +516,14 @@ fn find_dev_sidecar(configuration: &str) -> Option<PathBuf> {
     None
 }
 
+fn emit_camera_error<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    error: BoothyError,
+    correlation_id: &str,
+) {
+    let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
+}
+
 /// Handle events received from the sidecar
 fn handle_sidecar_event<R: tauri::Runtime>(app_handle: &AppHandle<R>, message: IpcMessage) {
     if message.message_type != IpcMessageType::Event {
@@ -570,14 +578,8 @@ fn handle_sidecar_event<R: tauri::Runtime>(app_handle: &AppHandle<R>, message: I
                         error_payload.error.message
                     );
 
-                    let _ = app_handle.emit(
-                        "boothy-camera-error",
-                        serde_json::json!({
-                            "code": format!("{:?}", error_payload.error.code),
-                            "message": error_payload.error.customer_safe_message(),
-                            "correlationId": message.correlation_id,
-                        }),
-                    );
+                    let boothy_error: BoothyError = error_payload.error.into();
+                    emit_camera_error(app_handle, boothy_error, &message.correlation_id);
                 }
             }
         }
@@ -667,11 +669,12 @@ mod tests {
             .expect("Expected boothy-camera-error event");
         let value: serde_json::Value = serde_json::from_str(&payload_str).unwrap();
 
-        assert_eq!(value["code"], "CameraNotConnected");
+        assert_eq!(value["code"], "CAMERA_NOT_CONNECTED");
         assert_eq!(
             value["message"],
             "Camera is not connected. Please check the camera connection and try again."
         );
+        assert_eq!(value["diagnostic"], "[CameraNotConnected] Camera missing");
         assert_eq!(value["correlationId"], "corr-err");
     }
 }

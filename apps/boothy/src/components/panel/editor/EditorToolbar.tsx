@@ -3,6 +3,7 @@ import { Eye, EyeOff, ArrowLeft, Maximize, Loader2, Undo, Redo, Waves } from 'lu
 import clsx from 'clsx';
 import { SelectedImage } from '../../ui/AppProperties';
 import { IconAperture, IconCalendar, IconClock, IconFocalLength, IconIso, IconShutter } from './ExifIcons';
+import SessionCountdown from '../../session/SessionCountdown';
 
 interface EditorToolbarProps {
   canRedo: boolean;
@@ -21,6 +22,7 @@ interface EditorToolbarProps {
   showOriginal: boolean;
   showDateView: boolean;
   onToggleDateView(): void;
+  sessionRemainingSeconds?: number | null;
 }
 
 const EditorToolbar = memo(
@@ -41,6 +43,7 @@ const EditorToolbar = memo(
     showOriginal,
     showDateView,
     onToggleDateView,
+    sessionRemainingSeconds,
   }: EditorToolbarProps) => {
     const isAnyLoading = isLoading || !!isLoadingFullRes || isFullScreenLoading;
     const [isLoaderVisible, setIsLoaderVisible] = useState(false);
@@ -302,6 +305,7 @@ const EditorToolbar = memo(
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0 z-40">
+          <SessionCountdown remainingSeconds={sessionRemainingSeconds ?? null} size="sm" />
           <button
             className="bg-surface text-text-primary p-2 rounded-full hover:bg-card-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={!canUndo}

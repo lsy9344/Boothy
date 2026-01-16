@@ -51,6 +51,7 @@ dotnet build -c Release
 ```
 
 This produces the sidecar binary that will be bundled with Boothy.
+Output: `apps/camera-sidecar/bin/Release/Boothy.CameraSidecar.exe`.
 
 ### 4. Installer Creation
 
@@ -79,6 +80,18 @@ The NSIS installer includes:
 - **Installation Root**: `C:\Program Files\Boothy\`
 - **Sidecar Location**: `C:\Program Files\Boothy\resources\camera-sidecar\`
 - **EDSDK DLLs** (internal only): `C:\Program Files\Boothy\resources\camera-sidecar\edsdk\`
+
+## Packaging Smoke Check
+
+After `npm run tauri build`, run:
+
+```bash
+cd apps/boothy
+npm run packaging:smoke
+```
+
+This verifies the installer exists, required resources are configured in `tauri.conf.json`,
+and the sidecar/notices files are present before release.
 
 ### User Data (Rollback-Safe)
 

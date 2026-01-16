@@ -53,6 +53,7 @@ interface EditorProps {
   uncroppedAdjustedPreviewUrl: string | null;
   updateSubMask(id: string | null, subMask: Partial<SubMask>): void;
   waveform: WaveformData | null;
+  sessionRemainingSeconds?: number | null;
   onDisplaySizeChange?(size: any): void;
   onInitialFitScale?(scale: number): void;
   originalSize?: ImageDimensions;
@@ -100,6 +101,7 @@ export default function Editor({
   uncroppedAdjustedPreviewUrl,
   updateSubMask,
   waveform,
+  sessionRemainingSeconds,
   onDisplaySizeChange,
   onInitialFitScale,
   originalSize,
@@ -483,6 +485,7 @@ export default function Editor({
           isLoadingFullRes={isLoadingFullRes}
           showDateView={showExifDateView}
           onToggleDateView={() => setShowExifDateView(prev => !prev)}
+          sessionRemainingSeconds={sessionRemainingSeconds}
         />
 
         <div
