@@ -1,14 +1,14 @@
 use super::metadata::{
-    is_background_export_completed, mark_background_export_failure, mark_background_export_success,
-    record_background_export_attempt, SessionExportError,
+    SessionExportError, is_background_export_completed, mark_background_export_failure,
+    mark_background_export_success, record_background_export_attempt,
 };
 use crate::camera::generate_correlation_id;
 use crate::error;
 use crate::file_management::{load_settings_for_handle, parse_virtual_path, read_file_mapped};
 use crate::formats::is_raw_file;
 use crate::image_loader::load_and_composite;
-use crate::image_processing::{get_or_init_gpu_context, ImageMetadata};
-use crate::{export_photo, AppState, ExportSettings};
+use crate::image_processing::{ImageMetadata, get_or_init_gpu_context};
+use crate::{AppState, ExportSettings, export_photo};
 use chrono::Utc;
 use serde_json::json;
 use std::collections::HashSet;
@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, Runtime};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 
 type ProcessorFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 type ProcessorFn<R> = Arc<
@@ -98,8 +98,12 @@ impl BackgroundExportQueue {
                     *inflight = Some(job.clone());
                 }
 
-                let result =
-                    (processor)(job.clone(), app_handle.clone(), Arc::clone(&state.cancel_requested)).await;
+                let result = (processor)(
+                    job.clone(),
+                    app_handle.clone(),
+                    Arc::clone(&state.cancel_requested),
+                )
+                .await;
 
                 if let Err(err) = result {
                     log::error!("Background export job failed: {}", err);
@@ -240,7 +244,11 @@ async fn process_background_export<R: Runtime>(
     }
 
     if let Err(err) = record_background_export_attempt(&session, &job.path) {
-        log::warn!("[{}] Failed to record export attempt: {}", correlation_id, err);
+        log::warn!(
+            "[{}] Failed to record export attempt: {}",
+            correlation_id,
+            err
+        );
     }
 
     log::info!(
@@ -367,11 +375,7 @@ async fn process_background_export<R: Runtime>(
             } else {
                 SessionExportError::new(
                     error::export::EXPORT_FAILED,
-                    error::export::failed(
-                        output_path.to_string_lossy().as_ref(),
-                        &err,
-                    )
-                    .message,
+                    error::export::failed(output_path.to_string_lossy().as_ref(), &err).message,
                     json!({
                         "destination": output_path.to_string_lossy(),
                         "detail": err,
@@ -456,16 +460,16 @@ mod tests {
                       _app_handle: AppHandle<tauri::test::MockRuntime>,
                       _cancel_flag: Arc<AtomicBool>|
                       -> ProcessorFuture {
-                let current = Arc::clone(&current);
-                let max = Arc::clone(&max);
-                Box::pin(async move {
-                    let in_flight = current.fetch_add(1, Ordering::SeqCst) + 1;
-                    max.fetch_max(in_flight, Ordering::SeqCst);
-                    sleep(Duration::from_millis(50)).await;
-                    current.fetch_sub(1, Ordering::SeqCst);
-                    Ok(())
-                })
-            },
+                    let current = Arc::clone(&current);
+                    let max = Arc::clone(&max);
+                    Box::pin(async move {
+                        let in_flight = current.fetch_add(1, Ordering::SeqCst) + 1;
+                        max.fetch_max(in_flight, Ordering::SeqCst);
+                        sleep(Duration::from_millis(50)).await;
+                        current.fetch_sub(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                },
             )
         };
 
@@ -506,12 +510,12 @@ mod tests {
                       _app_handle: AppHandle<tauri::test::MockRuntime>,
                       _cancel_flag: Arc<AtomicBool>|
                       -> ProcessorFuture {
-                let processed = Arc::clone(&processed);
-                Box::pin(async move {
-                    processed.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                })
-            },
+                    let processed = Arc::clone(&processed);
+                    Box::pin(async move {
+                        processed.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                },
             )
         };
 
@@ -545,15 +549,15 @@ mod tests {
                       _app_handle: AppHandle<tauri::test::MockRuntime>,
                       cancel_flag: Arc<AtomicBool>|
                       -> ProcessorFuture {
-                let cancel_observed = Arc::clone(&cancel_observed);
-                Box::pin(async move {
-                    while !cancel_flag.load(Ordering::SeqCst) {
-                        sleep(Duration::from_millis(10)).await;
-                    }
-                    cancel_observed.store(true, Ordering::SeqCst);
-                    Ok(())
-                })
-            },
+                    let cancel_observed = Arc::clone(&cancel_observed);
+                    Box::pin(async move {
+                        while !cancel_flag.load(Ordering::SeqCst) {
+                            sleep(Duration::from_millis(10)).await;
+                        }
+                        cancel_observed.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
+                },
             )
         };
 

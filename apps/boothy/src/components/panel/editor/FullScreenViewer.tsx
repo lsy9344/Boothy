@@ -156,4 +156,6 @@ const FullScreenViewer = memo(
   },
 );
 
+FullScreenViewer.displayName = 'FullScreenViewer';
+
 export default FullScreenViewer;

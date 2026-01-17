@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Star, Copy, ClipboardPaste, RotateCcw, ChevronUp, ChevronDown, Check, Save, Loader2, Settings } from 'lucide-react';
+import { Star, Copy, ClipboardPaste, RotateCcw, ChevronUp, ChevronDown, Check, Save, Settings } from 'lucide-react';
 import clsx from 'clsx';
 import Filmstrip from './Filmstrip';
 import { GLOBAL_KEYS, ImageFile, SelectedImage, ThumbnailAspectRatio } from '../ui/AppProperties';
@@ -36,10 +36,8 @@ interface BottomBarProps {
   setIsFilmstripVisible?(isVisible: boolean): void;
   thumbnails?: Record<string, string>;
   thumbnailAspectRatio: ThumbnailAspectRatio;
-  zoom?: number;
   displaySize?: { width: number; height: number };
   originalSize?: { width: number; height: number };
-  baseRenderSize?: { width: number; height: number };
 }
 
 interface StarRatingProps {
@@ -68,8 +66,8 @@ const StarRating = ({ rating, onRate, disabled }: StarRatingProps) => {
                 disabled
                   ? 'text-text-secondary opacity-40'
                   : starValue <= rating
-                  ? 'fill-accent text-accent'
-                  : 'text-text-secondary hover:text-accent',
+                    ? 'fill-accent text-accent'
+                    : 'text-text-secondary hover:text-accent',
               )}
             />
           </button>
@@ -111,10 +109,8 @@ export default function BottomBar({
   setIsFilmstripVisible,
   thumbnails,
   thumbnailAspectRatio,
-  zoom = 0,
   displaySize,
   originalSize,
-  baseRenderSize,
 }: BottomBarProps) {
   const [isEditingPercent, setIsEditingPercent] = useState(false);
   const [percentInputValue, setPercentInputValue] = useState('');
@@ -215,7 +211,6 @@ export default function BottomBar({
           <Filmstrip
             imageList={imageList}
             imageRatings={imageRatings}
-            isLoading={isLoading}
             multiSelectedPaths={multiSelectedPaths}
             onClearSelection={onClearSelection}
             onContextMenu={onContextMenu}
@@ -253,7 +248,11 @@ export default function BottomBar({
                   onClick={onPaste}
                   title="Paste Settings"
                 >
-                  {isPasted ? <Check size={18} className="text-green-500 animate-pop-in" /> : <ClipboardPaste size={18} />}
+                  {isPasted ? (
+                    <Check size={18} className="text-green-500 animate-pop-in" />
+                  ) : (
+                    <ClipboardPaste size={18} />
+                  )}
                 </button>
                 <button
                   className="w-8 h-8 flex items-center justify-center rounded-md text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"

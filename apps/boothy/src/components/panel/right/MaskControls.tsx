@@ -352,7 +352,7 @@ export default function MaskControls({
     const handleCopy = () => {
       const adjustmentsToCopy: Record<string, any> = {};
       for (const key of sectionKeys) {
-        if (editingMask.adjustments.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(editingMask.adjustments, key)) {
           adjustmentsToCopy[key] = JSON.parse(JSON.stringify(editingMask.adjustments[key]));
         }
       }

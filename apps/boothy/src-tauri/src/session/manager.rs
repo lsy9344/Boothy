@@ -68,11 +68,7 @@ impl SessionManager {
         }
 
         // Create session model
-        let session = BoothySession::new(
-            session_name,
-            session_folder_name,
-            session_base_path,
-        );
+        let session = BoothySession::new(session_name, session_folder_name, session_base_path);
 
         Ok((session, session_exists))
     }

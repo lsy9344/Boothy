@@ -191,8 +191,8 @@ export default function ExportPanel({
     ? multiSelectedPaths.length > 0
       ? multiSelectedPaths
       : selectedImage
-      ? [selectedImage.path]
-      : []
+        ? [selectedImage.path]
+        : []
     : multiSelectedPaths;
   const numImages = pathsToExport.length;
   const isBatchMode = numImages > 1;

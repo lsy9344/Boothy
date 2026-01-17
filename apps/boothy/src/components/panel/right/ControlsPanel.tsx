@@ -18,17 +18,22 @@ interface ControlsPanelOption {
   type?: string;
 }
 
+export interface CopiedSectionAdjustments {
+  section: string;
+  values: Partial<Adjustments>;
+}
+
 interface ControlsProps {
   adjustments: Adjustments;
   collapsibleState: any;
-  copiedSectionAdjustments: Adjustments | null;
+  copiedSectionAdjustments: CopiedSectionAdjustments | null;
   handleAutoAdjustments(): void;
   handleLutSelect(path: string): void;
   histogram: ChannelConfig | null;
   selectedImage: SelectedImage;
   setAdjustments(updater: (prev: Adjustments) => Adjustments): void;
   setCollapsibleState(state: any): void;
-  setCopiedSectionAdjustments(adjustments: any): void;
+  setCopiedSectionAdjustments(adjustments: CopiedSectionAdjustments | null): void;
   theme: string;
   appSettings: AppSettings | null;
   isWbPickerActive?: boolean;
@@ -97,7 +102,7 @@ export default function Controls({
     const handleCopy = () => {
       const adjustmentsToCopy: any = {};
       for (const key of sectionKeys) {
-        if (adjustments.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(adjustments, key)) {
           adjustmentsToCopy[key] = JSON.parse(JSON.stringify(adjustments[key]));
         }
       }

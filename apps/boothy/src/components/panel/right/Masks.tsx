@@ -1,12 +1,4 @@
-import React from 'react';
-import {
-  Brush,
-  Circle,
-  Droplet,
-  Layers,
-  RectangleHorizontal,
-  TriangleRight,
-} from 'lucide-react';
+import { Brush, Circle, Droplet, Layers, RectangleHorizontal, TriangleRight } from 'lucide-react';
 
 export enum Mask {
   All = 'all',

@@ -60,34 +60,28 @@ export default function SessionCountdown({ remainingSeconds, size = 'md' }: Sess
           'bg-amber-500/20 border-amber-400/40 text-amber-400': isWarning,
           // Urgent state (< 1 min): red + pulsing animation
           'bg-red-500/25 border-red-400/50 text-red-400 animate-pulse': isUrgent,
-        }
+        },
       )}
       aria-label={`Session time remaining ${display}`}
       role="timer"
     >
       <Timer
         size={config.icon}
-        className={clsx(
-          'transition-colors duration-300',
-          {
-            'text-accent': isNormal,
-            'text-amber-400': isWarning,
-            'text-red-400': isUrgent,
-          }
-        )}
+        className={clsx('transition-colors duration-300', {
+          'text-accent': isNormal,
+          'text-amber-400': isWarning,
+          'text-red-400': isUrgent,
+        })}
       />
       <span className="tabular-nums font-mono">{display}</span>
 
       {/* Visual indicator dot */}
       <div
-        className={clsx(
-          'w-2 h-2 rounded-full transition-all duration-300',
-          {
-            'bg-accent': isNormal,
-            'bg-amber-400 animate-pulse': isWarning,
-            'bg-red-400 animate-ping': isUrgent,
-          }
-        )}
+        className={clsx('w-2 h-2 rounded-full transition-all duration-300', {
+          'bg-accent': isNormal,
+          'bg-amber-400 animate-pulse': isWarning,
+          'bg-red-400 animate-ping': isUrgent,
+        })}
       />
     </div>
   );

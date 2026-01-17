@@ -18,10 +18,7 @@ export default function TimelineLockoutModal({ isOpen, onDismiss, onContinue }: 
       role="dialog"
       onClick={onDismiss}
     >
-      <div
-        className="bg-surface rounded-lg shadow-xl p-6 w-full max-w-md"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-surface rounded-lg shadow-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-semibold text-text-primary mb-2">Session Locked</h3>
         <p className="text-sm text-text-secondary mb-6">
           The session has reached T-0. Choose whether to keep the workspace locked or continue working in admin mode.

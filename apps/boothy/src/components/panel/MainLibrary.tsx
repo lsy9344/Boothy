@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, forwardRef, useMemo, useCallback } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
-import { invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
   Check,
@@ -29,12 +28,10 @@ import {
   AppSettings,
   FilterCriteria,
   ImageFile,
-  Invokes,
   LibraryViewMode,
   RawStatus,
   SortCriteria,
   SortDirection,
-  SupportedTypes,
   ThumbnailSize,
   ThumbnailAspectRatio,
 } from '../ui/AppProperties';
@@ -79,7 +76,6 @@ interface MainLibraryProps {
   isLoading: boolean;
   isStartingSession?: boolean;
   isThumbnailsLoading?: boolean;
-  isTreeLoading: boolean;
   libraryScrollTop: number;
   libraryViewMode: LibraryViewMode;
   multiSelectedPaths: Array<string>;
@@ -329,10 +325,7 @@ function SearchInput({ searchCriteria, setSearchCriteria }: SearchInputProps) {
   };
 
   const isActive = isSearchActive || tags.length > 0 || !!text;
-  const placeholderText =
-    tags.length > 0
-      ? 'Add another tag...'
-      : 'Search by tag or filename...';
+  const placeholderText = tags.length > 0 ? 'Add another tag...' : 'Search by tag or filename...';
 
   const INACTIVE_WIDTH = 48;
   const PADDING_AND_ICONS_WIDTH = 105;
@@ -566,8 +559,9 @@ function ThumbnailSizeOptions({ selectedSize, onSelectSize }: ThumbnailSizeProps
         const isSelected = selectedSize === option.id;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-              }`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+            }`}
             key={option.id}
             onClick={() => onSelectSize(option.id)}
             role="menuitem"
@@ -589,8 +583,9 @@ function ThumbnailAspectRatioOptions({ selectedAspectRatio, onSelectAspectRatio 
         const isSelected = selectedAspectRatio === option.id;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-              }`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+            }`}
             key={option.id}
             onClick={() => onSelectAspectRatio(option.id)}
             role="menuitem"
@@ -622,10 +617,11 @@ function FilterOptions({ filterCriteria, setFilterCriteria }: FilterOptionProps)
             const isSelected = filterCriteria.rating === option.value;
             return (
               <button
-                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected
-                  ? 'bg-card-active text-text-primary font-semibold'
-                  : 'text-text-primary hover:bg-bg-primary'
-                  }`}
+                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+                  isSelected
+                    ? 'bg-card-active text-text-primary font-semibold'
+                    : 'text-text-primary hover:bg-bg-primary'
+                }`}
                 key={option.value}
                 onClick={() => handleRatingFilterChange(option.value)}
                 role="menuitem"
@@ -646,10 +642,11 @@ function FilterOptions({ filterCriteria, setFilterCriteria }: FilterOptionProps)
             const isSelected = (filterCriteria.rawStatus || RawStatus.All) === option.key;
             return (
               <button
-                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected
-                  ? 'bg-card-active text-text-primary font-semibold'
-                  : 'text-text-primary hover:bg-bg-primary'
-                  }`}
+                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+                  isSelected
+                    ? 'bg-card-active text-text-primary font-semibold'
+                    : 'text-text-primary hover:bg-bg-primary'
+                }`}
                 key={option.key}
                 onClick={() => handleRawStatusChange(option.key as RawStatus)}
                 role="menuitem"
@@ -723,8 +720,9 @@ function SortOptions({ sortCriteria, setSortCriteria, sortOptions }: SortOptions
         const isSelected = sortCriteria.key === option.key;
         return (
           <button
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
-              } ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+              isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'
+            } ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             key={option.key}
             onClick={() => !option.disabled && handleKeyChange(option.key)}
             role="menuitem"
@@ -745,10 +743,11 @@ function ViewModeOptions({ mode, setMode }: { mode: LibraryViewMode; setMode: (m
     <>
       <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase">Display Mode</div>
       <button
-        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${mode === LibraryViewMode.Flat
-          ? 'bg-card-active text-text-primary font-semibold'
-          : 'text-text-primary hover:bg-bg-primary'
-          }`}
+        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+          mode === LibraryViewMode.Flat
+            ? 'bg-card-active text-text-primary font-semibold'
+            : 'text-text-primary hover:bg-bg-primary'
+        }`}
         onClick={() => setMode(LibraryViewMode.Flat)}
         role="menuitem"
       >
@@ -756,10 +755,11 @@ function ViewModeOptions({ mode, setMode }: { mode: LibraryViewMode; setMode: (m
         {mode === LibraryViewMode.Flat && <Check size={16} />}
       </button>
       <button
-        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${mode === LibraryViewMode.Recursive
-          ? 'bg-card-active text-text-primary font-semibold'
-          : 'text-text-primary hover:bg-bg-primary'
-          }`}
+        className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${
+          mode === LibraryViewMode.Recursive
+            ? 'bg-card-active text-text-primary font-semibold'
+            : 'text-text-primary hover:bg-bg-primary'
+        }`}
         onClick={() => setMode(LibraryViewMode.Recursive)}
         role="menuitem"
       >
@@ -937,8 +937,9 @@ function Thumbnail({
               )}
               <img
                 alt={path.split(/[\\/]/).pop()}
-                className={`w-full h-full group-hover:scale-[1.02] transition-transform duration-300 ${thumbnailAspectRatio === ThumbnailAspectRatio.Contain ? 'object-contain' : 'object-cover'
-                  } relative`}
+                className={`w-full h-full group-hover:scale-[1.02] transition-transform duration-300 ${
+                  thumbnailAspectRatio === ThumbnailAspectRatio.Contain ? 'object-contain' : 'object-cover'
+                } relative`}
                 decoding="async"
                 loading="lazy"
                 src={layer.url}
@@ -1101,7 +1102,6 @@ export default function MainLibrary({
   isLoading,
   isStartingSession = false,
   isThumbnailsLoading,
-  isTreeLoading,
   libraryScrollTop,
   libraryViewMode,
   multiSelectedPaths,
@@ -1134,7 +1134,6 @@ export default function MainLibrary({
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [sessionName, setSessionName] = useState('');
-  const [supportedTypes, setSupportedTypes] = useState<SupportedTypes | null>(null);
   const libraryContainerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<List>(null);
   const outerRef = useRef<HTMLDivElement>(null);
@@ -1240,8 +1239,7 @@ export default function MainLibrary({
           top: itemBottom - clientHeight + SCROLL_OFFSET,
           behavior: 'smooth',
         });
-      }
-      else if (targetTop < scrollTop) {
+      } else if (targetTop < scrollTop) {
         element.scrollTo({
           top: targetTop - SCROLL_OFFSET,
           behavior: 'smooth',
@@ -1283,12 +1281,6 @@ export default function MainLibrary({
     getVersion()
       .then((currentVersion) => setAppVersion(currentVersion))
       .catch((error) => console.error('Error reading app version:', error));
-  }, []);
-
-  useEffect(() => {
-    invoke(Invokes.GetSupportedFileTypes)
-      .then((types: any) => setSupportedTypes(types))
-      .catch((err) => console.error('Failed to load supported file types:', err));
   }, []);
 
   useEffect(() => {
@@ -1423,8 +1415,9 @@ export default function MainLibrary({
                   {showAdvancedControls && (
                     <div className="flex items-center gap-2">
                       <Button
-                        className={`rounded-md flex-grow flex justify-start items-center h-11 ${hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
-                          }`}
+                        className={`rounded-md flex-grow flex justify-start items-center h-11 ${
+                          hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
+                        }`}
                         onClick={onOpenFolder}
                         size="lg"
                       >
@@ -1464,14 +1457,13 @@ export default function MainLibrary({
       <header className="p-4 flex-shrink-0 flex justify-between items-center border-b border-border-color gap-4">
         <div className="min-w-0">
           <h2 className="text-2xl font-bold text-primary">Library</h2>
-          {boothySessionName && (
-            <p className="text-xs text-text-secondary">Session: {boothySessionName}</p>
-          )}
+          {boothySessionName && <p className="text-xs text-text-secondary">Session: {boothySessionName}</p>}
           <div className="flex items-center gap-2">
             <p className="text-sm text-text-secondary truncate">{currentFolderPath}</p>
             <div
-              className={`overflow-hidden transition-all duration-300 ${isLoaderVisible ? 'max-w-[1rem] opacity-100' : 'max-w-0 opacity-0'
-                }`}
+              className={`overflow-hidden transition-all duration-300 ${
+                isLoaderVisible ? 'max-w-[1rem] opacity-100' : 'max-w-0 opacity-0'
+              }`}
             >
               <Loader2 size={14} className="animate-spin text-text-secondary" />
             </div>
@@ -1549,7 +1541,7 @@ export default function MainLibrary({
               const rowHeight = itemWidth + ITEM_GAP;
               const headerHeight = 40;
 
-              let rows: any[] = [];
+              const rows: any[] = [];
 
               if (libraryViewMode === LibraryViewMode.Recursive && groups) {
                 groups.forEach((group) => {

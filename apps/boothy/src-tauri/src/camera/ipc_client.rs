@@ -4,8 +4,8 @@ use log::{debug, error, info, warn};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -117,7 +117,11 @@ impl CameraIpcClient {
         };
 
         if process_running {
-            if self.connect_to_pipe_with_retries(3, Duration::from_millis(200)).await.is_ok() {
+            if self
+                .connect_to_pipe_with_retries(3, Duration::from_millis(200))
+                .await
+                .is_ok()
+            {
                 self.start_event_listener();
                 info!("[{}] Connected to existing sidecar", correlation_id);
                 return Ok(());
@@ -239,7 +243,10 @@ impl CameraIpcClient {
         let json = match serde_json::to_string(&message) {
             Ok(json) => json,
             Err(e) => {
-                warn!("[{}] Failed to serialize shutdown request: {}", correlation_id, e);
+                warn!(
+                    "[{}] Failed to serialize shutdown request: {}",
+                    correlation_id, e
+                );
                 return;
             }
         };
@@ -331,11 +338,7 @@ impl CameraIpcClient {
         let mut last_error = String::new();
 
         for i in 0..max_retries {
-            match OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(PIPE_NAME)
-            {
+            match OpenOptions::new().read(true).write(true).open(PIPE_NAME) {
                 Ok(pipe) => {
                     info!("[{}] Connected to Named Pipe", correlation_id);
 
@@ -394,23 +397,18 @@ impl CameraIpcClient {
                 }
 
                 match line {
-                    Ok(line_str) => {
-                        match serde_json::from_str::<IpcMessage>(&line_str) {
-                            Ok(message) => {
-                                debug!(
-                                    "[{}] Received IPC message: {}",
-                                    message.correlation_id, message.method
-                                );
-                                handle_sidecar_event(&app_handle, message);
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "[{}] Failed to parse IPC message: {}",
-                                    correlation_id, e
-                                );
-                            }
+                    Ok(line_str) => match serde_json::from_str::<IpcMessage>(&line_str) {
+                        Ok(message) => {
+                            debug!(
+                                "[{}] Received IPC message: {}",
+                                message.correlation_id, message.method
+                            );
+                            handle_sidecar_event(&app_handle, message);
                         }
-                    }
+                        Err(e) => {
+                            warn!("[{}] Failed to parse IPC message: {}", correlation_id, e);
+                        }
+                    },
                     Err(e) => {
                         warn!("[{}] Pipe read error: {}", correlation_id, e);
                         break;

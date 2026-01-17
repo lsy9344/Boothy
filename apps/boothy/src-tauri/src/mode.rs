@@ -4,8 +4,8 @@ use argon2::{
 };
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex};
 
 fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, label: &str) -> MutexGuard<'a, T> {
     match mutex.lock() {

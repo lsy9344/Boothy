@@ -92,7 +92,9 @@ pub fn load_session_metadata(session_root: &Path) -> Option<BoothySessionMetadat
     serde_json::from_str(&contents).ok()
 }
 
-pub fn build_photo_state_map(metadata: &BoothySessionMetadata) -> HashMap<String, BoothyPhotoState> {
+pub fn build_photo_state_map(
+    metadata: &BoothySessionMetadata,
+) -> HashMap<String, BoothyPhotoState> {
     metadata
         .photos
         .iter()
@@ -110,8 +112,8 @@ pub fn build_photo_state_map(metadata: &BoothySessionMetadata) -> HashMap<String
 }
 
 pub fn collect_session_raw_files(raw_path: &Path) -> Result<Vec<PathBuf>, String> {
-    let entries = fs::read_dir(raw_path)
-        .map_err(|e| format!("Failed to read session Raw folder: {}", e))?;
+    let entries =
+        fs::read_dir(raw_path).map_err(|e| format!("Failed to read session Raw folder: {}", e))?;
     let mut files: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
@@ -131,7 +133,10 @@ pub fn filter_export_paths(
         BoothyExportChoice::ContinueFromBackground => paths
             .into_iter()
             .filter(|path| {
-                let filename = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
                 let completed = photo_states
                     .and_then(|states| states.get(filename))
                     .map(|state| state.completed)
@@ -170,13 +175,20 @@ mod tests {
         };
         let states = build_photo_state_map(&metadata);
 
-        let selected = filter_export_paths(paths, Some(&states), BoothyExportChoice::ContinueFromBackground);
+        let selected = filter_export_paths(
+            paths,
+            Some(&states),
+            BoothyExportChoice::ContinueFromBackground,
+        );
         let selected_names: Vec<String> = selected
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect();
 
-        assert_eq!(selected_names, vec!["B.CR3".to_string(), "C.CR3".to_string()]);
+        assert_eq!(
+            selected_names,
+            vec!["B.CR3".to_string(), "C.CR3".to_string()]
+        );
     }
 
     #[test]

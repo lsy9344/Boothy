@@ -43,22 +43,15 @@ export default function ExportProgressBar({ onDismissError, state }: ExportProgr
         {!isError && (
           <>
             <div className="mt-2 h-2 w-full rounded-full bg-bg-primary">
-              <div
-                className="h-2 rounded-full bg-accent transition-all"
-                style={{ width: `${percent}%` }}
-              />
+              <div className="h-2 rounded-full bg-accent transition-all" style={{ width: `${percent}%` }} />
             </div>
             {currentPath && !isComplete && (
-              <div className="mt-2 text-xs text-text-secondary">
-                Current: {formatCurrentFile(currentPath)}
-              </div>
+              <div className="mt-2 text-xs text-text-secondary">Current: {formatCurrentFile(currentPath)}</div>
             )}
           </>
         )}
         {isError && (
-          <div className="mt-2 text-sm text-red-200">
-            {errorMessage || 'Export failed. Please try again.'}
-          </div>
+          <div className="mt-2 text-sm text-red-200">{errorMessage || 'Export failed. Please try again.'}</div>
         )}
         {isError && (
           <div className="mt-3 flex justify-end">

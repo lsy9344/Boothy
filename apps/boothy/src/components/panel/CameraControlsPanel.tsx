@@ -116,4 +116,3 @@ export default function CameraControlsPanel({ title = 'Camera Controls' }: Camer
     </div>
   );
 }
-

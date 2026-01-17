@@ -75,7 +75,7 @@ const ColorWheel = ({
   useEffect(() => {
     const handleInteractionEnd = () => {
       setIsWheelDragging(false);
-      onDragStateChange?.(isSliderDragging); 
+      onDragStateChange?.(isSliderDragging);
       if (containerRef.current && !containerRef.current.matches(':hover')) {
         setIsHovered(false);
       }
@@ -145,9 +145,9 @@ const ColorWheel = ({
 
       <div ref={sizerRef} className="relative w-full aspect-square">
         {wheelSize > 0 && (
-          <div 
-            className="absolute inset-0 cursor-pointer" 
-            onDoubleClick={handleReset} 
+          <div
+            className="absolute inset-0 cursor-pointer"
+            onDoubleClick={handleReset}
             title="Double-click to reset"
             onMouseDownCapture={handleDragStart}
             onTouchStartCapture={handleDragStart}

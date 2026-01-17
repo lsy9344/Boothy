@@ -88,9 +88,7 @@ function SectionHeader({ title, isOpen, onToggle }: { title: string; isOpen: boo
           <ChevronRight size={14} className="text-text-secondary" />
         )}
       </div>
-      <span className="ml-1 text-xs font-bold uppercase text-text-secondary tracking-wider select-none">
-        {title}
-      </span>
+      <span className="ml-1 text-xs font-bold uppercase text-text-secondary tracking-wider select-none">{title}</span>
     </div>
   );
 }
@@ -288,8 +286,7 @@ export default function FolderTree({
 
       if (hasPinnedResults && activeSection !== 'pinned') {
         onActiveSectionChange('pinned');
-      }
-      else if (!hasPinnedResults && hasBaseResults && activeSection !== 'current') {
+      } else if (!hasPinnedResults && hasBaseResults && activeSection !== 'current') {
         onActiveSectionChange('current');
       }
     }

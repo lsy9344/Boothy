@@ -46,8 +46,8 @@ use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use image::codecs::jpeg::JpegEncoder;
 use image::{
-    DynamicImage, GenericImageView, GrayImage, ImageBuffer, ImageFormat, Luma, Rgba,
-    RgbaImage, imageops,
+    DynamicImage, GenericImageView, GrayImage, ImageBuffer, ImageFormat, Luma, Rgba, RgbaImage,
+    imageops,
 };
 use little_exif::exif_tag::ExifTag;
 use little_exif::filetype::FileExtension;
@@ -1080,7 +1080,10 @@ fn export_photo(
     is_raw: bool,
     cancel_flag: Option<&AtomicBool>,
 ) -> Result<(), String> {
-    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+    if cancel_flag
+        .map(|flag| flag.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
         return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
     }
 
@@ -1094,7 +1097,10 @@ fn export_photo(
         is_raw,
     )?;
 
-    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+    if cancel_flag
+        .map(|flag| flag.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
         return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
     }
 
@@ -1115,7 +1121,10 @@ fn export_photo(
         export_settings.strip_gps,
     )?;
 
-    if cancel_flag.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+    if cancel_flag
+        .map(|flag| flag.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
         return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
     }
 
@@ -2854,7 +2863,11 @@ fn frontend_ready(
 }
 
 #[tauri::command]
-fn boothy_log_frontend(level: String, message: String, context: Option<Value>) -> Result<(), String> {
+fn boothy_log_frontend(
+    level: String,
+    message: String,
+    context: Option<Value>,
+) -> Result<(), String> {
     let context_str = context
         .as_ref()
         .and_then(|value| serde_json::to_string(value).ok())
@@ -2909,13 +2922,17 @@ async fn boothy_create_or_open_session(
             // Set the session destination for incoming captures
             let correlation_id = camera::generate_correlation_id();
             let correlation_id_for_error = correlation_id.clone();
-            let session_name = raw_path.parent()
+            let session_name = raw_path
+                .parent()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string();
 
-            if let Err(e) = client.set_session_destination(raw_path, session_name, correlation_id).await {
+            if let Err(e) = client
+                .set_session_destination(raw_path, session_name, correlation_id)
+                .await
+            {
                 log::error!("Failed to set camera session destination: {}", e);
                 let error = error::camera::setup_failed(e);
                 let _ = app_handle.emit(
@@ -2949,14 +2966,17 @@ fn boothy_get_active_session(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<session::BoothySession>, String> {
     let session = state.session_manager.get_active_session();
-    
+
     // Start file watcher for the session's Raw/ folder when session is retrieved
     if let Some(ref s) = session {
-        if let Err(e) = state.file_watcher.start_watching(s.raw_path.clone(), app_handle) {
+        if let Err(e) = state
+            .file_watcher
+            .start_watching(s.raw_path.clone(), app_handle)
+        {
             log::warn!("Failed to start file watcher for active session: {}", e);
         }
     }
-    
+
     Ok(session)
 }
 
@@ -3067,16 +3087,51 @@ async fn boothy_handle_photo_transferred(
     let watcher_opt = {
         let mut guard = state.file_arrival_watcher.lock().unwrap();
         if guard.is_none() {
-            *guard = Some(ingest::file_watcher::FileArrivalWatcher::new(app_handle.clone()));
+            *guard = Some(ingest::file_watcher::FileArrivalWatcher::new(
+                app_handle.clone(),
+            ));
         }
         guard.as_ref().cloned()
     };
 
     if let Some(watcher) = watcher_opt {
-        watcher.handle_photo_transferred(path_buf, correlation_id).await?;
+        watcher
+            .handle_photo_transferred(path_buf, correlation_id)
+            .await?;
     }
 
     Ok(())
+}
+
+#[tauri::command]
+fn boothy_get_exported_count(
+    state: tauri::State<'_, AppState>,
+) -> Result<usize, String> {
+    let session = state
+        .session_manager
+        .get_active_session()
+        .ok_or("No active session available.".to_string())?;
+
+    let jpg_path = &session.jpg_path;
+
+    if !jpg_path.exists() {
+        return Ok(0);
+    }
+
+    let count = std::fs::read_dir(jpg_path)
+        .map_err(|e| format!("Failed to read Jpg folder: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
+                .unwrap_or(false)
+        })
+        .count();
+
+    Ok(count)
 }
 
 #[tauri::command]
@@ -3098,7 +3153,11 @@ async fn boothy_handle_export_decision(
         .unwrap_or_default();
     let selected_paths = filter_export_paths(raw_files, Some(&photo_states), choice);
 
-    log::info!("Boothy export decision: {:?} ({} files)", choice, selected_paths.len());
+    log::info!(
+        "Boothy export decision: {:?} ({} files)",
+        choice,
+        selected_paths.len()
+    );
 
     if selected_paths.is_empty() {
         let mut progress = ExportProgressState::new(0);
@@ -3141,11 +3200,12 @@ fn start_folder_watcher(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let path_buf = std::path::PathBuf::from(path);
-    log::info!("[FolderWatcher] Starting file watcher for folder: {:?}", path_buf);
-    
-    state
-        .file_watcher
-        .start_watching(path_buf, app_handle)
+    log::info!(
+        "[FolderWatcher] Starting file watcher for folder: {:?}",
+        path_buf
+    );
+
+    state.file_watcher.start_watching(path_buf, app_handle)
 }
 
 fn main() {
@@ -3272,9 +3332,18 @@ fn main() {
                 if let Some(last_root) = &settings.last_root_path {
                     let path_buf = std::path::PathBuf::from(last_root);
                     if path_buf.exists() {
-                        log::info!("[Setup] Starting file watcher for lastRootPath: {:?}", path_buf);
-                        if let Err(e) = state.file_watcher.start_watching(path_buf, app_handle.clone()) {
-                            log::warn!("[Setup] Failed to start file watcher for lastRootPath: {}", e);
+                        log::info!(
+                            "[Setup] Starting file watcher for lastRootPath: {:?}",
+                            path_buf
+                        );
+                        if let Err(e) = state
+                            .file_watcher
+                            .start_watching(path_buf, app_handle.clone())
+                        {
+                            log::warn!(
+                                "[Setup] Failed to start file watcher for lastRootPath: {}",
+                                e
+                            );
                         }
                     }
                 }
@@ -3398,6 +3467,7 @@ fn main() {
             boothy_set_current_preset,
             boothy_handle_photo_transferred,
             boothy_handle_export_decision,
+            boothy_get_exported_count,
             boothy_log_frontend,
             start_folder_watcher,
         ])
@@ -3405,32 +3475,30 @@ fn main() {
         .expect("error while building tauri application")
         .run(
             #[allow(unused_variables)]
-            |app_handle, event| {
-                match event {
-                    #[cfg(target_os = "macos")]
-                    tauri::RunEvent::Opened { urls } => {
-                        if let Some(url) = urls.first() {
-                            if let Ok(path) = url.to_file_path() {
-                                if let Some(path_str) = path.to_str() {
-                                    let state = app_handle.state::<AppState>();
-                                    *state.initial_file_path.lock().unwrap() =
-                                        Some(path_str.to_string());
-                                    log::info!(
-                                        "macOS initial open: Stored path {} for later.",
-                                        path_str
-                                    );
-                                }
+            |app_handle, event| match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Opened { urls } => {
+                    if let Some(url) = urls.first() {
+                        if let Ok(path) = url.to_file_path() {
+                            if let Some(path_str) = path.to_str() {
+                                let state = app_handle.state::<AppState>();
+                                *state.initial_file_path.lock().unwrap() =
+                                    Some(path_str.to_string());
+                                log::info!(
+                                    "macOS initial open: Stored path {} for later.",
+                                    path_str
+                                );
                             }
                         }
                     }
-                    tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
-                        let state = app_handle.state::<AppState>();
-                        if let Some(client) = state.camera_client.lock().unwrap().as_ref() {
-                            client.stop_sidecar();
-                        }
-                    }
-                    _ => {}
                 }
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    let state = app_handle.state::<AppState>();
+                    if let Some(client) = state.camera_client.lock().unwrap().as_ref() {
+                        client.stop_sidecar();
+                    }
+                }
+                _ => {}
             },
         );
 }

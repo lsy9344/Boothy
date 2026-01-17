@@ -343,7 +343,11 @@ export default function LibraryExportPanel({
     setExportState({ status: Status.Exporting, progress: { current: 0, total: numImages }, errorMessage: '' });
 
     let finalFilenameTemplate = filenameTemplate;
-    if (numImages > 1 && !filenameTemplate.includes('{sequence}') && !filenameTemplate.includes('{original_filename}')) {
+    if (
+      numImages > 1 &&
+      !filenameTemplate.includes('{sequence}') &&
+      !filenameTemplate.includes('{original_filename}')
+    ) {
       finalFilenameTemplate = `${filenameTemplate}_{sequence}`;
       setFilenameTemplate(finalFilenameTemplate);
     }

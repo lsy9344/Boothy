@@ -20,14 +20,9 @@ export default function ExportDecisionModal({ isOpen, onSelect }: ExportDecision
     >
       <div className="w-full max-w-md rounded-lg bg-surface p-6 shadow-xl">
         <h3 className="text-lg font-semibold text-text-primary">Export Options</h3>
-        <p className="mt-2 text-sm text-text-secondary">
-          Choose how to export this session&apos;s photos.
-        </p>
+        <p className="mt-2 text-sm text-text-secondary">Choose how to export this session&apos;s photos.</p>
         <div className="mt-6 space-y-3">
-          <Button
-            className="w-full justify-center"
-            onClick={() => onSelect('overwriteAll')}
-          >
+          <Button className="w-full justify-center" onClick={() => onSelect('overwriteAll')}>
             모두 내보내기
           </Button>
           <Button

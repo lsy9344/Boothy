@@ -216,7 +216,7 @@ pub fn init_file_watcher(app_handle: AppHandle) -> Arc<FileArrivalWatcher> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mode, session, watcher, AppState};
+    use crate::{AppState, mode, session, watcher};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
@@ -297,7 +297,9 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&payload_str).unwrap();
 
         assert_eq!(
-            payload["path"].as_str().expect("payload.path should be string"),
+            payload["path"]
+                .as_str()
+                .expect("payload.path should be string"),
             image_path.to_string_lossy().as_ref()
         );
         assert_eq!(
@@ -320,8 +322,14 @@ mod tests {
         let rrdata_contents = std::fs::read_to_string(&rrdata_path).unwrap();
         let rrdata_json: serde_json::Value = serde_json::from_str(&rrdata_contents).unwrap();
 
-        assert_eq!(rrdata_json["adjustments"]["exposure"], serde_json::json!(0.2));
-        assert_eq!(rrdata_json["adjustments"]["boothy"]["preset_id"], "preset-1");
+        assert_eq!(
+            rrdata_json["adjustments"]["exposure"],
+            serde_json::json!(0.2)
+        );
+        assert_eq!(
+            rrdata_json["adjustments"]["boothy"]["preset_id"],
+            "preset-1"
+        );
         assert_eq!(rrdata_json["adjustments"]["boothy"]["preset_name"], "Warm");
     }
 }

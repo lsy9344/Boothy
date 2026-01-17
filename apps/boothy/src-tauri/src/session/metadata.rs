@@ -69,7 +69,11 @@ pub struct SessionExportError {
 }
 
 impl SessionExportError {
-    pub fn new(code: impl Into<String>, message: impl Into<String>, context: serde_json::Value) -> Self {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        context: serde_json::Value,
+    ) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
@@ -101,7 +105,9 @@ pub fn save_session_metadata(
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
 
     let mut temp_file = NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    temp_file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+    temp_file
+        .write_all(json.as_bytes())
+        .map_err(|e| e.to_string())?;
     temp_file.flush().map_err(|e| e.to_string())?;
 
     if path.exists() {
@@ -112,7 +118,10 @@ pub fn save_session_metadata(
     Ok(())
 }
 
-pub fn record_background_export_attempt(session: &BoothySession, raw_path: &Path) -> Result<(), String> {
+pub fn record_background_export_attempt(
+    session: &BoothySession,
+    raw_path: &Path,
+) -> Result<(), String> {
     update_photo_state(session, raw_path, |entry| {
         entry.attempt_count = entry.attempt_count.saturating_add(1);
         entry.last_attempt_at = Some(Utc::now());
@@ -121,7 +130,10 @@ pub fn record_background_export_attempt(session: &BoothySession, raw_path: &Path
     })
 }
 
-pub fn mark_background_export_success(session: &BoothySession, raw_path: &Path) -> Result<(), String> {
+pub fn mark_background_export_success(
+    session: &BoothySession,
+    raw_path: &Path,
+) -> Result<(), String> {
     update_photo_state(session, raw_path, |entry| {
         entry.background_export_completed = true;
         entry.background_export_timestamp = Some(Utc::now());
@@ -148,7 +160,10 @@ pub fn mark_background_export_failure(
     })
 }
 
-pub fn is_background_export_completed(session: &BoothySession, raw_path: &Path) -> Result<bool, String> {
+pub fn is_background_export_completed(
+    session: &BoothySession,
+    raw_path: &Path,
+) -> Result<bool, String> {
     let raw_filename = raw_filename(raw_path)?;
     let metadata = load_session_metadata(session)?;
     Ok(metadata
@@ -176,9 +191,10 @@ where
         metadata
             .photos
             .push(SessionPhotoExportState::new(raw_filename.clone()));
-        metadata.photos.last_mut().ok_or_else(|| {
-            "Failed to append new session metadata entry".to_string()
-        })?
+        metadata
+            .photos
+            .last_mut()
+            .ok_or_else(|| "Failed to append new session metadata entry".to_string())?
     };
 
     mutator(entry);

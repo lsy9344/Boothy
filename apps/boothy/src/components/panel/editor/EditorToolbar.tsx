@@ -59,7 +59,7 @@ const EditorToolbar = memo(
     const { baseName, isVirtualCopy, vcId, exifData, hasExif } = useMemo(() => {
       const path = selectedImage.path;
       const parts = path.split('?vc=');
-      const fullFileName = parts[0].split(/[\/\\]/).pop() || '';
+      const fullFileName = parts[0].split(/[\\/]/).pop() || '';
 
       const exif = selectedImage.exif || {};
 
@@ -360,5 +360,7 @@ const EditorToolbar = memo(
     );
   },
 );
+
+EditorToolbar.displayName = 'EditorToolbar';
 
 export default EditorToolbar;

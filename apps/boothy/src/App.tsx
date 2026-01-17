@@ -40,6 +40,7 @@ import MainLibrary from './components/panel/MainLibrary';
 import FolderTree from './components/panel/FolderTree';
 import Editor from './components/panel/Editor';
 import Controls from './components/panel/right/ControlsPanel';
+import type { CopiedSectionAdjustments } from './components/panel/right/ControlsPanel';
 import { useThumbnails } from './hooks/useThumbnails';
 import { ImageDimensions } from './hooks/useImageRenderSize';
 import RightPanelSwitcher from './components/panel/right/RightPanelSwitcher';
@@ -76,7 +77,6 @@ import {
   Adjustments,
   Color,
   COLOR_LABELS,
-  Coord,
   COPYABLE_ADJUSTMENT_KEYS,
   INITIAL_ADJUSTMENTS,
   MaskContainer,
@@ -94,13 +94,7 @@ import {
   getBoothyTMinus5WarningMessage,
 } from './utils/boothySettings';
 import { SubMask, ToolType } from './components/panel/right/Masks';
-import {
-  EXPORT_TIMEOUT,
-  ExportState,
-  IMPORT_TIMEOUT,
-  ImportState,
-  Status,
-} from './components/panel/right/ExportImportProperties';
+import { ExportState, IMPORT_TIMEOUT, ImportState, Status } from './components/panel/right/ExportImportProperties';
 import {
   AppSettings,
   BrushSettings,
@@ -111,7 +105,6 @@ import {
   OPTION_SEPARATOR,
   LibraryViewMode,
   Panel,
-  Progress,
   RawStatus,
   SelectedImage,
   SortCriteria,
@@ -267,8 +260,7 @@ const sanitizeSettingsForSave = (settings: any) => {
     return settings;
   }
 
-  const isNonEmptyString = (value: unknown): value is string =>
-    typeof value === 'string' && value.trim().length > 0;
+  const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
   const sanitizeStringArray = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter(isNonEmptyString) : [];
@@ -331,10 +323,11 @@ const sanitizeSettingsForSave = (settings: any) => {
   return next;
 };
 
-const useAsyncThrottle = <T extends unknown[]>(
-  fn: (...args: T) => Promise<void>,
-  deps: any[] = []
-) => {
+type SettingsSaveMeta = {
+  reason?: string;
+};
+
+const useAsyncThrottle = <T extends unknown[]>(fn: (...args: T) => Promise<void>, deps: any[] = []) => {
   const isProcessing = useRef(false);
   const nextArgs = useRef<T | null>(null);
   const mounted = useRef(true);
@@ -377,6 +370,8 @@ const useAsyncThrottle = <T extends unknown[]>(
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const appSettingsRef = useRef<AppSettings | null>(null);
+  const settingsSaveSeqRef = useRef(0);
   const [boothySession, setBoothySession] = useState<BoothySession | null>(null);
   const [sessionRemainingSeconds, setSessionRemainingSeconds] = useState<number | null>(null);
   const [boothyMode, setBoothyMode] = useState<'customer' | 'admin'>('customer');
@@ -527,7 +522,7 @@ function App() {
     setError('Session is locked. Editing is disabled.');
   }, []);
   const [copiedFilePaths, setCopiedFilePaths] = useState<Array<string>>([]);
-  const [copiedSectionAdjustments, setCopiedSectionAdjustments] = useState(null);
+  const [copiedSectionAdjustments, setCopiedSectionAdjustments] = useState<CopiedSectionAdjustments | null>(null);
   const [copiedMask, setCopiedMask] = useState<MaskContainer | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isPasted, setIsPasted] = useState(false);
@@ -577,11 +572,10 @@ function App() {
     isOpen: false,
     sourceImages: [],
   });
-  const [customEscapeHandler, setCustomEscapeHandler] = useState(null);
+  const [customEscapeHandler, setCustomEscapeHandler] = useState<(() => void) | null>(null);
   const [isMaskControlHovered, setIsMaskControlHovered] = useState(false);
   const [libraryScrollTop, setLibraryScrollTop] = useState<number>(0);
   const { showContextMenu } = useContextMenu();
-  const imagePathList = useMemo(() => imageList.map((f: ImageFile) => f.path), [imageList]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const { loading: isThumbnailsLoading } = useThumbnails(imageList, setThumbnails);
   const transformWrapperRef = useRef<any>(null);
@@ -684,9 +678,7 @@ function App() {
   }, [historyAdjustments]);
 
   useEffect(() => {
-    if (
-      activeRightPanel !== Panel.Masks || !activeMaskContainerId
-    ) {
+    if (activeRightPanel !== Panel.Masks || !activeMaskContainerId) {
       setIsMaskControlHovered(false);
     }
   }, [activeRightPanel, activeMaskContainerId]);
@@ -705,7 +697,7 @@ function App() {
 
   const visualAdjustmentsKey = useMemo(() => {
     if (!adjustments) return '';
-    const { rating, sectionVisibility, ...visualAdjustments } = adjustments;
+    const { rating: _rating, sectionVisibility: _sectionVisibility, ...visualAdjustments } = adjustments;
     return JSON.stringify(visualAdjustments);
   }, [adjustments]);
 
@@ -1019,7 +1011,7 @@ function App() {
         console.error('Failed to invoke apply_adjustments:', err);
       }
     },
-    [selectedImage?.isReady]
+    [selectedImage?.isReady],
   );
 
   const debouncedApplyAdjustments = useCallback(
@@ -1133,6 +1125,10 @@ function App() {
   );
 
   useEffect(() => {
+    appSettingsRef.current = appSettings;
+  }, [appSettings]);
+
+  useEffect(() => {
     if (!isCustomerMode || !activeRightPanel || !allowedRightPanels) {
       return;
     }
@@ -1143,7 +1139,7 @@ function App() {
   }, [isCustomerMode, activeRightPanel, allowedRightPanels]);
 
   const handleSettingsChange = useCallback(
-    (newSettings: AppSettings) => {
+    (newSettings: AppSettings, meta?: SettingsSaveMeta) => {
       if (!newSettings) {
         console.error('handleSettingsChange was called with null settings. Aborting save operation.');
         return;
@@ -1158,14 +1154,34 @@ function App() {
         setTheme(sanitizedSettings.theme);
       }
 
-      const {
-        searchCriteria,
-        ...settingsToSave
-      } = sanitizedSettings as any;
+      const { searchCriteria: _searchCriteria, ...settingsToSave } = sanitizedSettings as any;
+      const saveSeq = (settingsSaveSeqRef.current += 1);
+      const previousSettings = appSettingsRef.current;
+
       setAppSettings(sanitizedSettings);
-      invoke(Invokes.SaveSettings, { settings: settingsToSave }).catch((err) => {
-        console.error('Failed to save settings:', err);
-      });
+      invoke(Invokes.SaveSettings, { settings: settingsToSave })
+        .then(() => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('boothy:settings-save-result', {
+                detail: { ok: true, reason: meta?.reason ?? 'unknown' },
+              }),
+            );
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to save settings:', err);
+          if (settingsSaveSeqRef.current === saveSeq && previousSettings) {
+            setAppSettings(previousSettings);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('boothy:settings-save-result', {
+                detail: { ok: false, reason: meta?.reason ?? 'unknown', error: `${err}` },
+              }),
+            );
+          }
+        });
     },
     [theme],
   );
@@ -1304,7 +1320,7 @@ function App() {
     if (appSettings?.adaptiveEditorTheme && selectedImage && finalPreviewUrl) {
       generatePaletteFromImage(finalPreviewUrl)
         .then(setAdaptivePalette)
-        .catch((err) => {
+        .catch((_err) => {
           const darkTheme = THEMES.find((t) => t.id === Theme.Dark);
           setAdaptivePalette(darkTheme ? darkTheme.cssVariables : null);
         });
@@ -1325,7 +1341,7 @@ function App() {
     }
 
     let finalCssVariables: any = { ...baseTheme.cssVariables };
-    let effectThemeForWindow = baseTheme.id;
+    const effectThemeForWindow = baseTheme.id;
 
     if (adaptivePalette) {
       finalCssVariables = { ...finalCssVariables, ...adaptivePalette };
@@ -1375,27 +1391,30 @@ function App() {
 
   const pinnedFolders = useMemo(() => appSettings?.pinnedFolders || [], [appSettings]);
 
-  const handleTogglePinFolder = useCallback(async (path: string) => {
-    if (!appSettings) return;
-    const currentPins = appSettings.pinnedFolders || [];
-    const isPinned = currentPins.includes(path);
-    const newPins = isPinned
-      ? currentPins.filter(p => p !== path)
-      : [...currentPins, path].sort((a, b) => a.localeCompare(b));
+  const handleTogglePinFolder = useCallback(
+    async (path: string) => {
+      if (!appSettings) return;
+      const currentPins = appSettings.pinnedFolders || [];
+      const isPinned = currentPins.includes(path);
+      const newPins = isPinned
+        ? currentPins.filter((p) => p !== path)
+        : [...currentPins, path].sort((a, b) => a.localeCompare(b));
 
-    if (!isPinned && path === currentFolderPath) {
-      handleActiveTreeSectionChange('pinned');
-    }
+      if (!isPinned && path === currentFolderPath) {
+        handleActiveTreeSectionChange('pinned');
+      }
 
-    handleSettingsChange({ ...appSettings, pinnedFolders: newPins });
+      handleSettingsChange({ ...appSettings, pinnedFolders: newPins });
 
-    try {
-      const trees = await invoke(Invokes.GetPinnedFolderTrees, { paths: newPins });
-      setPinnedFolderTrees(trees);
-    } catch (err) {
-      console.error('Failed to refresh pinned folders:', err);
-    }
-  }, [appSettings, handleSettingsChange]);
+      try {
+        const trees = await invoke(Invokes.GetPinnedFolderTrees, { paths: newPins });
+        setPinnedFolderTrees(trees);
+      } catch (err) {
+        console.error('Failed to refresh pinned folders:', err);
+      }
+    },
+    [appSettings, handleSettingsChange],
+  );
 
   const handleActiveTreeSectionChange = (section: string | null) => {
     setActiveTreeSection(section);
@@ -1543,15 +1562,7 @@ function App() {
         }
       }
     },
-    [
-      appSettings,
-      handleSettingsChange,
-      selectedImage,
-      rootPath,
-      sortCriteria.key,
-      pinnedFolders,
-      libraryViewMode,
-    ],
+    [appSettings, handleSettingsChange, selectedImage, rootPath, sortCriteria.key, pinnedFolders, libraryViewMode],
   );
 
   const handleLibraryRefresh = useCallback(() => {
@@ -1861,9 +1872,7 @@ function App() {
 
       if (activePath) {
         const physicalPath = activePath.split('?vc=')[0];
-        const isActiveImageDeleted = pathsToDelete.some(
-          (p) => p === activePath || p === physicalPath,
-        );
+        const isActiveImageDeleted = pathsToDelete.some((p) => p === activePath || p === physicalPath);
 
         if (isActiveImageDeleted) {
           const currentIndex = sortedImageList.findIndex((img) => img.path === activePath);
@@ -1898,9 +1907,7 @@ function App() {
 
         if (selectedImage) {
           const physicalPath = selectedImage.path.split('?vc=')[0];
-          const isFileBeingEditedDeleted = pathsToDelete.some(
-            (p) => p === selectedImage.path || p === physicalPath,
-          );
+          const isFileBeingEditedDeleted = pathsToDelete.some((p) => p === selectedImage.path || p === physicalPath);
 
           if (isFileBeingEditedDeleted) {
             if (nextImagePath) {
@@ -1963,10 +1970,12 @@ function App() {
 
     if (selectionHasVirtualCopies) {
       modalTitle = 'Delete Image and All Virtual Copies?';
-      modalMessage = `Are you sure you want to permanently delete this image and all of its virtual copies? This action cannot be undone.`;
+      modalMessage =
+        'Are you sure you want to permanently delete this image and all of its virtual copies? This action cannot be undone.';
       confirmText = 'Delete All';
     } else if (isSingle) {
-      modalMessage = `Are you sure you want to permanently delete this image? This action cannot be undone. Right-click for more options (e.g., deleting associated files).`;
+      modalMessage =
+        'Are you sure you want to permanently delete this image? This action cannot be undone. Right-click for more options (e.g., deleting associated files).';
       confirmText = 'Delete Selected Only';
     } else {
       modalMessage = `Are you sure you want to permanently delete these ${pathsToDelete.length} images? This action cannot be undone. Right-click for more options (e.g., deleting associated files).`;
@@ -2022,7 +2031,9 @@ function App() {
     const sourceAdjustments = selectedImage ? adjustments : libraryActiveAdjustments;
     const adjustmentsToCopy: any = {};
     for (const key of COPYABLE_ADJUSTMENT_KEYS) {
-      if (sourceAdjustments.hasOwnProperty(key)) adjustmentsToCopy[key] = sourceAdjustments[key];
+      if (Object.prototype.hasOwnProperty.call(sourceAdjustments, key)) {
+        adjustmentsToCopy[key] = sourceAdjustments[key];
+      }
     }
     setCopiedAdjustments(adjustmentsToCopy);
     setIsCopied(true);
@@ -2189,43 +2200,49 @@ function App() {
     [multiSelectedPaths, selectedImage, libraryActivePath, imageList],
   );
 
-  const getCommonTags = useCallback((paths: string[]): { tag: string; isUser: boolean }[] => {
-    if (paths.length === 0) return [];
-    const imageFiles = imageList.filter((img) => paths.includes(img.path));
-    if (imageFiles.length === 0) return [];
+  const getCommonTags = useCallback(
+    (paths: string[]): { tag: string; isUser: boolean }[] => {
+      if (paths.length === 0) return [];
+      const imageFiles = imageList.filter((img) => paths.includes(img.path));
+      if (imageFiles.length === 0) return [];
 
-    const allTagsSets = imageFiles.map((img) => {
-      const tagsWithPrefix = (img.tags || []).filter((t) => !t.startsWith('color:'));
-      return new Set(tagsWithPrefix);
-    });
+      const allTagsSets = imageFiles.map((img) => {
+        const tagsWithPrefix = (img.tags || []).filter((t) => !t.startsWith('color:'));
+        return new Set(tagsWithPrefix);
+      });
 
-    if (allTagsSets.length === 0) return [];
+      if (allTagsSets.length === 0) return [];
 
-    const commonTagsWithPrefix = allTagsSets.reduce((intersection, currentSet) => {
-      return new Set([...intersection].filter((tag) => currentSet.has(tag)));
-    });
+      const commonTagsWithPrefix = allTagsSets.reduce((intersection, currentSet) => {
+        return new Set([...intersection].filter((tag) => currentSet.has(tag)));
+      });
 
-    return Array.from(commonTagsWithPrefix)
-      .map((tag) => ({
-        tag: tag.startsWith('user:') ? tag.substring(5) : tag,
-        isUser: tag.startsWith('user:'),
-      }))
-      .sort((a, b) => a.tag.localeCompare(b.tag));
-  }, [imageList]);
+      return Array.from(commonTagsWithPrefix)
+        .map((tag) => ({
+          tag: tag.startsWith('user:') ? tag.substring(5) : tag,
+          isUser: tag.startsWith('user:'),
+        }))
+        .sort((a, b) => a.tag.localeCompare(b.tag));
+    },
+    [imageList],
+  );
 
-  const handleTagsChanged = useCallback((changedPaths: string[], newTags: { tag: string; isUser: boolean }[]) => {
-    setImageList((prevList) =>
-      prevList.map((image) => {
-        if (changedPaths.includes(image.path)) {
-          const colorTags = (image.tags || []).filter((t) => t.startsWith('color:'));
-          const prefixedNewTags = newTags.map((t) => (t.isUser ? `user:${t.tag}` : t.tag));
-          const finalTags = [...colorTags, ...prefixedNewTags].sort();
-          return { ...image, tags: finalTags.length > 0 ? finalTags : null };
-        }
-        return image;
-      }),
-    );
-  }, [setImageList]);
+  const handleTagsChanged = useCallback(
+    (changedPaths: string[], newTags: { tag: string; isUser: boolean }[]) => {
+      setImageList((prevList) =>
+        prevList.map((image) => {
+          if (changedPaths.includes(image.path)) {
+            const colorTags = (image.tags || []).filter((t) => t.startsWith('color:'));
+            const prefixedNewTags = newTags.map((t) => (t.isUser ? `user:${t.tag}` : t.tag));
+            const finalTags = [...colorTags, ...prefixedNewTags].sort();
+            return { ...image, tags: finalTags.length > 0 ? finalTags : null };
+          }
+          return image;
+        }),
+      );
+    },
+    [setImageList],
+  );
 
   const closeConfirmModal = () => setConfirmModalState({ ...confirmModalState, isOpen: false });
 
@@ -2296,7 +2313,7 @@ function App() {
   }, [adjustments, isFullResolution, selectedImage?.path, requestFullResolution, visualAdjustmentsKey]);
 
   const handleFullResolutionLogic = useCallback(
-    (targetZoomPercent: number, currentDisplayWidth: number) => {
+    (targetZoomPercent: number) => {
       if (appSettings?.enableZoomHifi === false) {
         return;
       }
@@ -2393,8 +2410,7 @@ function App() {
       }
       isProgrammaticZoom.current = true;
       setZoom(transformZoom);
-      const currentDisplayWidth = baseRenderSize.width * transformZoom;
-      handleFullResolutionLogic(targetZoomPercent, currentDisplayWidth);
+      handleFullResolutionLogic(targetZoomPercent);
     },
     [originalSize, baseRenderSize, handleFullResolutionLogic, adjustments.orientationSteps],
   );
@@ -2414,8 +2430,7 @@ function App() {
         const effectiveOriginalWidth = isSwapped ? originalSize.height : originalSize.width;
 
         const targetZoomPercent = (baseRenderSize.width * transformState.scale) / effectiveOriginalWidth;
-        const currentDisplayWidth = baseRenderSize.width * transformState.scale;
-        handleFullResolutionLogic(targetZoomPercent, currentDisplayWidth);
+        handleFullResolutionLogic(targetZoomPercent);
       }
     },
     [originalSize, baseRenderSize, handleFullResolutionLogic, adjustments.orientationSteps],
@@ -2488,6 +2503,14 @@ function App() {
     }
   }, []);
 
+  const resetGraceSeconds = useMemo(() => {
+    const configuredSeconds = getBoothyResetGracePeriodSeconds(appSettings);
+    if (typeof sessionRemainingSeconds === 'number' && Number.isFinite(sessionRemainingSeconds)) {
+      return Math.min(configuredSeconds, Math.max(0, sessionRemainingSeconds));
+    }
+    return configuredSeconds;
+  }, [appSettings, sessionRemainingSeconds]);
+
   const resetSessionContext = useCallback(() => {
     clearResetTimer();
     setPendingReset(false);
@@ -2512,15 +2535,18 @@ function App() {
     setLibraryActivePath(null);
     setIsLibraryExportPanelVisible(false);
     setExpandedFolders(new Set());
+    setIsStartingSession(false);
   }, [clearResetTimer]);
 
   const startResetFlow = useCallback(() => {
-    const graceSeconds = getBoothyResetGracePeriodSeconds(appSettings);
+    const remainingSeconds =
+      typeof sessionRemainingSeconds === 'number' && Number.isFinite(sessionRemainingSeconds)
+        ? Math.max(0, sessionRemainingSeconds)
+        : null;
+    const effectiveGraceSeconds = resetGraceSeconds;
     const isBoothyExporting = boothyExportProgress.status === 'exporting';
     const isBusy =
-      exportState.status === Status.Exporting ||
-      importState.status === Status.Importing ||
-      isBoothyExporting;
+      exportState.status === Status.Exporting || importState.status === Status.Importing || isBoothyExporting;
 
     resetPostponedRef.current = false;
 
@@ -2535,17 +2561,21 @@ function App() {
       if (resetPostponedRef.current || !pendingResetRef.current) {
         return;
       }
-      sendFrontendLog('warn', 'timeline-reset-grace-exceeded', { graceSeconds });
+      sendFrontendLog('warn', 'timeline-reset-grace-exceeded', {
+        graceSeconds: effectiveGraceSeconds,
+        remainingSeconds,
+      });
       invoke(Invokes.CancelExport).catch(() => { });
       resetSessionContext();
-    }, graceSeconds * 1000);
+    }, effectiveGraceSeconds * 1000);
   }, [
-    appSettings,
     boothyExportProgress.status,
     clearResetTimer,
     exportState.status,
     importState.status,
     resetSessionContext,
+    resetGraceSeconds,
+    sessionRemainingSeconds,
     sendFrontendLog,
   ]);
 
@@ -2595,9 +2625,7 @@ function App() {
     (payload: any) => {
       const fallbackMessage = getBoothyTMinus5WarningMessage(appSettings);
       const message =
-        typeof payload?.message === 'string' && payload.message.trim().length > 0
-          ? payload.message
-          : fallbackMessage;
+        typeof payload?.message === 'string' && payload.message.trim().length > 0 ? payload.message : fallbackMessage;
       setTMinus5Message(message);
       setIsTMinus5ModalOpen(true);
     },
@@ -2608,13 +2636,32 @@ function App() {
     setIsEndScreenVisible(true);
   }, []);
 
-  const handleExportDecisionOpen = useCallback(() => {
+  const handleAutoExportDecision = useCallback(async () => {
     if (!hasBoothySession) {
       return;
     }
     setIsLibraryExportPanelVisible(false);
+
+    try {
+      // Check if there are already exported files in Jpg folder
+      const exportedCount = await invoke<number>(Invokes.BoothyGetExportedCount);
+      const choice = exportedCount > 0 ? 'continueFromBackground' : 'overwriteAll';
+
+      invoke(Invokes.BoothyHandleExportDecision, { choice }).catch((err) => {
+        console.error('Failed to start Boothy export:', err);
+        setBoothyExportError(typeof err === 'string' ? err : 'Failed to start export.');
+      });
+    } catch (err) {
+      console.error('Failed to check exported count, defaulting to overwriteAll:', err);
+      invoke(Invokes.BoothyHandleExportDecision, { choice: 'overwriteAll' }).catch((exportErr) => {
+        setBoothyExportError(typeof exportErr === 'string' ? exportErr : 'Failed to start export.');
+      });
+    }
+  }, [hasBoothySession, setBoothyExportError]);
+
+  const handleExportDecisionOpen = useCallback(() => {
     setIsExportDecisionModalOpen(true);
-  }, [hasBoothySession]);
+  }, []);
 
   const handleExportDecisionSelect = useCallback(
     (choice: 'overwriteAll' | 'continueFromBackground') => {
@@ -2748,7 +2795,7 @@ function App() {
             isProcessing: false,
             previewBase64: isObject ? payload.denoised : payload,
             originalBase64: isObject ? payload.original : null,
-            progressMessage: null
+            progressMessage: null,
           }));
         }
       }),
@@ -2758,7 +2805,7 @@ function App() {
             ...prev,
             isProcessing: false,
             error: String(event.payload),
-            progressMessage: null
+            progressMessage: null,
           }));
         }
       }),
@@ -2788,8 +2835,7 @@ function App() {
       listen('boothy-session-t-zero', () => {
         if (isEffectActive) {
           handleSessionLockout();
-          handleExportDecisionOpen();
-          handleShowEndScreen();
+          handleAutoExportDecision();
         }
       }),
       listen('boothy-session-reset', () => {
@@ -2867,16 +2913,9 @@ function App() {
             message = payload;
           } else if (typeof payload?.message === 'string') {
             message = payload.message;
-            if (
-              boothyMode === 'admin' &&
-              typeof payload.diagnostic === 'string' &&
-              payload.diagnostic.trim()
-            ) {
+            if (boothyMode === 'admin' && typeof payload.diagnostic === 'string' && payload.diagnostic.trim()) {
               const details: string[] = [payload.diagnostic];
-              if (
-                typeof payload.correlationId === 'string' &&
-                payload.correlationId.trim()
-              ) {
+              if (typeof payload.correlationId === 'string' && payload.correlationId.trim()) {
                 details.push(`Correlation ID: ${payload.correlationId}`);
               }
               message = `${message} (Details: ${details.join(' | ')})`;
@@ -2908,7 +2947,7 @@ function App() {
     handleImageSelect,
     applyBoothySession,
     handleSessionLockout,
-    handleExportDecisionOpen,
+    handleAutoExportDecision,
     handleTMinus5Event,
     handleShowEndScreen,
     startResetFlow,
@@ -2920,9 +2959,7 @@ function App() {
   useEffect(() => {
     const isBoothyExporting = boothyExportProgress.status === 'exporting';
     const isBusy =
-      exportState.status === Status.Exporting ||
-      importState.status === Status.Importing ||
-      isBoothyExporting;
+      exportState.status === Status.Exporting || importState.status === Status.Importing || isBoothyExporting;
     if (!pendingResetRef.current || resetPostponedRef.current || isBusy) {
       return;
     }
@@ -3032,12 +3069,13 @@ function App() {
 
     const unlistenStart = listen('culling-start', (event: any) => {
       if (isEffectActive) {
-        setCullingModalState({
+        setCullingModalState((prev) => ({
+          ...prev,
           isOpen: true,
           progress: { current: 0, total: event.payload, stage: 'Initializing...' },
           suggestions: null,
           error: null,
-        });
+        }));
       }
     });
 
@@ -3088,34 +3126,37 @@ function App() {
     }
   };
 
-  const handleApplyDenoise = useCallback(async (intensity: number) => {
-    if (!denoiseModalState.targetPath) return;
+  const handleApplyDenoise = useCallback(
+    async (intensity: number) => {
+      if (!denoiseModalState.targetPath) return;
 
-    setDenoiseModalState(prev => ({
-      ...prev,
-      isProcessing: true,
-      error: null,
-      progressMessage: "Starting engine..."
-    }));
-
-    try {
-      await invoke(Invokes.ApplyDenoising, {
-        path: denoiseModalState.targetPath,
-        intensity: intensity
-      });
-    } catch (err) {
-      setDenoiseModalState(prev => ({
+      setDenoiseModalState((prev) => ({
         ...prev,
-        isProcessing: false,
-        error: String(err)
+        isProcessing: true,
+        error: null,
+        progressMessage: 'Starting engine...',
       }));
-    }
-  }, [denoiseModalState.targetPath]);
+
+      try {
+        await invoke(Invokes.ApplyDenoising, {
+          path: denoiseModalState.targetPath,
+          intensity: intensity,
+        });
+      } catch (err) {
+        setDenoiseModalState((prev) => ({
+          ...prev,
+          isProcessing: false,
+          error: String(err),
+        }));
+      }
+    },
+    [denoiseModalState.targetPath],
+  );
 
   const handleSaveDenoisedImage = async (): Promise<string> => {
-    if (!denoiseModalState.targetPath) throw new Error("No target path");
+    if (!denoiseModalState.targetPath) throw new Error('No target path');
     const savedPath = await invoke<string>(Invokes.SaveDenoisedImage, {
-      originalPathStr: denoiseModalState.targetPath
+      originalPathStr: denoiseModalState.targetPath,
     });
     await refreshImageList();
     return savedPath;
@@ -3143,9 +3184,9 @@ function App() {
           applyAdjustments(currentAdjustments, true);
         },
         120,
-        { leading: true, trailing: true }
+        { leading: true, trailing: true },
       ),
-    [applyAdjustments]
+    [applyAdjustments],
   );
 
   useEffect(() => {
@@ -3174,7 +3215,6 @@ function App() {
       dragIdleTimer.current = setTimeout(() => {
         applyAdjustments(adjustments, false);
       }, idleTimeoutDuration);
-
     } else {
       throttledInteractiveUpdate.cancel();
       debouncedApplyAdjustments(adjustments);
@@ -3194,7 +3234,7 @@ function App() {
     debouncedApplyAdjustments,
     throttledInteractiveUpdate,
     debouncedSave,
-    appSettings?.enableLivePreviews
+    appSettings?.enableLivePreviews,
   ]);
 
   useEffect(() => {
@@ -3272,43 +3312,49 @@ function App() {
     setIsAdminModalOpen(true);
   }, [boothyMode, syncBoothyModeState]);
 
-  const handleSetAdminPassword = useCallback(async (password: string) => {
-    setIsAdminActionRunning(true);
-    setAdminModalError(null);
-    try {
-      await invoke(Invokes.BoothySetAdminPassword, { password });
-      setBoothyMode('admin');
-      setBoothyHasAdminPassword(true);
-      await syncBoothyModeState();
-      setIsAdminModalOpen(false);
-    } catch (err) {
-      console.error('Failed to set admin password:', err);
-      setAdminModalError('Failed to set admin password.');
-    } finally {
-      setIsAdminActionRunning(false);
-    }
-  }, [syncBoothyModeState]);
-
-  const handleUnlockAdmin = useCallback(async (password: string) => {
-    setIsAdminActionRunning(true);
-    setAdminModalError(null);
-    try {
-      const result = await invoke(Invokes.BoothyAuthenticateAdmin, { password });
-      if (!result) {
-        setAdminModalError('Incorrect password.');
-        return;
+  const handleSetAdminPassword = useCallback(
+    async (password: string) => {
+      setIsAdminActionRunning(true);
+      setAdminModalError(null);
+      try {
+        await invoke(Invokes.BoothySetAdminPassword, { password });
+        setBoothyMode('admin');
+        setBoothyHasAdminPassword(true);
+        await syncBoothyModeState();
+        setIsAdminModalOpen(false);
+      } catch (err) {
+        console.error('Failed to set admin password:', err);
+        setAdminModalError('Failed to set admin password.');
+      } finally {
+        setIsAdminActionRunning(false);
       }
-      setBoothyMode('admin');
-      setBoothyHasAdminPassword(true);
-      await syncBoothyModeState();
-      setIsAdminModalOpen(false);
-    } catch (err) {
-      console.error('Failed to unlock admin mode:', err);
-      setAdminModalError('Failed to unlock admin mode.');
-    } finally {
-      setIsAdminActionRunning(false);
-    }
-  }, [syncBoothyModeState]);
+    },
+    [syncBoothyModeState],
+  );
+
+  const handleUnlockAdmin = useCallback(
+    async (password: string) => {
+      setIsAdminActionRunning(true);
+      setAdminModalError(null);
+      try {
+        const result = await invoke(Invokes.BoothyAuthenticateAdmin, { password });
+        if (!result) {
+          setAdminModalError('Incorrect password.');
+          return;
+        }
+        setBoothyMode('admin');
+        setBoothyHasAdminPassword(true);
+        await syncBoothyModeState();
+        setIsAdminModalOpen(false);
+      } catch (err) {
+        console.error('Failed to unlock admin mode:', err);
+        setAdminModalError('Failed to unlock admin mode.');
+      } finally {
+        setIsAdminActionRunning(false);
+      }
+    },
+    [syncBoothyModeState],
+  );
 
   const handleContinueSession = () => {
     const restore = async () => {
@@ -3363,7 +3409,7 @@ function App() {
       handleSelectSubfolder(parentDir, true);
       return;
     }
-    const isImageInList = imageList.some(image => image.path === initialFileToOpen);
+    const isImageInList = imageList.some((image) => image.path === initialFileToOpen);
     if (isImageInList) {
       handleImageSelect(initialFileToOpen);
       setInitialFileToOpen(null);
@@ -3371,9 +3417,18 @@ function App() {
       console.warn(`'open-with-file' target ${initialFileToOpen} not found in its directory after loading. Aborting.`);
       setInitialFileToOpen(null);
     }
-  }, [initialFileToOpen, appSettings, currentFolderPath, imageList, isViewLoading, handleSelectSubfolder, handleImageSelect]);
+  }, [
+    initialFileToOpen,
+    appSettings,
+    currentFolderPath,
+    imageList,
+    isViewLoading,
+    handleSelectSubfolder,
+    handleImageSelect,
+  ]);
 
   const handleGoHome = () => {
+    setIsStartingSession(false);
     setRootPath(null);
     setCurrentFolderPath(null);
     setImageList([]);
@@ -3655,7 +3710,14 @@ function App() {
           setError(`Failed to reset adjustments: ${err}`);
         });
     },
-    [multiSelectedPaths, libraryActivePath, selectedImage, adjustments.rating, resetAdjustmentsHistory, debouncedSetHistory],
+    [
+      multiSelectedPaths,
+      libraryActivePath,
+      selectedImage,
+      adjustments.rating,
+      resetAdjustmentsHistory,
+      debouncedSetHistory,
+    ],
   );
 
   const handleImportClick = useCallback(
@@ -3665,7 +3727,7 @@ function App() {
         const raw = supportedTypes?.raw || [];
 
         const expandExtensions = (exts: string[]) => {
-          return Array.from(new Set(exts.flatMap(ext => [ext.toLowerCase(), ext.toUpperCase()])));
+          return Array.from(new Set(exts.flatMap((ext) => [ext.toLowerCase(), ext.toUpperCase()])));
         };
 
         const processedNonRaw = expandExtensions(nonRaw);
@@ -3819,9 +3881,7 @@ function App() {
       const lastDotIndex = selectedPath.lastIndexOf('.');
       if (lastDotIndex === -1) return false;
       const basePath = selectedPath.substring(0, lastDotIndex);
-      return imageList.some(
-        (image) => image.path.startsWith(basePath + '.') && image.path !== selectedPath,
-      );
+      return imageList.some((image) => image.path.startsWith(basePath + '.') && image.path !== selectedPath);
     });
 
     let deleteSubmenu;
@@ -3876,8 +3936,8 @@ function App() {
     const autoAdjustLabel = isSingleSelection ? 'Auto Adjust Image' : `Auto Adjust ${selectionCount} Images`;
     const renameLabel = isSingleSelection ? 'Rename Image' : `Rename ${selectionCount} Images`;
     const cullLabel = isSingleSelection ? 'Cull Image' : `Cull ${selectionCount} Images`;
-    const collageLabel = isSingleSelection ? 'Create Collage' : `Create Collage`;
-    const stitchLabel = `Stitch Panorama`;
+    const collageLabel = isSingleSelection ? 'Create Collage' : 'Create Collage';
+    const stitchLabel = 'Stitch Panorama';
 
     const handleCreateVirtualCopy = async (sourcePath: string) => {
       try {
@@ -3969,7 +4029,9 @@ function App() {
                 : INITIAL_ADJUSTMENTS;
             const adjustmentsToCopy: any = {};
             for (const key of COPYABLE_ADJUSTMENT_KEYS) {
-              if (sourceAdjustments.hasOwnProperty(key)) adjustmentsToCopy[key] = sourceAdjustments[key];
+              if (Object.prototype.hasOwnProperty.call(sourceAdjustments, key)) {
+                adjustmentsToCopy[key] = sourceAdjustments[key];
+              }
             }
             setCopiedAdjustments(adjustmentsToCopy);
             setIsCopied(true);
@@ -4011,9 +4073,9 @@ function App() {
                 previewBase64: null,
                 error: null,
                 targetPath: finalSelection[0],
-                progressMessage: null
+                progressMessage: null,
               });
-            }
+            },
           },
           {
             disabled: selectionCount < 2 || selectionCount > 30,
@@ -4041,7 +4103,7 @@ function App() {
             icon: LayoutTemplate,
             label: collageLabel,
             onClick: () => {
-              const imagesForCollage = imageList.filter(img => finalSelection.includes(img.path));
+              const imagesForCollage = imageList.filter((img) => finalSelection.includes(img.path));
               setCollageModalState({
                 isOpen: true,
                 sourceImages: imagesForCollage,
@@ -4179,7 +4241,7 @@ function App() {
 
         const currentPins = appSettings?.pinnedFolders || [];
         if (currentPins.includes(oldPath)) {
-          const newPins = currentPins.map(p => (p === oldPath ? newPath : p)).sort((a, b) => a.localeCompare(b));
+          const newPins = currentPins.map((p) => (p === oldPath ? newPath : p)).sort((a, b) => a.localeCompare(b));
           newAppSettings.pinnedFolders = newPins;
           settingsChanged = true;
         }
@@ -4189,7 +4251,6 @@ function App() {
         }
 
         await refreshAllFolderTrees();
-
       } catch (err) {
         setError(`Failed to rename folder: ${err}`);
       }
@@ -4362,52 +4423,52 @@ function App() {
     showContextMenu(event.clientX, event.clientY, options);
   };
 
-  const memoizedFolderTree = useMemo(() => (
-    rootPath && !isCustomerMode && (
-      <>
-        <FolderTree
-          expandedFolders={expandedFolders}
-          isLoading={isTreeLoading}
-          isResizing={isResizing}
-          isVisible={uiVisibility.folderTree}
-          onContextMenu={handleFolderTreeContextMenu}
-          onFolderSelect={(path) => handleSelectSubfolder(path, false)}
-          onToggleFolder={handleToggleFolder}
-          selectedPath={currentFolderPath}
-          setIsVisible={(value: boolean) =>
-            setUiVisibility((prev: UiVisibility) => ({ ...prev, folderTree: value }))
-          }
-          style={{ width: uiVisibility.folderTree ? `${leftPanelWidth}px` : '32px' }}
-          tree={folderTree}
-          pinnedFolderTrees={pinnedFolderTrees}
-          pinnedFolders={pinnedFolders}
-          activeSection={activeTreeSection}
-          onActiveSectionChange={handleActiveTreeSectionChange}
-        />
-        <Resizer
-          direction={Orientation.Vertical}
-          onMouseDown={createResizeHandler(setLeftPanelWidth, leftPanelWidth)}
-        />
-      </>
-    )
-  ), [
-    rootPath,
-    isCustomerMode,
-    expandedFolders,
-    isTreeLoading,
-    isResizing,
-    handleSelectSubfolder,
-    uiVisibility.folderTree,
-    currentFolderPath,
-    leftPanelWidth,
-    folderTree,
-    pinnedFolderTrees,
-    pinnedFolders,
-    activeTreeSection
-  ]);
+  const memoizedFolderTree = useMemo(
+    () =>
+      rootPath &&
+      !isCustomerMode && (
+        <>
+          <FolderTree
+            expandedFolders={expandedFolders}
+            isLoading={isTreeLoading}
+            isResizing={isResizing}
+            isVisible={uiVisibility.folderTree}
+            onContextMenu={handleFolderTreeContextMenu}
+            onFolderSelect={(path) => handleSelectSubfolder(path, false)}
+            onToggleFolder={handleToggleFolder}
+            selectedPath={currentFolderPath}
+            setIsVisible={(value: boolean) => setUiVisibility((prev: UiVisibility) => ({ ...prev, folderTree: value }))}
+            style={{ width: uiVisibility.folderTree ? `${leftPanelWidth}px` : '32px' }}
+            tree={folderTree}
+            pinnedFolderTrees={pinnedFolderTrees}
+            pinnedFolders={pinnedFolders}
+            activeSection={activeTreeSection}
+            onActiveSectionChange={handleActiveTreeSectionChange}
+          />
+          <Resizer
+            direction={Orientation.Vertical}
+            onMouseDown={createResizeHandler(setLeftPanelWidth, leftPanelWidth)}
+          />
+        </>
+      ),
+    [
+      rootPath,
+      isCustomerMode,
+      expandedFolders,
+      isTreeLoading,
+      isResizing,
+      handleSelectSubfolder,
+      uiVisibility.folderTree,
+      currentFolderPath,
+      leftPanelWidth,
+      folderTree,
+      pinnedFolderTrees,
+      pinnedFolders,
+      activeTreeSection,
+    ],
+  );
 
-  const boothySessionLabel =
-    boothySession?.session_name || boothySession?.session_folder_name || null;
+  const boothySessionLabel = boothySession?.session_name || boothySession?.session_folder_name || null;
 
   const handleLibraryExportClick = useCallback(() => {
     if (hasBoothySession) {
@@ -4435,7 +4496,6 @@ function App() {
             isThumbnailsLoading={isThumbnailsLoading}
             isLoading={isViewLoading}
             isStartingSession={isStartingSession}
-            isTreeLoading={isTreeLoading}
             libraryScrollTop={libraryScrollTop}
             libraryViewMode={libraryViewMode}
             multiSelectedPaths={multiSelectedPaths}
@@ -4604,7 +4664,6 @@ function App() {
               multiSelectedPaths={multiSelectedPaths}
               displaySize={displaySize}
               originalSize={originalSize}
-              baseRenderSize={baseRenderSize}
               onClearSelection={handleClearSelection}
               onContextMenu={handleThumbnailContextMenu}
               onCopy={handleCopyAdjustments}
@@ -4620,7 +4679,6 @@ function App() {
               }
               thumbnailAspectRatio={thumbnailAspectRatio}
               thumbnails={thumbnails}
-              zoom={zoom}
             />
           </div>
 
@@ -4713,9 +4771,7 @@ function App() {
                           setExportState={setExportState}
                         />
                       )}
-                      {renderedRightPanel === Panel.CameraControls && (
-                        <CameraControlsPanel />
-                      )}
+                      {renderedRightPanel === Panel.CameraControls && <CameraControlsPanel />}
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -4751,15 +4807,16 @@ function App() {
         (appSettings?.adaptiveEditorTheme || isAnimatingTheme) && 'enable-color-transitions',
       )}
     >
-      {appSettings?.decorations || (!isWindowFullScreen && (
-        <TitleBar
-          boothyMode={boothyMode}
-          boothyHasAdminPassword={boothyHasAdminPassword}
-          adminOverrideActive={adminOverrideActive}
-          isAdminActionRunning={isAdminActionRunning}
-          onAdminToggle={handleAdminToggle}
-        />
-      ))}
+      {appSettings?.decorations ||
+        (!isWindowFullScreen && (
+          <TitleBar
+            boothyMode={boothyMode}
+            boothyHasAdminPassword={boothyHasAdminPassword}
+            adminOverrideActive={adminOverrideActive}
+            isAdminActionRunning={isAdminActionRunning}
+            onAdminToggle={handleAdminToggle}
+          />
+        ))}
 
       {isSessionLocked && (
         <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -4779,15 +4836,17 @@ function App() {
         {error && (
           <div className="absolute top-12 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-4 py-2 rounded-lg z-50">
             {error}
-            <button onClick={() => setError(null)} className="ml-4 font-bold hover:text-gray-200">
-              ×
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="ml-4 font-bold hover:text-gray-200"
+              aria-label="Dismiss error"
+            >
+              x
             </button>
           </div>
         )}
-        <ExportProgressBar
-          onDismissError={resetBoothyExportProgress}
-          state={boothyExportProgress}
-        />
+        <ExportProgressBar onDismissError={resetBoothyExportProgress} state={boothyExportProgress} />
         <div className="flex flex-row flex-grow h-full min-h-0">
           {memoizedFolderTree}
           <div className="flex-1 flex flex-col min-w-0">{renderContent()}</div>
@@ -4824,16 +4883,13 @@ function App() {
         onDismiss={handleAdminDismissLockout}
       />
       <TimelineResetModal
-        graceSeconds={getBoothyResetGracePeriodSeconds(appSettings)}
+        graceSeconds={resetGraceSeconds}
         isExporting={exportState.status === Status.Exporting || importState.status === Status.Importing}
         isOpen={isResetModalOpen}
         onPostpone={handleAdminPostponeReset}
         onResetNow={handleAdminResetNow}
       />
-      <ExportDecisionModal
-        isOpen={isExportDecisionModalOpen}
-        onSelect={handleExportDecisionSelect}
-      />
+      <ExportDecisionModal isOpen={isExportDecisionModalOpen} onSelect={handleExportDecisionSelect} />
       <EndScreenModal
         isAdmin={boothyMode === 'admin'}
         isOpen={isEndScreenVisible}
@@ -4844,7 +4900,9 @@ function App() {
         isOpen={isCopyPasteSettingsModalOpen}
         onClose={() => setIsCopyPasteSettingsModalOpen(false)}
         settings={appSettings?.copyPasteSettings as CopyPasteSettings}
-        onSave={(newSettings) => handleSettingsChange({ ...appSettings, copyPasteSettings: newSettings } as AppSettings)}
+        onSave={(newSettings) =>
+          handleSettingsChange({ ...appSettings, copyPasteSettings: newSettings } as AppSettings)
+        }
       />
       <PanoramaModal
         error={panoramaModalState.error}
@@ -4867,7 +4925,7 @@ function App() {
       />
       <DenoiseModal
         isOpen={denoiseModalState.isOpen}
-        onClose={() => setDenoiseModalState(prev => ({ ...prev, isOpen: false }))}
+        onClose={() => setDenoiseModalState((prev) => ({ ...prev, isOpen: false }))}
         onDenoise={handleApplyDenoise}
         onSave={handleSaveDenoisedImage}
         onOpenFile={handleImageSelect}
@@ -4912,7 +4970,9 @@ function App() {
       />
       <CullingModal
         isOpen={cullingModalState.isOpen}
-        onClose={() => setCullingModalState({ isOpen: false, progress: null, suggestions: null, error: null, pathsToCull: [] })}
+        onClose={() =>
+          setCullingModalState({ isOpen: false, progress: null, suggestions: null, error: null, pathsToCull: [] })
+        }
         progress={cullingModalState.progress}
         suggestions={cullingModalState.suggestions}
         error={cullingModalState.error}

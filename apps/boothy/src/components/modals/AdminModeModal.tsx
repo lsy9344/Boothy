@@ -119,12 +119,8 @@ export default function AdminModeModal({
             />
           )}
         </div>
-        {!passwordsMatch && (
-          <p className="text-xs text-red-400 mt-2">Passwords do not match.</p>
-        )}
-        {errorMessage && (
-          <p className="text-xs text-red-400 mt-2">{errorMessage}</p>
-        )}
+        {!passwordsMatch && <p className="text-xs text-red-400 mt-2">Passwords do not match.</p>}
+        {errorMessage && <p className="text-xs text-red-400 mt-2">{errorMessage}</p>}
         <div className="flex justify-end gap-3 mt-6">
           <Button
             className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"

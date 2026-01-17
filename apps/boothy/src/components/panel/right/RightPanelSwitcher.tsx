@@ -30,10 +30,11 @@ export default function RightPanelSwitcher({ activePanel, allowedPanels, onPanel
     <div className="flex flex-col p-1 gap-1 h-full">
       {visiblePanels.map(({ id, icon: Icon, title }) => (
         <button
-          className={`p-2 rounded-md transition-colors duration-200 ${activePanel === id
-            ? 'bg-surface text-text-primary'
-            : 'text-text-secondary hover:bg-surface hover:text-text-primary'
-            }`}
+          className={`p-2 rounded-md transition-colors duration-200 ${
+            activePanel === id
+              ? 'bg-surface text-text-primary'
+              : 'text-text-secondary hover:bg-surface hover:text-text-primary'
+          }`}
           key={id}
           onClick={() => onPanelSelect(id)}
           title={title}

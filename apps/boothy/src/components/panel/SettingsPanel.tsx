@@ -1,15 +1,5 @@
-import { useEffect, useState } from 'react';
-import {
-  ArrowLeft,
-  Check,
-  Cpu,
-  Info,
-  Trash2,
-  Plus,
-  X,
-  SlidersHorizontal,
-  Keyboard,
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Cpu, Info, Trash2, Plus, X, SlidersHorizontal, Keyboard } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -64,14 +54,8 @@ interface SettingsPanelProps {
   appSettings: any;
   onBack(): void;
   onLibraryRefresh(): void;
-  onSettingsChange(settings: any): void;
+  onSettingsChange(settings: any, meta?: { reason?: string }): void;
   rootPath: string | null;
-}
-
-interface TestStatus {
-  message: string;
-  success: boolean | null;
-  testing: boolean;
 }
 
 const EXECUTE_TIMEOUT = 3000;
@@ -188,6 +172,9 @@ export default function SettingsPanel({
     endScreenMessage: getBoothyEndScreenMessage(appSettings),
     tMinus5WarningMessage: getBoothyTMinus5WarningMessage(appSettings),
   });
+  const [timelineSaveStatus, setTimelineSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [timelineSaveMessage, setTimelineSaveMessage] = useState('');
+  const timelineSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
   const [logPath, setLogPath] = useState('');
@@ -203,8 +190,47 @@ export default function SettingsPanel({
       endScreenMessage: getBoothyEndScreenMessage(appSettings),
       tMinus5WarningMessage: getBoothyTMinus5WarningMessage(appSettings),
     });
+    setTimelineSaveStatus('idle');
+    setTimelineSaveMessage('');
     setRestartRequired(false);
   }, [appSettings]);
+
+  useEffect(() => {
+    const handleSettingsSaveResult = (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail;
+      if (!detail || detail.reason !== 'timeline-messages') {
+        return;
+      }
+
+      if (timelineSaveTimeoutRef.current) {
+        clearTimeout(timelineSaveTimeoutRef.current);
+        timelineSaveTimeoutRef.current = null;
+      }
+
+      if (detail.ok) {
+        setTimelineSaveStatus('success');
+        setTimelineSaveMessage('Saved.');
+      } else {
+        setTimelineSaveStatus('error');
+        setTimelineSaveMessage(`Save failed: ${detail.error ?? 'Unknown error'}`);
+      }
+
+      timelineSaveTimeoutRef.current = setTimeout(() => {
+        setTimelineSaveStatus('idle');
+        setTimelineSaveMessage('');
+        timelineSaveTimeoutRef.current = null;
+      }, EXECUTE_TIMEOUT);
+    };
+
+    window.addEventListener('boothy:settings-save-result', handleSettingsSaveResult as EventListener);
+    return () => {
+      window.removeEventListener('boothy:settings-save-result', handleSettingsSaveResult as EventListener);
+      if (timelineSaveTimeoutRef.current) {
+        clearTimeout(timelineSaveTimeoutRef.current);
+        timelineSaveTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const fetchLogPath = async () => {
@@ -379,11 +405,20 @@ export default function SettingsPanel({
     if (!appSettings || !isTimelineValid) {
       return;
     }
-    onSettingsChange({
-      ...appSettings,
-      boothy_end_screen_message: trimmedEndMessage,
-      boothy_t_minus_5_warning_message: trimmedTMinus5Message,
-    });
+    if (timelineSaveTimeoutRef.current) {
+      clearTimeout(timelineSaveTimeoutRef.current);
+      timelineSaveTimeoutRef.current = null;
+    }
+    setTimelineSaveStatus('saving');
+    setTimelineSaveMessage('Saving...');
+    onSettingsChange(
+      {
+        ...appSettings,
+        boothy_end_screen_message: trimmedEndMessage,
+        boothy_t_minus_5_warning_message: trimmedTMinus5Message,
+      },
+      { reason: 'timeline-messages' },
+    );
   };
 
   const handleTimelineCancel = () => {
@@ -524,8 +559,8 @@ export default function SettingsPanel({
                 <div className="p-6 bg-surface rounded-xl shadow-md">
                   <h2 className="text-xl font-semibold mb-6 text-accent">Adjustments Visibility</h2>
                   <p className="text-sm text-text-secondary mb-4">
-                    Hide adjustment sections you don't use often to simplify the editing panel. Your settings will be
-                    preserved and applied even when hidden.
+                    Hide adjustment sections you don&apos;t use often to simplify the editing panel. Your settings will
+                    be preserved and applied even when hidden.
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
                     {/* Hide noise reduction to stop people from thinking it exists
@@ -688,9 +723,11 @@ export default function SettingsPanel({
                       <Input
                         type="text"
                         value={timelineSettings.endScreenMessage}
-                        onChange={(e) =>
-                          setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }))
-                        }
+                        onChange={(e) => {
+                          setTimelineSaveStatus('idle');
+                          setTimelineSaveMessage('');
+                          setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }));
+                        }}
                       />
                     </SettingItem>
 
@@ -701,31 +738,47 @@ export default function SettingsPanel({
                       <Input
                         type="text"
                         value={timelineSettings.tMinus5WarningMessage}
-                        onChange={(e) =>
-                          setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }))
-                        }
+                        onChange={(e) => {
+                          setTimelineSaveStatus('idle');
+                          setTimelineSaveMessage('');
+                          setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }));
+                        }}
                       />
                     </SettingItem>
 
-                    {!isTimelineValid && (
-                      <p className="text-xs text-red-400">Messages cannot be empty.</p>
-                    )}
+                    {!isTimelineValid && <p className="text-xs text-red-400">Messages cannot be empty.</p>}
 
                     <div className="flex flex-wrap items-center justify-end gap-3">
+                      {timelineSaveMessage && (
+                        <p
+                          className={clsx(
+                            'text-xs mr-auto',
+                            timelineSaveStatus === 'error' && 'text-red-400',
+                            timelineSaveStatus === 'success' && 'text-green-400',
+                            timelineSaveStatus === 'saving' && 'text-text-secondary',
+                          )}
+                        >
+                          {timelineSaveMessage}
+                        </p>
+                      )}
                       <Button
                         className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
+                        disabled={timelineSaveStatus === 'saving'}
                         onClick={handleTimelineRestoreDefaults}
                       >
                         Restore Defaults
                       </Button>
                       <Button
                         className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
-                        disabled={!isTimelineDirty}
+                        disabled={!isTimelineDirty || timelineSaveStatus === 'saving'}
                         onClick={handleTimelineCancel}
                       >
                         Cancel
                       </Button>
-                      <Button disabled={!isTimelineDirty || !isTimelineValid} onClick={handleTimelineSave}>
+                      <Button
+                        disabled={!isTimelineDirty || !isTimelineValid || timelineSaveStatus === 'saving'}
+                        onClick={handleTimelineSave}
+                      >
                         Save
                       </Button>
                     </div>
@@ -868,7 +921,6 @@ export default function SettingsPanel({
                   </div>
                 </div>
 
-
                 <div className="p-6 bg-surface rounded-xl shadow-md">
                   <h2 className="text-xl font-semibold mb-6 text-accent">Data Management</h2>
                   <div className="space-y-6">
@@ -911,7 +963,7 @@ export default function SettingsPanel({
                       buttonText="Open Log File"
                       description={
                         <>
-                          View the application's log file for troubleshooting. The log is located at:
+                          View the application&apos;s log file for troubleshooting. The log is located at:
                           <span className="block font-mono text-xs bg-bg-primary p-2 rounded mt-2 break-all border border-border-color">
                             {logPath || 'Loading...'}
                           </span>
@@ -968,7 +1020,10 @@ export default function SettingsPanel({
                         <KeybindItem keys={['Space']} description="Cycle zoom (Fit, 2x Fit, 100%)" />
                         <KeybindItem keys={['←', '→']} description="Previous / Next image" />
                         <KeybindItem keys={['↑', '↓']} description="Zoom in / Zoom out (by step)" />
-                        <KeybindItem keys={['Shift', '+', 'Mouse Wheel']} description="Adjust slider value by 2 steps" />
+                        <KeybindItem
+                          keys={['Shift', '+', 'Mouse Wheel']}
+                          description="Adjust slider value by 2 steps"
+                        />
                         <KeybindItem keys={['Ctrl/Cmd', '+', '+']} description="Zoom in" />
                         <KeybindItem keys={['Ctrl/Cmd', '+', '-']} description="Zoom out" />
                         <KeybindItem keys={['Ctrl/Cmd', '+', '0']} description="Zoom to fit" />

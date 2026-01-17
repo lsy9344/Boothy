@@ -19,9 +19,13 @@ export default function TitleBar({
   isAdminActionRunning = false,
   onAdminToggle,
 }: TitleBarProps) {
-  const [osPlatform, setOsPlatform] = useState('');
+  const isTauriRuntime = typeof window !== 'undefined' && '__TAURI__' in window;
+  const [osPlatform, setOsPlatform] = useState(isTauriRuntime ? '' : 'web');
 
   useEffect(() => {
+    if (!isTauriRuntime) {
+      return;
+    }
     const getPlatform = async () => {
       try {
         const p = platform();
@@ -32,13 +36,16 @@ export default function TitleBar({
       }
     };
     getPlatform();
-  }, []);
+  }, [isTauriRuntime]);
 
-  const appWindow = getCurrentWindow();
-  const handleMinimize = () => appWindow.minimize();
-  const handleClose = () => appWindow.close();
+  const appWindow = isTauriRuntime ? getCurrentWindow() : null;
+  const handleMinimize = () => appWindow?.minimize();
+  const handleClose = () => appWindow?.close();
 
   const handleMaximize = useCallback(async () => {
+    if (!appWindow) {
+      return;
+    }
     switch (osPlatform) {
       case 'macos': {
         const isFullscreen = await appWindow.isFullscreen();
@@ -96,7 +103,7 @@ export default function TitleBar({
           <div
             className={clsx(
               'flex items-center gap-1.5 px-2 py-1 rounded-l-md text-xs font-medium transition-colors',
-              !isAdmin ? 'bg-accent/20 text-accent' : 'bg-surface/50 text-text-tertiary'
+              !isAdmin ? 'bg-accent/20 text-accent' : 'bg-surface/50 text-text-tertiary',
             )}
           >
             <User size={12} />
@@ -109,7 +116,7 @@ export default function TitleBar({
               isAdmin
                 ? 'bg-accent text-button-text'
                 : 'bg-surface/80 text-text-secondary hover:bg-surface hover:text-text-primary',
-              isAdminActionRunning && 'opacity-60 cursor-not-allowed'
+              isAdminActionRunning && 'opacity-60 cursor-not-allowed',
             )}
             disabled={isAdminActionRunning}
             onClick={(e) => {
@@ -118,13 +125,7 @@ export default function TitleBar({
             }}
           >
             <Shield size={12} />
-            <span>
-              {isAdmin
-                ? 'Exit Admin'
-                : boothyHasAdminPassword
-                  ? 'Unlock'
-                  : 'Set Admin'}
-            </span>
+            <span>{isAdmin ? 'Exit Admin' : boothyHasAdminPassword ? 'Unlock' : 'Set Admin'}</span>
           </button>
           {isAdmin && adminOverrideActive && (
             <span className="ml-2 px-2 py-1 rounded-full text-xs font-semibold text-amber-300 bg-amber-500/20 border border-amber-400/40">

@@ -31,7 +31,6 @@ import AddPresetModal from '../../modals/AddPresetModal';
 import RenamePresetModal from '../../modals/RenamePresetModal';
 import CreateFolderModal from '../../modals/CreateFolderModal';
 import RenameFolderModal from '../../modals/RenameFolderModal';
-import Button from '../../ui/Button';
 import { Adjustments, INITIAL_ADJUSTMENTS } from '../../../utils/adjustments';
 import { Invokes, OPTION_SEPARATOR, Panel, Preset, SelectedImage } from '../../ui/AppProperties';
 
@@ -131,12 +130,7 @@ function DraggablePresetItem({
   previewUrl,
   isGeneratingPreviews,
 }: DraggablePresetItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setDraggableNodeRef,
-    isDragging,
-  } = useDraggable({
+  const { attributes, listeners, isDragging, setNodeRef: setDraggableNodeRef } = useDraggable({
     id: preset.id,
     data: { type: PresetListType.Preset, preset },
   });
@@ -177,12 +171,7 @@ function DraggablePresetItem({
 }
 
 function DroppableFolderItem({ folder, onContextMenu, children, onToggle, isExpanded }: DroppableFolderItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setDraggableNodeRef,
-    isDragging,
-  } = useDraggable({
+  const { attributes, listeners, isDragging } = useDraggable({
     data: { type: PresetListType.Folder, folder },
     id: folder.id,
   });
@@ -669,7 +658,8 @@ export default function PresetsPanel({
       });
 
       if (typeof selectedPath === 'string') {
-        const isLegacy = selectedPath.toLowerCase().endsWith('.xmp') || selectedPath.toLowerCase().endsWith('.lrtemplate');
+        const isLegacy =
+          selectedPath.toLowerCase().endsWith('.xmp') || selectedPath.toLowerCase().endsWith('.lrtemplate');
 
         if (isLegacy) {
           await importLegacyPresetsFromFile(selectedPath);
@@ -863,9 +853,8 @@ export default function PresetsPanel({
         </div>
 
         <div
-          className={`flex-grow overflow-y-auto p-4 space-y-2 rounded-lg transition-colors ${
-            isRootOver ? 'bg-surface-hover' : ''
-          }`}
+          className={`flex-grow overflow-y-auto p-4 space-y-2 rounded-lg transition-colors ${isRootOver ? 'bg-surface-hover' : ''
+            }`}
           onContextMenu={handleBackgroundContextMenu}
           ref={setRootNodeRef}
         >

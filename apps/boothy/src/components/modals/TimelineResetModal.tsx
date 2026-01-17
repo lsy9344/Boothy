@@ -26,10 +26,7 @@ export default function TimelineResetModal({
       role="dialog"
       onClick={onPostpone}
     >
-      <div
-        className="bg-surface rounded-lg shadow-xl p-6 w-full max-w-md"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-surface rounded-lg shadow-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-semibold text-text-primary mb-2">Session Reset</h3>
         <p className="text-sm text-text-secondary mb-4">
           The session has reached N:59. You can reset now or postpone for troubleshooting.

@@ -1,5 +1,4 @@
-import React from 'react';
-import { Adjustments, Color, CopyPasteSettings } from '../../utils/adjustments';
+import { Adjustments, CopyPasteSettings } from '../../utils/adjustments';
 import { ToolType } from '../panel/right/Masks';
 
 export const GLOBAL_KEYS = [' ', 'ArrowUp', 'ArrowDown', 'f', 'b', 'w'];
@@ -68,6 +67,7 @@ export enum Invokes {
   BoothySwitchToCustomerMode = 'boothy_switch_to_customer_mode',
   BoothyHandlePhotoTransferred = 'boothy_handle_photo_transferred',
   BoothyHandleExportDecision = 'boothy_handle_export_decision',
+  BoothyGetExportedCount = 'boothy_get_exported_count',
   BoothySetCurrentPreset = 'boothy_set_current_preset',
   BoothyLogFrontend = 'boothy_log_frontend',
   SetColorLabelForPaths = 'set_color_label_for_paths',

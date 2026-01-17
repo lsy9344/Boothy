@@ -5,8 +5,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Runtime};
 use tauri::async_runtime::JoinHandle;
+use tauri::{AppHandle, Emitter, Runtime};
 
 const DEFAULT_T_MINUS_5_MESSAGE: &str = "이용시간이 5분 남았습니다.";
 const WALL_CLOCK_JUMP_THRESHOLD_SECONDS: i64 = 5;
@@ -45,7 +45,9 @@ enum TimedEvent {
         message: String,
         emitted: Arc<AtomicBool>,
     },
-    TZero,
+    TZero {
+        emitted: Arc<AtomicBool>,
+    },
     Reset,
 }
 
@@ -110,7 +112,6 @@ impl SessionTimer {
         };
 
         let t_zero_handle = if initial_remaining <= 0 {
-            emit_t_zero(&app_handle);
             None
         } else {
             duration_until(window.end, start_time).map(|delay| {
@@ -119,7 +120,9 @@ impl SessionTimer {
                     Arc::clone(&self.generation),
                     generation,
                     delay,
-                    TimedEvent::TZero,
+                    TimedEvent::TZero {
+                        emitted: Arc::clone(&t_zero_emitted),
+                    },
                 )
             })
         };
@@ -248,17 +251,17 @@ fn spawn_tick_loop<R: Runtime>(
         let mut last_wall_clock = Local::now();
         let initial_remaining = remaining_seconds(last_wall_clock, window.end);
         emit_tick(&app_handle, initial_remaining);
-        
+
         // Check T-5 on startup
         if should_emit_t_minus_5(last_wall_clock, &window) {
             emit_t_minus_5_once(&app_handle, &t_minus_5_message, &t_minus_5_emitted);
         }
-        
+
         // Check T-Zero on startup (if already past end time)
-        if initial_remaining <= 0 && !t_zero_emitted.swap(true, Ordering::SeqCst) {
-            emit_t_zero(&app_handle);
+        if initial_remaining <= 0 {
+            emit_t_zero_once(&app_handle, &t_zero_emitted);
         }
-        
+
         // Check Reset on startup (if already past reset time)
         if last_wall_clock >= window.reset_at && !reset_emitted.swap(true, Ordering::SeqCst) {
             emit_reset(&app_handle);
@@ -283,7 +286,7 @@ fn spawn_tick_loop<R: Runtime>(
 
             let remaining = remaining_seconds(now, window.end);
             emit_tick(&app_handle, remaining);
-            
+
             // Check T-5 in real-time
             if !t_minus_5_emitted.load(Ordering::SeqCst)
                 && remaining > 0
@@ -291,19 +294,18 @@ fn spawn_tick_loop<R: Runtime>(
             {
                 emit_t_minus_5_once(&app_handle, &t_minus_5_message, &t_minus_5_emitted);
             }
-            
+
             // Check T-Zero in real-time (when remaining hits 0)
-            if remaining <= 0 && !t_zero_emitted.swap(true, Ordering::SeqCst) {
-                info!("T-Zero reached, emitting event");
-                emit_t_zero(&app_handle);
+            if remaining <= 0 && !t_zero_emitted.load(Ordering::SeqCst) {
+                emit_t_zero_once(&app_handle, &t_zero_emitted);
             }
-            
+
             // Check Reset in real-time
             if now >= window.reset_at && !reset_emitted.swap(true, Ordering::SeqCst) {
                 info!("Reset time reached, emitting event");
                 emit_reset(&app_handle);
             }
-            
+
             last_wall_clock = now;
         }
     })
@@ -325,7 +327,7 @@ fn spawn_timed_event<R: Runtime>(
             TimedEvent::TMinus5 { message, emitted } => {
                 emit_t_minus_5_once(&app_handle, &message, emitted.as_ref());
             }
-            TimedEvent::TZero => emit_t_zero(&app_handle),
+            TimedEvent::TZero { emitted } => emit_t_zero_once(&app_handle, emitted.as_ref()),
             TimedEvent::Reset => emit_reset(&app_handle),
         }
     })
@@ -345,11 +347,7 @@ fn emit_t_minus_5<R: Runtime>(app_handle: &AppHandle<R>, message: String) {
     }
 }
 
-fn emit_t_minus_5_once<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    message: &str,
-    emitted: &AtomicBool,
-) {
+fn emit_t_minus_5_once<R: Runtime>(app_handle: &AppHandle<R>, message: &str, emitted: &AtomicBool) {
     if emitted.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -360,6 +358,14 @@ fn emit_t_zero<R: Runtime>(app_handle: &AppHandle<R>) {
     if let Err(err) = app_handle.emit("boothy-session-t-zero", serde_json::json!({})) {
         warn!("Failed to emit boothy-session-t-zero: {}", err);
     }
+}
+
+fn emit_t_zero_once<R: Runtime>(app_handle: &AppHandle<R>, emitted: &AtomicBool) {
+    if emitted.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    info!("T-Zero reached, emitting event");
+    emit_t_zero(app_handle);
 }
 
 fn emit_reset<R: Runtime>(app_handle: &AppHandle<R>) {
@@ -400,5 +406,26 @@ mod tests {
         assert_eq!(window.t_minus_5_at.minute(), 45);
         assert_eq!(remaining_seconds(window.t_minus_5_at, window.end), 5 * 60);
         assert!(should_emit_t_minus_5(window.t_minus_5_at, &window));
+    }
+
+    #[test]
+    fn does_not_emit_t_minus_5_before_threshold() {
+        let start = Local.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
+        let window = compute_session_window(start);
+        let just_before = window.t_minus_5_at - chrono::Duration::seconds(1);
+
+        assert!(!should_emit_t_minus_5(just_before, &window));
+    }
+
+    #[test]
+    fn does_not_emit_t_minus_5_at_or_after_end() {
+        let start = Local.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
+        let window = compute_session_window(start);
+
+        assert!(!should_emit_t_minus_5(window.end, &window));
+        assert!(!should_emit_t_minus_5(
+            window.end + chrono::Duration::seconds(1),
+            &window
+        ));
     }
 }

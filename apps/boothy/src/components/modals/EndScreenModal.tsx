@@ -31,24 +31,16 @@ export default function EndScreenModal({ isAdmin, isOpen, message, onExit }: End
           >
             {/* Simple accent heart icon */}
             <div className="mb-6 flex justify-center">
-              <Heart
-                size={48}
-                className="text-accent"
-                strokeWidth={1.5}
-              />
+              <Heart size={48} className="text-accent" strokeWidth={1.5} />
             </div>
 
             {/* Main message */}
-            <p className="text-2xl font-semibold text-text-primary whitespace-pre-wrap leading-relaxed">
-              {message}
-            </p>
+            <p className="text-2xl font-semibold text-text-primary whitespace-pre-wrap leading-relaxed">{message}</p>
 
             {/* Admin exit button */}
             {isAdmin && (
               <div className="mt-8 flex justify-center">
-                <Button onClick={onExit}>
-                  닫기
-                </Button>
+                <Button onClick={onExit}>Exit End Screen</Button>
               </div>
             )}
           </motion.div>

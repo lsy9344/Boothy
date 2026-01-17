@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
-import { Stage, Layer, Ellipse, Line, Transformer, Group, Circle, Rect } from 'react-konva';
+import { Stage, Layer, Ellipse, Line, Transformer, Group, Circle } from 'react-konva';
 import { PercentCrop, Crop } from 'react-image-crop';
-import clsx from 'clsx';
 import { Adjustments, Coord, MaskContainer } from '../../../utils/adjustments';
 import { Mask, SubMask, SubMaskMode, ToolType } from '../right/Masks';
 import { BrushSettings, SelectedImage } from '../../ui/AppProperties';
@@ -420,6 +419,8 @@ const MaskOverlay = memo(
   },
 );
 
+MaskOverlay.displayName = 'MaskOverlay';
+
 const ImageCanvas = memo(
   ({
     activeMaskContainerId,
@@ -509,8 +510,8 @@ const ImageCanvas = memo(
       const currentPreviewUrl = showOriginal
         ? transformedOriginalUrl
         : isFullResolution && !isLoadingFullRes && fullResolutionUrl
-        ? fullResolutionUrl
-        : finalPreviewUrl;
+          ? fullResolutionUrl
+          : finalPreviewUrl;
 
       if (imageChanged) {
         imagePathRef.current = currentImagePath;
@@ -565,9 +566,9 @@ const ImageCanvas = memo(
       const layerToFadeIn = layers.find((l: ImageLayer) => l.opacity === 0);
       if (layerToFadeIn) {
         const frame = requestAnimationFrame(() => {
-           setLayers((prev: Array<ImageLayer>) =>
-             prev.map((l: ImageLayer) => (l.id === layerToFadeIn.id ? { ...l, opacity: 1 } : l)),
-           );
+          setLayers((prev: Array<ImageLayer>) =>
+            prev.map((l: ImageLayer) => (l.id === layerToFadeIn.id ? { ...l, opacity: 1 } : l)),
+          );
         });
         return () => cancelAnimationFrame(frame);
       }
@@ -592,90 +593,95 @@ const ImageCanvas = memo(
       }
     }, [isCropping, uncroppedAdjustedPreviewUrl]);
 
-    const handleWbClick = useCallback((e: any) => {
-      if (!isWbPickerActive || !finalPreviewUrl || !onWbPicked) return;
-      
-      const stage = e.target.getStage();
-      const pointerPos = stage.getPointerPosition();
-      if (!pointerPos) return;
+    const handleWbClick = useCallback(
+      (e: any) => {
+        if (!isWbPickerActive || !finalPreviewUrl || !onWbPicked) return;
 
-      const x = pointerPos.x / imageRenderSize.scale;
-      const y = pointerPos.y / imageRenderSize.scale;
+        const stage = e.target.getStage();
+        const pointerPos = stage.getPointerPosition();
+        if (!pointerPos) return;
 
-      const imgLogicalWidth = imageRenderSize.width / imageRenderSize.scale;
-      const imgLogicalHeight = imageRenderSize.height / imageRenderSize.scale;
-      
-      if (x < 0 || x > imgLogicalWidth || y < 0 || y > imgLogicalHeight) return;
+        const x = pointerPos.x / imageRenderSize.scale;
+        const y = pointerPos.y / imageRenderSize.scale;
 
-      const img = new Image();
-      img.crossOrigin = "Anonymous";
-      img.src = finalPreviewUrl;
-      
-      img.onload = () => {
-        const radius = 5;
-        const side = radius * 2 + 1;
+        const imgLogicalWidth = imageRenderSize.width / imageRenderSize.scale;
+        const imgLogicalHeight = imageRenderSize.height / imageRenderSize.scale;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = side;
-        canvas.height = side;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) return;
+        if (x < 0 || x > imgLogicalWidth || y < 0 || y > imgLogicalHeight) return;
 
-        const scaleX = img.width / imgLogicalWidth;
-        const scaleY = img.height / imgLogicalHeight;
-        const srcX = Math.floor(x * scaleX);
-        const srcY = Math.floor(y * scaleY);
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.src = finalPreviewUrl;
 
-        const startX = Math.max(0, srcX - radius);
-        const startY = Math.max(0, srcY - radius);
-        const endX = Math.min(img.width, srcX + radius + 1);
-        const endY = Math.min(img.height, srcY + radius + 1);
-        const sw = endX - startX;
-        const sh = endY - startY;
+        img.onload = () => {
+          const radius = 5;
+          const side = radius * 2 + 1;
 
-        if (sw <= 0 || sh <= 0) return;
+          const canvas = document.createElement('canvas');
+          canvas.width = side;
+          canvas.height = side;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return;
 
-        ctx.drawImage(img, startX, startY, sw, sh, 0, 0, sw, sh);
+          const scaleX = img.width / imgLogicalWidth;
+          const scaleY = img.height / imgLogicalHeight;
+          const srcX = Math.floor(x * scaleX);
+          const srcY = Math.floor(y * scaleY);
 
-        const imageData = ctx.getImageData(0, 0, sw, sh);
-        const data = imageData.data;
-        
-        let rTotal = 0, gTotal = 0, bTotal = 0;
-        let count = 0;
+          const startX = Math.max(0, srcX - radius);
+          const startY = Math.max(0, srcY - radius);
+          const endX = Math.min(img.width, srcX + radius + 1);
+          const endY = Math.min(img.height, srcY + radius + 1);
+          const sw = endX - startX;
+          const sh = endY - startY;
 
-        for (let i = 0; i < data.length; i += 4) {
-          rTotal += data[i];
-          gTotal += data[i + 1];
-          bTotal += data[i + 2];
-          count++;
-        }
+          if (sw <= 0 || sh <= 0) return;
 
-        if (count === 0) return;
+          ctx.drawImage(img, startX, startY, sw, sh, 0, 0, sw, sh);
 
-        const avgR = rTotal / count;
-        const avgG = gTotal / count;
-        const avgB = bTotal / count;
+          const imageData = ctx.getImageData(0, 0, sw, sh);
+          const data = imageData.data;
 
-        const linR = Math.pow(avgR / 255.0, 2.2);
-        const linG = Math.pow(avgG / 255.0, 2.2);
-        const linB = Math.pow(avgB / 255.0, 2.2);
+          let rTotal = 0,
+            gTotal = 0,
+            bTotal = 0;
+          let count = 0;
 
-        const sumRB = linR + linB;
-        const deltaTemp = sumRB > 0.0001 ? ((linB - linR) / sumRB) * 125.0 : 0;
+          for (let i = 0; i < data.length; i += 4) {
+            rTotal += data[i];
+            gTotal += data[i + 1];
+            bTotal += data[i + 2];
+            count++;
+          }
 
-        const linM = sumRB / 2.0;
-        const sumGM = linG + linM;
-        const deltaTint = sumGM > 0.0001 ? ((linG - linM) / sumGM) * 400.0 : 0;
+          if (count === 0) return;
 
-        setAdjustments((prev: Adjustments) => ({
-          ...prev,
-          temperature: Math.max(-100, Math.min(100, (prev.temperature || 0) + deltaTemp)),
-          tint: Math.max(-100, Math.min(100, (prev.tint || 0) + deltaTint)),
-        }));
+          const avgR = rTotal / count;
+          const avgG = gTotal / count;
+          const avgB = bTotal / count;
 
-        onWbPicked();
-      };
-    }, [isWbPickerActive, finalPreviewUrl, imageRenderSize, onWbPicked, setAdjustments]);
+          const linR = Math.pow(avgR / 255.0, 2.2);
+          const linG = Math.pow(avgG / 255.0, 2.2);
+          const linB = Math.pow(avgB / 255.0, 2.2);
+
+          const sumRB = linR + linB;
+          const deltaTemp = sumRB > 0.0001 ? ((linB - linR) / sumRB) * 125.0 : 0;
+
+          const linM = sumRB / 2.0;
+          const sumGM = linG + linM;
+          const deltaTint = sumGM > 0.0001 ? ((linG - linM) / sumGM) * 400.0 : 0;
+
+          setAdjustments((prev: Adjustments) => ({
+            ...prev,
+            temperature: Math.max(-100, Math.min(100, (prev.temperature || 0) + deltaTemp)),
+            tint: Math.max(-100, Math.min(100, (prev.tint || 0) + deltaTint)),
+          }));
+
+          onWbPicked();
+        };
+      },
+      [isWbPickerActive, finalPreviewUrl, imageRenderSize, onWbPicked, setAdjustments],
+    );
 
     const handleMouseDown = useCallback(
       (e: any) => {
@@ -1168,5 +1174,7 @@ const ImageCanvas = memo(
     );
   },
 );
+
+ImageCanvas.displayName = 'ImageCanvas';
 
 export default ImageCanvas;

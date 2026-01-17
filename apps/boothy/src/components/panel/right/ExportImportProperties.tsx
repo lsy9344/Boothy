@@ -1,4 +1,3 @@
-import React from 'react';
 import { Progress } from '../../ui/AppProperties';
 
 export const EXPORT_TIMEOUT = 4000;

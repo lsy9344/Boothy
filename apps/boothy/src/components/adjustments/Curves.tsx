@@ -178,7 +178,7 @@ export default function CurveGraph({
 
       const svg = svgRef.current;
       if (!svg) return;
-      
+
       const rect = svg.getBoundingClientRect();
       let x = Math.max(0, Math.min(255, ((e.clientX - rect.left) / rect.width) * 255));
       const y = Math.max(0, Math.min(255, 255 - ((e.clientY - rect.top) / rect.height) * 255));
@@ -266,7 +266,7 @@ export default function CurveGraph({
   const handlePointMouseDown = (e: any, index: number) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     onDragStateChange?.(true);
 
     setLocalPoints(points);
@@ -288,7 +288,7 @@ export default function CurveGraph({
 
     setLocalPoints(newPoints);
     localPointsRef.current = newPoints;
-    
+
     setAdjustments((prev: Adjustments) => ({
       ...prev,
       curves: { ...prev.curves, [activeChannel]: newPoints },

@@ -1,0 +1,144 @@
+import { mockConvertFileSrc, mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+
+type MockSession = {
+  base_path: string;
+  jpg_path: string;
+  raw_path: string;
+  session_folder_name: string;
+  session_name: string;
+};
+
+type MockEmit = (event: string, payload?: unknown) => Promise<void>;
+
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: {
+      invoke?: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+    };
+    __TAURI_MOCK__?: {
+      emit: MockEmit;
+      session: MockSession;
+      startSession: () => Promise<void>;
+      triggerExport: (choice: 'overwriteAll' | 'continueFromBackground') => void;
+    };
+  }
+}
+
+const shouldMockTauri = typeof window !== 'undefined' && !window.__TAURI_INTERNALS__;
+
+if (shouldMockTauri) {
+  mockWindows('main');
+  mockConvertFileSrc('windows');
+
+  const defaultSession: MockSession = {
+    base_path: 'C:\\Mock\\Session',
+    jpg_path: 'C:\\Mock\\Session\\Jpg',
+    raw_path: 'C:\\Mock\\Session\\Raw',
+    session_folder_name: 'MockSession',
+    session_name: 'Mock Session',
+  };
+
+  const emitEvent: MockEmit = async (event, payload) => {
+    await window.__TAURI_INTERNALS__?.invoke?.('plugin:event|emit', { event, payload });
+  };
+
+  let exportTimeouts: Array<number> = [];
+  const clearExportTimeouts = () => {
+    exportTimeouts.forEach((id) => window.clearTimeout(id));
+    exportTimeouts = [];
+  };
+
+  const scheduleExport = (choice: 'overwriteAll' | 'continueFromBackground') => {
+    clearExportTimeouts();
+    const total = choice === 'overwriteAll' ? 5 : 2;
+    const filenames = Array.from({ length: total }, (_, index) => `photo-${index + 1}.CR3`);
+
+    void emitEvent('boothy-export-progress', { completed: 0, total, current_path: '' });
+
+    const step = (completed: number) => {
+      if (completed >= total) {
+        void emitEvent('boothy-export-complete');
+        return;
+      }
+      const current_path = filenames[completed];
+      void emitEvent('boothy-export-progress', { completed: completed + 1, total, current_path });
+      exportTimeouts.push(window.setTimeout(() => step(completed + 1), 150));
+    };
+
+    exportTimeouts.push(window.setTimeout(() => step(0), 150));
+  };
+
+  mockIPC(
+    (cmd, args) => {
+      switch (cmd) {
+        case 'plugin:app|version':
+          return '0.0.0-mock';
+        case 'plugin:app|name':
+          return 'Boothy';
+        case 'plugin:app|tauri_version':
+          return '2.9.0';
+        case 'plugin:os|platform':
+          return 'windows';
+        case 'plugin:path|home_dir':
+          return 'C:\\Users\\Mock';
+        case 'plugin:dialog|open':
+        case 'plugin:dialog|save':
+        case 'plugin:process|relaunch':
+          return null;
+        case 'plugin:window|is_fullscreen':
+        case 'plugin:window|is_maximized':
+        case 'plugin:window|is_minimized':
+          return false;
+        case 'plugin:window|toggle_maximize':
+        case 'plugin:window|minimize':
+        case 'plugin:window|close':
+        case 'plugin:window|set_fullscreen':
+        case 'plugin:window|maximize':
+        case 'plugin:window|unmaximize':
+          return null;
+        case 'load_settings':
+          return {
+            lastRootPath: null,
+            theme: 'dark',
+            pinnedFolders: [],
+          };
+        case 'get_folder_tree': {
+          const path = (args?.path as string) ?? defaultSession.raw_path;
+          return { children: [], is_dir: true, name: 'Session', path };
+        }
+        case 'get_supported_file_types':
+          return { raw: ['.CR3'], nonRaw: ['.JPG'] };
+        case 'get_pinned_folder_trees':
+          return [];
+        case 'list_images_in_dir':
+        case 'list_images_recursive':
+          return [];
+        case 'read_exif_for_paths':
+          return {};
+        case 'save_settings':
+        case 'cancel_thumbnail_generation':
+        case 'start_folder_watcher':
+          return null;
+        case 'boothy_get_mode_state':
+          return { mode: 'customer', has_admin_password: false };
+        case 'boothy_handle_export_decision': {
+          const choice = (args?.choice as 'overwriteAll' | 'continueFromBackground') ?? 'continueFromBackground';
+          scheduleExport(choice);
+          return null;
+        }
+        case 'boothy_log_frontend':
+          return null;
+        default:
+          return null;
+      }
+    },
+    { shouldMockEvents: true },
+  );
+
+  window.__TAURI_MOCK__ = {
+    emit: emitEvent,
+    session: defaultSession,
+    startSession: async () => emitEvent('boothy-session-changed', defaultSession),
+    triggerExport: scheduleExport,
+  };
+}

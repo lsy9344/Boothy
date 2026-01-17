@@ -1,3 +1,4 @@
+import './tauriMock';
 import React from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { createRoot } from 'react-dom/client';

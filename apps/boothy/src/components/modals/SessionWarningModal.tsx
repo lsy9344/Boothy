@@ -10,12 +10,7 @@ interface SessionWarningModalProps {
 
 const FALLBACK_MESSAGE = '세션 종료가 5분 남았습니다.';
 
-export default function SessionWarningModal({
-  isBlocking,
-  isOpen,
-  message,
-  onClose,
-}: SessionWarningModalProps) {
+export default function SessionWarningModal({ isBlocking, isOpen, message, onClose }: SessionWarningModalProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [show, setShow] = useState(false);
 

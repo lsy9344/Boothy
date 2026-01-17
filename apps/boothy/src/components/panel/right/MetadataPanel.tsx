@@ -115,7 +115,7 @@ export default function MetadataPanel({ selectedImage }: MetaDataPanelProps) {
     const lonStr = exif.GPSLongitude;
     const lonRef = exif.GPSLongitudeRef;
 
-    let gpsData: GPSData = { lat: null, lon: null, altitude: exif.GPSAltitude || null };
+    const gpsData: GPSData = { lat: null, lon: null, altitude: exif.GPSAltitude || null };
     if (latStr && latRef && lonStr && lonRef) {
       const parsedLat = parseDms(latStr);
       const parsedLon = parseDms(lonStr);

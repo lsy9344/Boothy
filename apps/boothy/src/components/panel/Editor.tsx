@@ -285,13 +285,7 @@ export default function Editor({
     debouncedGenerateMaskOverlay(maskDefForOverlay, imageRenderSize);
 
     return () => debouncedGenerateMaskOverlay.cancel();
-  }, [
-    activeRightPanel,
-    activeMaskContainerId,
-    adjustments.masks,
-    imageRenderSize,
-    debouncedGenerateMaskOverlay,
-  ]);
+  }, [activeRightPanel, activeMaskContainerId, adjustments.masks, imageRenderSize, debouncedGenerateMaskOverlay]);
 
   useEffect(() => {
     let timer: number;
@@ -446,10 +440,7 @@ export default function Editor({
     return null;
   }, [adjustments.masks, activeMaskId, isMasking]);
 
-  const isPanningDisabled =
-    isMaskHovered ||
-    isCropping ||
-    (isMasking && activeSubMask?.type === Mask.Brush);
+  const isPanningDisabled = isMaskHovered || isCropping || (isMasking && activeSubMask?.type === Mask.Brush);
 
   const waveFormData: WaveformData = waveform || { blue: [], green: [], height: 0, luma: [], red: [], width: 0 };
 
@@ -484,7 +475,7 @@ export default function Editor({
           showOriginal={showOriginal}
           isLoadingFullRes={isLoadingFullRes}
           showDateView={showExifDateView}
-          onToggleDateView={() => setShowExifDateView(prev => !prev)}
+          onToggleDateView={() => setShowExifDateView((prev) => !prev)}
           sessionRemainingSeconds={sessionRemainingSeconds}
         />
 
