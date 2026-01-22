@@ -126,6 +126,8 @@ export interface Adjustments {
   lutName?: string | null;
   lutPath?: string | null;
   lutSize?: number;
+  lastPresetId?: string | null;
+  lastPresetName?: string | null;
   masks: Array<MaskContainer>;
   negativeBlueBalance: number;
   negativeGreenBalance: number;
@@ -397,6 +399,8 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
   lutName: null,
   lutPath: null,
   lutSize: 0,
+  lastPresetId: null,
+  lastPresetName: null,
   masks: [],
   negativeBlueBalance: 0,
   negativeGreenBalance: 0,

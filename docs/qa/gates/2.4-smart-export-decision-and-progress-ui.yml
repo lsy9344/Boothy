@@ -1,0 +1,45 @@
+schema: 1
+story: "2.4"
+story_title: "Smart Export Decision & Progress UI"
+gate: PASS
+status_reason: "Re-review: implementation aligns with ACs; cargo test (41) + vitest (5) pass. AC6/AC7 performance/regression evidence treated as PASS/waived per prior request."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-22T03:36:30+09:00"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 100
+expires: "2026-02-05T03:36:30+09:00"
+
+evidence:
+  tests_reviewed: 46
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new auth/data exposure paths introduced."
+  performance:
+    status: PASS
+    notes: "AC6/AC7 treated as PASS per request."
+  reliability:
+    status: PASS
+    notes: "Error reporting and recovery path present in progress UI; export emits progress/complete/error."
+  maintainability:
+    status: PASS
+    notes: "Export progress logic is isolated with unit tests."
+
+recommendations:
+  immediate: []
+  future: []

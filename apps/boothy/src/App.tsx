@@ -43,6 +43,7 @@ import Controls from './components/panel/right/ControlsPanel';
 import type { CopiedSectionAdjustments } from './components/panel/right/ControlsPanel';
 import { useThumbnails } from './hooks/useThumbnails';
 import { ImageDimensions } from './hooks/useImageRenderSize';
+import type { UserPreset } from './hooks/usePresets';
 import RightPanelSwitcher from './components/panel/right/RightPanelSwitcher';
 import MetadataPanel from './components/panel/right/MetadataPanel';
 import CropPanel from './components/panel/right/CropPanel';
@@ -54,6 +55,7 @@ import CameraControlsPanel from './components/panel/CameraControlsPanel';
 import BottomBar from './components/panel/BottomBar';
 import ExportDecisionModal from './components/session/ExportDecisionModal';
 import ExportProgressBar from './components/session/ExportProgressBar';
+import SessionCountdown from './components/session/SessionCountdown';
 import { ContextMenuProvider, useContextMenu } from './context/ContextMenuContext';
 import TaggingSubMenu from './context/TaggingSubMenu';
 import AdminModeModal from './components/modals/AdminModeModal';
@@ -105,6 +107,7 @@ import {
   OPTION_SEPARATOR,
   LibraryViewMode,
   Panel,
+  Preset,
   RawStatus,
   SelectedImage,
   SortCriteria,
@@ -367,6 +370,97 @@ const useAsyncThrottle = <T extends unknown[]>(fn: (...args: T) => Promise<void>
   }, [trigger]);
 };
 
+const isPlainObject = (value: any): value is Record<string, any> => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+};
+
+const deepEqual = (a: any, b: any): boolean => {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  if (!isPlainObject(a) || !isPlainObject(b)) {
+    return false;
+  }
+
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!deepEqual(a[key], b[key])) return false;
+  }
+
+  return true;
+};
+
+const NON_VISUAL_ADJUSTMENT_KEYS = new Set([
+  'aspectRatio',
+  'lastPresetId',
+  'lastPresetName',
+  'rating',
+  'tags',
+  'version',
+  'sectionVisibility',
+]);
+
+const hasRenderableAdjustments = (loadedAdjustments: Adjustments | null | undefined) => {
+  if (!loadedAdjustments) {
+    return false;
+  }
+  if (!isPlainObject(loadedAdjustments)) {
+    return true;
+  }
+  if (loadedAdjustments.is_null) {
+    return false;
+  }
+  const normalized = normalizeLoadedAdjustments(loadedAdjustments);
+  return Object.keys(INITIAL_ADJUSTMENTS).some((key) => {
+    if (NON_VISUAL_ADJUSTMENT_KEYS.has(key)) {
+      return false;
+    }
+    return !deepEqual(normalized[key as keyof Adjustments], INITIAL_ADJUSTMENTS[key as keyof Adjustments]);
+  });
+};
+
+const findBestMatchingPreset = (adjustments: any, presets: Array<Preset>): Preset | null => {
+  if (!adjustments || presets.length === 0) return null;
+
+  let best: Preset | null = null;
+  let bestScore = -1;
+
+  for (const preset of presets) {
+    const presetAdjustments = preset?.adjustments || {};
+    const keys = Object.keys(presetAdjustments);
+    if (keys.length === 0) continue;
+
+    let ok = true;
+    for (const key of keys) {
+      if (!deepEqual(adjustments[key], presetAdjustments[key])) {
+        ok = false;
+        break;
+      }
+    }
+
+    if (ok && keys.length > bestScore) {
+      best = preset;
+      bestScore = keys.length;
+    }
+  }
+
+  return best;
+};
+
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
@@ -381,6 +475,8 @@ function App() {
   const [isAdminActionRunning, setIsAdminActionRunning] = useState(false);
   const [adminModalError, setAdminModalError] = useState<string | null>(null);
   const [isStartingSession, setIsStartingSession] = useState(false);
+  const [activeView, setActiveView] = useState<'editor' | 'library'>('library');
+  const [shouldAutoOpenEditor, setShouldAutoOpenEditor] = useState(false);
   const [isWindowFullScreen, setIsWindowFullScreen] = useState(false);
   const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set<string>());
@@ -396,6 +492,12 @@ function App() {
   });
   const [supportedTypes, setSupportedTypes] = useState<SupportedTypes | null>(null);
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(null);
+  const [currentPreset, setCurrentPreset] = useState<Preset | null>(null);
+  const currentPresetRef = useRef<Preset | null>(null);
+  const defaultPresetLoadedRef = useRef(false);
+  const defaultPresetRef = useRef<Preset | null>(null);
+  const presetsIndexRef = useRef<Array<Preset>>([]);
+  const imageListRef = useRef<Array<ImageFile>>([]);
   const [multiSelectedPaths, setMultiSelectedPaths] = useState<Array<string>>([]);
   const [libraryActivePath, setLibraryActivePath] = useState<string | null>(null);
   const [libraryActiveAdjustments, setLibraryActiveAdjustments] = useState<Adjustments>(INITIAL_ADJUSTMENTS);
@@ -452,6 +554,77 @@ function App() {
   useDelayedRevokeBlobUrl(fullScreenUrl);
   useDelayedRevokeBlobUrl(transformedOriginalUrl);
   useDelayedRevokeBlobUrl(selectedImage?.originalUrl);
+  currentPresetRef.current = currentPreset;
+  useEffect(() => {
+    imageListRef.current = imageList;
+  }, [imageList]);
+
+  const findFirstPreset = useCallback((presetList: Array<UserPreset>): Preset | null => {
+    if (!Array.isArray(presetList)) {
+      return null;
+    }
+    for (const item of presetList) {
+      if (item.preset) {
+        return item.preset;
+      }
+      if (item.folder?.children?.length) {
+        return item.folder.children[0];
+      }
+    }
+    return null;
+  }, []);
+
+  const flattenPresets = useCallback((presetList: Array<UserPreset>): Array<Preset> => {
+    if (!Array.isArray(presetList)) {
+      return [];
+    }
+    const flat: Array<Preset> = [];
+    for (const item of presetList) {
+      if (item.preset) {
+        flat.push(item.preset);
+      } else if (item.folder?.children?.length) {
+        flat.push(...item.folder.children);
+      }
+    }
+    return flat;
+  }, []);
+
+  const cachePresets = useCallback(
+    (loadedPresets: Array<UserPreset>) => {
+      presetsIndexRef.current = flattenPresets(loadedPresets);
+      if (!defaultPresetRef.current) {
+        defaultPresetRef.current = findFirstPreset(loadedPresets);
+      }
+    },
+    [findFirstPreset, flattenPresets],
+  );
+
+  const ensurePresetCache = useCallback(async () => {
+    if (defaultPresetRef.current && presetsIndexRef.current.length > 0) {
+      return;
+    }
+    try {
+      const loadedPresets: Array<UserPreset> = await invoke(Invokes.LoadPresets);
+      cachePresets(loadedPresets);
+    } catch (err) {
+      console.error('[Presets] Failed to load presets for cache:', err);
+    }
+  }, [cachePresets]);
+
+  const findNewestAddedPath = useCallback((files: ImageFile[], prevFiles: ImageFile[]) => {
+    const prevPaths = new Set(prevFiles.map((file) => file.path));
+    const addedFiles = files.filter((file) => !prevPaths.has(file.path));
+    if (addedFiles.length === 0) {
+      return null;
+    }
+    let newest = addedFiles[0];
+    for (const file of addedFiles) {
+      if ((file.modified ?? 0) >= (newest.modified ?? 0)) {
+        newest = file;
+      }
+    }
+    return newest.path;
+  }, []);
 
   const handleDisplaySizeChange = useCallback((size: ImageDimensions & { scale?: number }) => {
     setDisplaySize({ width: size.width, height: size.height });
@@ -462,6 +635,40 @@ function App() {
       setBaseRenderSize({ width: baseWidth, height: baseHeight });
     }
   }, []);
+
+  useEffect(() => {
+    if (defaultPresetLoadedRef.current) {
+      return;
+    }
+    defaultPresetLoadedRef.current = true;
+
+    const loadDefaultPreset = async () => {
+      try {
+        const loadedPresets: Array<UserPreset> = await invoke(Invokes.LoadPresets);
+        cachePresets(loadedPresets);
+        const firstPreset = findFirstPreset(loadedPresets);
+        if (!firstPreset) {
+          return;
+        }
+        if (currentPresetRef.current) {
+          return;
+        }
+        setCurrentPreset(firstPreset);
+        currentPresetRef.current = firstPreset;
+        defaultPresetRef.current = firstPreset;
+        await invoke(Invokes.BoothySetCurrentPreset, {
+          presetId: firstPreset.id,
+          presetName: firstPreset.name,
+          presetAdjustments: firstPreset.adjustments,
+        });
+        console.log('[PresetsPanel] Default preset set:', firstPreset.name);
+      } catch (err) {
+        console.error('[PresetsPanel] Failed to set default preset:', err);
+      }
+    };
+
+    loadDefaultPreset();
+  }, [findFirstPreset, cachePresets]);
 
   const [initialFitScale, setInitialFitScale] = useState<number | null>(null);
   const [renderedRightPanel, setRenderedRightPanel] = useState<Panel | null>(activeRightPanel);
@@ -582,6 +789,7 @@ function App() {
   const isProgrammaticZoom = useRef(false);
   const isInitialMount = useRef(true);
   const currentFolderPathRef = useRef<string>(currentFolderPath);
+  const hasBoothySessionRef = useRef(hasBoothySession);
   const pendingSessionRef = useRef<BoothySession | null>(null);
   const lastAppliedSessionRef = useRef<string | null>(null);
   const selectSubfolderRequestRef = useRef(0);
@@ -609,6 +817,10 @@ function App() {
   useEffect(() => {
     currentFolderPathRef.current = currentFolderPath;
   }, [currentFolderPath]);
+
+  useEffect(() => {
+    hasBoothySessionRef.current = hasBoothySession;
+  }, [hasBoothySession]);
 
   useEffect(() => {
     if (!isCopied) {
@@ -647,6 +859,13 @@ function App() {
       });
     },
     [debouncedSetHistory],
+  );
+
+  const handlePresetApplied = useCallback(
+    (preset: Preset) => {
+      setCurrentPreset(preset);
+    },
+    [],
   );
 
   const handleStraighten = useCallback(
@@ -1575,6 +1794,8 @@ function App() {
         return;
       }
       setBoothySession(session);
+      setShouldAutoOpenEditor(true);
+      setActiveView('editor');
 
       const rawPath = (session as any).raw_path || (session as any).rawPath;
       if (!rawPath) {
@@ -1753,14 +1974,6 @@ function App() {
     reconcileSelectionAfterRefresh(files);
   }, [refreshImageList, reconcileSelectionAfterRefresh]);
 
-  const throttledSessionRefresh = useMemo(
-    () =>
-      throttle(() => {
-        void refreshSessionFiles();
-      }, 500),
-    [refreshSessionFiles],
-  );
-
   const handleToggleFolder = useCallback((path: string) => {
     setExpandedFolders((prev) => {
       const newSet = new Set(prev);
@@ -1798,14 +2011,9 @@ function App() {
     return () => window.removeEventListener('contextmenu', handleGlobalContextMenu);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      throttledSessionRefresh.cancel();
-    };
-  }, [throttledSessionRefresh]);
-
   const handleBackToLibrary = useCallback(() => {
     const lastActivePath = selectedImage?.path ?? null;
+    setActiveView('library');
     clearEditorSelection(lastActivePath);
   }, [selectedImage?.path, clearEditorSelection]);
 
@@ -1814,6 +2022,7 @@ function App() {
       if (selectedImage?.path === path) {
         return;
       }
+      setActiveView('editor');
       applyAdjustments.cancel();
       debouncedSave.cancel();
 
@@ -1856,6 +2065,83 @@ function App() {
     },
     [selectedImage?.path, applyAdjustments, debouncedSave, thumbnails, resetAdjustmentsHistory],
   );
+
+  const pickNewestImagePath = useCallback((files: ImageFile[]) => {
+    if (!files || files.length === 0) {
+      return null;
+    }
+    let newest = files[0];
+    for (const file of files) {
+      if ((file.modified ?? 0) >= (newest.modified ?? 0)) {
+        newest = file;
+      }
+    }
+    return newest.path;
+  }, []);
+
+  const selectEditorTargetPath = useCallback(() => {
+    if (libraryActivePath) {
+      return libraryActivePath;
+    }
+    if (multiSelectedPaths.length > 0) {
+      return multiSelectedPaths[0];
+    }
+    return pickNewestImagePath(imageList);
+  }, [libraryActivePath, multiSelectedPaths, imageList, pickNewestImagePath]);
+
+  const handleReturnToEditor = useCallback(() => {
+    setActiveView('editor');
+    const targetPath = selectEditorTargetPath();
+    if (!targetPath) {
+      return;
+    }
+    handleImageSelect(targetPath);
+  }, [handleImageSelect, selectEditorTargetPath]);
+
+  useEffect(() => {
+    if (!shouldAutoOpenEditor) {
+      return;
+    }
+    if (selectedImage) {
+      setShouldAutoOpenEditor(false);
+      return;
+    }
+    const targetPath = selectEditorTargetPath();
+    if (!targetPath) {
+      return;
+    }
+    handleImageSelect(targetPath);
+    setShouldAutoOpenEditor(false);
+  }, [shouldAutoOpenEditor, selectedImage, selectEditorTargetPath, handleImageSelect]);
+
+  const refreshSessionFilesWithAutoSelect = useCallback(async () => {
+    const previousFiles = imageListRef.current;
+    const files = await refreshImageList();
+    reconcileSelectionAfterRefresh(files);
+
+    if (!files || isEditingLockedRef.current) {
+      return;
+    }
+
+    const newestPath = findNewestAddedPath(files, previousFiles);
+    if (newestPath) {
+      handleImageSelect(newestPath);
+    }
+  }, [refreshImageList, reconcileSelectionAfterRefresh, findNewestAddedPath, handleImageSelect]);
+
+  const throttledSessionRefresh = useMemo(
+    () =>
+      throttle(() => {
+        void refreshSessionFilesWithAutoSelect();
+      }, 500),
+    [refreshSessionFilesWithAutoSelect],
+  );
+
+  useEffect(() => {
+    return () => {
+      throttledSessionRefresh.cancel();
+    };
+  }, [throttledSessionRefresh]);
 
   const executeDelete = useCallback(
     async (pathsToDelete: Array<string>, options = { includeAssociated: false }) => {
@@ -2580,11 +2866,8 @@ function App() {
   ]);
 
   const handleSessionLockout = useCallback(() => {
-    if (isCustomerMode) {
-      setIsSessionLocked(true);
-      setIsLockoutModalOpen(false);
-    } else {
-      setIsSessionLocked(true);
+    setIsSessionLocked(true);
+    if (!isCustomerMode) {
       setIsLockoutModalOpen(true);
     }
   }, [isCustomerMode]);
@@ -2637,9 +2920,16 @@ function App() {
   }, []);
 
   const handleAutoExportDecision = useCallback(async () => {
-    if (!hasBoothySession) {
+    // Check backend active session instead of frontend state to avoid stale closure issues
+    try {
+      const session = await invoke(Invokes.BoothyGetActiveSession);
+      if (!session) {
+        return;
+      }
+    } catch {
       return;
     }
+
     setIsLibraryExportPanelVisible(false);
 
     try {
@@ -2657,7 +2947,7 @@ function App() {
         setBoothyExportError(typeof exportErr === 'string' ? exportErr : 'Failed to start export.');
       });
     }
-  }, [hasBoothySession, setBoothyExportError]);
+  }, [setBoothyExportError]);
 
   const handleExportDecisionOpen = useCallback(() => {
     setIsExportDecisionModalOpen(true);
@@ -3271,6 +3561,7 @@ function App() {
       setError(null);
       try {
         const session = await invoke(Invokes.BoothyCreateOrOpenSession, { sessionName });
+        setShouldAutoOpenEditor(true);
         applyBoothySession(session as BoothySession);
       } catch (err) {
         console.error('Failed to start session:', err);
@@ -3394,7 +3685,7 @@ function App() {
       if (appSettings) {
         handleSettingsChange({ ...appSettings, lastRootPath: null, lastFolderState: null });
       }
-      handleGoHome();
+      handleExitToHome();
       setIsTreeLoading(false);
     });
   };
@@ -3427,7 +3718,9 @@ function App() {
     handleImageSelect,
   ]);
 
-  const handleGoHome = () => {
+  const handleExitToHome = useCallback(() => {
+    setActiveView('library');
+    setShouldAutoOpenEditor(false);
     setIsStartingSession(false);
     setRootPath(null);
     setCurrentFolderPath(null);
@@ -3438,7 +3731,7 @@ function App() {
     setLibraryActivePath(null);
     setIsLibraryExportPanelVisible(false);
     setExpandedFolders(new Set());
-  };
+  }, []);
 
   const handleMultiSelectClick = (path: string, event: any, options: MultiSelectOptions) => {
     const { ctrlKey, metaKey, shiftKey } = event;
@@ -3577,17 +3870,44 @@ function App() {
             return currentSelected;
           });
 
-          let initialAdjusts;
-          if (loadImageResult.metadata.adjustments && !loadImageResult.metadata.adjustments.is_null) {
-            initialAdjusts = normalizeLoadedAdjustments(loadImageResult.metadata.adjustments);
+          let initialAdjusts: Adjustments;
+          const savedAdjustments = loadImageResult?.metadata?.adjustments;
+          const hasSavedAdjustments = hasRenderableAdjustments(savedAdjustments);
+
+          await ensurePresetCache();
+          if (!isEffectActive) {
+            return;
+          }
+
+          const isSessionActive = hasBoothySessionRef.current;
+          const fallbackPreset = defaultPresetRef.current;
+          const activePreset = currentPresetRef.current ?? fallbackPreset;
+
+          if (hasSavedAdjustments) {
+            initialAdjusts = normalizeLoadedAdjustments(savedAdjustments);
           } else {
+            const shouldApplyPreset =
+              isSessionActive && activePreset && isPlainObject(activePreset.adjustments);
+            const presetAdjustments = shouldApplyPreset ? activePreset.adjustments : null;
+
             initialAdjusts = {
               ...INITIAL_ADJUSTMENTS,
+              ...(presetAdjustments ?? {}),
               aspectRatio: loadImageResult.width / loadImageResult.height,
+              lastPresetId: activePreset?.id ?? null,
+              lastPresetName: activePreset?.name ?? null,
             };
           }
-          if (loadImageResult.metadata.adjustments && !loadImageResult.metadata.adjustments.is_null) {
-            initialAdjusts = normalizeLoadedAdjustments(loadImageResult.metadata.adjustments);
+
+          if (!initialAdjusts.lastPresetId) {
+            const matchedPreset = findBestMatchingPreset(initialAdjusts, presetsIndexRef.current);
+            if (matchedPreset) {
+              initialAdjusts.lastPresetId = matchedPreset.id;
+              initialAdjusts.lastPresetName = matchedPreset.name;
+            } else if (fallbackPreset) {
+              initialAdjusts.lastPresetId = fallbackPreset.id;
+              initialAdjusts.lastPresetName = fallbackPreset.name;
+            }
           }
           setLiveAdjustments(initialAdjusts);
           resetAdjustmentsHistory(initialAdjusts);
@@ -3613,7 +3933,13 @@ function App() {
         isEffectActive = false;
       };
     }
-  }, [selectedImage?.path, selectedImage?.isReady, resetAdjustmentsHistory, appSettings?.editorPreviewResolution]);
+  }, [
+    selectedImage?.path,
+    selectedImage?.isReady,
+    resetAdjustmentsHistory,
+    appSettings?.editorPreviewResolution,
+    ensurePresetCache,
+  ]);
 
   const handleClearSelection = () => {
     if (selectedImage) {
@@ -4503,7 +4829,8 @@ function App() {
             onContextMenu={handleThumbnailContextMenu}
             onContinueSession={handleContinueSession}
             onEmptyAreaContextMenu={handleMainLibraryContextMenu}
-            onGoHome={handleGoHome}
+            onGoEditor={handleReturnToEditor}
+            onExitToHome={handleExitToHome}
             onImageClick={handleLibraryImageSingleClick}
             onImageDoubleClick={handleImageSelect}
             onLibraryRefresh={handleLibraryRefresh}
@@ -4581,21 +4908,35 @@ function App() {
       isEditingLocked,
       isStartingSession,
       handleLibraryExportClick,
+      handleReturnToEditor,
+      handleExitToHome,
       handleStartSession,
     ],
   );
 
-  const renderMainView = () => {
+  const renderEditorEmptyState = () => (
+    <div className="flex-1 bg-bg-secondary rounded-lg flex flex-col relative overflow-hidden p-2 gap-2 min-h-0">
+      <div className="flex items-center justify-end px-4 h-14">
+        <SessionCountdown remainingSeconds={sessionRemainingSeconds ?? null} size="sm" />
+      </div>
+      <div className="flex-1 flex items-center justify-center text-text-secondary">
+        <p>Select an image from the library to begin editing.</p>
+      </div>
+    </div>
+  );
+
+  const renderEditorView = () => {
     const panelVariants: any = {
       animate: { opacity: 1, y: 0, transition: { duration: 0.2, ease: 'circOut' } },
       exit: { opacity: 0.4, y: -20, transition: { duration: 0.1, ease: 'circIn' } },
       initial: { opacity: 0.4, y: 20 },
     };
+    const hasSelection = !!selectedImage;
 
-    if (selectedImage) {
-      return (
-        <div className="flex flex-row flex-grow h-full min-h-0">
-          <div className="flex-1 flex flex-col min-w-0">
+    return (
+      <div className="flex flex-row flex-grow h-full min-h-0">
+        <div className="flex-1 flex flex-col min-w-0">
+          {hasSelection ? (
             <Editor
               activeMaskContainerId={activeMaskContainerId}
               activeMaskId={activeMaskId}
@@ -4644,157 +4985,232 @@ function App() {
               fullResolutionUrl={fullResolutionUrl}
               isLoadingFullRes={isLoadingFullRes}
             />
-            <Resizer
-              direction={Orientation.Horizontal}
-              onMouseDown={createResizeHandler(setBottomPanelHeight, bottomPanelHeight)}
-            />
-            <BottomBar
-              filmstripHeight={bottomPanelHeight}
-              imageList={sortedImageList}
-              imageRatings={imageRatings}
-              isCopied={isCopied}
-              isCopyDisabled={isEditingLocked || !selectedImage}
-              isCustomerMode={isCustomerMode}
-              isFilmstripVisible={uiVisibility.filmstrip}
-              isLoading={isViewLoading}
-              isPasted={isPasted}
-              isPasteDisabled={isEditingLocked || copiedAdjustments === null}
-              isRatingDisabled={isEditingLocked || !selectedImage}
-              isResizing={isResizing}
-              multiSelectedPaths={multiSelectedPaths}
-              displaySize={displaySize}
-              originalSize={originalSize}
-              onClearSelection={handleClearSelection}
-              onContextMenu={handleThumbnailContextMenu}
-              onCopy={handleCopyAdjustments}
-              onOpenCopyPasteSettings={() => setIsCopyPasteSettingsModalOpen(true)}
-              onImageSelect={handleImageClick}
-              onPaste={() => handlePasteAdjustments()}
-              onRate={handleRate}
-              onZoomChange={handleZoomChange}
-              rating={adjustments.rating || 0}
-              selectedImage={selectedImage}
-              setIsFilmstripVisible={(value: boolean) =>
-                setUiVisibility((prev: UiVisibility) => ({ ...prev, filmstrip: value }))
-              }
-              thumbnailAspectRatio={thumbnailAspectRatio}
-              thumbnails={thumbnails}
-            />
-          </div>
-
+          ) : (
+            renderEditorEmptyState()
+          )}
           <Resizer
-            onMouseDown={createResizeHandler(setRightPanelWidth, rightPanelWidth)}
-            direction={Orientation.Vertical}
+            direction={Orientation.Horizontal}
+            onMouseDown={createResizeHandler(setBottomPanelHeight, bottomPanelHeight)}
           />
-          <div className="flex bg-bg-secondary rounded-lg h-full">
-            <div
-              className={clsx('h-full overflow-hidden', !isResizing && 'transition-all duration-300 ease-in-out')}
-              style={{ width: activeRightPanel ? `${rightPanelWidth}px` : '0px' }}
-            >
-              <div style={{ width: `${rightPanelWidth}px` }} className="h-full">
-                <AnimatePresence mode="wait">
-                  {activeRightPanel && (
-                    <motion.div
-                      animate="animate"
-                      className="h-full w-full"
-                      exit="exit"
-                      initial="initial"
-                      key={renderedRightPanel}
-                      variants={panelVariants}
+          <BottomBar
+            filmstripHeight={bottomPanelHeight}
+            imageList={sortedImageList}
+            imageRatings={imageRatings}
+            isCopied={isCopied}
+            isCopyDisabled={isEditingLocked || !selectedImage}
+            isCustomerMode={isCustomerMode}
+            isFilmstripVisible={uiVisibility.filmstrip}
+            isLoading={isViewLoading}
+            isPasted={isPasted}
+            isPasteDisabled={isEditingLocked || copiedAdjustments === null}
+            isRatingDisabled={isEditingLocked || !selectedImage}
+            isResizing={isResizing}
+            multiSelectedPaths={multiSelectedPaths}
+            displaySize={displaySize}
+            originalSize={originalSize}
+            onClearSelection={handleClearSelection}
+            onContextMenu={handleThumbnailContextMenu}
+            onCopy={handleCopyAdjustments}
+            onOpenCopyPasteSettings={() => setIsCopyPasteSettingsModalOpen(true)}
+            onImageSelect={handleImageClick}
+            onPaste={() => handlePasteAdjustments()}
+            onRate={handleRate}
+            onZoomChange={handleZoomChange}
+            rating={adjustments.rating || 0}
+            selectedImage={selectedImage}
+            setIsFilmstripVisible={(value: boolean) =>
+              setUiVisibility((prev: UiVisibility) => ({ ...prev, filmstrip: value }))
+            }
+            thumbnailAspectRatio={thumbnailAspectRatio}
+            thumbnails={thumbnails}
+          />
+        </div>
+
+        <Resizer
+          onMouseDown={createResizeHandler(setRightPanelWidth, rightPanelWidth)}
+          direction={Orientation.Vertical}
+        />
+        <div className="flex bg-bg-secondary rounded-lg h-full">
+          <div
+            className={clsx('h-full overflow-hidden', !isResizing && 'transition-all duration-300 ease-in-out')}
+            style={{ width: activeRightPanel && hasSelection ? `${rightPanelWidth}px` : '0px' }}
+          >
+            <div style={{ width: `${rightPanelWidth}px` }} className="h-full">
+              {hasSelection && (
+                <>
+                  <div className="px-4 py-2 border-b border-surface text-xs text-text-secondary flex items-center gap-2">
+                    <span className="uppercase tracking-wider">Preset</span>
+                    <div
+                      className={clsx(
+                        'min-w-0 flex-1 inline-flex items-center gap-2',
+                        'px-2.5 py-1 rounded-xl border bg-surface/50',
+                        selectedImagePresetName ? 'border-accent/30' : 'border-border-color/30',
+                      )}
+                      title={selectedImagePresetName || 'None'}
                     >
-                      {renderedRightPanel === Panel.Adjustments && (
-                        <Controls
-                          adjustments={adjustments}
-                          collapsibleState={collapsibleSectionsState}
-                          copiedSectionAdjustments={copiedSectionAdjustments}
-                          handleAutoAdjustments={handleAutoAdjustments}
-                          histogram={histogram}
-                          selectedImage={selectedImage}
-                          setAdjustments={setAdjustments}
-                          setCollapsibleState={setCollapsibleSectionsState}
-                          setCopiedSectionAdjustments={setCopiedSectionAdjustments}
-                          theme={theme}
-                          handleLutSelect={handleLutSelect}
-                          appSettings={appSettings}
-                          isWbPickerActive={isWbPickerActive}
-                          toggleWbPicker={toggleWbPicker}
-                          onDragStateChange={setIsSliderDragging}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.Metadata && <MetadataPanel selectedImage={selectedImage} />}
-                      {renderedRightPanel === Panel.Crop && (
-                        <CropPanel
-                          adjustments={adjustments}
-                          isStraightenActive={isStraightenActive}
-                          isSessionLocked={isEditingLocked}
-                          selectedImage={selectedImage}
-                          setAdjustments={setAdjustments}
-                          setIsStraightenActive={setIsStraightenActive}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.Masks && (
-                        <MasksPanel
-                          activeMaskContainerId={activeMaskContainerId}
-                          activeMaskId={activeMaskId}
-                          adjustments={adjustments}
-                          appSettings={appSettings}
-                          brushSettings={brushSettings}
-                          copiedMask={copiedMask}
-                          histogram={histogram}
-                          onSelectContainer={setActiveMaskContainerId}
-                          onSelectMask={setActiveMaskId}
-                          selectedImage={selectedImage}
-                          setAdjustments={setAdjustments}
-                          setBrushSettings={setBrushSettings}
-                          setCopiedMask={setCopiedMask}
-                          setCustomEscapeHandler={setCustomEscapeHandler}
-                          onDragStateChange={setIsSliderDragging}
-                          setIsMaskControlHovered={setIsMaskControlHovered}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.Presets && (
-                        <PresetsPanel
-                          activePanel={activeRightPanel}
-                          adjustments={adjustments}
-                          isSessionLocked={isEditingLocked}
-                          onBlockedAction={reportLockoutBlockedAction}
-                          selectedImage={selectedImage}
-                          setAdjustments={setAdjustments}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.Export && (
-                        <ExportPanel
-                          adjustments={adjustments}
-                          exportState={exportState}
-                          multiSelectedPaths={multiSelectedPaths}
-                          selectedImage={selectedImage}
-                          setExportState={setExportState}
-                        />
-                      )}
-                      {renderedRightPanel === Panel.CameraControls && <CameraControlsPanel />}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-            <div
-              className={clsx(
-                'h-full border-l transition-colors',
-                activeRightPanel ? 'border-surface' : 'border-transparent',
+                      <span
+                        className={clsx('h-2 w-2 rounded-full flex-shrink-0 ring-2 ring-transparent', [
+                          selectedImagePresetName ? 'bg-accent ring-accent/50' : 'bg-text-secondary/40',
+                        ])}
+                        aria-hidden="true"
+                      />
+                      <span
+                        className={clsx(
+                          'min-w-0 truncate font-medium',
+                          selectedImagePresetName ? 'text-text-primary' : 'text-text-secondary',
+                        )}
+                      >
+                        {selectedImagePresetName || 'None'}
+                      </span>
+                    </div>
+                  </div>
+                  <AnimatePresence mode="wait">
+                    {activeRightPanel && (
+                      <motion.div
+                        animate="animate"
+                        className="h-full w-full"
+                        exit="exit"
+                        initial="initial"
+                        key={renderedRightPanel}
+                        variants={panelVariants}
+                      >
+                        {renderedRightPanel === Panel.Adjustments && (
+                          <Controls
+                            adjustments={adjustments}
+                            collapsibleState={collapsibleSectionsState}
+                            copiedSectionAdjustments={copiedSectionAdjustments}
+                            handleAutoAdjustments={handleAutoAdjustments}
+                            histogram={histogram}
+                            selectedImage={selectedImage}
+                            setAdjustments={setAdjustments}
+                            setCollapsibleState={setCollapsibleSectionsState}
+                            setCopiedSectionAdjustments={setCopiedSectionAdjustments}
+                            theme={theme}
+                            handleLutSelect={handleLutSelect}
+                            appSettings={appSettings}
+                            isWbPickerActive={isWbPickerActive}
+                            toggleWbPicker={toggleWbPicker}
+                            onDragStateChange={setIsSliderDragging}
+                          />
+                        )}
+                        {renderedRightPanel === Panel.Metadata && <MetadataPanel selectedImage={selectedImage} />}
+                        {renderedRightPanel === Panel.Crop && (
+                          <CropPanel
+                            adjustments={adjustments}
+                            isStraightenActive={isStraightenActive}
+                            isSessionLocked={isEditingLocked}
+                            selectedImage={selectedImage}
+                            setAdjustments={setAdjustments}
+                            setIsStraightenActive={setIsStraightenActive}
+                          />
+                        )}
+                        {renderedRightPanel === Panel.Masks && (
+                          <MasksPanel
+                            activeMaskContainerId={activeMaskContainerId}
+                            activeMaskId={activeMaskId}
+                            adjustments={adjustments}
+                            appSettings={appSettings}
+                            brushSettings={brushSettings}
+                            copiedMask={copiedMask}
+                            histogram={histogram}
+                            onSelectContainer={setActiveMaskContainerId}
+                            onSelectMask={setActiveMaskId}
+                            selectedImage={selectedImage}
+                            setAdjustments={setAdjustments}
+                            setBrushSettings={setBrushSettings}
+                            setCopiedMask={setCopiedMask}
+                            setCustomEscapeHandler={setCustomEscapeHandler}
+                            onDragStateChange={setIsSliderDragging}
+                            setIsMaskControlHovered={setIsMaskControlHovered}
+                          />
+                        )}
+                        {renderedRightPanel === Panel.Presets && (
+                          <PresetsPanel
+                            activePanel={activeRightPanel}
+                            adjustments={adjustments}
+                            isSessionLocked={isEditingLocked}
+                            onBlockedAction={reportLockoutBlockedAction}
+                            onPresetApplied={handlePresetApplied}
+                            selectedPresetId={selectedImagePresetId}
+                            selectedImage={selectedImage}
+                            setAdjustments={setAdjustments}
+                          />
+                        )}
+                        {renderedRightPanel === Panel.Export && (
+                          <ExportPanel
+                            adjustments={adjustments}
+                            exportState={exportState}
+                            multiSelectedPaths={multiSelectedPaths}
+                            selectedImage={selectedImage}
+                            setExportState={setExportState}
+                          />
+                        )}
+                        {renderedRightPanel === Panel.CameraControls && <CameraControlsPanel />}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
               )}
-            >
-              <RightPanelSwitcher
-                activePanel={activeRightPanel}
-                allowedPanels={allowedRightPanels}
-                onPanelSelect={handleRightPanelSelect}
-              />
             </div>
+          </div>
+          <div
+            className={clsx(
+              'h-full border-l transition-colors relative',
+              activeRightPanel && hasSelection ? 'border-surface' : 'border-transparent',
+            )}
+          >
+            <RightPanelSwitcher
+              activePanel={activeRightPanel}
+              allowedPanels={allowedRightPanels}
+              onOpenLibrary={handleBackToLibrary}
+              onPanelSelect={handleRightPanelSelect}
+            />
+            {!activeRightPanel && hasSelection && (
+              <div
+                className="absolute top-2 right-full mr-2 max-w-[14rem]"
+                title={selectedImagePresetName || 'None'}
+                aria-label={`Current preset: ${selectedImagePresetName || 'None'}`}
+              >
+                <div
+                  className={clsx(
+                    'min-w-0 inline-flex items-center gap-2',
+                    'px-2.5 py-1 rounded-xl border bg-surface/50',
+                    selectedImagePresetName ? 'border-accent/30' : 'border-border-color/30',
+                  )}
+                >
+                  <span
+                    className={clsx('h-2 w-2 rounded-full flex-shrink-0 ring-2 ring-transparent', [
+                      selectedImagePresetName ? 'bg-accent ring-accent/50' : 'bg-text-secondary/40',
+                    ])}
+                    aria-hidden="true"
+                  />
+                  <span
+                    className={clsx(
+                      'min-w-0 truncate text-xs font-medium',
+                      selectedImagePresetName ? 'text-text-primary' : 'text-text-secondary',
+                    )}
+                  >
+                    {selectedImagePresetName || 'None'}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      );
+      </div>
+    );
+  };
+
+  const renderMainView = () => {
+    const isEditorView = activeView === 'editor' || !!selectedImage;
+    if (isEditorView) {
+      return renderEditorView();
     }
     return memoizedLibraryView;
   };
+
+  const selectedImagePresetId = adjustments?.lastPresetId || null;
+  const selectedImagePresetName = adjustments?.lastPresetName || null;
 
   const renderContent = () => {
     return renderMainView();

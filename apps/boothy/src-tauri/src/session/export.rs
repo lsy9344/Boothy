@@ -15,15 +15,19 @@ pub enum BoothyExportChoice {
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BoothySessionMetadata {
+    #[serde(alias = "schema_version")]
     pub schema_version: Option<u32>,
     pub photos: Vec<BoothySessionPhoto>,
 }
 
 #[derive(Default, Deserialize, Clone)]
-#[serde(default, rename_all = "snake_case")]
+#[serde(default, rename_all = "camelCase")]
 pub struct BoothySessionPhoto {
+    #[serde(alias = "raw_filename")]
     pub raw_filename: String,
+    #[serde(alias = "background_export_completed")]
     pub background_export_completed: Option<bool>,
+    #[serde(alias = "correlation_id")]
     pub correlation_id: Option<String>,
 }
 

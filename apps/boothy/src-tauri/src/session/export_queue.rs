@@ -406,6 +406,82 @@ async fn process_background_export<R: Runtime>(
     }
 }
 
+/// Enqueue existing raw files that have preset snapshots (.rrdata) but haven't been background-exported yet.
+/// Called at session open to catch up on files that arrived while the app was closed or were
+/// manually copied into the Raw folder.
+pub async fn enqueue_existing_raw_files_for_export<R: Runtime>(
+    session: &super::models::BoothySession,
+    queue: &BackgroundExportQueue,
+    app_handle: &AppHandle<R>,
+) {
+    let raw_path = &session.raw_path;
+
+    // List all files in Raw folder
+    let entries = match fs::read_dir(raw_path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "Failed to list files in Raw folder {:?}: {}",
+                raw_path,
+                err
+            );
+            return;
+        }
+    };
+
+    let mut enqueued_count = 0;
+    let mut skipped_count = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip directories
+        if path.is_dir() {
+            continue;
+        }
+
+        // Only process RAW files
+        let path_str = path.to_string_lossy().to_string();
+        if !is_raw_file(&path_str) {
+            continue;
+        }
+
+        // Check if .rrdata sidecar exists (preset was applied)
+        let rrdata_path = PathBuf::from(format!("{}.rrdata", path_str));
+        if !rrdata_path.exists() {
+            skipped_count += 1;
+            continue;
+        }
+
+        // Check if already background-exported
+        if super::metadata::is_background_export_completed(session, &path).unwrap_or(false) {
+            skipped_count += 1;
+            continue;
+        }
+
+        // Enqueue for background export
+        let correlation_id = generate_correlation_id();
+        if let Err(err) = queue.enqueue(app_handle, path.clone(), correlation_id.clone()).await {
+            log::warn!(
+                "[{}] Failed to enqueue existing raw file for background export: {} - {}",
+                correlation_id,
+                path.display(),
+                err
+            );
+        } else {
+            enqueued_count += 1;
+        }
+    }
+
+    if enqueued_count > 0 || skipped_count > 0 {
+        log::info!(
+            "Session open: enqueued {} existing raw files for background export, skipped {} (already exported or no preset)",
+            enqueued_count,
+            skipped_count
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

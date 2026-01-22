@@ -1,4 +1,4 @@
-import { SlidersHorizontal, Info, Scaling, Bookmark, Save, Layers, Camera } from 'lucide-react';
+import { SlidersHorizontal, Info, Scaling, Bookmark, Save, Layers, Camera, Images } from 'lucide-react';
 import { Panel } from '../../ui/AppProperties';
 
 interface PanelOptions {
@@ -10,6 +10,7 @@ interface PanelOptions {
 interface RightPanelSwitcherProps {
   activePanel: Panel | null;
   allowedPanels?: Panel[] | null;
+  onOpenLibrary?(): void;
   onPanelSelect(id: Panel): void;
 }
 
@@ -23,7 +24,12 @@ const panelOptions: Array<PanelOptions> = [
   { id: Panel.CameraControls, icon: Camera, title: 'Camera Controls' },
 ];
 
-export default function RightPanelSwitcher({ activePanel, allowedPanels, onPanelSelect }: RightPanelSwitcherProps) {
+export default function RightPanelSwitcher({
+  activePanel,
+  allowedPanels,
+  onOpenLibrary,
+  onPanelSelect,
+}: RightPanelSwitcherProps) {
   const visiblePanels = allowedPanels ? panelOptions.filter((panel) => allowedPanels.includes(panel.id)) : panelOptions;
 
   return (
@@ -42,6 +48,18 @@ export default function RightPanelSwitcher({ activePanel, allowedPanels, onPanel
           <Icon size={20} />
         </button>
       ))}
+      {onOpenLibrary && (
+        <div className="mt-auto pt-1 border-t border-border-color/40">
+          <button
+            className="p-2 rounded-md transition-colors duration-200 text-text-secondary hover:bg-surface hover:text-text-primary"
+            onClick={onOpenLibrary}
+            title="Open Library"
+            aria-label="Open Library"
+          >
+            <Images size={20} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

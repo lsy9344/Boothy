@@ -1,7 +1,5 @@
 # Epic 3: Storage Health (Disk Space) Guardrails & Admin Cleanup
 
-NOTE: Canonical location for this epic is `docs/prd/epic-3-storage-health-disk-space-guardrails.md` (this copy is kept for backwards references).
-
 - Epic ID: epic-3
 - Type: Brownfield enhancement
 - Baseline: Existing Boothy session storage + export pipeline (from Epic 1)

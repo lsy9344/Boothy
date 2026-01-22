@@ -2327,19 +2327,27 @@ fn generate_preset_preview(
 ) -> Result<Response, String> {
     let context = get_or_init_gpu_context(&state)?;
 
-    let loaded_image = state
-        .original_image
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No original image loaded for preset preview")?;
-    let original_image = loaded_image.image;
-    let path = loaded_image.path;
-    let is_raw = loaded_image.is_raw;
-    let unique_hash = calculate_full_job_hash(&path, &js_adjustments);
+    let (preview_base, is_raw) = {
+        let guard = state.original_image.lock().unwrap();
+        let loaded_image = guard
+            .as_ref()
+            .ok_or("No original image loaded for preset preview")?;
 
-    const PRESET_PREVIEW_DIM: u32 = 200;
-    let preview_base = downscale_f32_image(&original_image, PRESET_PREVIEW_DIM, PRESET_PREVIEW_DIM);
+        // Preset previews are small UI thumbnails; keep them light but avoid visible artifacts.
+        const PRESET_PREVIEW_DIM: u32 = 128;
+        let preview_base = loaded_image.image.resize(
+            PRESET_PREVIEW_DIM,
+            PRESET_PREVIEW_DIM,
+            image::imageops::FilterType::Triangle,
+        );
+
+        (preview_base, loaded_image.is_raw)
+    };
+
+    // Important: for preset previews we want to reuse the uploaded base texture across many presets.
+    // Using the full job hash would include all adjustment params, invalidating the GPU cache per preset.
+    // The input texture only depends on transforms (crop/rotate/flip/orientation), so hash only those.
+    let transform_hash = calculate_transform_hash(&js_adjustments);
 
     let (transformed_image, unscaled_crop_offset) =
         apply_all_transformations(&preview_base, &js_adjustments);
@@ -2363,7 +2371,7 @@ fn generate_preset_preview(
         &context,
         &state,
         &transformed_image,
-        unique_hash,
+        transform_hash,
         all_adjustments,
         &mask_bitmaps,
         lut,
@@ -2373,7 +2381,7 @@ fn generate_preset_preview(
     let mut buf = Cursor::new(Vec::new());
     processed_image
         .to_rgb8()
-        .write_with_encoder(JpegEncoder::new_with_quality(&mut buf, 50))
+        .write_with_encoder(JpegEncoder::new_with_quality(&mut buf, 40))
         .map_err(|e| e.to_string())?;
 
     Ok(Response::new(buf.into_inner()))
@@ -2953,6 +2961,19 @@ async fn boothy_create_or_open_session(
     }
 
     state.session_timer.start_for_session(app_handle.clone());
+
+    // Enqueue existing raw files that have preset snapshots but haven't been background-exported yet
+    let background_queue = Arc::clone(&state.background_export_queue);
+    let session_clone = session.clone();
+    let app_handle_clone = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        session::export_queue::enqueue_existing_raw_files_for_export(
+            &session_clone,
+            &background_queue,
+            &app_handle_clone,
+        )
+        .await;
+    });
 
     // NOTE: FileArrivalWatcher is initialized above and will be invoked via boothy_handle_photo_transferred command
     // The IPC client emits boothy-photo-transferred events which the UI catches and calls the command

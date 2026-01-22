@@ -50,8 +50,8 @@ Enable reliable unattended kiosk operation through strict time-boxed sessions (N
 
 4. **Story 2.4** — Smart Export Decision & Progress UI
    - Dependencies: Story 2.2 (T-0 event, end screen), Story 2.3 (background state)
-   - Implements export decision modal (overwrite/continue), progress visualization
-   - Integrates T-0 forced export trigger
+   - Implements manual export decision modal (overwrite/continue) and progress visualization
+   - Integrates T-0 forced export trigger with auto decision (no modal)
    - **Confirmed:** Both export modes use `{session_folder}/Jpg/` folder
 
 5. **Story 2.5** — Navigation Flow Optimization
@@ -128,7 +128,7 @@ Enable reliable unattended kiosk operation through strict time-boxed sessions (N
 - ✅ **Admin settings UI:** Freely edit messages (end screen, T-5 warning) without config file access
 - ✅ Background export keeps pace with typical shooting (export <10s in "Continue" mode)
 - ✅ Export destination: `{session_folder}/Jpg/` folder (existing structure)
-- ✅ Export decision modal provides working overwrite/continue options with progress
+- ✅ Export decision modal provides working overwrite/continue options with progress for manual export; T-0 uses auto decision without a modal
 - ✅ Navigation flows optimized without breaking existing functionality
 - ✅ Existing capture/preset/manual-export regression-tested and verified
 - ✅ Configuration file allows admin customization (timing, messages)
@@ -181,7 +181,7 @@ Enable reliable unattended kiosk operation through strict time-boxed sessions (N
 
 **Performance Targets:**
 - Timer tick: 1 second resolution, ±2s accuracy over 50 minutes
-- Modal response: <500ms from trigger condition
+- Manual decision modal response: <500ms from trigger condition
 - Background processing: No perceptible UI lag or frame drops
 - Export completion: <10s (continue mode), <5min (overwrite mode) for 50 photos
 

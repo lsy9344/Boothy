@@ -1,3 +1,5 @@
+# Speak Korean.
+
 # Project Agents
 
 This file provides guidance and memory for Codex CLI.

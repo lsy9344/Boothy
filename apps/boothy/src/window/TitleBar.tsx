@@ -97,38 +97,56 @@ export default function TitleBar({
         </div>
       </div>
 
-      {/* Mode Toggle - Center aligned */}
+      {/* Mode Toggle - Absolute Center */}
       {onAdminToggle && (
-        <div className="flex items-center gap-2">
-          <div
-            className={clsx(
-              'flex items-center gap-1.5 px-2 py-1 rounded-l-md text-xs font-medium transition-colors',
-              !isAdmin ? 'bg-accent/20 text-accent' : 'bg-surface/50 text-text-tertiary',
-            )}
-          >
-            <User size={12} />
-            <span>Customer</span>
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center">
+          {/* Container with glass effect and border */}
+          <div className="flex items-center bg-black/30 backdrop-blur-sm rounded-full border border-white/10 p-0.5">
+            {/* Customer Button */}
+            <button
+              aria-label="Customer mode"
+              className={clsx(
+                'flex items-center justify-center gap-1.5 w-28 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200',
+                !isAdmin
+                  ? 'bg-accent text-button-text shadow-sm'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-white/5',
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isAdmin && !isAdminActionRunning) {
+                  onAdminToggle();
+                }
+              }}
+              disabled={!isAdmin || isAdminActionRunning}
+            >
+              <User size={14} />
+              <span>Customer</span>
+            </button>
+            {/* Admin Button */}
+            <button
+              aria-label="Toggle admin mode"
+              className={clsx(
+                'flex items-center justify-center gap-1.5 w-28 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200',
+                isAdmin
+                  ? 'bg-accent text-button-text shadow-sm'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-white/5',
+                isAdminActionRunning && 'opacity-60 cursor-not-allowed',
+              )}
+              disabled={isAdminActionRunning}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isAdmin) {
+                  onAdminToggle();
+                }
+              }}
+            >
+              <Shield size={14} />
+              <span>Admin</span>
+            </button>
           </div>
-          <button
-            aria-label="Toggle admin mode"
-            className={clsx(
-              'flex items-center gap-1.5 px-2.5 py-1 rounded-r-md text-xs font-medium transition-all duration-200',
-              isAdmin
-                ? 'bg-accent text-button-text'
-                : 'bg-surface/80 text-text-secondary hover:bg-surface hover:text-text-primary',
-              isAdminActionRunning && 'opacity-60 cursor-not-allowed',
-            )}
-            disabled={isAdminActionRunning}
-            onClick={(e) => {
-              e.stopPropagation();
-              onAdminToggle();
-            }}
-          >
-            <Shield size={12} />
-            <span>{isAdmin ? 'Exit Admin' : boothyHasAdminPassword ? 'Unlock' : 'Set Admin'}</span>
-          </button>
+          {/* Override Active Badge */}
           {isAdmin && adminOverrideActive && (
-            <span className="ml-2 px-2 py-1 rounded-full text-xs font-semibold text-amber-300 bg-amber-500/20 border border-amber-400/40">
+            <span className="ml-2 px-2.5 py-1 rounded-full text-xs font-semibold text-amber-300 bg-amber-500/20 backdrop-blur-sm border border-amber-400/40">
               Override Active
             </span>
           )}

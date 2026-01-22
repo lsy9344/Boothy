@@ -6,6 +6,7 @@ import {
   Folder,
   FolderInput,
   Home,
+  LogOut,
   Image as ImageIcon,
   Loader2,
   FolderOpen,
@@ -83,7 +84,8 @@ interface MainLibraryProps {
   onContextMenu(event: any, path: string): void;
   onContinueSession(): void;
   onEmptyAreaContextMenu(event: any): void;
-  onGoHome(): void;
+  onGoEditor(): void;
+  onExitToHome(): void;
   onImageClick(path: string, event: any): void;
   onImageDoubleClick(path: string): void;
   onLibraryRefresh(): void;
@@ -1109,7 +1111,8 @@ export default function MainLibrary({
   onContextMenu,
   onContinueSession,
   onEmptyAreaContextMenu,
-  onGoHome,
+  onGoEditor,
+  onExitToHome,
   onImageClick,
   onImageDoubleClick,
   onLibraryRefresh,
@@ -1520,10 +1523,17 @@ export default function MainLibrary({
           )}
           <Button
             className="h-12 w-12 bg-surface text-text-primary shadow-none p-0 flex items-center justify-center"
-            onClick={onGoHome}
-            title="Go to Home Screen"
+            onClick={onGoEditor}
+            title="Back to Editor"
           >
             <Home className="w-8 h-8" />
+          </Button>
+          <Button
+            className="h-12 w-12 bg-surface text-text-primary shadow-none p-0 flex items-center justify-center"
+            onClick={onExitToHome}
+            title="Exit to Home Screen"
+          >
+            <LogOut className="w-8 h-8" />
           </Button>
         </div>
       </header>

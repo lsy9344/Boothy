@@ -1,58 +1,37 @@
 schema: 1
 story: '2.2'
 story_title: 'T-0 Lockout, Application Reset & Admin Settings'
-gate: CONCERNS
-status_reason: 'Admin bypass/indicator validated; remaining gaps are export-in-progress reset/cleanup and persistence verification. Read-only browsing is intentionally blocked and needs doc alignment.'
+gate: PASS
+status_reason: 'Manual validation completed for admin settings/logging, T-0 lockout bypass, and N:59 reset with export conflict; prior UI validation covers remaining ACs.'
 reviewer: 'Quinn (Test Architect)'
-updated: '2026-01-17T14:52:24.2565802+09:00'
+updated: '2026-01-20T01:15:03.7326007+09:00'
 
-top_issues:
-  - id: QA-2.2-1
-    severity: medium
-    issue: 'Export-in-progress reset grace period and cleanup not validated end-to-end (customer/admin).'
-    suggested_owner: dev
-  - id: QA-2.2-2
-    severity: low
-    issue: 'Admin override logging + settings.json persistence not validated.'
-    suggested_owner: dev
-  - id: QA-2.2-3
-    severity: low
-    issue: 'Document alignment needed for intentionally blocked read-only browsing during lockout.'
-    suggested_owner: po
-
+top_issues: []
 waiver: { active: false }
-quality_score: 80
-expires: '2026-01-31T14:52:24.2565802+09:00'
+quality_score: 100
+expires: '2026-02-03T01:15:03.7326007+09:00'
 
 evidence:
-  tests_reviewed: 2
-  risks_identified: 3
+  tests_reviewed: 3
+  risks_identified: 0
   trace:
-    ac_covered: [1, 2, 5, 6, 7]
-    ac_gaps: [3, 4]
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
 
 nfr_validation:
   security:
     status: PASS
-    notes: 'No new auth paths; admin logging uses existing log channel.'
+    notes: 'Admin actions and logging use existing auth/log channels; log persistence verified manually.'
   performance:
     status: PASS
-    notes: 'No heavy processing changes; reset flow uses timers only.'
+    notes: 'Reset grace handling validated with export-in-progress conflict.'
   reliability:
-    status: CONCERNS
-    notes: 'Export reset/persistence not validated; lockout stability confirmed.'
+    status: PASS
+    notes: 'Lockout/reset flows validated; no crashes reported.'
   maintainability:
     status: PASS
-    notes: 'Changes are localized (modals + settings helpers + App orchestration).'
+    notes: 'Changes remain localized; no new debt identified in this review.'
 
 recommendations:
-  immediate:
-    - action: 'Validate export-in-progress reset grace/cleanup paths (customer/admin).'
-      refs: ['apps/boothy/src/App.tsx']
-    - action: 'Validate admin override logging + settings.json persistence.'
-      refs: ['apps/boothy/src/App.tsx', 'apps/boothy/src/utils/boothySettings.ts']
-    - action: 'Update requirement/compat note to reflect intended lockout browsing behavior.'
-      refs: ['docs/stories/2.2.t-0-lockout-application-reset-admin-settings.md']
-  future:
-    - action: 'Add a repeatable regression check for lockout read-only browsing.'
-      refs: ['docs/architecture/testing-strategy.md']
+  immediate: []
+  future: []

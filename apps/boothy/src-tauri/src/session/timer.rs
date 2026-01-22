@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const DEFAULT_T_MINUS_5_MESSAGE: &str = "이용시간이 5분 남았습니다.";
 const WALL_CLOCK_JUMP_THRESHOLD_SECONDS: i64 = 5;
@@ -263,7 +263,10 @@ fn spawn_tick_loop<R: Runtime>(
         }
 
         // Check Reset on startup (if already past reset time)
-        if last_wall_clock >= window.reset_at && !reset_emitted.swap(true, Ordering::SeqCst) {
+        if last_wall_clock >= window.reset_at
+            && has_active_webview(&app_handle)
+            && !reset_emitted.swap(true, Ordering::SeqCst)
+        {
             emit_reset(&app_handle);
         }
 
@@ -301,7 +304,10 @@ fn spawn_tick_loop<R: Runtime>(
             }
 
             // Check Reset in real-time
-            if now >= window.reset_at && !reset_emitted.swap(true, Ordering::SeqCst) {
+            if now >= window.reset_at
+                && has_active_webview(&app_handle)
+                && !reset_emitted.swap(true, Ordering::SeqCst)
+            {
                 info!("Reset time reached, emitting event");
                 emit_reset(&app_handle);
             }
@@ -333,7 +339,14 @@ fn spawn_timed_event<R: Runtime>(
     })
 }
 
+fn has_active_webview<R: Runtime>(app_handle: &AppHandle<R>) -> bool {
+    !app_handle.webview_windows().is_empty()
+}
+
 fn emit_tick<R: Runtime>(app_handle: &AppHandle<R>, remaining_seconds: i64) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     let payload = TimerTickPayload { remaining_seconds };
     if let Err(err) = app_handle.emit("boothy-session-timer-tick", payload) {
         warn!("Failed to emit boothy-session-timer-tick: {}", err);
@@ -341,6 +354,9 @@ fn emit_tick<R: Runtime>(app_handle: &AppHandle<R>, remaining_seconds: i64) {
 }
 
 fn emit_t_minus_5<R: Runtime>(app_handle: &AppHandle<R>, message: String) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     let payload = TMinus5Payload { message };
     if let Err(err) = app_handle.emit("boothy-session-t-minus-5", payload) {
         warn!("Failed to emit boothy-session-t-minus-5: {}", err);
@@ -348,6 +364,9 @@ fn emit_t_minus_5<R: Runtime>(app_handle: &AppHandle<R>, message: String) {
 }
 
 fn emit_t_minus_5_once<R: Runtime>(app_handle: &AppHandle<R>, message: &str, emitted: &AtomicBool) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     if emitted.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -355,12 +374,18 @@ fn emit_t_minus_5_once<R: Runtime>(app_handle: &AppHandle<R>, message: &str, emi
 }
 
 fn emit_t_zero<R: Runtime>(app_handle: &AppHandle<R>) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     if let Err(err) = app_handle.emit("boothy-session-t-zero", serde_json::json!({})) {
         warn!("Failed to emit boothy-session-t-zero: {}", err);
     }
 }
 
 fn emit_t_zero_once<R: Runtime>(app_handle: &AppHandle<R>, emitted: &AtomicBool) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     if emitted.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -369,6 +394,9 @@ fn emit_t_zero_once<R: Runtime>(app_handle: &AppHandle<R>, emitted: &AtomicBool)
 }
 
 fn emit_reset<R: Runtime>(app_handle: &AppHandle<R>) {
+    if !has_active_webview(app_handle) {
+        return;
+    }
     if let Err(err) = app_handle.emit("boothy-session-reset", serde_json::json!({})) {
         warn!("Failed to emit boothy-session-reset: {}", err);
     }

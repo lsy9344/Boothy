@@ -31,6 +31,7 @@ import AddPresetModal from '../../modals/AddPresetModal';
 import RenamePresetModal from '../../modals/RenamePresetModal';
 import CreateFolderModal from '../../modals/CreateFolderModal';
 import RenameFolderModal from '../../modals/RenameFolderModal';
+import clsx from 'clsx';
 import { Adjustments, INITIAL_ADJUSTMENTS } from '../../../utils/adjustments';
 import { Invokes, OPTION_SEPARATOR, Panel, Preset, SelectedImage } from '../../ui/AppProperties';
 
@@ -44,6 +45,7 @@ interface DroppableFolderItemProps {
 
 interface DraggablePresetItemProps {
   isGeneratingPreviews: boolean;
+  isSelected?: boolean;
   onApply(preset: any): void;
   onContextMenu(event: any, preset: any): void;
   preset: any;
@@ -66,6 +68,7 @@ interface ModalState {
 
 interface PresetItemDisplayProps {
   isGeneratingPreviews: boolean;
+  isSelected?: boolean;
   preset: any;
   previewUrl: string;
 }
@@ -73,8 +76,10 @@ interface PresetItemDisplayProps {
 interface PresetsPanelProps {
   activePanel: Panel | null;
   adjustments: Adjustments;
+  selectedPresetId?: string | null;
   isSessionLocked?: boolean;
   onBlockedAction?(): void;
+  onPresetApplied?(preset: Preset): void;
   selectedImage: SelectedImage;
   setAdjustments(adjustments: Partial<Adjustments>): void;
 }
@@ -92,9 +97,17 @@ const itemVariants = {
   exit: { opacity: 0, x: -15, transition: { duration: 0.2 } },
 };
 
-function PresetItemDisplay({ preset, previewUrl, isGeneratingPreviews }: PresetItemDisplayProps) {
+function PresetItemDisplay({ preset, previewUrl, isGeneratingPreviews, isSelected = false }: PresetItemDisplayProps) {
   return (
-    <div className="flex items-center gap-2 p-2 rounded-lg bg-surface cursor-grabbing">
+    <div
+      className={clsx(
+        'relative flex items-center gap-2 p-2 rounded-lg cursor-grabbing transition-colors',
+        isSelected
+          ? 'bg-accent/20 ring-2 ring-accent/80 border border-accent/40'
+          : 'bg-surface hover:bg-card-active/20 border border-transparent',
+      )}
+      aria-selected={isSelected}
+    >
       <div className="w-20 h-14 bg-bg-tertiary rounded-md flex items-center justify-center flex-shrink-0">
         {isGeneratingPreviews && !previewUrl ? (
           <Loader2 size={20} className="animate-spin text-text-secondary" />
@@ -105,7 +118,14 @@ function PresetItemDisplay({ preset, previewUrl, isGeneratingPreviews }: PresetI
         )}
       </div>
       <div className="flex-grow min-w-0">
-        <p className="font-medium truncate">{preset.name}</p>
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="font-medium truncate min-w-0 flex-1">{preset.name}</p>
+          {isSelected && (
+            <span className="flex-shrink-0 bg-accent/35 text-text-primary text-[10px] font-semibold px-2 py-0.5 rounded-full border border-accent/50">
+              Active
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -125,6 +145,7 @@ function FolderItemDisplay({ folder }: FolderProps) {
 
 function DraggablePresetItem({
   preset,
+  isSelected = false,
   onApply,
   onContextMenu,
   previewUrl,
@@ -164,7 +185,12 @@ function DraggablePresetItem({
       style={style}
     >
       <div {...listeners} {...attributes} className="cursor-grab">
-        <PresetItemDisplay preset={preset} previewUrl={previewUrl} isGeneratingPreviews={isGeneratingPreviews} />
+        <PresetItemDisplay
+          isGeneratingPreviews={isGeneratingPreviews}
+          isSelected={isSelected}
+          preset={preset}
+          previewUrl={previewUrl}
+        />
       </div>
     </div>
   );
@@ -243,8 +269,10 @@ function DroppableFolderItem({ folder, onContextMenu, children, onToggle, isExpa
 export default function PresetsPanel({
   activePanel,
   adjustments,
+  selectedPresetId = null,
   isSessionLocked = false,
   onBlockedAction,
+  onPresetApplied,
   selectedImage,
   setAdjustments,
 }: PresetsPanelProps) {
@@ -528,7 +556,10 @@ export default function PresetsPanel({
     setAdjustments((prevAdjustments: Adjustments) => ({
       ...prevAdjustments,
       ...preset.adjustments,
+      lastPresetId: preset.id,
+      lastPresetName: preset.name,
     }));
+    onPresetApplied?.(preset);
 
     try {
       await invoke(Invokes.BoothySetCurrentPreset, {
@@ -898,11 +929,12 @@ export default function PresetsPanel({
                                 layout="position"
                               >
                                 <DraggablePresetItem
+                                  isSelected={preset.id === selectedPresetId}
                                   isGeneratingPreviews={isGeneratingPreviews}
                                   onApply={handleApplyPreset}
                                   onContextMenu={(e: any) => handleContextMenu(e, { preset })}
                                   preset={preset}
-                                  previewUrl={previews[preset.id] || ''}
+                                  previewUrl={previews[preset.id] || selectedImage?.thumbnailUrl || ''}
                                 />
                               </motion.div>
                             ))}
@@ -925,11 +957,12 @@ export default function PresetsPanel({
                       variants={itemVariants}
                     >
                       <DraggablePresetItem
+                        isSelected={item.preset?.id === selectedPresetId}
                         isGeneratingPreviews={isGeneratingPreviews}
                         onApply={handleApplyPreset}
                         onContextMenu={(e: any) => handleContextMenu(e, item)}
                         preset={item.preset}
-                        previewUrl={(item.preset?.id ? previews[item.preset.id] : '') || ''}
+                        previewUrl={(item.preset?.id ? previews[item.preset.id] : '') || selectedImage?.thumbnailUrl || ''}
                       />
                     </motion.div>
                   ))}
@@ -966,8 +999,9 @@ export default function PresetsPanel({
           activeItem.type === 'preset' ? (
             <PresetItemDisplay
               isGeneratingPreviews={false}
+              isSelected={activeItem.data?.id === selectedPresetId}
               preset={activeItem.data}
-              previewUrl={previews[activeItem.data.id] || ''}
+              previewUrl={previews[activeItem.data.id] || selectedImage?.thumbnailUrl || ''}
             />
           ) : (
             <FolderItemDisplay folder={activeItem.data} />

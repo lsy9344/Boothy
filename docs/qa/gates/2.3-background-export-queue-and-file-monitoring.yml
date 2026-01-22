@@ -1,0 +1,43 @@
+schema: 1
+story: "2.3"
+story_title: "Background Export Queue & File Monitoring"
+gate: PASS
+status_reason: "Manual scenarios are complete and session metadata parsing aligns with persisted camelCase fields."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-20T05:10:00+09:00"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations: { must_fix: [], monitor: [] }
+
+quality_score: 100
+expires: "2026-02-03T05:10:00+09:00"
+
+evidence:
+  tests_reviewed: 10
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new auth/data exposure paths introduced."
+  performance:
+    status: PASS
+    notes: "spawn_blocking export and single-worker queue; manual responsiveness test passed."
+  reliability:
+    status: PASS
+    notes: "Restart persistence, session flush, and duplicate watcher events manually validated."
+  maintainability:
+    status: PASS
+    notes: "Queue and metadata modules are isolated with unit tests."
+
+recommendations:
+  immediate: []
+  future: []

@@ -2,26 +2,3 @@
 > dev
 > vite --host 127.0.0.1 --port 4174
 
-
-  [32m[1mVITE[22m v7.3.0[39m  [2mready in [0m[1m255[22m[2m[0m ms[22m
-
-  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m4174[22m/[39m
-[2m오후 12:32:27[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/main.jsx.tsx, /src/styles.css[22m
-[2m오후 12:32:27[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [33mhmr invalidate [39m[2m/src/main.jsx.tsx[22m Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
-[2m오후 12:32:27[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/main.tsx[22m
-[2m오후 2:00:41[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/main.jsx.tsx, /src/App.tsx, /src/components/ui/Resizer.tsx, /src/context/TaggingSubMenu.tsx, /src/components/panel/right/ControlsPanel.tsx, /src/components/panel/right/RightPanelSwitcher.tsx, /src/components/panel/MainLibrary.tsx, /src/components/panel/SettingsPanel.tsx, /src/context/ContextMenuContext.tsx, /src/components/panel/Editor.tsx, /src/components/panel/BottomBar.tsx, /src/components/panel/right/ExportPanel.tsx, /src/components/modals/CullingModal.tsx, /src/components/panel/right/MasksPanel.tsx, /src/components/panel/right/CropPanel.tsx, /src/components/panel/right/PresetsPanel.tsx, /src/components/panel/right/LibraryExportPanel.tsx, /src/components/modals/CollageModal.tsx, /src/components/ui/Slider.tsx, /src/components/adjustments/Curves.tsx, /src/components/panel/Filmstrip.tsx, /src/components/panel/right/MaskControls.tsx, /src/styles.css[[2m[2m오후 2:01:12[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:01:37[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:02:00[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:12:31[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:51:43[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/panel/right/PresetsPanel.tsx, /src/styles.css[22m
-[2m오후 2:09:42[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:09:43[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/panel/right/PresetsPanel.tsx, /src/styles.css[22m
-[2m오후 2:47:05[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오전 4:23:05[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:12:31[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:51:43[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/panel/right/PresetsPanel.tsx, /src/styles.css[22m
-[2m오후 2:09:42[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오후 2:09:43[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/panel/right/PresetsPanel.tsx, /src/styles.css[22m
-[2m오후 2:47:05[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
-[2m오전 4:23:05[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/styles.css[22m
