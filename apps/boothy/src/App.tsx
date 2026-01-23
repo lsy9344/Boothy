@@ -221,6 +221,18 @@ interface BoothyCameraErrorPayload {
   severity?: string;
 }
 
+type StorageHealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
+
+interface BoothyStorageHealthPayload {
+  status: StorageHealthStatus;
+  freeBytes: number;
+  totalBytes: number;
+  warningThresholdBytes: number;
+  criticalThresholdBytes: number;
+  sampledAt: string;
+  diagnostic?: string | null;
+}
+
 const DEBUG = false;
 const REVOCATION_DELAY = 5000;
 
@@ -256,6 +268,24 @@ const getParentDir = (filePath: string): string => {
     return '';
   }
   return filePath.substring(0, lastSeparatorIndex);
+};
+
+const formatBytes = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let index = 0;
+  let result = value;
+
+  while (result >= 1024 && index < units.length - 1) {
+    result /= 1024;
+    index += 1;
+  }
+
+  const precision = result >= 10 || index === 0 ? 0 : 1;
+  return `${result.toFixed(precision)} ${units[index]}`;
 };
 
 const sanitizeSettingsForSave = (settings: any) => {
@@ -470,6 +500,7 @@ function App() {
   const [sessionRemainingSeconds, setSessionRemainingSeconds] = useState<number | null>(null);
   const [boothyMode, setBoothyMode] = useState<'customer' | 'admin'>('customer');
   const [boothyHasAdminPassword, setBoothyHasAdminPassword] = useState(false);
+  const [storageHealth, setStorageHealth] = useState<BoothyStorageHealthPayload | null>(null);
   const hasBoothySession = Boolean(boothySession?.session_name || boothySession?.session_folder_name);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isAdminActionRunning, setIsAdminActionRunning] = useState(false);
@@ -3106,6 +3137,7 @@ function App() {
           if (session) {
             applyBoothySession(session);
             setSessionRemainingSeconds(null);
+            setStorageHealth(null);
           }
         }
       }),
@@ -3213,6 +3245,14 @@ function App() {
           }
 
           setError(message);
+        }
+      }),
+      listen('boothy-storage-health', (event: any) => {
+        if (isEffectActive) {
+          const payload = event.payload as BoothyStorageHealthPayload;
+          if (payload?.status) {
+            setStorageHealth(payload);
+          }
         }
       }),
       listen('boothy-mode-changed', (event: any) => {
@@ -4818,6 +4858,7 @@ function App() {
             imageList={sortedImageList}
             imageRatings={imageRatings}
             importState={importState}
+            isAdmin={boothyMode === 'admin'}
             isCustomerMode={isCustomerMode}
             isThumbnailsLoading={isThumbnailsLoading}
             isLoading={isViewLoading}
@@ -5216,6 +5257,36 @@ function App() {
     return renderMainView();
   };
 
+  const storageStatus = storageHealth?.status;
+  const shouldShowStorageWarning =
+    !!storageStatus &&
+    (isCustomerMode
+      ? storageStatus === 'warning' || storageStatus === 'critical'
+      : storageStatus !== 'healthy');
+
+  const storageHealthMessage = isCustomerMode
+    ? '저장 공간이 부족해지고 있습니다. 직원에게 문의해 주세요.'
+    : storageStatus === 'unknown'
+      ? '스토리지 상태를 확인할 수 없습니다.'
+      : storageStatus === 'critical'
+        ? '저장 공간이 매우 부족합니다.'
+        : '저장 공간이 부족해지고 있습니다.';
+
+  const storageHealthDetails =
+    !isCustomerMode && storageHealth
+      ? (() => {
+          const details: string[] = [];
+          if (storageHealth.totalBytes > 0) {
+            details.push(
+              `남은 공간: ${formatBytes(storageHealth.freeBytes)} / 전체: ${formatBytes(storageHealth.totalBytes)}`,
+            );
+          }
+          details.push(`경고 임계값: ${formatBytes(storageHealth.warningThresholdBytes)}`);
+          details.push(`위험 임계값: ${formatBytes(storageHealth.criticalThresholdBytes)}`);
+          return details;
+        })()
+      : [];
+
   return (
     <div
       className={clsx(
@@ -5260,6 +5331,21 @@ function App() {
             >
               x
             </button>
+          </div>
+        )}
+        {shouldShowStorageWarning && (
+          <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-amber-500/90 text-amber-50 px-4 py-2 rounded-lg z-50 shadow-lg border border-amber-200/40">
+            <div className="text-sm font-semibold">{storageHealthMessage}</div>
+            {!isCustomerMode && storageHealthDetails.length > 0 && (
+              <div className="mt-1 text-xs text-amber-100/90 space-y-0.5">
+                {storageHealthDetails.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </div>
+            )}
+            {!isCustomerMode && storageHealth?.diagnostic && (
+              <div className="mt-1 text-[11px] text-amber-100/80">{storageHealth.diagnostic}</div>
+            )}
           </div>
         )}
         <ExportProgressBar onDismissError={resetBoothyExportProgress} state={boothyExportProgress} />

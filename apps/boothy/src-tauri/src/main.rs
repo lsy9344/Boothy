@@ -25,6 +25,8 @@ mod preset;
 mod preset_converter;
 mod raw_processing;
 mod session;
+mod storage_diagnostics;
+mod storage_health;
 mod tagging;
 mod watcher;
 
@@ -36,6 +38,8 @@ use std::io::Cursor;
 use std::io::Write;
 use std::panic;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -74,6 +78,7 @@ use crate::session::export::{
     BoothyExportChoice, ExportProgressState, build_photo_state_map, collect_session_raw_files,
     filter_export_paths, load_session_metadata,
 };
+use crate::error::{BoothyError, UiErrorPayload};
 
 #[derive(Clone)]
 pub struct LoadedImage {
@@ -127,6 +132,7 @@ pub struct AppState {
     // Boothy-specific state
     pub session_manager: session::SessionManager,
     pub session_timer: session::SessionTimer,
+    pub storage_health_monitor: storage_health::StorageHealthMonitor,
     pub mode_manager: mode::ModeManager,
     pub file_watcher: watcher::FileWatcher,
     pub camera_client: Mutex<Option<camera::ipc_client::CameraIpcClient>>,
@@ -2889,6 +2895,32 @@ fn boothy_log_frontend(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct StorageDiagnosticsData {
+    sessions_root: String,
+    active_session: Option<session::BoothySession>,
+    drive_free_bytes: u64,
+    drive_total_bytes: u64,
+    warning_threshold_bytes: Option<u64>,
+    critical_threshold_bytes: Option<u64>,
+    captured_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct StorageDiagnosticsResponse {
+    ok: bool,
+    data: Option<StorageDiagnosticsData>,
+    error: Option<UiErrorPayload>,
+}
+
+fn storage_error_response(error: BoothyError, correlation_id: String) -> StorageDiagnosticsResponse {
+    StorageDiagnosticsResponse {
+        ok: false,
+        data: None,
+        error: Some(error.to_ui_payload(correlation_id)),
+    }
+}
+
 // Boothy session management commands
 #[tauri::command]
 async fn boothy_create_or_open_session(
@@ -2899,6 +2931,10 @@ async fn boothy_create_or_open_session(
     let session = state
         .session_manager
         .create_or_open_session(session_name, &app_handle)?;
+
+    state
+        .storage_health_monitor
+        .start_for_session(app_handle.clone(), session.base_path.clone());
 
     // Start file watcher for the session's Raw/ folder
     if let Err(e) = state
@@ -2982,6 +3018,86 @@ async fn boothy_create_or_open_session(
 }
 
 #[tauri::command]
+fn boothy_get_storage_diagnostics(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> StorageDiagnosticsResponse {
+    let correlation_id = camera::generate_correlation_id();
+
+    let sessions_root = match session::SessionManager::get_sessions_root() {
+        Ok(root) => root,
+        Err(err) => {
+            let error = error::storage::diagnostics_failed(err);
+            return storage_error_response(error, correlation_id);
+        }
+    };
+
+    let active_session = state.session_manager.get_active_session();
+    let drive_path = active_session
+        .as_ref()
+        .map(|session| session.base_path.clone())
+        .unwrap_or_else(|| sessions_root.clone());
+
+    let drive_stats = match storage_diagnostics::sample_drive_stats(&drive_path) {
+        Ok(stats) => stats,
+        Err(err) => {
+            let error = error::storage::diagnostics_failed(err);
+            return storage_error_response(error, correlation_id);
+        }
+    };
+
+    let settings = match file_management::load_settings_for_handle(&app_handle) {
+        Ok(settings) => settings,
+        Err(err) => {
+            let error = error::storage::diagnostics_failed(err);
+            return storage_error_response(error, correlation_id);
+        }
+    };
+
+    StorageDiagnosticsResponse {
+        ok: true,
+        data: Some(StorageDiagnosticsData {
+            sessions_root: sessions_root.to_string_lossy().to_string(),
+            active_session,
+            drive_free_bytes: drive_stats.free_bytes,
+            drive_total_bytes: drive_stats.total_bytes,
+            warning_threshold_bytes: settings.boothy_storage_warning_threshold_bytes,
+            critical_threshold_bytes: settings.boothy_storage_critical_threshold_bytes,
+            captured_at: Utc::now().to_rfc3339(),
+        }),
+        error: None,
+    }
+}
+
+#[tauri::command]
+fn boothy_open_sessions_root_in_explorer() -> Result<(), UiErrorPayload> {
+    let correlation_id = camera::generate_correlation_id();
+    let sessions_root = session::SessionManager::get_sessions_root().map_err(|err| {
+        error::storage::open_sessions_root_failed(err).to_ui_payload(correlation_id.clone())
+    })?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&sessions_root)
+            .spawn()
+            .map_err(|err| {
+                error::storage::open_sessions_root_failed(err.to_string())
+                    .to_ui_payload(correlation_id)
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(error::storage::open_sessions_root_failed(
+            "Opening sessions root is only supported on Windows.",
+        )
+        .to_ui_payload(correlation_id))
+    }
+}
+
+#[tauri::command]
 fn boothy_get_active_session(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -2990,6 +3106,9 @@ fn boothy_get_active_session(
 
     // Start file watcher for the session's Raw/ folder when session is retrieved
     if let Some(ref s) = session {
+        state
+            .storage_health_monitor
+            .start_for_session(app_handle.clone(), s.base_path.clone());
         if let Err(e) = state
             .file_watcher
             .start_watching(s.raw_path.clone(), app_handle)
@@ -3333,6 +3452,9 @@ fn main() {
                         log::warn!("Failed to start file watcher for restored session: {}", e);
                     }
                     state.session_timer.start_for_session(app_handle.clone());
+                    state
+                        .storage_health_monitor
+                        .start_for_session(app_handle.clone(), session.base_path.clone());
                     true
                 }
                 Ok(None) => false,
@@ -3404,6 +3526,7 @@ fn main() {
             mask_cache: Mutex::new(HashMap::new()),
             session_manager: session::SessionManager::new(),
             session_timer: session::SessionTimer::new(),
+            storage_health_monitor: storage_health::StorageHealthMonitor::new(),
             mode_manager: mode::ModeManager::new(),
             file_watcher: watcher::FileWatcher::new(),
             camera_client: Mutex::new(None),
@@ -3480,6 +3603,8 @@ fn main() {
             tagging::remove_tag_for_paths,
             culling::cull_images,
             boothy_create_or_open_session,
+            boothy_get_storage_diagnostics,
+            boothy_open_sessions_root_in_explorer,
             boothy_get_active_session,
             boothy_get_mode_state,
             boothy_set_admin_password,

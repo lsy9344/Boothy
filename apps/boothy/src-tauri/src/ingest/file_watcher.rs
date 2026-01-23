@@ -216,7 +216,7 @@ pub fn init_file_watcher(app_handle: AppHandle) -> Arc<FileArrivalWatcher> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppState, mode, session, watcher};
+    use crate::{AppState, mode, session, storage_health, watcher};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
@@ -242,6 +242,7 @@ mod tests {
                 mask_cache: Mutex::new(HashMap::new()),
                 session_manager: session::SessionManager::new(),
                 session_timer: session::SessionTimer::new(),
+                storage_health_monitor: storage_health::StorageHealthMonitor::new(),
                 mode_manager: mode::ModeManager::new(),
                 file_watcher: watcher::FileWatcher::new(),
                 camera_client: Mutex::new(None),

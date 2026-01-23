@@ -60,6 +60,8 @@ export enum Invokes {
   SavePresets = 'save_presets',
   SaveSettings = 'save_settings',
   BoothyCreateOrOpenSession = 'boothy_create_or_open_session',
+  BoothyGetStorageDiagnostics = 'boothy_get_storage_diagnostics',
+  BoothyOpenSessionsRootInExplorer = 'boothy_open_sessions_root_in_explorer',
   BoothyGetActiveSession = 'boothy_get_active_session',
   BoothyGetModeState = 'boothy_get_mode_state',
   BoothySetAdminPassword = 'boothy_set_admin_password',
@@ -143,6 +145,10 @@ export interface AppSettings {
   boothy_end_screen_message?: string;
   boothy_t_minus_5_warning_message?: string;
   boothy_reset_grace_period_seconds?: number;
+  boothy_storage_health_enabled?: boolean;
+  boothy_storage_warning_threshold_bytes?: number;
+  boothy_storage_critical_threshold_bytes?: number;
+  boothy_storage_poll_interval_seconds?: number;
 }
 
 export interface BrushSettings {

@@ -206,6 +206,10 @@ impl Default for CopyPasteSettings {
     }
 }
 
+pub const BOOTHY_STORAGE_WARNING_THRESHOLD_BYTES_DEFAULT: u64 = 10 * 1024 * 1024 * 1024;
+pub const BOOTHY_STORAGE_CRITICAL_THRESHOLD_BYTES_DEFAULT: u64 = 2 * 1024 * 1024 * 1024;
+pub const BOOTHY_STORAGE_POLL_INTERVAL_SECONDS_DEFAULT: u64 = 10;
+
 fn default_tagging_shortcuts_option() -> Option<Vec<String>> {
     Some(vec![
         "portrait".to_string(),
@@ -269,6 +273,14 @@ pub struct AppSettings {
     pub boothy_t_minus_5_warning_message: Option<String>,
     #[serde(default, rename = "boothy_reset_grace_period_seconds")]
     pub boothy_reset_grace_period_seconds: Option<u32>,
+    #[serde(default, rename = "boothy_storage_health_enabled")]
+    pub boothy_storage_health_enabled: Option<bool>,
+    #[serde(default, rename = "boothy_storage_warning_threshold_bytes")]
+    pub boothy_storage_warning_threshold_bytes: Option<u64>,
+    #[serde(default, rename = "boothy_storage_critical_threshold_bytes")]
+    pub boothy_storage_critical_threshold_bytes: Option<u64>,
+    #[serde(default, rename = "boothy_storage_poll_interval_seconds")]
+    pub boothy_storage_poll_interval_seconds: Option<u64>,
 }
 
 fn default_adjustment_visibility() -> HashMap<String, bool> {
@@ -322,6 +334,10 @@ impl Default for AppSettings {
             boothy_end_screen_message: Some("이용해주셔서 감사합니다".to_string()),
             boothy_t_minus_5_warning_message: Some("이용시간이 5분 남았습니다".to_string()),
             boothy_reset_grace_period_seconds: Some(30),
+            boothy_storage_health_enabled: Some(true),
+            boothy_storage_warning_threshold_bytes: Some(BOOTHY_STORAGE_WARNING_THRESHOLD_BYTES_DEFAULT),
+            boothy_storage_critical_threshold_bytes: Some(BOOTHY_STORAGE_CRITICAL_THRESHOLD_BYTES_DEFAULT),
+            boothy_storage_poll_interval_seconds: Some(BOOTHY_STORAGE_POLL_INTERVAL_SECONDS_DEFAULT),
         }
     }
 }

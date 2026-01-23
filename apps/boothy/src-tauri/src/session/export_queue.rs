@@ -485,7 +485,7 @@ pub async fn enqueue_existing_raw_files_for_export<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mode, session, watcher};
+    use crate::{mode, session, storage_health, watcher};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicBool as StdAtomicBool;
     use std::sync::{Arc, Mutex};
@@ -510,6 +510,7 @@ mod tests {
                 mask_cache: Mutex::new(HashMap::new()),
                 session_manager: session::SessionManager::new(),
                 session_timer: session::SessionTimer::new(),
+                storage_health_monitor: storage_health::StorageHealthMonitor::new(),
                 mode_manager: mode::ModeManager::new(),
                 file_watcher: watcher::FileWatcher::new(),
                 camera_client: Mutex::new(None),
