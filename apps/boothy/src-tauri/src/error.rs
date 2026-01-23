@@ -277,6 +277,39 @@ pub mod export {
     }
 }
 
+/// Storage-specific error codes and constructors
+pub mod storage {
+    use super::*;
+
+    pub const STORAGE_CRITICAL: &str = "STORAGE_CRITICAL";
+    pub const STORAGE_CRITICAL_MESSAGE: &str = "디스크 공간이 부족합니다. 직원에게 문의해 주세요.";
+    pub const STORAGE_DIAGNOSTICS_FAILED: &str = "STORAGE_DIAGNOSTICS_FAILED";
+    pub const STORAGE_OPEN_FAILED: &str = "STORAGE_OPEN_FAILED";
+
+    pub fn critical_lockout() -> BoothyError {
+        BoothyError::new(STORAGE_CRITICAL, STORAGE_CRITICAL_MESSAGE)
+            .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn diagnostics_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            STORAGE_DIAGNOSTICS_FAILED,
+            "Failed to fetch storage diagnostics. Please try again.",
+            diagnostic,
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn open_sessions_root_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            STORAGE_OPEN_FAILED,
+            "Failed to open the sessions folder. Please try again.",
+            diagnostic,
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+}
+
 /// Preset-specific error codes and constructors
 pub mod preset {
     use super::*;

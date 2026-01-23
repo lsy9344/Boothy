@@ -234,6 +234,8 @@ interface BoothyStorageHealthPayload {
 }
 
 const DEBUG = false;
+const STORAGE_CRITICAL_MESSAGE = '디스크 공간이 부족합니다. 직원에게 문의해 주세요.';
+const STORAGE_WARNING_MESSAGE = '저장 공간이 부족해지고 있습니다. 직원에게 문의해 주세요.';
 const REVOCATION_DELAY = 5000;
 
 const useDelayedRevokeBlobUrl = (url: string | null | undefined) => {
@@ -735,6 +737,7 @@ function App() {
   const isEditingLockedRef = useRef(false);
   const pendingResetRef = useRef(false);
   const resetPostponedRef = useRef(false);
+  const storageLockoutRef = useRef(false);
 
   const sendFrontendLog = useCallback(
     (level: 'debug' | 'info' | 'warn' | 'error', message: string, context?: Record<string, any>) => {
@@ -825,6 +828,7 @@ function App() {
   const lastAppliedSessionRef = useRef<string | null>(null);
   const selectSubfolderRequestRef = useRef(0);
   const isCustomerMode = boothyMode === 'customer';
+  const isStorageLockout = storageHealth?.status === 'critical';
   const isEditingLocked = isSessionLocked || (isCustomerMode && isTMinus5ModalOpen);
   const {
     state: boothyExportProgress,
@@ -871,6 +875,10 @@ function App() {
   useEffect(() => {
     isEditingLockedRef.current = isEditingLocked;
   }, [isEditingLocked]);
+
+  useEffect(() => {
+    storageLockoutRef.current = isStorageLockout;
+  }, [isStorageLockout]);
 
   useEffect(() => {
     pendingResetRef.current = pendingReset;
@@ -2951,6 +2959,10 @@ function App() {
   }, []);
 
   const handleAutoExportDecision = useCallback(async () => {
+    if (storageLockoutRef.current) {
+      setBoothyExportError(STORAGE_CRITICAL_MESSAGE);
+      return;
+    }
     // Check backend active session instead of frontend state to avoid stale closure issues
     try {
       const session = await invoke(Invokes.BoothyGetActiveSession);
@@ -2981,11 +2993,19 @@ function App() {
   }, [setBoothyExportError]);
 
   const handleExportDecisionOpen = useCallback(() => {
+    if (storageLockoutRef.current) {
+      setError(STORAGE_CRITICAL_MESSAGE);
+      return;
+    }
     setIsExportDecisionModalOpen(true);
-  }, []);
+  }, [setError]);
 
   const handleExportDecisionSelect = useCallback(
     (choice: 'overwriteAll' | 'continueFromBackground') => {
+      if (storageLockoutRef.current) {
+        setBoothyExportError(STORAGE_CRITICAL_MESSAGE);
+        return;
+      }
       setIsExportDecisionModalOpen(false);
       invoke(Invokes.BoothyHandleExportDecision, { choice }).catch((err) => {
         console.error('Failed to start Boothy export:', err);
@@ -3179,6 +3199,10 @@ function App() {
           if (isEditingLockedRef.current) {
             return;
           }
+          if (storageLockoutRef.current) {
+            setError(STORAGE_CRITICAL_MESSAGE);
+            return;
+          }
           const payload = event.payload;
           const path = typeof payload === 'string' ? payload : payload?.path;
           const correlationId = typeof payload === 'object' ? payload?.correlationId : undefined;
@@ -3192,7 +3216,7 @@ function App() {
             correlationId: correlationId || '',
           }).catch((err) => {
             console.error('Failed to handle photo transfer:', err);
-            setError('Failed to process the latest capture. Please try again.');
+            setError(typeof err === 'string' ? err : 'Failed to process the latest capture. Please try again.');
           });
         }
       }),
@@ -5076,10 +5100,10 @@ function App() {
             className={clsx('h-full overflow-hidden', !isResizing && 'transition-all duration-300 ease-in-out')}
             style={{ width: activeRightPanel && hasSelection ? `${rightPanelWidth}px` : '0px' }}
           >
-            <div style={{ width: `${rightPanelWidth}px` }} className="h-full">
+            <div style={{ width: `${rightPanelWidth}px` }} className="h-full min-h-0 flex flex-col">
               {hasSelection && (
                 <>
-                  <div className="px-4 py-2 border-b border-surface text-xs text-text-secondary flex items-center gap-2">
+                  <div className="px-4 py-2 border-b border-surface text-xs text-text-secondary flex items-center gap-2 flex-shrink-0">
                     <span className="uppercase tracking-wider">Preset</span>
                     <div
                       className={clsx(
@@ -5109,7 +5133,7 @@ function App() {
                     {activeRightPanel && (
                       <motion.div
                         animate="animate"
-                        className="h-full w-full"
+                        className="flex-1 min-h-0 w-full"
                         exit="exit"
                         initial="initial"
                         key={renderedRightPanel}
@@ -5265,7 +5289,9 @@ function App() {
       : storageStatus !== 'healthy');
 
   const storageHealthMessage = isCustomerMode
-    ? '저장 공간이 부족해지고 있습니다. 직원에게 문의해 주세요.'
+    ? storageStatus === 'critical'
+      ? STORAGE_CRITICAL_MESSAGE
+      : STORAGE_WARNING_MESSAGE
     : storageStatus === 'unknown'
       ? '스토리지 상태를 확인할 수 없습니다.'
       : storageStatus === 'critical'
@@ -5287,6 +5313,8 @@ function App() {
         })()
       : [];
 
+  const shouldShowTitleBar = !appSettings?.decorations && !isWindowFullScreen;
+
   return (
     <div
       className={clsx(
@@ -5294,16 +5322,15 @@ function App() {
         (appSettings?.adaptiveEditorTheme || isAnimatingTheme) && 'enable-color-transitions',
       )}
     >
-      {appSettings?.decorations ||
-        (!isWindowFullScreen && (
-          <TitleBar
-            boothyMode={boothyMode}
-            boothyHasAdminPassword={boothyHasAdminPassword}
-            adminOverrideActive={adminOverrideActive}
-            isAdminActionRunning={isAdminActionRunning}
-            onAdminToggle={handleAdminToggle}
-          />
-        ))}
+      {shouldShowTitleBar && (
+        <TitleBar
+          boothyMode={boothyMode}
+          boothyHasAdminPassword={boothyHasAdminPassword}
+          adminOverrideActive={adminOverrideActive}
+          isAdminActionRunning={isAdminActionRunning}
+          onAdminToggle={handleAdminToggle}
+        />
+      )}
 
       {isSessionLocked && (
         <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -5317,7 +5344,7 @@ function App() {
       <div
         className={clsx('flex-1 flex flex-col min-h-0', [
           rootPath && 'p-2 gap-2',
-          !appSettings?.decorations && rootPath && !isWindowFullScreen && 'pt-12',
+          shouldShowTitleBar && 'pt-12',
         ])}
       >
         {error && (

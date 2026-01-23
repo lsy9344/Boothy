@@ -17,15 +17,11 @@ impl SessionManager {
     }
 
     /// Get the sessions root directory: %USERPROFILE%\Pictures\dabi_shoot
-    fn get_sessions_root() -> Result<PathBuf, String> {
+    pub fn get_sessions_root() -> Result<PathBuf, String> {
         let user_profile = std::env::var("USERPROFILE")
             .map_err(|_| "USERPROFILE environment variable not found".to_string())?;
 
-        let sessions_root = PathBuf::from(user_profile)
-            .join("Pictures")
-            .join("dabi_shoot");
-
-        Ok(sessions_root)
+        Ok(build_sessions_root(&user_profile))
     }
 
     fn create_or_open_session_in_root(
@@ -141,6 +137,10 @@ impl SessionManager {
     }
 }
 
+fn build_sessions_root(user_profile: &str) -> PathBuf {
+    PathBuf::from(user_profile).join("Pictures").join("dabi_shoot")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +181,17 @@ mod tests {
         assert!(existed_second);
         assert_eq!(first.base_path, second.base_path);
         assert_eq!(first.session_folder_name, second.session_folder_name);
+    }
+
+    #[test]
+    fn build_sessions_root_uses_user_profile() {
+        let sessions_root = build_sessions_root("C:\\Users\\TestUser");
+        assert_eq!(
+            sessions_root,
+            PathBuf::from("C:\\Users\\TestUser")
+                .join("Pictures")
+                .join("dabi_shoot")
+        );
     }
 }
 

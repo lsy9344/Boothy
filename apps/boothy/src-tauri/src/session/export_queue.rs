@@ -215,6 +215,10 @@ async fn process_background_export<R: Runtime>(
         }
     };
 
+    if state.storage_health_monitor.is_critical() {
+        return Err(error::storage::STORAGE_CRITICAL.to_string());
+    }
+
     let correlation_id = if job.correlation_id.is_empty() {
         generate_correlation_id()
     } else {
@@ -371,6 +375,19 @@ async fn process_background_export<R: Runtime>(
                     "BACKGROUND_EXPORT_CANCELLED",
                     "Background export cancelled.",
                     json!({ "correlationId": correlation_id_clone }),
+                )
+            } else if err == error::storage::STORAGE_CRITICAL {
+                SessionExportError::new(
+                    error::storage::STORAGE_CRITICAL,
+                    error::storage::STORAGE_CRITICAL_MESSAGE,
+                    json!({ "correlationId": correlation_id_clone }),
+                )
+            } else if err == error::export::DISK_FULL {
+                let destination = output_path.to_string_lossy().to_string();
+                SessionExportError::new(
+                    error::export::DISK_FULL,
+                    error::export::disk_full(&destination).message,
+                    json!({ "destination": destination, "correlationId": correlation_id_clone }),
                 )
             } else {
                 SessionExportError::new(

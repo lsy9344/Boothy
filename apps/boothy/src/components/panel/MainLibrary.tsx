@@ -1100,6 +1100,7 @@ export default function MainLibrary({
   imageList,
   imageRatings,
   importState,
+  isAdmin = false,
   isCustomerMode = false,
   isLoading,
   isStartingSession = false,
@@ -1316,6 +1317,28 @@ export default function MainLibrary({
     };
   }, [thumbnailSize, onThumbnailSizeChange]);
 
+  if (showSettings && showAdvancedControls) {
+    if (!appSettings) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center h-full rounded-lg bg-bg-primary p-8 text-center">
+          <ImageIcon size={80} className="text-accent opacity-20 mb-6 animate-pulse" />
+          <h1 className="text-3xl font-bold text-primary mb-2">Dabi</h1>
+          <p className="text-text-secondary mb-8">Loading settings...</p>
+        </div>
+      );
+    }
+    return (
+      <SettingsPanel
+        appSettings={appSettings}
+        isAdmin={isAdmin}
+        onBack={() => setShowSettings(false)}
+        onLibraryRefresh={onLibraryRefresh}
+        onSettingsChange={onSettingsChange}
+        rootPath={rootPath}
+      />
+    );
+  }
+
   if (!rootPath) {
     if (!appSettings) {
       return (
@@ -1349,104 +1372,94 @@ export default function MainLibrary({
           </AnimatePresence>
         </div>
         <div className="w-full md:w-1/2 flex flex-col p-8 lg:p-16 relative">
-          {showSettings && showAdvancedControls ? (
-            <SettingsPanel
-              appSettings={appSettings}
-              onBack={() => setShowSettings(false)}
-              onLibraryRefresh={onLibraryRefresh}
-              onSettingsChange={onSettingsChange}
-              rootPath={rootPath}
-            />
-          ) : (
-            <>
-              <div className="my-auto text-left">
-                <h1 className="text-5xl font-bold text-text-primary text-shadow-shiny mb-4">Dabi</h1>
-                <p className="text-text-secondary mb-10 max-w-md">
-                  {hasLastPath ? (
-                    <>
-                      Welcome back!
-                      <br />
-                      Continue where you left off or start a new session.
-                    </>
-                  ) : (
-                    'Start a new session to begin your booth workflow.'
-                  )}
-                </p>
-                <div className="flex flex-col w-full max-w-xs gap-4">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm text-text-secondary" htmlFor="boothy-session-name">
-                      Session name
-                    </label>
-                    <Input
-                      id="boothy-session-name"
-                      onChange={(event: any) => setSessionName(event.target.value)}
-                      onKeyDown={(event: any) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          handleStartSession();
-                        }
-                      }}
-                      placeholder="e.g. 2026-01-14-01"
-                      type="text"
-                      value={sessionName}
-                    />
+          <>
+            <div className="my-auto text-left">
+              <h1 className="text-5xl font-bold text-text-primary text-shadow-shiny mb-4">Dabi</h1>
+              <p className="text-text-secondary mb-10 max-w-md">
+                {hasLastPath ? (
+                  <>
+                    Welcome back!
+                    <br />
+                    Continue where you left off or start a new session.
+                  </>
+                ) : (
+                  'Start a new session to begin your booth workflow.'
+                )}
+              </p>
+              <div className="flex flex-col w-full max-w-xs gap-4">
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm text-text-secondary" htmlFor="boothy-session-name">
+                    Session name
+                  </label>
+                  <Input
+                    id="boothy-session-name"
+                    onChange={(event: any) => setSessionName(event.target.value)}
+                    onKeyDown={(event: any) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        handleStartSession();
+                      }
+                    }}
+                    placeholder="e.g. 2026-01-14-01"
+                    type="text"
+                    value={sessionName}
+                  />
+                  <Button
+                    className="rounded-md h-11 w-full flex justify-center items-center"
+                    disabled={!sessionName.trim() || isStartingSession}
+                    onClick={handleStartSession}
+                    size="lg"
+                  >
+                    {isStartingSession ? (
+                      <>
+                        <Loader2 size={18} className="mr-2 animate-spin" />
+                        Starting...
+                      </>
+                    ) : (
+                      'Start Session'
+                    )}
+                  </Button>
+                </div>
+                {hasLastPath && (
+                  <Button
+                    className="rounded-md h-11 w-full flex justify-start items-center"
+                    onClick={onContinueSession}
+                    size="lg"
+                  >
+                    <RefreshCw size={20} className="mr-2" /> Continue Session
+                  </Button>
+                )}
+                {showAdvancedControls && (
+                  <div className="flex items-center gap-2">
                     <Button
-                      className="rounded-md h-11 w-full flex justify-center items-center"
-                      disabled={!sessionName.trim() || isStartingSession}
-                      onClick={handleStartSession}
+                      className={`rounded-md flex-grow flex justify-start items-center h-11 ${
+                        hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
+                      }`}
+                      onClick={onOpenFolder}
                       size="lg"
                     >
-                      {isStartingSession ? (
-                        <>
-                          <Loader2 size={18} className="mr-2 animate-spin" />
-                          Starting...
-                        </>
-                      ) : (
-                        'Start Session'
-                      )}
+                      <Folder size={20} className="mr-2" />
+                      {hasLastPath ? 'Change Folder' : 'Open Folder'}
+                    </Button>
+                    <Button
+                      className="px-3 bg-surface text-text-primary shadow-none h-11"
+                      onClick={() => setShowSettings(true)}
+                      size="lg"
+                      title="Settings"
+                      variant="ghost"
+                    >
+                      <Settings size={20} />
                     </Button>
                   </div>
-                  {hasLastPath && (
-                    <Button
-                      className="rounded-md h-11 w-full flex justify-start items-center"
-                      onClick={onContinueSession}
-                      size="lg"
-                    >
-                      <RefreshCw size={20} className="mr-2" /> Continue Session
-                    </Button>
-                  )}
-                  {showAdvancedControls && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        className={`rounded-md flex-grow flex justify-start items-center h-11 ${
-                          hasLastPath ? 'bg-surface text-text-primary shadow-none' : ''
-                        }`}
-                        onClick={onOpenFolder}
-                        size="lg"
-                      >
-                        <Folder size={20} className="mr-2" />
-                        {hasLastPath ? 'Change Folder' : 'Open Folder'}
-                      </Button>
-                      <Button
-                        className="px-3 bg-surface text-text-primary shadow-none h-11"
-                        onClick={() => setShowSettings(true)}
-                        size="lg"
-                        title="Settings"
-                        variant="ghost"
-                      >
-                        <Settings size={20} />
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
-              {appVersion && (
-                <div className="absolute bottom-8 left-8 lg:left-16 text-xs text-text-secondary">
-                  Version {appVersion}
-                </div>
-              )}
-            </>
-          )}
+            </div>
+            {appVersion && (
+              <div className="absolute bottom-8 left-8 lg:left-16 text-xs text-text-secondary">
+                Version {appVersion}
+              </div>
+            )}
+          </>
         </div>
       </div>
     );
@@ -1519,6 +1532,15 @@ export default function MainLibrary({
               title="Open another folder"
             >
               <Folder className="w-8 h-8" />
+            </Button>
+          )}
+          {showAdvancedControls && (
+            <Button
+              className="h-12 w-12 bg-surface text-text-primary shadow-none p-0 flex items-center justify-center"
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+            >
+              <Settings className="w-8 h-8" />
             </Button>
           )}
           <Button

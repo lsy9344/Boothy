@@ -1,0 +1,41 @@
+schema: 1
+story: '3.1'
+story_title: 'Storage Health Monitor (Backend) + UI Status Surface'
+gate: PASS
+status_reason: '스토리지 모니터/이벤트/UX 구현과 기본 단위 테스트가 확인되었고, 고객 모드 정보 누출 없이 경고가 동작함.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-23T16:27:46.2971054+09:00'
+
+top_issues: []
+waiver: { active: false }
+
+quality_score: 100
+expires: '2026-02-06T16:27:46.2971054+09:00'
+
+evidence:
+  tests_reviewed: 2
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: '관리자 모드에만 진단 정보 표시; 고객 모드 노출 없음.'
+  performance:
+    status: PASS
+    notes: '10초 기본 폴링, async 루프에서 Windows API 호출.'
+  reliability:
+    status: PASS
+    notes: '샘플 실패 시 unknown + 진단 반환, 하드 블로킹 없음.'
+  maintainability:
+    status: PASS
+    notes: 'storage_health 모듈 분리 및 설정 기반 동작.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: '스토리지 상태 이벤트/배너 동작에 대한 통합 테스트 추가 검토'
+      refs: ['apps/boothy/src/App.tsx', 'apps/boothy/src-tauri/src/storage_health.rs']
+      suggested_owner: 'dev'

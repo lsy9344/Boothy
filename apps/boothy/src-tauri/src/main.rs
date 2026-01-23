@@ -34,8 +34,7 @@ use log;
 use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::Cursor;
-use std::io::Write;
+use std::io::{Cursor, ErrorKind, Write};
 use std::panic;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
@@ -1075,6 +1074,23 @@ fn encode_image_to_bytes(
     Ok(image_bytes)
 }
 
+fn is_disk_full_error(error: &std::io::Error) -> bool {
+    if matches!(error.kind(), ErrorKind::WriteZero) {
+        return true;
+    }
+    if let Some(code) = error.raw_os_error() {
+        #[cfg(target_os = "windows")]
+        {
+            return code == 112;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return code == 28;
+        }
+    }
+    false
+}
+
 fn export_photo(
     source_path_str: &str,
     output_path: &Path,
@@ -1134,7 +1150,19 @@ fn export_photo(
         return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
     }
 
-    fs::write(output_path, image_bytes).map_err(|e| e.to_string())?;
+    if state.storage_health_monitor.is_critical() {
+        return Err(error::storage::STORAGE_CRITICAL.to_string());
+    }
+
+    match fs::write(output_path, image_bytes) {
+        Ok(()) => {}
+        Err(err) => {
+            if is_disk_full_error(&err) {
+                return Err(error::export::DISK_FULL.to_string());
+            }
+            return Err(err.to_string());
+        }
+    }
     Ok(())
 }
 
@@ -1151,12 +1179,19 @@ async fn export_image(
         return Err("An export is already in progress.".to_string());
     }
 
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        let message = err.message.clone();
+        let _ = app_handle.emit("export-error", message.clone());
+        return Err(message);
+    }
+
     state.background_export_queue.pause_and_cancel().await;
 
     let context = get_or_init_gpu_context(&state)?;
     let (original_image_data, is_raw) = get_full_image_for_processing(&state)?;
     let context = Arc::new(context);
     let background_queue = Arc::clone(&state.background_export_queue);
+    let output_path_for_error = output_path.clone();
 
     let task = tokio::spawn(async move {
         let state = app_handle.state::<AppState>();
@@ -1181,7 +1216,14 @@ async fn export_image(
         })();
 
         if let Err(e) = processing_result {
-            let _ = app_handle.emit("export-error", e);
+            let message = if e == error::storage::STORAGE_CRITICAL {
+                error::storage::STORAGE_CRITICAL_MESSAGE.to_string()
+            } else if e == error::export::DISK_FULL {
+                error::export::disk_full(&output_path_for_error).message
+            } else {
+                e
+            };
+            let _ = app_handle.emit("export-error", message);
         } else {
             let _ = app_handle.emit("export-complete", ());
         }
@@ -1211,12 +1253,19 @@ async fn batch_export_images(
         return Err("An export is already in progress.".to_string());
     }
 
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        let message = err.message.clone();
+        let _ = app_handle.emit("export-error", message.clone());
+        return Err(message);
+    }
+
     state.background_export_queue.pause_and_cancel().await;
 
     let context = get_or_init_gpu_context(&state)?;
     let context = Arc::new(context);
     let progress_counter = Arc::new(AtomicUsize::new(0));
     let background_queue = Arc::clone(&state.background_export_queue);
+    let output_folder_for_error = output_folder.clone();
 
     let available_cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -1388,7 +1437,14 @@ async fn batch_export_images(
             if let Err(e) = result {
                 error_count += 1;
                 log::error!("Batch export error: {}", e);
-                let _ = app_handle.emit("export-error", e);
+                let message = if e == error::storage::STORAGE_CRITICAL {
+                    error::storage::STORAGE_CRITICAL_MESSAGE.to_string()
+                } else if e == error::export::DISK_FULL {
+                    error::export::disk_full(&output_folder_for_error).message
+                } else {
+                    e
+                };
+                let _ = app_handle.emit("export-error", message);
             }
         }
 
@@ -1430,11 +1486,21 @@ fn start_boothy_batch_export(
         return Err("An export is already in progress.".to_string());
     }
 
+    if state.storage_health_monitor.is_critical() {
+        let message = error::storage::STORAGE_CRITICAL_MESSAGE.to_string();
+        let _ = app_handle.emit(
+            "boothy-export-error",
+            serde_json::json!({ "message": message.clone() }),
+        );
+        return Err(message);
+    }
+
     let context = get_or_init_gpu_context(&state)?;
     let context = Arc::new(context);
     let progress_counter = Arc::new(AtomicUsize::new(0));
     let progress_state = Arc::new(Mutex::new(ExportProgressState::new(paths.len())));
     let photo_states = Arc::new(photo_states);
+    let output_folder_for_error = output_folder.clone();
 
     let available_cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -1619,6 +1685,14 @@ fn start_boothy_batch_export(
                             export_settings.jpeg_quality,
                         )?;
 
+                        if app_handle
+                            .state::<AppState>()
+                            .storage_health_monitor
+                            .is_critical()
+                        {
+                            return Err(error::storage::STORAGE_CRITICAL.to_string());
+                        }
+
                         write_image_with_metadata(
                             &mut image_bytes,
                             &source_path_str,
@@ -1627,8 +1701,15 @@ fn start_boothy_batch_export(
                             export_settings.strip_gps,
                         )?;
 
-                        fs::write(&output_path, image_bytes)
-                            .map_err(|e| format!("Failed to write output: {}", e))?;
+                        match fs::write(&output_path, image_bytes) {
+                            Ok(()) => {}
+                            Err(err) => {
+                                if is_disk_full_error(&err) {
+                                    return Err(error::export::DISK_FULL.to_string());
+                                }
+                                return Err(format!("Failed to write output: {}", err));
+                            }
+                        }
 
                         Ok(())
                     })();
@@ -1669,10 +1750,18 @@ fn start_boothy_batch_export(
         });
 
         let mut error_count = 0;
+        let mut saw_storage_critical = false;
+        let mut saw_disk_full = false;
         for result in results {
             if let Err(e) = result {
                 error_count += 1;
                 log::error!("Boothy export error: {}", e);
+                if e == error::storage::STORAGE_CRITICAL {
+                    saw_storage_critical = true;
+                }
+                if e == error::export::DISK_FULL {
+                    saw_disk_full = true;
+                }
             }
         }
 
@@ -1681,11 +1770,16 @@ fn start_boothy_batch_export(
                 let mut progress = progress_state.lock().unwrap();
                 progress.mark_error();
             }
+            let message = if saw_storage_critical {
+                error::storage::STORAGE_CRITICAL_MESSAGE.to_string()
+            } else if saw_disk_full {
+                error::export::disk_full(&output_folder_for_error).message
+            } else {
+                format!("Export completed with {} error(s).", error_count)
+            };
             let _ = app_handle.emit(
                 "boothy-export-error",
-                serde_json::json!({
-                    "message": format!("Export completed with {} error(s).", error_count),
-                }),
+                serde_json::json!({ "message": message }),
             );
         } else {
             {
@@ -3221,6 +3315,10 @@ async fn boothy_handle_photo_transferred(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        return Err(err.message);
+    }
+
     let path_buf = std::path::PathBuf::from(path);
 
     // Clone the watcher (it's Arc internally) and drop the lock before await
@@ -3280,6 +3378,15 @@ async fn boothy_handle_export_decision(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        let message = err.message.clone();
+        let _ = app_handle.emit(
+            "boothy-export-error",
+            serde_json::json!({ "message": message.clone() }),
+        );
+        return Err(message);
+    }
+
     let session = state
         .session_manager
         .get_active_session()
@@ -3481,14 +3588,21 @@ fn main() {
                         );
                         if let Err(e) = state
                             .file_watcher
-                            .start_watching(path_buf, app_handle.clone())
+                            .start_watching(path_buf.clone(), app_handle.clone())
                         {
                             log::warn!(
                                 "[Setup] Failed to start file watcher for lastRootPath: {}",
                                 e
                             );
                         }
+                        state
+                            .storage_health_monitor
+                            .start_for_session(app_handle.clone(), path_buf);
                     }
+                } else if let Ok(sessions_root) = session::SessionManager::get_sessions_root() {
+                    state
+                        .storage_health_monitor
+                        .start_for_session(app_handle.clone(), sessions_root);
                 }
             }
 

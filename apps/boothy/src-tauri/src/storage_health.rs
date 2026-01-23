@@ -1,3 +1,4 @@
+use crate::error;
 use crate::file_management::{
     AppSettings, BOOTHY_STORAGE_CRITICAL_THRESHOLD_BYTES_DEFAULT,
     BOOTHY_STORAGE_POLL_INTERVAL_SECONDS_DEFAULT, BOOTHY_STORAGE_WARNING_THRESHOLD_BYTES_DEFAULT,
@@ -34,10 +35,48 @@ pub struct StorageHealthPayload {
     pub diagnostic: Option<String>,
 }
 
+impl StorageHealthPayload {
+    fn unknown_with_thresholds(
+        warning_threshold_bytes: u64,
+        critical_threshold_bytes: u64,
+        diagnostic: Option<String>,
+    ) -> Self {
+        Self {
+            status: StorageHealthStatus::Unknown,
+            free_bytes: 0,
+            total_bytes: 0,
+            warning_threshold_bytes,
+            critical_threshold_bytes,
+            sampled_at: Utc::now().to_rfc3339(),
+            diagnostic,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DiskSpaceSample {
     free_bytes: u64,
     total_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+struct StorageHealthState {
+    latest_payload: StorageHealthPayload,
+    session_path: Option<PathBuf>,
+}
+
+impl StorageHealthState {
+    fn new() -> Self {
+        let settings = StorageHealthSettings::default();
+        Self {
+            latest_payload: StorageHealthPayload::unknown_with_thresholds(
+                settings.warning_threshold_bytes,
+                settings.critical_threshold_bytes,
+                None,
+            ),
+            session_path: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +130,7 @@ impl StorageHealthSettings {
 pub struct StorageHealthMonitor {
     handles: Arc<Mutex<Option<JoinHandle<()>>>>,
     generation: Arc<AtomicU64>,
+    state: Arc<Mutex<StorageHealthState>>,
 }
 
 impl StorageHealthMonitor {
@@ -98,6 +138,7 @@ impl StorageHealthMonitor {
         Self {
             handles: Arc::new(Mutex::new(None)),
             generation: Arc::new(AtomicU64::new(0)),
+            state: Arc::new(Mutex::new(StorageHealthState::new())),
         }
     }
 
@@ -106,11 +147,22 @@ impl StorageHealthMonitor {
 
         let generation_value = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let session_path = canonicalize_path(session_path);
+        {
+            let mut state = lock_or_recover(&self.state, "storage_health_state");
+            state.session_path = Some(session_path.clone());
+        }
+
+        let settings = load_storage_health_settings(&app_handle);
+        let payload = build_payload(&session_path, &settings);
+        update_latest_payload(&self.state, payload.clone());
+        emit_storage_health(&app_handle, payload);
+
         let handle = spawn_monitor_loop(
             app_handle,
             session_path,
             Arc::clone(&self.generation),
             generation_value,
+            Arc::clone(&self.state),
         );
         *lock_or_recover(&self.handles, "storage_health_handles") = Some(handle);
     }
@@ -118,6 +170,24 @@ impl StorageHealthMonitor {
     pub fn stop(&self) {
         if let Some(handle) = lock_or_recover(&self.handles, "storage_health_handles").take() {
             handle.abort();
+        }
+    }
+
+    pub fn latest_payload(&self) -> StorageHealthPayload {
+        lock_or_recover(&self.state, "storage_health_state")
+            .latest_payload
+            .clone()
+    }
+
+    pub fn is_critical(&self) -> bool {
+        matches!(self.latest_payload().status, StorageHealthStatus::Critical)
+    }
+
+    pub fn guard_critical(&self) -> Result<(), error::BoothyError> {
+        if self.is_critical() {
+            Err(error::storage::critical_lockout())
+        } else {
+            Ok(())
         }
     }
 }
@@ -147,6 +217,7 @@ fn spawn_monitor_loop<R: Runtime>(
     session_path: PathBuf,
     generation: Arc<AtomicU64>,
     generation_value: u64,
+    state: Arc<Mutex<StorageHealthState>>,
 ) -> JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -156,6 +227,7 @@ fn spawn_monitor_loop<R: Runtime>(
 
             let settings = load_storage_health_settings(&app_handle);
             let payload = build_payload(&session_path, &settings);
+            update_latest_payload(&state, payload.clone());
             emit_storage_health(&app_handle, payload);
 
             let interval = Duration::from_secs(settings.poll_interval_seconds.max(1));
@@ -173,15 +245,11 @@ fn load_storage_health_settings<R: Runtime>(app_handle: &AppHandle<R>) -> Storag
 fn build_payload(session_path: &Path, settings: &StorageHealthSettings) -> StorageHealthPayload {
     let sampled_at = Utc::now().to_rfc3339();
     if !settings.enabled {
-        return StorageHealthPayload {
-            status: StorageHealthStatus::Unknown,
-            free_bytes: 0,
-            total_bytes: 0,
-            warning_threshold_bytes: settings.warning_threshold_bytes,
-            critical_threshold_bytes: settings.critical_threshold_bytes,
-            sampled_at,
-            diagnostic: Some("storage health disabled".to_string()),
-        };
+        return StorageHealthPayload::unknown_with_thresholds(
+            settings.warning_threshold_bytes,
+            settings.critical_threshold_bytes,
+            Some("storage health disabled".to_string()),
+        );
     }
 
     match sample_disk_space(session_path) {
@@ -197,16 +265,22 @@ fn build_payload(session_path: &Path, settings: &StorageHealthSettings) -> Stora
                 diagnostic: None,
             }
         }
-        Err(err) => StorageHealthPayload {
-            status: StorageHealthStatus::Unknown,
-            free_bytes: 0,
-            total_bytes: 0,
-            warning_threshold_bytes: settings.warning_threshold_bytes,
-            critical_threshold_bytes: settings.critical_threshold_bytes,
-            sampled_at,
-            diagnostic: Some(err),
-        },
+        Err(err) => StorageHealthPayload::unknown_with_thresholds(
+            settings.warning_threshold_bytes,
+            settings.critical_threshold_bytes,
+            Some(err),
+        ),
     }
+}
+
+fn update_latest_payload(
+    state: &Mutex<StorageHealthState>,
+    payload: StorageHealthPayload,
+) -> StorageHealthStatus {
+    let mut guard = lock_or_recover(state, "storage_health_state");
+    let previous_status = guard.latest_payload.status;
+    guard.latest_payload = payload;
+    previous_status
 }
 
 fn emit_storage_health<R: Runtime>(app_handle: &AppHandle<R>, payload: StorageHealthPayload) {

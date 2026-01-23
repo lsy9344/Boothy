@@ -156,7 +156,7 @@ export default function SettingsPanel({
     confirmVariant: 'primary',
     isOpen: false,
     message: '',
-    onConfirm: () => {},
+    onConfirm: () => { },
     title: '',
   });
   const [hasInteractedWithLivePreview, setHasInteractedWithLivePreview] = useState(false);
@@ -326,7 +326,7 @@ export default function SettingsPanel({
   };
 
   const shortcutTagVariants = {
-    visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 500, damping: 30 } },
+    visible: { opacity: 1, scale: 1, transition: { type: 'spring' as const, stiffness: 500, damping: 30 } },
     exit: { opacity: 0, scale: 0.8, transition: { duration: 0.15 } },
   };
 
@@ -340,9 +340,8 @@ export default function SettingsPanel({
       confirmText: 'Toggle Transparency',
       confirmVariant: 'primary',
       isOpen: true,
-      message: `Are you sure you want to ${transparent ? 'enable' : 'disable'} window transparency effects?\n\n${
-        transparent ? 'These effects may reduce application performance.' : ''
-      }\n\nThe application will relaunch to make this change.`,
+      message: `Are you sure you want to ${transparent ? 'enable' : 'disable'} window transparency effects?\n\n${transparent ? 'These effects may reduce application performance.' : ''
+        }\n\nThe application will relaunch to make this change.`,
       onConfirm: () => executeSetTransparent(transparent),
       title: 'Confirm Window Transparency',
     });
@@ -497,73 +496,74 @@ export default function SettingsPanel({
         </header>
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2 -mr-2 custom-scrollbar">
-          <AnimatePresence mode="wait">
-            {activeCategory === 'general' && (
-              <motion.div
-                key="general"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-8"
-              >
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">General Settings</h2>
-                  <div className="space-y-6">
-                    <SettingItem label="Theme" description="Change the look and feel of the application.">
-                      <Dropdown
-                        onChange={(value: any) => onSettingsChange({ ...appSettings, theme: value })}
-                        options={THEMES.map((theme: ThemeProps) => ({ value: theme.id, label: theme.name }))}
-                        value={appSettings?.theme || DEFAULT_THEME_ID}
-                      />
-                    </SettingItem>
+          <div className="max-w-7xl mx-auto w-full">
+            <AnimatePresence mode="wait">
+              {activeCategory === 'general' && (
+                <motion.div
+                  key="general"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  transition={{ duration: 0.2 }}
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+                >
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">General Settings</h2>
+                    <div className="space-y-6">
+                      <SettingItem label="Theme" description="Change the look and feel of the application.">
+                        <Dropdown
+                          onChange={(value: any) => onSettingsChange({ ...appSettings, theme: value })}
+                          options={THEMES.map((theme: ThemeProps) => ({ value: theme.id, label: theme.name }))}
+                          value={appSettings?.theme || DEFAULT_THEME_ID}
+                        />
+                      </SettingItem>
 
-                    <SettingItem
-                      description="Dynamically changes editor colors based on the current image."
-                      label="Editor Theme"
-                    >
-                      <Switch
-                        checked={appSettings?.adaptiveEditorTheme ?? false}
-                        id="adaptive-theme-toggle"
-                        label="Adaptive Editor Theme"
-                        onChange={(checked) => onSettingsChange({ ...appSettings, adaptiveEditorTheme: checked })}
-                      />
-                    </SettingItem>
+                      <SettingItem
+                        description="Dynamically changes editor colors based on the current image."
+                        label="Editor Theme"
+                      >
+                        <Switch
+                          checked={appSettings?.adaptiveEditorTheme ?? false}
+                          id="adaptive-theme-toggle"
+                          label="Adaptive Editor Theme"
+                          onChange={(checked) => onSettingsChange({ ...appSettings, adaptiveEditorTheme: checked })}
+                        />
+                      </SettingItem>
 
-                    <SettingItem
-                      label="EXIF Library Sorting"
-                      description="Read EXIF data (ISO, aperture, etc.) on folder load at the cost of slower folder loading when using EXIF sorting."
-                    >
-                      <Switch
-                        checked={appSettings?.enableExifReading ?? false}
-                        id="exif-reading-toggle"
-                        label="EXIF Reading"
-                        onChange={(checked) => onSettingsChange({ ...appSettings, enableExifReading: checked })}
-                      />
-                    </SettingItem>
+                      <SettingItem
+                        label="EXIF Library Sorting"
+                        description="Read EXIF data (ISO, aperture, etc.) on folder load at the cost of slower folder loading when using EXIF sorting."
+                      >
+                        <Switch
+                          checked={appSettings?.enableExifReading ?? false}
+                          id="exif-reading-toggle"
+                          label="EXIF Reading"
+                          onChange={(checked) => onSettingsChange({ ...appSettings, enableExifReading: checked })}
+                        />
+                      </SettingItem>
 
-                    <SettingItem
-                      description="Enables or disables transparency effects for the application window. Relaunch required."
-                      label="Window Effects"
-                    >
-                      <Switch
-                        checked={appSettings?.transparent ?? true}
-                        id="window-effects-toggle"
-                        label="Transparency"
-                        onChange={handleSetTransparent}
-                      />
-                    </SettingItem>
+                      <SettingItem
+                        description="Enables or disables transparency effects for the application window. Relaunch required."
+                        label="Window Effects"
+                      >
+                        <Switch
+                          checked={appSettings?.transparent ?? true}
+                          id="window-effects-toggle"
+                          label="Transparency"
+                          onChange={handleSetTransparent}
+                        />
+                      </SettingItem>
+                    </div>
                   </div>
-                </div>
 
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Adjustments Visibility</h2>
-                  <p className="text-sm text-text-secondary mb-4">
-                    Hide adjustment sections you don&apos;t use often to simplify the editing panel. Your settings will
-                    be preserved and applied even when hidden.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-                    {/* Hide noise reduction to stop people from thinking it exists
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Adjustments Visibility</h2>
+                    <p className="text-sm text-text-secondary mb-4">
+                      Hide adjustment sections you don&apos;t use often to simplify the editing panel. Your settings will
+                      be preserved and applied even when hidden.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                      {/* Hide noise reduction to stop people from thinking it exists
                     <Switch
                       label="Noise Reduction"
                       checked={appSettings?.adjustmentVisibility?.noiseReduction ?? true}
@@ -578,422 +578,420 @@ export default function SettingsPanel({
                       }
                     /> 
                     */}
-                    <Switch
-                      label="Chromatic Aberration"
-                      checked={appSettings?.adjustmentVisibility?.chromaticAberration ?? false}
-                      onChange={(checked) =>
-                        onSettingsChange({
-                          ...appSettings,
-                          adjustmentVisibility: {
-                            ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
-                            chromaticAberration: checked,
-                          },
-                        })
-                      }
-                    />
-                    <Switch
-                      label="Grain"
-                      checked={appSettings?.adjustmentVisibility?.grain ?? true}
-                      onChange={(checked) =>
-                        onSettingsChange({
-                          ...appSettings,
-                          adjustmentVisibility: {
-                            ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
-                            grain: checked,
-                          },
-                        })
-                      }
-                    />
-                    <Switch
-                      label="Color Calibration"
-                      checked={appSettings?.adjustmentVisibility?.colorCalibration ?? true}
-                      onChange={(checked) =>
-                        onSettingsChange({
-                          ...appSettings,
-                          adjustmentVisibility: {
-                            ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
-                            colorCalibration: checked,
-                          },
-                        })
-                      }
-                    />
-                    <Switch
-                      label="Negative Conversion"
-                      checked={appSettings?.adjustmentVisibility?.negativeConversion ?? false}
-                      onChange={(checked) =>
-                        onSettingsChange({
-                          ...appSettings,
-                          adjustmentVisibility: {
-                            ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
-                            negativeConversion: checked,
-                          },
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Tagging</h2>
-                  <div className="space-y-6">
-                    <SettingItem
-                      label="Tagging Shortcuts"
-                      description="A list of tags that will appear as shortcuts in the tagging context menu."
-                    >
-                      <div>
-                        <div className="flex flex-wrap gap-2 p-2 bg-bg-primary rounded-md min-h-[40px] border border-border-color mb-2 items-center">
-                          <AnimatePresence>
-                            {(appSettings?.taggingShortcuts || []).length > 0 ? (
-                              (appSettings?.taggingShortcuts || []).map((shortcut: string) => (
-                                <motion.div
-                                  key={shortcut}
-                                  layout
-                                  variants={shortcutTagVariants}
-                                  initial={false}
-                                  animate="visible"
-                                  exit="exit"
-                                  onClick={() => handleRemoveShortcut(shortcut)}
-                                  title={`Remove shortcut "${shortcut}"`}
-                                  className="flex items-center gap-1 bg-surface text-text-primary text-sm font-medium px-2 py-1 rounded group cursor-pointer"
-                                >
-                                  <span>{shortcut}</span>
-                                  <span className="rounded-full group-hover:bg-black/20 p-0.5 transition-colors">
-                                    <X size={14} />
-                                  </span>
-                                </motion.div>
-                              ))
-                            ) : (
-                              <motion.span
-                                key="no-shortcuts-placeholder"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                                className="text-sm text-text-secondary italic px-1 select-none"
-                              >
-                                No shortcuts added
-                              </motion.span>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                        <div className="relative">
-                          <Input
-                            type="text"
-                            value={newShortcut}
-                            onChange={(e) => setNewShortcut(e.target.value)}
-                            onKeyDown={handleInputKeyDown}
-                            placeholder="Add a new shortcut..."
-                            className="pr-10"
-                          />
-                          <button
-                            onClick={handleAddShortcut}
-                            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface"
-                            title="Add shortcut"
-                          >
-                            <Plus size={18} />
-                          </button>
-                        </div>
-                      </div>
-                    </SettingItem>
-
-                    <div className="pt-6 border-t border-border-color">
-                      <div className="space-y-6">
-                        <DataActionItem
-                          buttonAction={handleClearTags}
-                          buttonText="Clear Tags"
-                          description="This will remove all non-color tags from your .rrdata files in the current base folder. Color labels will be kept."
-                          disabled={!effectiveRootPath}
-                          icon={<Trash2 size={16} className="mr-2" />}
-                          isProcessing={isClearingTags}
-                          message={tagsClearMessage}
-                          title="Clear Tags"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Session Timeline Messages</h2>
-                  <div className="space-y-6">
-                    <SettingItem
-                      label="End Screen Message"
-                      description="Displayed on the end screen after a session finishes."
-                    >
-                      <Input
-                        type="text"
-                        value={timelineSettings.endScreenMessage}
-                        onChange={(e) => {
-                          setTimelineSaveStatus('idle');
-                          setTimelineSaveMessage('');
-                          setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }));
-                        }}
-                      />
-                    </SettingItem>
-
-                    <SettingItem
-                      label="T-5 Warning Message"
-                      description="Shown in the warning modal when five minutes remain."
-                    >
-                      <Input
-                        type="text"
-                        value={timelineSettings.tMinus5WarningMessage}
-                        onChange={(e) => {
-                          setTimelineSaveStatus('idle');
-                          setTimelineSaveMessage('');
-                          setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }));
-                        }}
-                      />
-                    </SettingItem>
-
-                    {!isTimelineValid && <p className="text-xs text-red-400">Messages cannot be empty.</p>}
-
-                    <div className="flex flex-wrap items-center justify-end gap-3">
-                      {timelineSaveMessage && (
-                        <p
-                          className={clsx(
-                            'text-xs mr-auto',
-                            timelineSaveStatus === 'error' && 'text-red-400',
-                            timelineSaveStatus === 'success' && 'text-green-400',
-                            timelineSaveStatus === 'saving' && 'text-text-secondary',
-                          )}
-                        >
-                          {timelineSaveMessage}
-                        </p>
-                      )}
-                      <Button
-                        className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
-                        disabled={timelineSaveStatus === 'saving'}
-                        onClick={handleTimelineRestoreDefaults}
-                      >
-                        Restore Defaults
-                      </Button>
-                      <Button
-                        className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
-                        disabled={!isTimelineDirty || timelineSaveStatus === 'saving'}
-                        onClick={handleTimelineCancel}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        disabled={!isTimelineDirty || !isTimelineValid || timelineSaveStatus === 'saving'}
-                        onClick={handleTimelineSave}
-                      >
-                        Save
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {activeCategory === 'processing' && (
-              <motion.div
-                key="processing"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-8"
-              >
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Processing Engine</h2>
-                  <div className="space-y-6">
-                    <SettingItem
-                      description="Higher resolutions provide a sharper preview but may impact performance on less powerful systems."
-                      label="Preview Resolution"
-                    >
-                      <Dropdown
-                        onChange={(value: any) => handleProcessingSettingChange('editorPreviewResolution', value)}
-                        options={resolutions}
-                        value={processingSettings.editorPreviewResolution}
-                      />
-                    </SettingItem>
-
-                    <SettingItem
-                      label="High Quality Zoom"
-                      description="Load a higher quality version of the image when zooming in for more detail. Disabling this can improve performance."
-                    >
                       <Switch
-                        checked={appSettings?.enableZoomHifi ?? true}
-                        id="zoom-hifi-toggle"
-                        label="Enable High Quality Zoom"
-                        onChange={(checked) => onSettingsChange({ ...appSettings, enableZoomHifi: checked })}
+                        label="Chromatic Aberration"
+                        checked={appSettings?.adjustmentVisibility?.chromaticAberration ?? false}
+                        onChange={(checked) =>
+                          onSettingsChange({
+                            ...appSettings,
+                            adjustmentVisibility: {
+                              ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
+                              chromaticAberration: checked,
+                            },
+                          })
+                        }
                       />
-                    </SettingItem>
+                      <Switch
+                        label="Grain"
+                        checked={appSettings?.adjustmentVisibility?.grain ?? true}
+                        onChange={(checked) =>
+                          onSettingsChange({
+                            ...appSettings,
+                            adjustmentVisibility: {
+                              ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
+                              grain: checked,
+                            },
+                          })
+                        }
+                      />
+                      <Switch
+                        label="Color Calibration"
+                        checked={appSettings?.adjustmentVisibility?.colorCalibration ?? true}
+                        onChange={(checked) =>
+                          onSettingsChange({
+                            ...appSettings,
+                            adjustmentVisibility: {
+                              ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
+                              colorCalibration: checked,
+                            },
+                          })
+                        }
+                      />
+                      <Switch
+                        label="Negative Conversion"
+                        checked={appSettings?.adjustmentVisibility?.negativeConversion ?? false}
+                        onChange={(checked) =>
+                          onSettingsChange({
+                            ...appSettings,
+                            adjustmentVisibility: {
+                              ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
+                              negativeConversion: checked,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
 
-                    <div className="space-y-4">
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Tagging</h2>
+                    <div className="space-y-6">
                       <SettingItem
-                        label="Live Interactive Previews"
-                        description="Update the preview immediately while dragging sliders. Disable this if the interface feels laggy during adjustments."
+                        label="Tagging Shortcuts"
+                        description="A list of tags that will appear as shortcuts in the tagging context menu."
                       >
-                        <Switch
-                          checked={appSettings?.enableLivePreviews ?? true}
-                          id="live-previews-toggle"
-                          label="Enable Live Previews"
-                          onChange={(checked) => {
-                            setHasInteractedWithLivePreview(true);
-                            onSettingsChange({ ...appSettings, enableLivePreviews: checked });
+                        <div>
+                          <div className="flex flex-wrap gap-2 p-2 bg-bg-primary rounded-md min-h-[40px] border border-border-color mb-2 items-center">
+                            <AnimatePresence>
+                              {(appSettings?.taggingShortcuts || []).length > 0 ? (
+                                (appSettings?.taggingShortcuts || []).map((shortcut: string) => (
+                                  <motion.div
+                                    key={shortcut}
+                                    layout
+                                    variants={shortcutTagVariants}
+                                    initial={false}
+                                    animate="visible"
+                                    exit="exit"
+                                    onClick={() => handleRemoveShortcut(shortcut)}
+                                    title={`Remove shortcut "${shortcut}"`}
+                                    className="flex items-center gap-1 bg-surface text-text-primary text-sm font-medium px-2 py-1 rounded group cursor-pointer"
+                                  >
+                                    <span>{shortcut}</span>
+                                    <span className="rounded-full group-hover:bg-black/20 p-0.5 transition-colors">
+                                      <X size={14} />
+                                    </span>
+                                  </motion.div>
+                                ))
+                              ) : (
+                                <motion.span
+                                  key="no-shortcuts-placeholder"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="text-sm text-text-secondary italic px-1 select-none"
+                                >
+                                  No shortcuts added
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                          <div className="relative">
+                            <Input
+                              type="text"
+                              value={newShortcut}
+                              onChange={(e) => setNewShortcut(e.target.value)}
+                              onKeyDown={handleInputKeyDown}
+                              placeholder="Add a new shortcut..."
+                              className="pr-10"
+                            />
+                            <button
+                              onClick={handleAddShortcut}
+                              className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface"
+                              title="Add shortcut"
+                            >
+                              <Plus size={18} />
+                            </button>
+                          </div>
+                        </div>
+                      </SettingItem>
+
+                      <div className="pt-6 border-t border-border-color">
+                        <div className="space-y-6">
+                          <DataActionItem
+                            buttonAction={handleClearTags}
+                            buttonText="Clear Tags"
+                            description="This will remove all non-color tags from your .rrdata files in the current base folder. Color labels will be kept."
+                            disabled={!effectiveRootPath}
+                            icon={<Trash2 size={16} className="mr-2" />}
+                            isProcessing={isClearingTags}
+                            message={tagsClearMessage}
+                            title="Clear Tags"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Session Timeline Messages</h2>
+                    <div className="space-y-6">
+                      <SettingItem
+                        label="End Screen Message"
+                        description="Displayed on the end screen after a session finishes."
+                      >
+                        <Input
+                          type="text"
+                          value={timelineSettings.endScreenMessage}
+                          onChange={(e) => {
+                            setTimelineSaveStatus('idle');
+                            setTimelineSaveMessage('');
+                            setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }));
                           }}
                         />
                       </SettingItem>
 
-                      <AnimatePresence>
-                        {(appSettings?.enableLivePreviews ?? true) && (
-                          <motion.div
-                            initial={hasInteractedWithLivePreview ? { height: 0, opacity: 0 } : false}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.3, ease: 'easeInOut' }}
-                            className="overflow-hidden"
+                      <SettingItem
+                        label="T-5 Warning Message"
+                        description="Shown in the warning modal when five minutes remain."
+                      >
+                        <Input
+                          type="text"
+                          value={timelineSettings.tMinus5WarningMessage}
+                          onChange={(e) => {
+                            setTimelineSaveStatus('idle');
+                            setTimelineSaveMessage('');
+                            setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }));
+                          }}
+                        />
+                      </SettingItem>
+
+                      {!isTimelineValid && <p className="text-xs text-red-400">Messages cannot be empty.</p>}
+
+                      <div className="flex flex-wrap items-center justify-end gap-3">
+                        {timelineSaveMessage && (
+                          <p
+                            className={clsx(
+                              'text-xs mr-auto',
+                              timelineSaveStatus === 'error' && 'text-red-400',
+                              timelineSaveStatus === 'success' && 'text-green-400',
+                              timelineSaveStatus === 'saving' && 'text-text-secondary',
+                            )}
                           >
-                            <div className="pl-4 border-l-2 border-border-color ml-1">
-                              <SettingItem
-                                label="High Quality Live Preview"
-                                description="Uses higher resolution and less compression during interaction. Significantly increases GPU load."
-                              >
-                                <Switch
-                                  checked={appSettings?.enableHighQualityLivePreviews ?? false}
-                                  id="hq-live-previews-toggle"
-                                  label="Enable High Quality"
-                                  onChange={(checked) =>
-                                    onSettingsChange({ ...appSettings, enableHighQualityLivePreviews: checked })
-                                  }
-                                />
-                              </SettingItem>
-                            </div>
-                          </motion.div>
+                            {timelineSaveMessage}
+                          </p>
                         )}
-                      </AnimatePresence>
+                        <Button
+                          className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
+                          disabled={timelineSaveStatus === 'saving'}
+                          onClick={handleTimelineRestoreDefaults}
+                        >
+                          Restore Defaults
+                        </Button>
+                        <Button
+                          className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
+                          disabled={!isTimelineDirty || timelineSaveStatus === 'saving'}
+                          onClick={handleTimelineCancel}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          disabled={!isTimelineDirty || !isTimelineValid || timelineSaveStatus === 'saving'}
+                          onClick={handleTimelineSave}
+                        >
+                          Save
+                        </Button>
+                      </div>
                     </div>
-
-                    <SettingItem
-                      label="RAW Highlight Recovery"
-                      description="Controls how much detail is recovered from clipped highlights in RAW files. Higher values recover more detail but can introduce purple artefacts."
-                    >
-                      <Slider
-                        label="Amount"
-                        min={1}
-                        max={10}
-                        step={0.1}
-                        value={processingSettings.rawHighlightCompression}
-                        defaultValue={2.5}
-                        onChange={(e: any) =>
-                          handleProcessingSettingChange('rawHighlightCompression', parseFloat(e.target.value))
-                        }
-                      />
-                    </SettingItem>
-
-                    <SettingItem
-                      label="Processing Backend"
-                      description="Select the graphics API. 'Auto' is recommended. May fix crashes on some systems."
-                    >
-                      <Dropdown
-                        onChange={(value: any) => handleProcessingSettingChange('processingBackend', value)}
-                        options={backendOptions}
-                        value={processingSettings.processingBackend}
-                      />
-                    </SettingItem>
-
-                    <SettingItem
-                      label="Linux Compatibility Mode"
-                      description="Enable workarounds for common GPU driver and display server (e.g., Wayland) issues. May improve stability or performance on some systems."
-                    >
-                      <Switch
-                        checked={processingSettings.linuxGpuOptimization}
-                        id="gpu-compat-toggle"
-                        label="Enable Compatibility Mode"
-                        onChange={(checked) => handleProcessingSettingChange('linuxGpuOptimization', checked)}
-                      />
-                    </SettingItem>
-
-                    {restartRequired && (
-                      <>
-                        <div className="p-3 bg-blue-900/20 text-blue-300 border border-blue-500/50 rounded-lg text-sm flex items-center gap-3">
-                          <Info size={18} />
-                          <p>Changes to the processing engine require an application restart to take effect.</p>
-                        </div>
-                        <div className="flex justify-end">
-                          <Button onClick={handleSaveAndRelaunch}>Save & Relaunch</Button>
-                        </div>
-                      </>
-                    )}
                   </div>
-                </div>
+                </motion.div>
+              )}
 
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Data Management</h2>
-                  <div className="space-y-6">
-                    <DataActionItem
-                      buttonAction={handleClearSidecars}
-                      buttonText="Delete All Edits in Folder"
-                      description={
+              {activeCategory === 'processing' && (
+                <motion.div
+                  key="processing"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  transition={{ duration: 0.2 }}
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+                >
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Processing Engine</h2>
+                    <div className="space-y-6">
+                      <SettingItem
+                        description="Higher resolutions provide a sharper preview but may impact performance on less powerful systems."
+                        label="Preview Resolution"
+                      >
+                        <Dropdown
+                          onChange={(value: any) => handleProcessingSettingChange('editorPreviewResolution', value)}
+                          options={resolutions}
+                          value={processingSettings.editorPreviewResolution}
+                        />
+                      </SettingItem>
+
+                      <SettingItem
+                        label="High Quality Zoom"
+                        description="Load a higher quality version of the image when zooming in for more detail. Disabling this can improve performance."
+                      >
+                        <Switch
+                          checked={appSettings?.enableZoomHifi ?? true}
+                          id="zoom-hifi-toggle"
+                          label="Enable High Quality Zoom"
+                          onChange={(checked) => onSettingsChange({ ...appSettings, enableZoomHifi: checked })}
+                        />
+                      </SettingItem>
+
+                      <div className="space-y-4">
+                        <SettingItem
+                          label="Live Interactive Previews"
+                          description="Update the preview immediately while dragging sliders. Disable this if the interface feels laggy during adjustments."
+                        >
+                          <Switch
+                            checked={appSettings?.enableLivePreviews ?? true}
+                            id="live-previews-toggle"
+                            label="Enable Live Previews"
+                            onChange={(checked) => {
+                              setHasInteractedWithLivePreview(true);
+                              onSettingsChange({ ...appSettings, enableLivePreviews: checked });
+                            }}
+                          />
+                        </SettingItem>
+
+                        <AnimatePresence>
+                          {(appSettings?.enableLivePreviews ?? true) && (
+                            <motion.div
+                              initial={hasInteractedWithLivePreview ? { height: 0, opacity: 0 } : false}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.3, ease: 'easeInOut' }}
+                              className="overflow-hidden"
+                            >
+                              <div className="pl-4 border-l-2 border-border-color ml-1">
+                                <SettingItem
+                                  label="High Quality Live Preview"
+                                  description="Uses higher resolution and less compression during interaction. Significantly increases GPU load."
+                                >
+                                  <Switch
+                                    checked={appSettings?.enableHighQualityLivePreviews ?? false}
+                                    id="hq-live-previews-toggle"
+                                    label="Enable High Quality"
+                                    onChange={(checked) =>
+                                      onSettingsChange({ ...appSettings, enableHighQualityLivePreviews: checked })
+                                    }
+                                  />
+                                </SettingItem>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
+                      <SettingItem
+                        label="RAW Highlight Recovery"
+                        description="Controls how much detail is recovered from clipped highlights in RAW files. Higher values recover more detail but can introduce purple artefacts."
+                      >
+                        <Slider
+                          label="Amount"
+                          min={1}
+                          max={10}
+                          step={0.1}
+                          value={processingSettings.rawHighlightCompression}
+                          defaultValue={2.5}
+                          onChange={(e: any) =>
+                            handleProcessingSettingChange('rawHighlightCompression', parseFloat(e.target.value))
+                          }
+                        />
+                      </SettingItem>
+
+                      <SettingItem
+                        label="Processing Backend"
+                        description="Select the graphics API. 'Auto' is recommended. May fix crashes on some systems."
+                      >
+                        <Dropdown
+                          onChange={(value: any) => handleProcessingSettingChange('processingBackend', value)}
+                          options={backendOptions}
+                          value={processingSettings.processingBackend}
+                        />
+                      </SettingItem>
+
+                      <SettingItem
+                        label="Linux Compatibility Mode"
+                        description="Enable workarounds for common GPU driver and display server (e.g., Wayland) issues. May improve stability or performance on some systems."
+                      >
+                        <Switch
+                          checked={processingSettings.linuxGpuOptimization}
+                          id="gpu-compat-toggle"
+                          label="Enable Compatibility Mode"
+                          onChange={(checked) => handleProcessingSettingChange('linuxGpuOptimization', checked)}
+                        />
+                      </SettingItem>
+
+                      {restartRequired && (
                         <>
-                          This will delete all{' '}
-                          <code className="bg-bg-primary px-1 rounded text-text-primary">.rrdata</code> files
-                          (containing your edits) within the current base folder:
-                          <span className="block font-mono text-xs bg-bg-primary p-2 rounded mt-2 break-all border border-border-color">
-                            {effectiveRootPath || 'No folder selected'}
-                          </span>
+                          <div className="p-3 bg-blue-900/20 text-blue-300 border border-blue-500/50 rounded-lg text-sm flex items-center gap-3">
+                            <Info size={18} />
+                            <p>Changes to the processing engine require an application restart to take effect.</p>
+                          </div>
+                          <div className="flex justify-end">
+                            <Button onClick={handleSaveAndRelaunch}>Save & Relaunch</Button>
+                          </div>
                         </>
-                      }
-                      disabled={!effectiveRootPath}
-                      icon={<Trash2 size={16} className="mr-2" />}
-                      isProcessing={isClearing}
-                      message={clearMessage}
-                      title="Clear All Sidecar Files"
-                    />
-
-                    <DataActionItem
-                      buttonAction={handleClearCache}
-                      buttonText="Clear Thumbnail Cache"
-                      description="This will delete all cached thumbnail images. They will be regenerated automatically as you browse your library."
-                      icon={<Trash2 size={16} className="mr-2" />}
-                      isProcessing={isClearingCache}
-                      message={cacheClearMessage}
-                      title="Clear Thumbnail Cache"
-                    />
-
-                    <DataActionItem
-                      buttonAction={async () => {
-                        if (logPath && !logPath.startsWith('Could not')) {
-                          await invoke(Invokes.ShowInFinder, { path: logPath });
-                        }
-                      }}
-                      buttonText="Open Log File"
-                      description={
-                        <>
-                          View the application&apos;s log file for troubleshooting. The log is located at:
-                          <span className="block font-mono text-xs bg-bg-primary p-2 rounded mt-2 break-all border border-border-color">
-                            {logPath || 'Loading...'}
-                          </span>
-                        </>
-                      }
-                      disabled={!logPath || logPath.startsWith('Could not')}
-                      icon={<Info size={16} className="mr-2" />}
-                      isProcessing={false}
-                      message=""
-                      title="View Application Logs"
-                    />
+                      )}
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            )}
 
-            {activeCategory === 'shortcuts' && (
-              <motion.div
-                key="shortcuts"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-8"
-              >
-                <div className="p-6 bg-surface rounded-xl shadow-md">
-                  <h2 className="text-xl font-semibold mb-6 text-accent">Keyboard Shortcuts</h2>
-                  <div className="space-y-4">
-                    <div>
-                      <h3 className="text-lg font-semibold pt-3 pb-2 text-accent">General</h3>
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Data Management</h2>
+                    <div className="space-y-6">
+                      <DataActionItem
+                        buttonAction={handleClearSidecars}
+                        buttonText="Delete All Edits in Folder"
+                        description={
+                          <>
+                            This will delete all{' '}
+                            <code className="bg-bg-primary px-1 rounded text-text-primary">.rrdata</code> files
+                            (containing your edits) within the current base folder:
+                            <span className="block font-mono text-xs bg-bg-primary p-2 rounded mt-2 break-all border border-border-color">
+                              {effectiveRootPath || 'No folder selected'}
+                            </span>
+                          </>
+                        }
+                        disabled={!effectiveRootPath}
+                        icon={<Trash2 size={16} className="mr-2" />}
+                        isProcessing={isClearing}
+                        message={clearMessage}
+                        title="Clear All Sidecar Files"
+                      />
+
+                      <DataActionItem
+                        buttonAction={handleClearCache}
+                        buttonText="Clear Thumbnail Cache"
+                        description="This will delete all cached thumbnail images. They will be regenerated automatically as you browse your library."
+                        icon={<Trash2 size={16} className="mr-2" />}
+                        isProcessing={isClearingCache}
+                        message={cacheClearMessage}
+                        title="Clear Thumbnail Cache"
+                      />
+
+                      <DataActionItem
+                        buttonAction={async () => {
+                          if (logPath && !logPath.startsWith('Could not')) {
+                            await invoke(Invokes.ShowInFinder, { path: logPath });
+                          }
+                        }}
+                        buttonText="Open Log File"
+                        description={
+                          <>
+                            View the application&apos;s log file for troubleshooting. The log is located at:
+                            <span className="block font-mono text-xs bg-bg-primary p-2 rounded mt-2 break-all border border-border-color">
+                              {logPath || 'Loading...'}
+                            </span>
+                          </>
+                        }
+                        disabled={!logPath || logPath.startsWith('Could not')}
+                        icon={<Info size={16} className="mr-2" />}
+                        isProcessing={false}
+                        message=""
+                        title="View Application Logs"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {activeCategory === 'shortcuts' && (
+                <motion.div
+                  key="shortcuts"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  transition={{ duration: 0.2 }}
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+                >
+                  <div className="p-6 bg-surface rounded-xl shadow-md h-full">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">General Shortcuts</h2>
+                    <div className="space-y-4">
                       <div className="divide-y divide-border-color">
                         <KeybindItem keys={['Space', 'Enter']} description="Open selected image" />
                         <KeybindItem keys={['Ctrl/Cmd', '+', 'C']} description="Copy selected adjustments" />
@@ -1010,8 +1008,11 @@ export default function SettingsPanel({
                         <KeybindItem keys={['↑', '↓', '←', '→']} description="Navigate images in library" />
                       </div>
                     </div>
-                    <div>
-                      <h3 className="text-lg font-semibold pt-3 pb-2 text-accent">Editor</h3>
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md h-full">
+                    <h2 className="text-xl font-semibold mb-6 text-accent">Editor Shortcuts</h2>
+                    <div className="space-y-4">
                       <div className="divide-y divide-border-color">
                         <KeybindItem keys={['Esc']} description="Deselect mask, exit crop/fullscreen/editor" />
                         <KeybindItem keys={['Ctrl/Cmd', '+', 'Z']} description="Undo adjustment" />
@@ -1040,10 +1041,10 @@ export default function SettingsPanel({
                       </div>
                     </div>
                   </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
     </>
