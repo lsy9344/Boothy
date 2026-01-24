@@ -37,6 +37,41 @@ if (shouldMockTauri) {
     session_folder_name: 'MockSession',
     session_name: 'Mock Session',
   };
+  const storageDiagnosticsMock = {
+    ok: true,
+    data: {
+      sessions_root: 'C:\\Mock\\dabi_shoot',
+      active_session: defaultSession,
+      drive_free_bytes: 128 * 1024 * 1024 * 1024,
+      drive_total_bytes: 512 * 1024 * 1024 * 1024,
+      warning_threshold_bytes: 50 * 1024 * 1024 * 1024,
+      critical_threshold_bytes: 20 * 1024 * 1024 * 1024,
+      captured_at: '2026-01-01T00:00:00.000Z',
+    },
+    error: null,
+  };
+  const cleanupSessionsMock = {
+    ok: true,
+    data: [
+      {
+        name: 'MockSession',
+        path: 'C:\\Mock\\dabi_shoot\\MockSession',
+        lastModified: '2026-01-01T00:00:00.000Z',
+        sizeBytes: 1024 * 1024 * 128,
+        isActive: true,
+        diagnostic: null,
+      },
+      {
+        name: 'OldSession-2024-12',
+        path: 'C:\\Mock\\dabi_shoot\\OldSession-2024-12',
+        lastModified: '2025-12-31T23:00:00.000Z',
+        sizeBytes: 1024 * 1024 * 512,
+        isActive: false,
+        diagnostic: null,
+      },
+    ],
+    error: null,
+  };
 
   const emitEvent: MockEmit = async (event, payload) => {
     await window.__TAURI_INTERNALS__?.invoke?.('plugin:event|emit', { event, payload });
@@ -126,6 +161,23 @@ if (shouldMockTauri) {
           scheduleExport(choice);
           return null;
         }
+        case 'boothy_get_storage_diagnostics':
+          return storageDiagnosticsMock;
+        case 'boothy_open_sessions_root_in_explorer':
+          return null;
+        case 'boothy_list_cleanup_sessions':
+          return cleanupSessionsMock;
+        case 'boothy_delete_cleanup_sessions':
+          return {
+            ok: true,
+            data: {
+              deleted: (args?.sessionNames as string[]) ?? [],
+              skippedActive: [],
+              skippedInvalid: [],
+              failed: [],
+            },
+            error: null,
+          };
         case 'boothy_log_frontend':
           return null;
         default:

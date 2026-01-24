@@ -2249,6 +2249,13 @@ pub async fn import_files(
     settings: ImportSettings,
     app_handle: AppHandle,
 ) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        let message = err.message.clone();
+        let _ = app_handle.emit("import-error", message.clone());
+        return Err(message);
+    }
+
     let total_files = source_paths.len();
     let _ = app_handle.emit("import-start", serde_json::json!({ "total": total_files }));
 

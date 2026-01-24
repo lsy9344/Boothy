@@ -1,0 +1,42 @@
+﻿schema: 1
+story: '3.4'
+story_title: 'Admin Guided Cleanup: Safe Old Session Deletion'
+gate: PASS
+status_reason: '수동 MVP 게이트 시나리오 3종 검증 완료(정상 삭제/활성 세션 보호/경로 탈출 방지)로 AC 증적을 충족했습니다.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-24T16:19:01.3488945+09:00'
+
+top_issues: []
+
+waiver:
+  active: false
+
+quality_score: 100
+expires: '2026-02-07T16:19:04.6018593+09:00'
+
+evidence:
+  tests_reviewed: 6
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: '세션명 단일 컴포넌트 제한과 canonicalize 검사로 루트 탈출 차단; admin 게이팅 적용.'
+  performance:
+    status: PASS
+    notes: '열거/삭제는 spawn_blocking에서 실행; UI 이벤트 루프 보호.'
+  reliability:
+    status: PASS
+    notes: '수동 MVP 게이트 시나리오 수행으로 end-to-end 안정성 확인.'
+  maintainability:
+    status: PASS
+    notes: 'cleanup 모듈 분리 및 유닛 테스트 존재.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Admin cleanup UI 선택/진단 표시에 대한 최소 UI 테스트 추가.'
+      refs: ['apps/boothy/src/components/panel/__tests__/']

@@ -1,513 +1,0 @@
-     Running BeforeDevCommand (`npm run dev`)
-     Running DevCommand (`cargo  run --no-default-features --color always --`)
-        Info Watching C:\Code\Project\Boothy\apps\boothy\src-tauri for changes...
-[1m[93mwarning[0m[1m[97m: unnecessary parentheses around type[0m
-    [1m[96m--> [0mC:\Code\Project\Boothy\reference\uxui_presetfunction\src-tauri\rawler\rawler\src\decoders\mod.rs:1115:14
-     [1m[96m|[0m
-[1m[96m1115[0m [1m[96m|[0m   F: Fn(&mut (dyn LineIteratorMut<'a, T>), usize, usize) -> std::result::Result<(), String> + Sync,
-     [1m[96m|[0m              [1m[93m^[0m                          [1m[93m^[0m
-     [1m[96m|[0m
-     [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
-[1m[96mhelp[0m: remove these parentheses
-     [1m[96m|[0m
-[1m[96m1115[0m [91m- [0m  F: Fn(&mut [91m([0mdyn LineIteratorMut<'a, T>[91m)[0m, usize, usize) -> std::result::Result<(), String> + Sync,
-[1m[96m1115[0m [92m+ [0m  F: Fn(&mut dyn LineIteratorMut<'a, T>[92m [0m, usize, usize) -> std::result::Result<(), String> + Sync,
-     [1m[96m|[0m
-
-[1m[93mwarning[0m[1m[97m: unnecessary parentheses around closure body[0m
-   [1m[96m--> [0mC:\Code\Project\Boothy\reference\uxui_presetfunction\src-tauri\rawler\rawler\src\rawimage.rs:299:63
-    [1m[96m|[0m
-[1m[96m299[0m [1m[96m|[0m       let blacklevels: Vec<f32> = samples.into_iter().map(|s| (s.avg / s.count as f32)).collect();
-    [1m[96m|[0m                                                               [1m[93m^[0m                      [1m[93m^[0m
-    [1m[96m|[0m
-[1m[96mhelp[0m: remove these parentheses
-    [1m[96m|[0m
-[1m[96m299[0m [91m- [0m      let blacklevels: Vec<f32> = samples.into_iter().map(|s| [91m([0ms.avg / s.count as f32[91m)[0m).collect();
-[1m[96m299[0m [92m+ [0m      let blacklevels: Vec<f32> = samples.into_iter().map(|s| s.avg / s.count as f32[92m [0m).collect();
-    [1m[96m|[0m
-
-[1m[93mwarning[0m[1m[97m: unused import: `rayon::prelude`[0m
-  [1m[96m--> [0mC:\Code\Project\Boothy\reference\uxui_presetfunction\src-tauri\rawler\rawler\src\imgop\sensor\xtrans\demosaic.rs:10:5
-   [1m[96m|[0m
-[1m[96m10[0m [1m[96m|[0m use rayon::prelude::*;
-   [1m[96m|[0m     [1m[93m^^^^^^^^^^^^^^[0m
-   [1m[96m|[0m
-   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-[1m[93mwarning[0m[1m[97m: unused variable: `colors`[0m
-   [1m[96m--> [0mC:\Code\Project\Boothy\reference\uxui_presetfunction\src-tauri\rawler\rawler\src\imgop\sensor\xtrans\demosaic.rs:227:50
-    [1m[96m|[0m
-[1m[96m227[0m [1m[96m|[0m   fn demosaic(&self, pixels: &PixF32, cfa: &CFA, colors: &PlaneColor, roi: Rect) -> Color2D<f32, 3> {
-    [1m[96m|[0m                                                  [1m[93m^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: `_colors`[0m
-    [1m[96m|[0m
-    [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
-
-[1m[93mwarning[0m[1m[97m: associated constants `SIGN_BITS`, `PRECISION`, and `FRACTION_POS` are never used[0m
-   [1m[96m--> [0mC:\Code\Project\Boothy\reference\uxui_presetfunction\src-tauri\rawler\rawler\src\bits.rs:280:9
-    [1m[96m|[0m
-[1m[96m273[0m [1m[96m|[0m pub(crate) trait FloatingPointParameters {
-    [1m[96m|[0m                  [1m[96m-----------------------[0m [1m[96massociated constants in this trait[0m
-[1m[96m...[0m
-[1m[96m280[0m [1m[96m|[0m   const SIGN_BITS: usize = 1;
-    [1m[96m|[0m         [1m[93m^^^^^^^^^[0m
-[1m[96m281[0m [1m[96m|[0m   const PRECISION: usize = Self::FRACTION_WIDTH + 1;
-    [1m[96m|[0m         [1m[93m^^^^^^^^^[0m
-[1m[96m...[0m
-[1m[96m284[0m [1m[96m|[0m   const FRACTION_POS: usize = 0; // FractionPos is always 0.
-    [1m[96m|[0m         [1m[93m^^^^^^^^^^^^[0m
-    [1m[96m|[0m
-    [1m[96m= [0m[1m[97mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-[1m[93mwarning[0m: `rawler` (lib) generated 5 warnings (run `cargo fix --lib -p rawler` to apply 3 suggestions)
-[1m[92m   Compiling[0m boothy v0.0.0 (C:\Code\Project\Boothy\apps\boothy\src-tauri)
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: unused import: `ipc_client::*`[0m
- [1m[96m--> [0msrc\camera\mod.rs:4:9
-  [1m[96m|[0m
-[1m[96m4[0m [1m[96m|[0m pub use ipc_client::*;
-  [1m[96m|[0m         [1m[93m^^^^^^^^^^^^^[0m
-  [1m[96m|[0m
-  [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: unused import: `imageops`[0m
- [1m[96m--> [0msrc\image_loader.rs:9:40
-  [1m[96m|[0m
-[1m[96m9[0m [1m[96m|[0m use image::{DynamicImage, ImageReader, imageops};
-  [1m[96m|[0m                                        [1m[93m^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: unused import: `file_watcher::*`[0m
- [1m[96m--> [0msrc\ingest\mod.rs:4:9
-  [1m[96m|[0m
-[1m[96m4[0m [1m[96m|[0m pub use file_watcher::*;
-  [1m[96m|[0m         [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: unused import: `export_queue::*`[0m
- [1m[96m--> [0msrc\session\mod.rs:9:9
-  [1m[96m|[0m
-[1m[96m9[0m [1m[96m|[0m pub use export_queue::*;
-  [1m[96m|[0m         [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: unused import: `metadata::*`[0m
-  [1m[96m--> [0msrc\session\mod.rs:11:9
-   [1m[96m|[0m
-[1m[96m11[0m [1m[96m|[0m pub use metadata::*;
-   [1m[96m|[0m         [1m[93m^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `IPC_TIMEOUT_MS` is never used[0m
-  [1m[96m--> [0msrc\camera\ipc_client.rs:13:7
-   [1m[96m|[0m
-[1m[96m13[0m [1m[96m|[0m const IPC_TIMEOUT_MS: u64 = 5000;
-   [1m[96m|[0m       [1m[93m^^^^^^^^^^^^^^[0m
-   [1m[96m|[0m
-   [1m[96m= [0m[1m[97mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: associated items `new_event`, `new_response`, `new_error`, and `validate_version` are never used[0m
-   [1m[96m--> [0msrc\camera\ipc_models.rs:54:12
-    [1m[96m|[0m
- [1m[96m52[0m [1m[96m|[0m impl IpcMessage {
-    [1m[96m|[0m [1m[96m---------------[0m [1m[96massociated items in this implementation[0m
- [1m[96m53[0m [1m[96m|[0m     /// Create a new event message
- [1m[96m54[0m [1m[96m|[0m     pub fn new_event(method: String, correlation_id: String, payload: serde_json::Value) -> Self {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-[1m[96m...[0m
- [1m[96m87[0m [1m[96m|[0m     pub fn new_response(
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^[0m
-[1m[96m...[0m
-[1m[96m106[0m [1m[96m|[0m     pub fn new_error(
-    [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-[1m[96m...[0m
-[1m[96m125[0m [1m[96m|[0m     pub fn validate_version(&self) -> Result<(), IpcError> {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: struct `CaptureStartedPayload` is never constructed[0m
-   [1m[96m--> [0msrc\camera\ipc_models.rs:247:12
-    [1m[96m|[0m
-[1m[96m247[0m [1m[96m|[0m pub struct CaptureStartedPayload {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: struct `SetSessionDestinationResponse` is never constructed[0m
-   [1m[96m--> [0msrc\camera\ipc_models.rs:279:12
-    [1m[96m|[0m
-[1m[96m279[0m [1m[96m|[0m pub struct SetSessionDestinationResponse {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: struct `CameraStatusResponse` is never constructed[0m
-   [1m[96m--> [0msrc\camera\ipc_models.rs:292:12
-    [1m[96m|[0m
-[1m[96m292[0m [1m[96m|[0m pub struct CameraStatusResponse {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `CAMERA_DISCONNECT` is never used[0m
-   [1m[96m--> [0msrc\error.rs:123:15
-    [1m[96m|[0m
-[1m[96m123[0m [1m[96m|[0m     pub const CAMERA_DISCONNECT: &str = "CAMERA_DISCONNECT";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `CAMERA_INIT_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:124:15
-    [1m[96m|[0m
-[1m[96m124[0m [1m[96m|[0m     pub const CAMERA_INIT_FAILED: &str = "CAMERA_INIT_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `CAPTURE_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:125:15
-    [1m[96m|[0m
-[1m[96m125[0m [1m[96m|[0m     pub const CAPTURE_FAILED: &str = "CAPTURE_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `TRANSFER_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:126:15
-    [1m[96m|[0m
-[1m[96m126[0m [1m[96m|[0m     pub const TRANSFER_FAILED: &str = "TRANSFER_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `CAMERA_BUSY` is never used[0m
-   [1m[96m--> [0msrc\error.rs:127:15
-    [1m[96m|[0m
-[1m[96m127[0m [1m[96m|[0m     pub const CAMERA_BUSY: &str = "CAMERA_BUSY";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `CAMERA_NOT_FOUND` is never used[0m
-   [1m[96m--> [0msrc\error.rs:128:15
-    [1m[96m|[0m
-[1m[96m128[0m [1m[96m|[0m     pub const CAMERA_NOT_FOUND: &str = "CAMERA_NOT_FOUND";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `disconnect` is never used[0m
-   [1m[96m--> [0msrc\error.rs:131:12
-    [1m[96m|[0m
-[1m[96m131[0m [1m[96m|[0m     pub fn disconnect(diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `capture_failed` is never used[0m
-   [1m[96m--> [0msrc\error.rs:140:12
-    [1m[96m|[0m
-[1m[96m140[0m [1m[96m|[0m     pub fn capture_failed(diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `transfer_failed` is never used[0m
-   [1m[96m--> [0msrc\error.rs:149:12
-    [1m[96m|[0m
-[1m[96m149[0m [1m[96m|[0m     pub fn transfer_failed(diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `not_found` is never used[0m
-   [1m[96m--> [0msrc\error.rs:158:12
-    [1m[96m|[0m
-[1m[96m158[0m [1m[96m|[0m     pub fn not_found() -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `IPC_TIMEOUT` is never used[0m
-   [1m[96m--> [0msrc\error.rs:180:15
-    [1m[96m|[0m
-[1m[96m180[0m [1m[96m|[0m     pub const IPC_TIMEOUT: &str = "IPC_TIMEOUT";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `IPC_INVALID_RESPONSE` is never used[0m
-   [1m[96m--> [0msrc\error.rs:182:15
-    [1m[96m|[0m
-[1m[96m182[0m [1m[96m|[0m     pub const IPC_INVALID_RESPONSE: &str = "IPC_INVALID_RESPONSE";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `SIDECAR_CRASH` is never used[0m
-   [1m[96m--> [0msrc\error.rs:183:15
-    [1m[96m|[0m
-[1m[96m183[0m [1m[96m|[0m     pub const SIDECAR_CRASH: &str = "SIDECAR_CRASH";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `timeout` is never used[0m
-   [1m[96m--> [0msrc\error.rs:186:12
-    [1m[96m|[0m
-[1m[96m186[0m [1m[96m|[0m     pub fn timeout(operation: &str) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `sidecar_crash` is never used[0m
-   [1m[96m--> [0msrc\error.rs:204:12
-    [1m[96m|[0m
-[1m[96m204[0m [1m[96m|[0m     pub fn sidecar_crash(diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `IMPORT_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:227:15
-    [1m[96m|[0m
-[1m[96m227[0m [1m[96m|[0m     pub const IMPORT_FAILED: &str = "IMPORT_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `FILE_NOT_STABLE` is never used[0m
-   [1m[96m--> [0msrc\error.rs:228:15
-    [1m[96m|[0m
-[1m[96m228[0m [1m[96m|[0m     pub const FILE_NOT_STABLE: &str = "FILE_NOT_STABLE";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `FILE_CORRUPTED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:229:15
-    [1m[96m|[0m
-[1m[96m229[0m [1m[96m|[0m     pub const FILE_CORRUPTED: &str = "FILE_CORRUPTED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `UNSUPPORTED_FORMAT` is never used[0m
-   [1m[96m--> [0msrc\error.rs:230:15
-    [1m[96m|[0m
-[1m[96m230[0m [1m[96m|[0m     pub const UNSUPPORTED_FORMAT: &str = "UNSUPPORTED_FORMAT";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `failed` is never used[0m
-   [1m[96m--> [0msrc\error.rs:232:12
-    [1m[96m|[0m
-[1m[96m232[0m [1m[96m|[0m     pub fn failed(file_path: &str, diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `unsupported_format` is never used[0m
-   [1m[96m--> [0msrc\error.rs:242:12
-    [1m[96m|[0m
-[1m[96m242[0m [1m[96m|[0m     pub fn unsupported_format(file_path: &str) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `PERMISSION_DENIED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:258:15
-    [1m[96m|[0m
-[1m[96m258[0m [1m[96m|[0m     pub const PERMISSION_DENIED: &str = "PERMISSION_DENIED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `PRESET_NOT_FOUND` is never used[0m
-   [1m[96m--> [0msrc\error.rs:317:15
-    [1m[96m|[0m
-[1m[96m317[0m [1m[96m|[0m     pub const PRESET_NOT_FOUND: &str = "PRESET_NOT_FOUND";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `PRESET_APPLY_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:318:15
-    [1m[96m|[0m
-[1m[96m318[0m [1m[96m|[0m     pub const PRESET_APPLY_FAILED: &str = "PRESET_APPLY_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `PRESET_LOAD_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:319:15
-    [1m[96m|[0m
-[1m[96m319[0m [1m[96m|[0m     pub const PRESET_LOAD_FAILED: &str = "PRESET_LOAD_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `not_found` is never used[0m
-   [1m[96m--> [0msrc\error.rs:321:12
-    [1m[96m|[0m
-[1m[96m321[0m [1m[96m|[0m     pub fn not_found(preset_id: &str) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `apply_failed` is never used[0m
-   [1m[96m--> [0msrc\error.rs:330:12
-    [1m[96m|[0m
-[1m[96m330[0m [1m[96m|[0m     pub fn apply_failed(preset_id: &str, diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `SESSION_CREATE_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:345:15
-    [1m[96m|[0m
-[1m[96m345[0m [1m[96m|[0m     pub const SESSION_CREATE_FAILED: &str = "SESSION_CREATE_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `SESSION_NOT_FOUND` is never used[0m
-   [1m[96m--> [0msrc\error.rs:346:15
-    [1m[96m|[0m
-[1m[96m346[0m [1m[96m|[0m     pub const SESSION_NOT_FOUND: &str = "SESSION_NOT_FOUND";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `SESSION_LOAD_FAILED` is never used[0m
-   [1m[96m--> [0msrc\error.rs:347:15
-    [1m[96m|[0m
-[1m[96m347[0m [1m[96m|[0m     pub const SESSION_LOAD_FAILED: &str = "SESSION_LOAD_FAILED";
-    [1m[96m|[0m               [1m[93m^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `create_failed` is never used[0m
-   [1m[96m--> [0msrc\error.rs:349:12
-    [1m[96m|[0m
-[1m[96m349[0m [1m[96m|[0m     pub fn create_failed(session_name: &str, diagnostic: impl Into<String>) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `not_found` is never used[0m
-   [1m[96m--> [0msrc\error.rs:359:12
-    [1m[96m|[0m
-[1m[96m359[0m [1m[96m|[0m     pub fn not_found(session_name: &str) -> BoothyError {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `get_thumb_cache_dir` is never used[0m
-    [1m[96m--> [0msrc\file_management.rs:2173:8
-     [1m[96m|[0m
-[1m[96m2173[0m [1m[96m|[0m pub fn get_thumb_cache_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-     [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `get_cache_key_hash` is never used[0m
-    [1m[96m--> [0msrc\file_management.rs:2185:8
-     [1m[96m|[0m
-[1m[96m2185[0m [1m[96m|[0m pub fn get_cache_key_hash(path_str: &str) -> Option<String> {
-     [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `get_cached_or_generate_thumbnail_image` is never used[0m
-    [1m[96m--> [0msrc\file_management.rs:2214:8
-     [1m[96m|[0m
-[1m[96m2214[0m [1m[96m|[0m pub fn get_cached_or_generate_thumbnail_image(
-     [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `init_file_watcher` is never used[0m
-   [1m[96m--> [0msrc\ingest\file_watcher.rs:209:8
-    [1m[96m|[0m
-[1m[96m209[0m [1m[96m|[0m pub fn init_file_watcher(app_handle: AppHandle) -> Arc<FileArrivalWatcher> {
-    [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `PIXEL_KNOWN` is never used[0m
- [1m[96m--> [0msrc\inpainting.rs:7:7
-  [1m[96m|[0m
-[1m[96m7[0m [1m[96m|[0m const PIXEL_KNOWN: u8 = 0;
-  [1m[96m|[0m       [1m[93m^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: constant `PIXEL_HOLE` is never used[0m
- [1m[96m--> [0msrc\inpainting.rs:8:7
-  [1m[96m|[0m
-[1m[96m8[0m [1m[96m|[0m const PIXEL_HOLE: u8 = 1;
-  [1m[96m|[0m       [1m[93m^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: constant `PIXEL_FRONT` is never used[0m
- [1m[96m--> [0msrc\inpainting.rs:9:7
-  [1m[96m|[0m
-[1m[96m9[0m [1m[96m|[0m const PIXEL_FRONT: u8 = 2;
-  [1m[96m|[0m       [1m[93m^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: struct `FloatOrd` is never constructed[0m
-  [1m[96m--> [0msrc\inpainting.rs:12:8
-   [1m[96m|[0m
-[1m[96m12[0m [1m[96m|[0m struct FloatOrd(f32);
-   [1m[96m|[0m        [1m[93m^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: struct `HeapItem` is never constructed[0m
-  [1m[96m--> [0msrc\inpainting.rs:25:8
-   [1m[96m|[0m
-[1m[96m25[0m [1m[96m|[0m struct HeapItem {
-   [1m[96m|[0m        [1m[93m^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `inpaint_criminisi` is never used[0m
-  [1m[96m--> [0msrc\inpainting.rs:48:4
-   [1m[96m|[0m
-[1m[96m48[0m [1m[96m|[0m fn inpaint_criminisi(source_image: &RgbImage, mask: &GrayImage, patch_radius: u32) -> RgbImage {
-   [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `get_gaussian_kernel` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:207:4
-    [1m[96m|[0m
-[1m[96m207[0m [1m[96m|[0m fn get_gaussian_kernel(radius: u32, sigma: f32) -> Vec<f32> {
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `get_pixel_luma` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:228:4
-    [1m[96m|[0m
-[1m[96m228[0m [1m[96m|[0m fn get_pixel_luma(p: &Rgb<u8>) -> f32 {
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `get_neighbors` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:232:4
-    [1m[96m|[0m
-[1m[96m232[0m [1m[96m|[0m fn get_neighbors(x: u32, y: u32, width: u32, height: u32) -> Vec<(u32, u32)> {
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `calculate_normal` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:249:4
-    [1m[96m|[0m
-[1m[96m249[0m [1m[96m|[0m fn calculate_normal(pixel_states: &[u8], width: u32, height: u32, x: u32, y: u32) -> (f32, f32) {
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `calculate_and_smooth_normals` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:271:4
-    [1m[96m|[0m
-[1m[96m271[0m [1m[96m|[0m fn calculate_and_smooth_normals(
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `get_gradient_at_point` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:321:4
-    [1m[96m|[0m
-[1m[96m321[0m [1m[96m|[0m fn get_gradient_at_point(
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `calculate_priority` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:363:4
-    [1m[96m|[0m
-[1m[96m363[0m [1m[96m|[0m fn calculate_priority(
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `calculate_ssd` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:403:4
-    [1m[96m|[0m
-[1m[96m403[0m [1m[96m|[0m fn calculate_ssd(
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `find_best_match_local` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:451:4
-    [1m[96m|[0m
-[1m[96m451[0m [1m[96m|[0m fn find_best_match_local(
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `perform_fast_inpaint` is never used[0m
-   [1m[96m--> [0msrc\inpainting.rs:543:8
-    [1m[96m|[0m
-[1m[96m543[0m [1m[96m|[0m pub fn perform_fast_inpaint(
-    [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: struct `DiagnosticEvent` is never constructed[0m
-  [1m[96m--> [0msrc\logging.rs:90:12
-   [1m[96m|[0m
-[1m[96m90[0m [1m[96m|[0m pub struct DiagnosticEvent {
-   [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: associated items `new`, `with_context`, and `log` are never used[0m
-   [1m[96m--> [0msrc\logging.rs:100:12
-    [1m[96m|[0m
- [1m[96m99[0m [1m[96m|[0m impl DiagnosticEvent {
-    [1m[96m|[0m [1m[96m--------------------[0m [1m[96massociated items in this implementation[0m
-[1m[96m100[0m [1m[96m|[0m     pub fn new(
-    [1m[96m|[0m            [1m[93m^^^[0m
-[1m[96m...[0m
-[1m[96m116[0m [1m[96m|[0m     pub fn with_context(mut self, key: &str, value: serde_json::Value) -> Self {
-    [1m[96m|[0m            [1m[93m^^^^^^^^^^^^[0m
-[1m[96m...[0m
-[1m[96m123[0m [1m[96m|[0m     pub fn log(&self) {
-    [1m[96m|[0m            [1m[93m^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `generate` is never used[0m
-  [1m[96m--> [0msrc\logging.rs:65:12
-   [1m[96m|[0m
-[1m[96m65[0m [1m[96m|[0m     pub fn generate() -> String {
-   [1m[96m|[0m            [1m[93m^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `log_info` is never used[0m
-  [1m[96m--> [0msrc\logging.rs:71:12
-   [1m[96m|[0m
-[1m[96m71[0m [1m[96m|[0m     pub fn log_info(correlation_id: &str, message: &str) {
-   [1m[96m|[0m            [1m[93m^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `log_debug` is never used[0m
-  [1m[96m--> [0msrc\logging.rs:75:12
-   [1m[96m|[0m
-[1m[96m75[0m [1m[96m|[0m     pub fn log_debug(correlation_id: &str, message: &str) {
-   [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: function `log_error` is never used[0m
-  [1m[96m--> [0msrc\logging.rs:79:12
-   [1m[96m|[0m
-[1m[96m79[0m [1m[96m|[0m     pub fn log_error(correlation_id: &str, message: &str) {
-   [1m[96m|[0m            [1m[93m^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `log_warn` is never used[0m
-  [1m[96m--> [0msrc\logging.rs:83:12
-   [1m[96m|[0m
-[1m[96m83[0m [1m[96m|[0m     pub fn log_warn(correlation_id: &str, message: &str) {
-   [1m[96m|[0m            [1m[93m^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…                                                            [1m[93mwarning[0m[1m[97m: struct `GrowFeatherParameters` is never constructed[0m
-  [1m[96m--> [0msrc\mask_generation.rs:45:8
-   [1m[96m|[0m
-[1m[96m45[0m [1m[96m|[0m struct GrowFeatherParameters {
-   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[93mwarning[0m[1m[97m: function `apply_grow_and_feather` is never used[0m
-   [1m[96m--> [0msrc\mask_generation.rs:117:4
-    [1m[96m|[0m
-[1m[96m117[0m [1m[96m|[0m fn apply_grow_and_feather(mask: &mut GrayImage, grow: f32, feather: f32, width: u32, height: u32) {
-    [1m[96m|[0m    [1m[93m^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[96m    Building[0m [=======================> ] 855/856: boothy(…       Error The "beforeDevCommand" terminated with a non-zero status code.

@@ -1,9 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import Button from '../ui/Button';
+import Input from '../ui/Input';
 
 interface ConfirmModalProps {
   cancelText?: string;
   confirmText?: string;
+  confirmRequiredText?: string;
+  confirmInputLabel?: string;
+  confirmInputPlaceholder?: string;
   confirmVariant?: string;
   isOpen: boolean;
   message?: string;
@@ -15,6 +19,9 @@ interface ConfirmModalProps {
 export default function ConfirmModal({
   cancelText = 'Cancel',
   confirmText = 'Confirm',
+  confirmRequiredText,
+  confirmInputLabel,
+  confirmInputPlaceholder,
   confirmVariant = 'primary',
   isOpen,
   message,
@@ -24,6 +31,10 @@ export default function ConfirmModal({
 }: ConfirmModalProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [show, setShow] = useState(false);
+  const [confirmationValue, setConfirmationValue] = useState('');
+
+  const requiresMatch = typeof confirmRequiredText === 'string' && confirmRequiredText.trim().length > 0;
+  const canConfirm = !requiresMatch || confirmationValue.trim() === confirmRequiredText;
 
   useEffect(() => {
     if (isOpen) {
@@ -31,6 +42,7 @@ export default function ConfirmModal({
       const timer = setTimeout(() => {
         setShow(true);
       }, 10);
+      setConfirmationValue('');
       return () => clearTimeout(timer);
     } else {
       setShow(false);
@@ -42,11 +54,14 @@ export default function ConfirmModal({
   }, [isOpen]);
 
   const handleConfirm = useCallback(() => {
+    if (!canConfirm) {
+      return;
+    }
     if (onConfirm) {
       onConfirm();
     }
     onClose();
-  }, [onConfirm, onClose]);
+  }, [canConfirm, onConfirm, onClose]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -54,7 +69,9 @@ export default function ConfirmModal({
         e.preventDefault();
         e.stopPropagation();
         e.nativeEvent.stopImmediatePropagation();
-        handleConfirm();
+        if (canConfirm) {
+          handleConfirm();
+        }
       } else if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -62,7 +79,7 @@ export default function ConfirmModal({
         onClose();
       }
     },
-    [handleConfirm, onClose],
+    [canConfirm, handleConfirm, onClose],
   );
 
   if (!isMounted) {
@@ -95,6 +112,20 @@ export default function ConfirmModal({
           {title}
         </h3>
         <p className="text-sm text-text-secondary mb-6 whitespace-pre-wrap">{message}</p>
+        {requiresMatch && (
+          <div className="mb-4 space-y-2">
+            <label className="text-xs text-text-secondary">
+              {confirmInputLabel ?? `Type ${confirmRequiredText} to confirm.`}
+            </label>
+            <Input
+              autoFocus={true}
+              type="text"
+              value={confirmationValue}
+              onChange={(e) => setConfirmationValue(e.target.value)}
+              placeholder={confirmInputPlaceholder ?? confirmRequiredText}
+            />
+          </div>
+        )}
         <div className="flex justify-end gap-3 mt-5">
           <Button
             className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
@@ -107,8 +138,9 @@ export default function ConfirmModal({
           <Button
             onClick={handleConfirm}
             variant={confirmVariant}
-            autoFocus={true}
+            autoFocus={!requiresMatch}
             className="focus:outline-none focus:ring-0 focus:ring-offset-0"
+            disabled={!canConfirm}
           >
             {confirmText}
           </Button>

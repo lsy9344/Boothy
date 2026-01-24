@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Cpu, Info, Trash2, Plus, X, SlidersHorizontal, Keyboard } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Cpu, Info, Trash2, Plus, X, SlidersHorizontal, Keyboard, RefreshCw, FolderOpen, CheckSquare } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,6 +22,9 @@ import {
 interface ConfirmModalState {
   confirmText: string;
   confirmVariant: string;
+  confirmRequiredText?: string;
+  confirmInputLabel?: string;
+  confirmInputPlaceholder?: string;
   isOpen: boolean;
   message: string;
   onConfirm(): void;
@@ -52,13 +55,133 @@ interface SettingItemProps {
 
 interface SettingsPanelProps {
   appSettings: any;
+  isAdmin?: boolean;
   onBack(): void;
   onLibraryRefresh(): void;
   onSettingsChange(settings: any, meta?: { reason?: string }): void;
   rootPath: string | null;
 }
 
+interface StorageDiagnosticsSession {
+  base_path: string;
+  raw_path: string;
+  jpg_path: string;
+  session_name?: string;
+  session_folder_name?: string;
+}
+
+interface StorageDiagnosticsData {
+  sessions_root: string;
+  active_session: StorageDiagnosticsSession | null;
+  drive_free_bytes: number;
+  drive_total_bytes: number;
+  warning_threshold_bytes: number | null;
+  critical_threshold_bytes: number | null;
+  captured_at: string;
+}
+
+interface StorageDiagnosticsError {
+  message?: string;
+  diagnostic?: string | null;
+  correlationId?: string;
+}
+
+interface StorageDiagnosticsResponse {
+  ok: boolean;
+  data: StorageDiagnosticsData | null;
+  error: StorageDiagnosticsError | null;
+}
+
+interface CleanupSessionEntry {
+  name: string;
+  path: string;
+  lastModified?: string | null;
+  sizeBytes?: number | null;
+  isActive: boolean;
+  diagnostic?: string | null;
+}
+
+interface CleanupSessionsResponse {
+  ok: boolean;
+  data: CleanupSessionEntry[] | null;
+  error: StorageDiagnosticsError | null;
+}
+
+interface CleanupDeleteFailure {
+  name: string;
+  diagnostic: string;
+}
+
+interface CleanupDeleteSummary {
+  deleted: string[];
+  skippedActive: string[];
+  skippedInvalid: string[];
+  failed: CleanupDeleteFailure[];
+}
+
+interface CleanupDeleteResponse {
+  ok: boolean;
+  data: CleanupDeleteSummary | null;
+  error: StorageDiagnosticsError | null;
+}
+
 const EXECUTE_TIMEOUT = 3000;
+
+const formatBytes = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let index = 0;
+  let result = value;
+
+  while (result >= 1024 && index < units.length - 1) {
+    result /= 1024;
+    index += 1;
+  }
+
+  const precision = result >= 10 || index === 0 ? 0 : 1;
+  return `${result.toFixed(precision)} ${units[index]}`;
+};
+
+const formatThreshold = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'Unset (configure in settings.json)';
+  }
+  return formatBytes(value);
+};
+
+const formatTimestamp = (value: string | null | undefined) => {
+  if (!value) {
+    return 'Not yet refreshed';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+};
+
+const normalizeDiagnosticsError = (error: any): StorageDiagnosticsError => {
+  if (!error) {
+    return { message: 'Request failed.' };
+  }
+  if (typeof error === 'string') {
+    return { message: error };
+  }
+  if (typeof error.message === 'string') {
+    return {
+      message: error.message,
+      diagnostic: typeof error.diagnostic === 'string' ? error.diagnostic : null,
+      correlationId: typeof error.correlationId === 'string' ? error.correlationId : error.correlation_id,
+    };
+  }
+  if (typeof error.error === 'string') {
+    return { message: error.error };
+  }
+  return { message: 'Request failed.' };
+};
 
 const adjustmentVisibilityDefaults = {
   sharpening: true,
@@ -140,6 +263,7 @@ const DataActionItem = ({
 
 export default function SettingsPanel({
   appSettings,
+  isAdmin,
   onBack,
   onLibraryRefresh,
   onSettingsChange,
@@ -175,9 +299,34 @@ export default function SettingsPanel({
   const [timelineSaveStatus, setTimelineSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [timelineSaveMessage, setTimelineSaveMessage] = useState('');
   const timelineSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const storageActionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cleanupMessageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
   const [logPath, setLogPath] = useState('');
+  const [storageDiagnostics, setStorageDiagnostics] = useState<StorageDiagnosticsData | null>(null);
+  const [storageDiagnosticsStatus, setStorageDiagnosticsStatus] = useState<'idle' | 'loading'>('idle');
+  const [storageDiagnosticsError, setStorageDiagnosticsError] = useState<StorageDiagnosticsError | null>(null);
+  const [storageActionMessage, setStorageActionMessage] = useState('');
+  const [storageActionError, setStorageActionError] = useState<StorageDiagnosticsError | null>(null);
+  const [cleanupSessions, setCleanupSessions] = useState<CleanupSessionEntry[]>([]);
+  const [cleanupStatus, setCleanupStatus] = useState<'idle' | 'loading' | 'deleting'>('idle');
+  const [cleanupError, setCleanupError] = useState<StorageDiagnosticsError | null>(null);
+  const [cleanupMessage, setCleanupMessage] = useState('');
+  const [selectedCleanupSessions, setSelectedCleanupSessions] = useState<string[]>([]);
+
+  useEffect(() => {
+    return () => {
+      if (storageActionTimeoutRef.current) {
+        clearTimeout(storageActionTimeoutRef.current);
+        storageActionTimeoutRef.current = null;
+      }
+      if (cleanupMessageTimeoutRef.current) {
+        clearTimeout(cleanupMessageTimeoutRef.current);
+        cleanupMessageTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setProcessingSettings({
@@ -244,6 +393,203 @@ export default function SettingsPanel({
     };
     fetchLogPath();
   }, []);
+
+  const refreshStorageDiagnostics = useCallback(async () => {
+    if (!isAdmin) {
+      return;
+    }
+    setStorageDiagnosticsStatus('loading');
+    setStorageDiagnosticsError(null);
+    setStorageActionMessage('');
+    setStorageActionError(null);
+
+    try {
+      const response = await invoke<StorageDiagnosticsResponse>(Invokes.BoothyGetStorageDiagnostics);
+      if (response?.ok && response.data) {
+        setStorageDiagnostics(response.data);
+        setStorageDiagnosticsError(null);
+      } else {
+        setStorageDiagnosticsError(normalizeDiagnosticsError(response?.error));
+      }
+    } catch (error) {
+      setStorageDiagnosticsError(normalizeDiagnosticsError(error));
+    } finally {
+      setStorageDiagnosticsStatus('idle');
+    }
+  }, [isAdmin]);
+
+  const refreshCleanupSessions = useCallback(async () => {
+    if (!isAdmin) {
+      return;
+    }
+    setCleanupStatus('loading');
+    setCleanupError(null);
+
+    try {
+      const response = await invoke<CleanupSessionsResponse>(Invokes.BoothyListCleanupSessions);
+      if (response?.ok && Array.isArray(response.data)) {
+        setCleanupSessions(response.data);
+        setCleanupError(null);
+        setSelectedCleanupSessions((prev) =>
+          prev.filter((name) => response.data?.some((entry) => entry.name === name && !entry.isActive)),
+        );
+      } else {
+        setCleanupSessions([]);
+        setCleanupError(normalizeDiagnosticsError(response?.error));
+      }
+    } catch (error) {
+      setCleanupSessions([]);
+      setCleanupError(normalizeDiagnosticsError(error));
+    } finally {
+      setCleanupStatus('idle');
+    }
+  }, [isAdmin]);
+
+  const setCleanupMessageWithTimeout = (message: string) => {
+    setCleanupMessage(message);
+
+    if (cleanupMessageTimeoutRef.current) {
+      clearTimeout(cleanupMessageTimeoutRef.current);
+      cleanupMessageTimeoutRef.current = null;
+    }
+
+    if (message) {
+      cleanupMessageTimeoutRef.current = setTimeout(() => {
+        setCleanupMessage('');
+        cleanupMessageTimeoutRef.current = null;
+      }, EXECUTE_TIMEOUT);
+    }
+  };
+
+  const handleOpenSessionsRoot = useCallback(async () => {
+    setStorageActionMessage('');
+    setStorageActionError(null);
+
+    if (storageActionTimeoutRef.current) {
+      clearTimeout(storageActionTimeoutRef.current);
+      storageActionTimeoutRef.current = null;
+    }
+
+    try {
+      await invoke(Invokes.BoothyOpenSessionsRootInExplorer);
+      setStorageActionMessage('Explorer opened.');
+
+      storageActionTimeoutRef.current = setTimeout(() => {
+        setStorageActionMessage('');
+        storageActionTimeoutRef.current = null;
+      }, EXECUTE_TIMEOUT);
+
+    } catch (error) {
+      setStorageActionError(normalizeDiagnosticsError(error));
+    }
+  }, []);
+
+  const handleSelectAllCleanupSessions = () => {
+    const selectable = cleanupSessions
+      .filter((entry) => !entry.isActive)
+      .map((entry) => entry.name);
+    setSelectedCleanupSessions(selectable);
+  };
+
+  const toggleCleanupSelection = (sessionName: string) => {
+    setSelectedCleanupSessions((prev) =>
+      prev.includes(sessionName)
+        ? prev.filter((name) => name !== sessionName)
+        : [...prev, sessionName],
+    );
+  };
+
+  const buildCleanupSummaryMessage = (summary: CleanupDeleteSummary) => {
+    const parts: string[] = [];
+    if (summary.deleted.length > 0) {
+      parts.push(`Deleted ${summary.deleted.length} session${summary.deleted.length === 1 ? '' : 's'}.`);
+    }
+    if (summary.skippedActive.length > 0) {
+      parts.push(
+        `Skipped active session${summary.skippedActive.length === 1 ? '' : 's'}: ${summary.skippedActive.join(', ')}.`,
+      );
+    }
+    if (summary.skippedInvalid.length > 0) {
+      parts.push(
+        `Skipped ${summary.skippedInvalid.length} invalid request${summary.skippedInvalid.length === 1 ? '' : 's'}.`,
+      );
+    }
+    if (summary.failed.length > 0) {
+      parts.push(
+        `Failed to delete ${summary.failed.length} session${summary.failed.length === 1 ? '' : 's'}.`,
+      );
+    }
+    return parts.join(' ');
+  };
+
+  const executeCleanupDelete = async () => {
+    if (selectedCleanupSessions.length === 0) {
+      return;
+    }
+
+    setCleanupStatus('deleting');
+    setCleanupError(null);
+    setCleanupMessage('');
+    if (cleanupMessageTimeoutRef.current) {
+      clearTimeout(cleanupMessageTimeoutRef.current);
+      cleanupMessageTimeoutRef.current = null;
+    }
+
+    try {
+      const response = await invoke<CleanupDeleteResponse>(Invokes.BoothyDeleteCleanupSessions, {
+        sessionNames: selectedCleanupSessions,
+      });
+      if (response?.ok && response.data) {
+        setCleanupMessageWithTimeout(buildCleanupSummaryMessage(response.data));
+        setSelectedCleanupSessions([]);
+        await refreshCleanupSessions();
+      } else {
+        setCleanupError(normalizeDiagnosticsError(response?.error));
+      }
+    } catch (error) {
+      setCleanupError(normalizeDiagnosticsError(error));
+    } finally {
+      setCleanupStatus('idle');
+    }
+  };
+
+  const handleCleanupDelete = () => {
+    if (selectedCleanupSessions.length === 0) {
+      return;
+    }
+    setConfirmModalState({
+      confirmText: 'Delete Sessions',
+      confirmVariant: 'destructive',
+      confirmRequiredText: 'DELETE',
+      confirmInputLabel: 'Type DELETE to confirm.',
+      confirmInputPlaceholder: 'DELETE',
+      isOpen: true,
+      message:
+        `You are about to permanently delete ${selectedCleanupSessions.length} session` +
+        `${selectedCleanupSessions.length === 1 ? '' : 's'}.\n\n` +
+        'This action cannot be undone.',
+      onConfirm: executeCleanupDelete,
+      title: 'Confirm Session Deletion',
+    });
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      void refreshStorageDiagnostics();
+      void refreshCleanupSessions();
+    } else {
+      setStorageDiagnostics(null);
+      setStorageDiagnosticsError(null);
+      setStorageActionMessage('');
+      setStorageActionError(null);
+      setStorageDiagnosticsStatus('idle');
+      setCleanupSessions([]);
+      setCleanupError(null);
+      setCleanupMessage('');
+      setCleanupStatus('idle');
+      setSelectedCleanupSessions([]);
+    }
+  }, [isAdmin, refreshCleanupSessions, refreshStorageDiagnostics]);
 
   const handleProcessingSettingChange = (key: string, value: any) => {
     setProcessingSettings((prev) => ({ ...prev, [key]: value }));
@@ -393,11 +739,12 @@ export default function SettingsPanel({
 
   const currentEndMessage = getBoothyEndScreenMessage(appSettings);
   const currentTMinus5Message = getBoothyTMinus5WarningMessage(appSettings);
-  const trimmedEndMessage = timelineSettings.endScreenMessage.trim();
-  const trimmedTMinus5Message = timelineSettings.tMinus5WarningMessage.trim();
+  const timelineEndMessage = timelineSettings.endScreenMessage ?? '';
+  const timelineTMinus5Message = timelineSettings.tMinus5WarningMessage ?? '';
+  const trimmedEndMessage = timelineEndMessage.trim();
+  const trimmedTMinus5Message = timelineTMinus5Message.trim();
   const isTimelineDirty =
-    timelineSettings.endScreenMessage !== currentEndMessage ||
-    timelineSettings.tMinus5WarningMessage !== currentTMinus5Message;
+    timelineEndMessage !== currentEndMessage || timelineTMinus5Message !== currentTMinus5Message;
   const isTimelineValid = trimmedEndMessage.length > 0 && trimmedTMinus5Message.length > 0;
 
   const handleTimelineSave = () => {
@@ -447,56 +794,61 @@ export default function SettingsPanel({
     }
   };
 
+  const storageSession = storageDiagnostics?.active_session ?? null;
+  const storageLastUpdated = formatTimestamp(storageDiagnostics?.captured_at);
+
   return (
     <>
       <ConfirmModal {...confirmModalState} onClose={closeConfirmModal} />
       <div className="flex flex-col h-full w-full text-text-primary">
-        <header className="flex-shrink-0 flex flex-wrap items-center justify-between gap-y-4 mb-8 pt-4">
-          <div className="flex items-center flex-shrink-0">
-            <Button
-              className="mr-4 hover:bg-surface text-text-primary rounded-full"
-              onClick={onBack}
-              size="icon"
-              variant="ghost"
-            >
-              <ArrowLeft />
-            </Button>
-            <h1 className="text-3xl font-bold text-accent whitespace-nowrap">Settings</h1>
-          </div>
-
-          <div className="relative flex w-full min-[1200px]:w-[450px] p-2 bg-surface rounded-md">
-            {settingCategories.map((category) => (
-              <button
-                key={category.id}
-                onClick={() => setActiveCategory(category.id)}
-                className={clsx(
-                  'relative flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-                  {
-                    'text-text-primary hover:bg-surface': activeCategory !== category.id,
-                    'text-button-text': activeCategory === category.id,
-                  },
-                )}
-                style={{ WebkitTapHighlightColor: 'transparent' }}
+        <header className="flex-shrink-0 mb-8 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-y-4 max-w-7xl mx-auto w-full px-6">
+            <div className="flex items-center flex-shrink-0">
+              <Button
+                className="mr-4 hover:bg-surface text-text-primary rounded-full"
+                onClick={onBack}
+                size="icon"
+                variant="ghost"
               >
-                {activeCategory === category.id && (
-                  <motion.span
-                    layoutId="settings-category-switch-bubble"
-                    className="absolute inset-0 z-0 bg-accent"
-                    style={{ borderRadius: 6 }}
-                    transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
-                  />
-                )}
-                <span className="relative z-10 flex items-center">
-                  <category.icon size={16} className="mr-2 flex-shrink-0" />
-                  <span className="truncate">{category.label}</span>
-                </span>
-              </button>
-            ))}
+                <ArrowLeft />
+              </Button>
+              <h1 className="text-3xl font-bold text-accent whitespace-nowrap">Settings</h1>
+            </div>
+
+            <div className="relative flex w-full min-[1200px]:w-[450px] p-2 bg-surface rounded-md">
+              {settingCategories.map((category) => (
+                <button
+                  key={category.id}
+                  onClick={() => setActiveCategory(category.id)}
+                  className={clsx(
+                    'relative flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                    {
+                      'text-text-primary hover:bg-surface': activeCategory !== category.id,
+                      'text-button-text': activeCategory === category.id,
+                    },
+                  )}
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  {activeCategory === category.id && (
+                    <motion.span
+                      layoutId="settings-category-switch-bubble"
+                      className="absolute inset-0 z-0 bg-accent"
+                      style={{ borderRadius: 6 }}
+                      transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center">
+                    <category.icon size={16} className="mr-2 flex-shrink-0" />
+                    <span className="truncate">{category.label}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2 -mr-2 custom-scrollbar">
-          <div className="max-w-7xl mx-auto w-full">
+          <div className="max-w-7xl mx-auto w-full px-6 pb-8">
             <AnimatePresence mode="wait">
               {activeCategory === 'general' && (
                 <motion.div
@@ -722,12 +1074,13 @@ export default function SettingsPanel({
                       >
                         <Input
                           type="text"
-                          value={timelineSettings.endScreenMessage}
+                          value={timelineEndMessage}
                           onChange={(e) => {
                             setTimelineSaveStatus('idle');
                             setTimelineSaveMessage('');
                             setTimelineSettings((prev) => ({ ...prev, endScreenMessage: e.target.value }));
                           }}
+                          placeholder="End screen message..."
                         />
                       </SettingItem>
 
@@ -737,30 +1090,33 @@ export default function SettingsPanel({
                       >
                         <Input
                           type="text"
-                          value={timelineSettings.tMinus5WarningMessage}
+                          value={timelineTMinus5Message}
                           onChange={(e) => {
                             setTimelineSaveStatus('idle');
                             setTimelineSaveMessage('');
                             setTimelineSettings((prev) => ({ ...prev, tMinus5WarningMessage: e.target.value }));
                           }}
+                          placeholder="T-5 warning message..."
                         />
                       </SettingItem>
 
                       {!isTimelineValid && <p className="text-xs text-red-400">Messages cannot be empty.</p>}
 
+                      {timelineSaveMessage && (
+                        <div
+                          className={clsx(
+                            'mb-4 rounded-lg border p-3 text-sm flex items-center gap-2',
+                            timelineSaveStatus === 'error' && 'border-red-500/40 bg-red-500/10 text-red-200',
+                            timelineSaveStatus === 'success' && 'border-green-500/30 bg-green-500/10 text-green-300',
+                            timelineSaveStatus === 'saving' && 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+                          )}
+                        >
+                          <Info size={16} />
+                          {timelineSaveMessage}
+                        </div>
+                      )}
+
                       <div className="flex flex-wrap items-center justify-end gap-3">
-                        {timelineSaveMessage && (
-                          <p
-                            className={clsx(
-                              'text-xs mr-auto',
-                              timelineSaveStatus === 'error' && 'text-red-400',
-                              timelineSaveStatus === 'success' && 'text-green-400',
-                              timelineSaveStatus === 'saving' && 'text-text-secondary',
-                            )}
-                          >
-                            {timelineSaveMessage}
-                          </p>
-                        )}
                         <Button
                           className="bg-bg-primary shadow-transparent hover:bg-bg-primary text-white shadow-none focus:outline-none focus:ring-0"
                           disabled={timelineSaveStatus === 'saving'}
@@ -784,6 +1140,296 @@ export default function SettingsPanel({
                       </div>
                     </div>
                   </div>
+
+                  {isAdmin && (
+                    <div className="p-6 bg-surface rounded-xl shadow-md lg:col-span-2">
+                      <div className="flex items-center justify-between mb-6">
+                        <div>
+                          <h2 className="text-xl font-semibold text-accent">Admin Storage Diagnostics</h2>
+                          <p className="text-sm text-text-secondary mt-1">
+                            View disk usage and session paths.
+                          </p>
+                        </div>
+                        <Button
+                          onClick={refreshStorageDiagnostics}
+                          disabled={storageDiagnosticsStatus === 'loading'}
+                          variant="secondary"
+                          size="sm"
+                        >
+                          <RefreshCw
+                            size={16}
+                            className={clsx('mr-2', storageDiagnosticsStatus === 'loading' && 'animate-spin')}
+                          />
+                          Refresh
+                        </Button>
+                      </div>
+
+                      {storageDiagnosticsError && (
+                        <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                          <div className="font-medium flex items-center gap-2">
+                            <Info size={16} />
+                            {storageDiagnosticsError.message || 'Failed to load storage diagnostics.'}
+                          </div>
+                          {storageDiagnosticsError.diagnostic && (
+                            <div className="mt-2 text-xs font-mono bg-black/20 p-2 rounded">
+                              {storageDiagnosticsError.diagnostic}
+                            </div>
+                          )}
+                          {storageDiagnosticsError.correlationId && (
+                            <div className="mt-1 text-xs opacity-70">
+                              ID: {storageDiagnosticsError.correlationId}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {storageActionError && (
+                        <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                          <div className="font-medium">{storageActionError.message || 'Action failed.'}</div>
+                          {storageActionError.diagnostic && (
+                            <div className="mt-2 text-xs font-mono bg-black/20 p-2 rounded">
+                              {storageActionError.diagnostic}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {!storageActionError && storageActionMessage && (
+                        <div className="mb-6 rounded-lg border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-300 flex items-center gap-2">
+                          <Info size={16} />
+                          {storageActionMessage}
+                        </div>
+                      )}
+
+                      <div className="space-y-8">
+                        {/* Sessions Root */}
+                        <SettingItem
+                          label="Sessions Root"
+                          description={`The base directory where all sessions are stored. Last updated: ${storageLastUpdated}`}
+                        >
+                          <div className="flex gap-2">
+                            <Input
+                              type="text"
+                              value={storageDiagnostics?.sessions_root || 'Not yet refreshed'}
+                              readOnly
+                              className="font-mono text-xs flex-1"
+                            />
+                            <Button onClick={handleOpenSessionsRoot} variant="secondary" title="Open in Explorer">
+                              <FolderOpen size={16} />
+                            </Button>
+                          </div>
+                        </SettingItem>
+
+                        {/* Active Session */}
+                        <div className="pt-6 border-t border-border-color">
+                          <h3 className="text-base font-medium text-text-primary mb-4 flex items-center gap-2">
+                            <FolderOpen size={18} className="text-accent" />
+                            Active Session
+                          </h3>
+                          {storageSession ? (
+                            <div className="space-y-4">
+                              <SettingItem label="Base Path">
+                                <Input
+                                  value={storageSession.base_path}
+                                  readOnly
+                                  className="font-mono text-xs"
+                                />
+                              </SettingItem>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <SettingItem label="Raw Path">
+                                  <Input
+                                    value={storageSession.raw_path}
+                                    readOnly
+                                    className="font-mono text-xs"
+                                  />
+                                </SettingItem>
+                                <SettingItem label="Jpg Path">
+                                  <Input
+                                    value={storageSession.jpg_path}
+                                    readOnly
+                                    className="font-mono text-xs"
+                                  />
+                                </SettingItem>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-4 bg-bg-primary rounded-lg border border-border-color text-center text-text-secondary italic">
+                              No active session currently loaded.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Disk Usage */}
+                        <div className="pt-6 border-t border-border-color">
+                          <h3 className="text-base font-medium text-text-primary mb-4 flex items-center gap-2">
+                            <Cpu size={18} className="text-accent" />
+                            Disk Usage
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            <SettingItem label="Free Space">
+                              <Input
+                                value={
+                                  storageDiagnostics
+                                    ? formatBytes(storageDiagnostics.drive_free_bytes)
+                                    : '-'
+                                }
+                                readOnly
+                                className="font-mono text-xs"
+                              />
+                            </SettingItem>
+                            <SettingItem label="Total Space">
+                              <Input
+                                value={
+                                  storageDiagnostics
+                                    ? formatBytes(storageDiagnostics.drive_total_bytes)
+                                    : '-'
+                                }
+                                readOnly
+                                className="font-mono text-xs"
+                              />
+                            </SettingItem>
+                            <SettingItem
+                              label="Warning Threshold"
+                              description="Visual warning level"
+                            >
+                              <Input
+                                value={formatThreshold(storageDiagnostics?.warning_threshold_bytes)}
+                                readOnly
+                                className="font-mono text-xs"
+                              />
+                            </SettingItem>
+                            <SettingItem
+                              label="Critical Threshold"
+                              description="Lockout threshold"
+                            >
+                              <Input
+                                value={formatThreshold(storageDiagnostics?.critical_threshold_bytes)}
+                                readOnly
+                                className="font-mono text-xs"
+                              />
+                            </SettingItem>
+                          </div>
+                        </div>
+
+                        {/* Cleanup Sessions */}
+                        <div className="pt-6 border-t border-border-color">
+                          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between mb-4">
+                            <div>
+                              <h3 className="text-base font-medium text-text-primary mb-1 flex items-center gap-2">
+                                <Trash2 size={18} className="text-accent" />
+                                Cleanup Sessions
+                              </h3>
+                              <p className="text-xs text-text-secondary">
+                                Select old sessions to permanently remove them from the sessions root.
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                onClick={refreshCleanupSessions}
+                                disabled={cleanupStatus === 'loading' || cleanupStatus === 'deleting'}
+                                variant="secondary"
+                              >
+                                <RefreshCw
+                                  size={16}
+                                  className={clsx(
+                                    'mr-2',
+                                    cleanupStatus === 'loading' && 'animate-spin',
+                                  )}
+                                />
+                                Refresh
+                              </Button>
+                              <Button
+                                onClick={handleSelectAllCleanupSessions}
+                                disabled={
+                                  cleanupStatus === 'loading' ||
+                                  cleanupStatus === 'deleting' ||
+                                  cleanupSessions.filter((entry) => !entry.isActive).length === 0
+                                }
+                                variant="secondary"
+                              >
+                                <CheckSquare size={16} className="mr-2" />
+                                Select All
+                              </Button>
+                              <Button
+                                onClick={handleCleanupDelete}
+                                disabled={selectedCleanupSessions.length === 0 || cleanupStatus !== 'idle'}
+                                variant="destructive"
+                              >
+                                <Trash2 size={16} className="mr-2" />
+                                Delete Selected
+                              </Button>
+                            </div>
+                          </div>
+
+                          {cleanupError && (
+                            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                              <div className="font-medium">{cleanupError.message || 'Cleanup failed.'}</div>
+                              {cleanupError.diagnostic && (
+                                <div className="mt-2 text-xs font-mono bg-black/20 p-2 rounded">
+                                  {cleanupError.diagnostic}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {!cleanupError && cleanupMessage && (
+                            <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-300 flex items-center gap-2">
+                              <Info size={16} />
+                              {cleanupMessage}
+                            </div>
+                          )}
+
+                          {cleanupSessions.length === 0 ? (
+                            <div className="p-4 bg-bg-primary rounded-lg border border-border-color text-center text-text-secondary italic">
+                              No sessions available for cleanup.
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {cleanupSessions.map((session) => {
+                                const isSelected = selectedCleanupSessions.includes(session.name);
+                                const isDisabled =
+                                  session.isActive || cleanupStatus === 'loading' || cleanupStatus === 'deleting';
+                                return (
+                                  <div
+                                    key={session.name}
+                                    className={clsx(
+                                      'flex items-start gap-3 rounded-lg border border-border-color bg-bg-primary p-3',
+                                      isDisabled && 'opacity-60',
+                                    )}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="mt-1 h-4 w-4 accent-accent"
+                                      checked={isSelected}
+                                      disabled={isDisabled}
+                                      onChange={() => toggleCleanupSelection(session.name)}
+                                    />
+                                    <div className="flex-1 space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-text-primary">{session.name}</span>
+                                        {session.isActive && (
+                                          <span className="text-[10px] uppercase tracking-wide bg-amber-500/20 text-amber-200 px-2 py-0.5 rounded-full">
+                                            Active
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-xs text-text-secondary break-all">{session.path}</div>
+                                      <div className="text-[11px] text-text-secondary">
+                                        {formatTimestamp(session.lastModified ?? null)} · {formatBytes(session.sizeBytes)}
+                                      </div>
+                                      {session.diagnostic && (
+                                        <div className="text-[11px] text-amber-200">{session.diagnostic}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -1046,7 +1692,7 @@ export default function SettingsPanel({
             </AnimatePresence>
           </div>
         </div>
-      </div>
+      </div >
     </>
   );
 }

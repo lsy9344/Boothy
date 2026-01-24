@@ -37,6 +37,7 @@ struct QueueState {
     pending_keys: Mutex<HashSet<String>>,
     inflight: Mutex<Option<BackgroundExportJob>>,
     paused: AtomicBool,
+    storage_lockout: AtomicBool,
     cancel_requested: Arc<AtomicBool>,
     resume_notify: Notify,
     idle_notify: Notify,
@@ -59,6 +60,7 @@ impl BackgroundExportQueue {
                 pending_keys: Mutex::new(HashSet::new()),
                 inflight: Mutex::new(None),
                 paused: AtomicBool::new(false),
+                storage_lockout: AtomicBool::new(false),
                 cancel_requested: Arc::new(AtomicBool::new(false)),
                 resume_notify: Notify::new(),
                 idle_notify: Notify::new(),
@@ -157,6 +159,14 @@ impl BackgroundExportQueue {
         self.state.paused.store(true, Ordering::SeqCst);
     }
 
+    pub fn set_storage_lockout(&self, active: bool) {
+        self.state.storage_lockout.store(active, Ordering::SeqCst);
+    }
+
+    pub fn is_storage_lockout(&self) -> bool {
+        self.state.storage_lockout.load(Ordering::SeqCst)
+    }
+
     pub fn resume(&self) {
         self.state.paused.store(false, Ordering::SeqCst);
         self.state.resume_notify.notify_waiters();
@@ -188,6 +198,7 @@ impl BackgroundExportQueue {
         self.pause();
         self.request_cancel();
         self.wait_for_idle().await;
+        self.state.cancel_requested.store(false, Ordering::SeqCst);
     }
 
     fn dedupe_key(path: &Path) -> String {
@@ -244,6 +255,9 @@ async fn process_background_export<R: Runtime>(
     }
 
     if cancel_flag.load(Ordering::SeqCst) {
+        if state.background_export_queue.is_storage_lockout() {
+            return Err(error::storage::STORAGE_CRITICAL.to_string());
+        }
         return Ok(());
     }
 
@@ -284,11 +298,14 @@ async fn process_background_export<R: Runtime>(
     let output_path_clone = output_path.clone();
 
     let processing_result = tokio::task::spawn_blocking(move || {
-        if cancel_for_blocking.load(Ordering::SeqCst) {
-            return Err("BACKGROUND_EXPORT_CANCELLED".to_string());
-        }
-
         let state = app_handle_clone.state::<AppState>();
+        if cancel_for_blocking.load(Ordering::SeqCst) {
+            return Err(if state.background_export_queue.is_storage_lockout() {
+                error::storage::STORAGE_CRITICAL.to_string()
+            } else {
+                "BACKGROUND_EXPORT_CANCELLED".to_string()
+            });
+        }
         let context = get_or_init_gpu_context(&state)?;
         let settings = load_settings_for_handle(&app_handle_clone).unwrap_or_default();
         let highlight_compression = settings.raw_highlight_compression.unwrap_or(2.5);
@@ -370,13 +387,16 @@ async fn process_background_export<R: Runtime>(
             Ok(())
         }
         Err(err) => {
-            let session_error = if err == "BACKGROUND_EXPORT_CANCELLED" {
+            let is_lockout = state.background_export_queue.is_storage_lockout();
+            let session_error = if err == "BACKGROUND_EXPORT_CANCELLED" && !is_lockout {
                 SessionExportError::new(
                     "BACKGROUND_EXPORT_CANCELLED",
                     "Background export cancelled.",
                     json!({ "correlationId": correlation_id_clone }),
                 )
-            } else if err == error::storage::STORAGE_CRITICAL {
+            } else if err == error::storage::STORAGE_CRITICAL
+                || (err == "BACKGROUND_EXPORT_CANCELLED" && is_lockout)
+            {
                 SessionExportError::new(
                     error::storage::STORAGE_CRITICAL,
                     error::storage::STORAGE_CRITICAL_MESSAGE,

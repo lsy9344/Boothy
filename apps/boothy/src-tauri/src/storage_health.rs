@@ -4,6 +4,7 @@ use crate::file_management::{
     BOOTHY_STORAGE_POLL_INTERVAL_SECONDS_DEFAULT, BOOTHY_STORAGE_WARNING_THRESHOLD_BYTES_DEFAULT,
     load_settings_for_handle,
 };
+use crate::AppState;
 use chrono::Utc;
 use log::warn;
 use serde::Serialize;
@@ -154,7 +155,8 @@ impl StorageHealthMonitor {
 
         let settings = load_storage_health_settings(&app_handle);
         let payload = build_payload(&session_path, &settings);
-        update_latest_payload(&self.state, payload.clone());
+        let previous_status = update_latest_payload(&self.state, payload.clone());
+        handle_storage_health_transition(&app_handle, previous_status, payload.status);
         emit_storage_health(&app_handle, payload);
 
         let handle = spawn_monitor_loop(
@@ -227,7 +229,8 @@ fn spawn_monitor_loop<R: Runtime>(
 
             let settings = load_storage_health_settings(&app_handle);
             let payload = build_payload(&session_path, &settings);
-            update_latest_payload(&state, payload.clone());
+            let previous_status = update_latest_payload(&state, payload.clone());
+            handle_storage_health_transition(&app_handle, previous_status, payload.status);
             emit_storage_health(&app_handle, payload);
 
             let interval = Duration::from_secs(settings.poll_interval_seconds.max(1));
@@ -281,6 +284,30 @@ fn update_latest_payload(
     let previous_status = guard.latest_payload.status;
     guard.latest_payload = payload;
     previous_status
+}
+
+fn handle_storage_health_transition<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    previous_status: StorageHealthStatus,
+    new_status: StorageHealthStatus,
+) {
+    if previous_status == new_status {
+        return;
+    }
+
+    let state = app_handle.state::<AppState>();
+    if new_status == StorageHealthStatus::Critical {
+        let queue = Arc::clone(&state.background_export_queue);
+        queue.set_storage_lockout(true);
+        tauri::async_runtime::spawn(async move {
+            queue.pause_and_cancel().await;
+        });
+    } else if previous_status == StorageHealthStatus::Critical {
+        state.background_export_queue.set_storage_lockout(false);
+        if state.export_task_handle.lock().unwrap().is_none() {
+            state.background_export_queue.resume();
+        }
+    }
 }
 
 fn emit_storage_health<R: Runtime>(app_handle: &AppHandle<R>, payload: StorageHealthPayload) {
@@ -362,6 +389,18 @@ fn sample_disk_space(_path: &Path) -> Result<DiskSpaceSample, String> {
 mod tests {
     use super::*;
 
+    fn make_payload(status: StorageHealthStatus) -> StorageHealthPayload {
+        StorageHealthPayload {
+            status,
+            free_bytes: 0,
+            total_bytes: 0,
+            warning_threshold_bytes: 10,
+            critical_threshold_bytes: 5,
+            sampled_at: Utc::now().to_rfc3339(),
+            diagnostic: None,
+        }
+    }
+
     #[test]
     fn classify_storage_status_thresholds() {
         let warning = 10;
@@ -394,5 +433,29 @@ mod tests {
             status_from_sample(None, &settings),
             StorageHealthStatus::Unknown
         );
+    }
+
+    #[test]
+    fn guard_critical_blocks_when_critical() {
+        let monitor = StorageHealthMonitor::new();
+        update_latest_payload(&monitor.state, make_payload(StorageHealthStatus::Critical));
+
+        let err = monitor
+            .guard_critical()
+            .expect_err("critical status should block guard");
+
+        assert_eq!(err.code, error::storage::STORAGE_CRITICAL);
+        assert_eq!(err.message, error::storage::STORAGE_CRITICAL_MESSAGE);
+    }
+
+    #[test]
+    fn guard_critical_allows_non_critical() {
+        let monitor = StorageHealthMonitor::new();
+
+        update_latest_payload(&monitor.state, make_payload(StorageHealthStatus::Healthy));
+        assert!(monitor.guard_critical().is_ok());
+
+        update_latest_payload(&monitor.state, make_payload(StorageHealthStatus::Unknown));
+        assert!(monitor.guard_critical().is_ok());
     }
 }

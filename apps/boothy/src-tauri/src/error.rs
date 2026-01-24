@@ -285,6 +285,9 @@ pub mod storage {
     pub const STORAGE_CRITICAL_MESSAGE: &str = "디스크 공간이 부족합니다. 직원에게 문의해 주세요.";
     pub const STORAGE_DIAGNOSTICS_FAILED: &str = "STORAGE_DIAGNOSTICS_FAILED";
     pub const STORAGE_OPEN_FAILED: &str = "STORAGE_OPEN_FAILED";
+    pub const STORAGE_CLEANUP_LIST_FAILED: &str = "STORAGE_CLEANUP_LIST_FAILED";
+    pub const STORAGE_CLEANUP_DELETE_FAILED: &str = "STORAGE_CLEANUP_DELETE_FAILED";
+    pub const STORAGE_CLEANUP_REQUIRES_ADMIN: &str = "STORAGE_CLEANUP_REQUIRES_ADMIN";
 
     pub fn critical_lockout() -> BoothyError {
         BoothyError::new(STORAGE_CRITICAL, STORAGE_CRITICAL_MESSAGE)
@@ -305,6 +308,32 @@ pub mod storage {
             STORAGE_OPEN_FAILED,
             "Failed to open the sessions folder. Please try again.",
             diagnostic,
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn cleanup_list_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            STORAGE_CLEANUP_LIST_FAILED,
+            "Failed to load session cleanup list. Please try again.",
+            diagnostic,
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn cleanup_delete_failed(diagnostic: impl Into<String>) -> BoothyError {
+        BoothyError::with_diagnostic(
+            STORAGE_CLEANUP_DELETE_FAILED,
+            "Failed to delete one or more sessions. Please try again.",
+            diagnostic,
+        )
+        .with_severity(ErrorSeverity::Error)
+    }
+
+    pub fn cleanup_requires_admin() -> BoothyError {
+        BoothyError::new(
+            STORAGE_CLEANUP_REQUIRES_ADMIN,
+            "Admin mode is required to perform cleanup actions.",
         )
         .with_severity(ErrorSeverity::Error)
     }

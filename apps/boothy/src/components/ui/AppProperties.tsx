@@ -62,6 +62,8 @@ export enum Invokes {
   BoothyCreateOrOpenSession = 'boothy_create_or_open_session',
   BoothyGetStorageDiagnostics = 'boothy_get_storage_diagnostics',
   BoothyOpenSessionsRootInExplorer = 'boothy_open_sessions_root_in_explorer',
+  BoothyListCleanupSessions = 'boothy_list_cleanup_sessions',
+  BoothyDeleteCleanupSessions = 'boothy_delete_cleanup_sessions',
   BoothyGetActiveSession = 'boothy_get_active_session',
   BoothyGetModeState = 'boothy_get_mode_state',
   BoothySetAdminPassword = 'boothy_set_admin_password',

@@ -3015,6 +3015,38 @@ fn storage_error_response(error: BoothyError, correlation_id: String) -> Storage
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupSessionsResponse {
+    ok: bool,
+    data: Option<Vec<session::cleanup::CleanupSessionEntry>>,
+    error: Option<UiErrorPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupDeleteResponse {
+    ok: bool,
+    data: Option<session::cleanup::CleanupDeleteSummary>,
+    error: Option<UiErrorPayload>,
+}
+
+fn cleanup_list_error_response(error: BoothyError, correlation_id: String) -> CleanupSessionsResponse {
+    CleanupSessionsResponse {
+        ok: false,
+        data: None,
+        error: Some(error.to_ui_payload(correlation_id)),
+    }
+}
+
+fn cleanup_delete_error_response(error: BoothyError, correlation_id: String) -> CleanupDeleteResponse {
+    CleanupDeleteResponse {
+        ok: false,
+        data: None,
+        error: Some(error.to_ui_payload(correlation_id)),
+    }
+}
+
 // Boothy session management commands
 #[tauri::command]
 async fn boothy_create_or_open_session(
@@ -3188,6 +3220,118 @@ fn boothy_open_sessions_root_in_explorer() -> Result<(), UiErrorPayload> {
             "Opening sessions root is only supported on Windows.",
         )
         .to_ui_payload(correlation_id))
+    }
+}
+
+#[tauri::command]
+async fn boothy_list_cleanup_sessions(
+    state: tauri::State<'_, AppState>,
+) -> Result<CleanupSessionsResponse, UiErrorPayload> {
+    let correlation_id = camera::generate_correlation_id();
+
+    if !state.mode_manager.is_admin() {
+        return Ok(cleanup_list_error_response(
+            error::storage::cleanup_requires_admin(),
+            correlation_id,
+        ));
+    }
+
+    let sessions_root = match session::SessionManager::get_sessions_root() {
+        Ok(root) => root,
+        Err(err) => {
+            let error = error::storage::cleanup_list_failed(err);
+            return Ok(cleanup_list_error_response(error, correlation_id));
+        }
+    };
+
+    let active_session_name = state
+        .session_manager
+        .get_active_session()
+        .map(|session| session.session_folder_name);
+
+    let list_result = tokio::task::spawn_blocking(move || {
+        session::cleanup::list_sessions(
+            &sessions_root,
+            active_session_name.as_deref(),
+        )
+    })
+    .await;
+
+    match list_result {
+        Ok(Ok(entries)) => Ok(CleanupSessionsResponse {
+            ok: true,
+            data: Some(entries),
+            error: None,
+        }),
+        Ok(Err(err)) => {
+            let error = error::storage::cleanup_list_failed(err);
+            Ok(cleanup_list_error_response(error, correlation_id))
+        }
+        Err(err) => {
+            let error = error::storage::cleanup_list_failed(err.to_string());
+            Ok(cleanup_list_error_response(error, correlation_id))
+        }
+    }
+}
+
+#[tauri::command]
+async fn boothy_delete_cleanup_sessions(
+    session_names: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<CleanupDeleteResponse, UiErrorPayload> {
+    let correlation_id = camera::generate_correlation_id();
+
+    if !state.mode_manager.is_admin() {
+        return Ok(cleanup_delete_error_response(
+            error::storage::cleanup_requires_admin(),
+            correlation_id,
+        ));
+    }
+
+    if session_names.is_empty() {
+        return Ok(CleanupDeleteResponse {
+            ok: true,
+            data: Some(session::cleanup::CleanupDeleteSummary::default()),
+            error: None,
+        });
+    }
+
+    let sessions_root = match session::SessionManager::get_sessions_root() {
+        Ok(root) => root,
+        Err(err) => {
+            let error = error::storage::cleanup_delete_failed(err);
+            return Ok(cleanup_delete_error_response(error, correlation_id));
+        }
+    };
+
+    let active_session_name = state
+        .session_manager
+        .get_active_session()
+        .map(|session| session.session_folder_name);
+
+    let delete_result = tokio::task::spawn_blocking(move || {
+        session::cleanup::delete_sessions(
+            &sessions_root,
+            active_session_name.as_deref(),
+            &session_names,
+        )
+    })
+    .await;
+
+    match delete_result {
+        Ok(Ok(summary)) => Ok(CleanupDeleteResponse {
+            ok: true,
+            data: Some(summary),
+            error: None,
+        }),
+        Ok(Err(err)) => {
+            let error = error::storage::cleanup_delete_failed(err);
+            Ok(cleanup_delete_error_response(error, correlation_id))
+        }
+        Err(err) => {
+            let error = error::storage::cleanup_delete_failed(err.to_string());
+            Ok(cleanup_delete_error_response(error, correlation_id))
+        }
     }
 }
 
@@ -3719,6 +3863,8 @@ fn main() {
             boothy_create_or_open_session,
             boothy_get_storage_diagnostics,
             boothy_open_sessions_root_in_explorer,
+            boothy_list_cleanup_sessions,
+            boothy_delete_cleanup_sessions,
             boothy_get_active_session,
             boothy_get_mode_state,
             boothy_set_admin_password,

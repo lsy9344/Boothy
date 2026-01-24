@@ -1,4 +1,109 @@
-# BMAD (local only)
-.bmad-core/
-.bmad-*/
-reference/uxui_presetfunction/src-tauri/rawler/
+# ----------------------------------------
+# OS / Editor
+# ----------------------------------------
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+*.swp
+*.swo
+*.swn
+*~
+
+# IDE (repo root only)
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+/.idea/
+/.vs/
+
+# ----------------------------------------
+# Logs / Runtime
+# ----------------------------------------
+*.log
+logs/
+
+# ----------------------------------------
+# Environment / Secrets
+# ----------------------------------------
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ----------------------------------------
+# Node / JS / TS
+# ----------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+.npm/
+.pnp.*
+.pnpm-store/
+.yarn/
+
+.eslintcache
+*.tsbuildinfo
+
+dist/
+dist-ssr/
+build/
+coverage/
+.nyc_output/
+.vite/
+.turbo/
+.next/
+.nuxt/
+.svelte-kit/
+out/
+
+*.local
+
+# ----------------------------------------
+# Rust / Cargo / Tauri
+# ----------------------------------------
+target/
+**/*.rs.bk
+
+# Tauri generated
+**/src-tauri/gen/schemas
+
+# dynamic libraries downloaded by 'ort' crate at build time
+**/src-tauri/resources/libonnxruntime.so
+**/src-tauri/resources/libonnxruntime.dylib
+**/src-tauri/resources/onnxruntime.dll
+
+# RapidRAW-DngLab (vendor/submodule) workspace
+**/src-tauri/rawler/
+
+# ----------------------------------------
+# .NET / Visual Studio
+# ----------------------------------------
+**/[Bb]in/
+**/[Oo]bj/
+TestResults/
+
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ----------------------------------------
+# Playwright
+# ----------------------------------------
+playwright-report/
+test-results/
+.cache/ms-playwright/
+
+# ----------------------------------------
+# BMAD / Codex
+# ----------------------------------------
+/.bmad-*/
+!/.bmad-core/
