@@ -3031,6 +3031,25 @@ struct CleanupDeleteResponse {
     error: Option<UiErrorPayload>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraStatusReport {
+    ipc_state: String,
+    last_error: Option<String>,
+    protocol_version: String,
+    request_id: Option<String>,
+    correlation_id: Option<String>,
+    status: Option<camera::CameraStatusResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraReconnectResult {
+    ok: bool,
+    attempts: u8,
+    last_error: Option<String>,
+}
+
 fn cleanup_list_error_response(error: BoothyError, correlation_id: String) -> CleanupSessionsResponse {
     CleanupSessionsResponse {
         ok: false,
@@ -3141,6 +3160,299 @@ async fn boothy_create_or_open_session(
     // The IPC client emits boothy-photo-transferred events which the UI catches and calls the command
 
     Ok(session)
+}
+
+#[tauri::command]
+async fn boothy_camera_get_status(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CameraStatusReport, String> {
+    let client_opt = {
+        let mut camera_client_guard = state.camera_client.lock().unwrap();
+        if camera_client_guard.is_none() {
+            let client = camera::ipc_client::CameraIpcClient::new(app_handle.clone());
+            *camera_client_guard = Some(client);
+        }
+        camera_client_guard.as_ref().cloned()
+    };
+
+    let Some(client) = client_opt else {
+        return Ok(CameraStatusReport {
+            ipc_state: "disconnected".to_string(),
+            last_error: Some("Camera client not initialized".to_string()),
+            protocol_version: camera::IPC_PROTOCOL_VERSION.to_string(),
+            request_id: None,
+            correlation_id: None,
+            status: None,
+        });
+    };
+
+    // Allow getStatus to bootstrap the sidecar even when no session is active yet.
+    // This keeps the customer UI camera lamp accurate before session start.
+    if !client.is_connected() {
+        if let Err(e) = client.start_sidecar().await {
+            log::warn!("Failed to start camera sidecar during getStatus: {}", e);
+        }
+    }
+
+    let correlation_id = camera::generate_correlation_id();
+    let status_result = client
+        .send_request_with_options(
+            "camera.getStatus".to_string(),
+            serde_json::json!({}),
+            correlation_id,
+            std::time::Duration::from_millis(4000),
+            false,
+        )
+        .await;
+
+    let diagnostics = client.diagnostics_snapshot();
+    let mut report = CameraStatusReport {
+        ipc_state: diagnostics.ipc_state,
+        last_error: diagnostics.last_error,
+        protocol_version: diagnostics.protocol_version,
+        request_id: diagnostics.request_id,
+        correlation_id: diagnostics.correlation_id,
+        status: None,
+    };
+
+    match status_result {
+        Ok(payload) => match serde_json::from_value::<camera::CameraStatusResponse>(payload) {
+            Ok(status) => {
+                // Always report the latest observed status (even if we decide to restart).
+                report.status = Some(status.clone());
+
+                let decision = client.note_camera_status(&status);
+                if decision.should_restart {
+                    log::warn!(
+                        "Camera not detected (streak). Auto-restarting sidecar. reason={:?}",
+                        decision.reason
+                    );
+                    let client_for_stop = client.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        client_for_stop.stop_sidecar();
+                    })
+                    .await
+                    .ok();
+
+                    if let Err(err) = client.start_sidecar().await {
+                        report.last_error =
+                            Some(format!("Failed to restart camera sidecar: {}", err));
+                        return Ok(report);
+                    }
+
+                    // Refresh diagnostics after restart attempt.
+                    let diagnostics = client.diagnostics_snapshot();
+                    report.ipc_state = diagnostics.ipc_state;
+                    report.last_error = diagnostics.last_error;
+                    report.request_id = diagnostics.request_id;
+                    report.correlation_id = diagnostics.correlation_id;
+
+                    let retry_corr = camera::generate_correlation_id();
+                    match client
+                        .send_request_with_options(
+                            "camera.getStatus".to_string(),
+                            serde_json::json!({}),
+                            retry_corr,
+                            std::time::Duration::from_millis(4000),
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(retry_payload) => {
+                            match serde_json::from_value::<camera::CameraStatusResponse>(
+                                retry_payload,
+                            ) {
+                                Ok(retry_status) => {
+                                    let _ = client.note_camera_status(&retry_status);
+                                    report.status = Some(retry_status);
+                                    report.last_error = None;
+                                }
+                                Err(err) => {
+                                    report.last_error = Some(format!(
+                                        "Invalid camera.getStatus response after restart: {}",
+                                        err
+                                    ));
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            report.last_error =
+                                Some(format!("camera.getStatus failed after restart: {}", err));
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                report.last_error = Some(format!("Invalid camera.getStatus response: {}", err));
+            }
+        },
+        Err(err) => {
+            report.last_error = Some(err);
+        }
+    }
+
+    Ok(report)
+}
+
+#[tauri::command]
+async fn boothy_camera_reconnect(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CameraReconnectResult, String> {
+    let client_opt = {
+        let mut camera_client_guard = state.camera_client.lock().unwrap();
+        if camera_client_guard.is_none() {
+            let client = camera::ipc_client::CameraIpcClient::new(app_handle.clone());
+            *camera_client_guard = Some(client);
+        }
+        camera_client_guard.as_ref().cloned()
+    };
+
+    let Some(client) = client_opt else {
+        return Err("Camera client not initialized".to_string());
+    };
+
+    let backoff = [250u64, 500, 1000];
+    let mut last_error: Option<String> = None;
+
+    for (index, delay_ms) in backoff.iter().enumerate() {
+        let attempt = (index + 1) as u8;
+        match client.start_sidecar().await {
+            Ok(_) => {
+                if let Some(session) = state.session_manager.get_active_session() {
+                    let correlation_id = camera::generate_correlation_id();
+                    let session_name = session
+                        .raw_path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    if let Err(err) = client
+                        .set_session_destination(session.raw_path.clone(), session_name, correlation_id)
+                        .await
+                    {
+                        last_error = Some(err);
+                        return Ok(CameraReconnectResult {
+                            ok: false,
+                            attempts: attempt,
+                            last_error,
+                        });
+                    }
+                }
+
+                return Ok(CameraReconnectResult {
+                    ok: true,
+                    attempts: attempt,
+                    last_error: None,
+                });
+            }
+            Err(err) => {
+                last_error = Some(err);
+                if index < backoff.len() - 1 {
+                    tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+                }
+            }
+        }
+    }
+
+    Ok(CameraReconnectResult {
+        ok: false,
+        attempts: backoff.len() as u8,
+        last_error,
+    })
+}
+
+#[tauri::command]
+async fn boothy_trigger_capture(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    if let Err(err) = state.storage_health_monitor.guard_critical() {
+        return Err(err.message);
+    }
+
+    let session = state
+        .session_manager
+        .get_active_session()
+        .ok_or("No active session available.".to_string())?;
+
+    let client_opt = {
+        let mut camera_client_guard = state.camera_client.lock().unwrap();
+        if camera_client_guard.is_none() {
+            let client = camera::ipc_client::CameraIpcClient::new(app_handle.clone());
+            *camera_client_guard = Some(client);
+        }
+        camera_client_guard.as_ref().cloned()
+    };
+
+    let Some(client) = client_opt else {
+        return Err("Camera client unavailable.".to_string());
+    };
+
+    if !client.is_connected() {
+        if let Err(e) = client.start_sidecar().await {
+            log::warn!("Failed to start camera sidecar for capture: {}", e);
+            let correlation_id = camera::generate_correlation_id();
+            let error = error::ipc::sidecar_start_failed(e);
+            let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
+            return Err("Camera service unavailable.".to_string());
+        }
+    }
+
+    if !client.is_connected() {
+        return Err("Camera service not connected.".to_string());
+    }
+
+    let session_name = session
+        .raw_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let setup_correlation_id = camera::generate_correlation_id();
+    if let Err(e) = client
+        .set_session_destination(
+            session.raw_path.clone(),
+            session_name,
+            setup_correlation_id,
+        )
+        .await
+    {
+        log::error!("Failed to set camera session destination: {}", e);
+        let error = error::camera::setup_failed(e);
+        let correlation_id = camera::generate_correlation_id();
+        let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
+        return Err("Failed to configure camera.".to_string());
+    }
+
+    let capture_correlation_id = camera::generate_correlation_id();
+    let response = client
+        .send_request(
+            "camera.capture".to_string(),
+            serde_json::json!({}),
+            capture_correlation_id.clone(),
+        )
+        .await?;
+
+    let success = response
+        .get("success")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+
+    if !success {
+        let error = error::camera::capture_failed("Sidecar returned success=false");
+        let _ = app_handle.emit(
+            "boothy-camera-error",
+            error.to_ui_payload(capture_correlation_id),
+        );
+        return Err("Capture failed.".to_string());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -3751,8 +4063,16 @@ fn main() {
             }
 
             let window_cfg = app.config().app.windows.get(0).unwrap().clone();
-            let transparent = settings.transparent.unwrap_or(window_cfg.transparent);
-            let decorations = settings.decorations.unwrap_or(window_cfg.decorations);
+            let mut transparent = settings.transparent.unwrap_or(window_cfg.transparent);
+            let mut decorations = settings.decorations.unwrap_or(window_cfg.decorations);
+
+            // Dev UX: a fully transparent, undecorated window is easy to "lose" (looks like nothing launched).
+            // Force a visible window in debug builds.
+            if cfg!(debug_assertions) {
+                transparent = false;
+                decorations = true;
+                log::info!("[Setup] Debug build: forcing window transparent=false, decorations=true");
+            }
 
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &window_cfg)
                 .unwrap()
@@ -3861,6 +4181,8 @@ fn main() {
             tagging::remove_tag_for_paths,
             culling::cull_images,
             boothy_create_or_open_session,
+            boothy_camera_get_status,
+            boothy_camera_reconnect,
             boothy_get_storage_diagnostics,
             boothy_open_sessions_root_in_explorer,
             boothy_list_cleanup_sessions,
@@ -3871,6 +4193,7 @@ fn main() {
             boothy_authenticate_admin,
             boothy_switch_to_customer_mode,
             boothy_set_current_preset,
+            boothy_trigger_capture,
             boothy_handle_photo_transferred,
             boothy_handle_export_decision,
             boothy_get_exported_count,

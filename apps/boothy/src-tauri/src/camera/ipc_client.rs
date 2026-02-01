@@ -1,6 +1,8 @@
 use super::ipc_models::*;
 use crate::error::{self, BoothyError};
 use log::{debug, error, info, warn};
+use serde::Serialize;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -8,9 +10,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use std::time::{Duration as StdDuration, Instant};
+use tokio::sync::oneshot;
 
 const PIPE_NAME: &str = "\\\\.\\pipe\\boothy_camera_sidecar";
 const IPC_TIMEOUT_MS: u64 = 5000;
+const STATUS_MONITOR_INTERVAL: StdDuration = StdDuration::from_secs(5);
+const STATUS_MONITOR_TIMEOUT: StdDuration = StdDuration::from_secs(4);
+const STATUS_MONITOR_INITIAL_DELAY: StdDuration = StdDuration::from_secs(2);
+const STATUS_MONITOR_ERROR_BACKOFF_MAX: StdDuration = StdDuration::from_secs(30);
 
 /// Camera IPC Client State
 /// Manages sidecar process lifecycle and Named Pipe communication
@@ -22,6 +30,9 @@ pub struct CameraIpcClient {
     /// Whether the sidecar is connected
     connected: Arc<Mutex<bool>>,
 
+    /// IPC diagnostics state
+    diagnostics: Arc<Mutex<CameraDiagnosticsInternal>>,
+
     /// App handle for emitting events
     app_handle: AppHandle,
 
@@ -30,6 +41,121 @@ pub struct CameraIpcClient {
 
     /// Prevent concurrent start attempts
     starting: Arc<AtomicBool>,
+
+    /// Pending request map for request/response correlation
+    pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, IpcError>>>>>,
+
+    /// Background camera.getStatus poller state (to keep UI lamp updated even if the frontend reloads/stalls)
+    status_monitor_started: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CameraDiagnosticsInternal {
+    ipc_state: IpcConnectionState,
+    last_error: Option<String>,
+    last_request_id: Option<String>,
+    last_correlation_id: Option<String>,
+    no_camera_streak: u32,
+    last_camera_detected_at: Option<Instant>,
+    last_forced_restart_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug, Default)]
+enum IpcConnectionState {
+    Connected,
+    #[default]
+    Disconnected,
+    Reconnecting,
+}
+
+impl IpcConnectionState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            IpcConnectionState::Connected => "connected",
+            IpcConnectionState::Disconnected => "disconnected",
+            IpcConnectionState::Reconnecting => "reconnecting",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraDiagnosticsSnapshot {
+    pub ipc_state: String,
+    pub last_error: Option<String>,
+    pub protocol_version: String,
+    pub request_id: Option<String>,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraAutoRestartReason {
+    LostAfterDetected,
+    ProlongedNoCamera,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CameraAutoRestartDecision {
+    pub should_restart: bool,
+    pub reason: Option<CameraAutoRestartReason>,
+}
+
+fn note_camera_status_internal(
+    diag: &mut CameraDiagnosticsInternal,
+    status: &CameraStatusResponse,
+    now: Instant,
+) -> CameraAutoRestartDecision {
+    if matches!(diag.ipc_state, IpcConnectionState::Disconnected) {
+        return CameraAutoRestartDecision {
+            should_restart: false,
+            reason: None,
+        };
+    }
+
+    if status.connected && status.camera_detected {
+        diag.no_camera_streak = 0;
+        diag.last_camera_detected_at = Some(now);
+        return CameraAutoRestartDecision {
+            should_restart: false,
+            reason: None,
+        };
+    }
+
+    diag.no_camera_streak = diag.no_camera_streak.saturating_add(1);
+
+    let throttle = StdDuration::from_secs(30);
+    if let Some(last_restart) = diag.last_forced_restart_at {
+        if now.duration_since(last_restart) < throttle {
+            return CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None,
+            };
+        }
+    }
+
+    let has_detected_before = diag.last_camera_detected_at.is_some();
+    let decision = if has_detected_before && diag.no_camera_streak >= 2 {
+        CameraAutoRestartDecision {
+            should_restart: true,
+            reason: Some(CameraAutoRestartReason::LostAfterDetected),
+        }
+    } else if !has_detected_before && diag.no_camera_streak >= 3 {
+        CameraAutoRestartDecision {
+            should_restart: true,
+            reason: Some(CameraAutoRestartReason::ProlongedNoCamera),
+        }
+    } else {
+        CameraAutoRestartDecision {
+            should_restart: false,
+            reason: None,
+        }
+    };
+
+    if decision.should_restart {
+        diag.last_forced_restart_at = Some(now);
+    }
+
+    decision
 }
 
 impl CameraIpcClient {
@@ -38,9 +164,12 @@ impl CameraIpcClient {
         Self {
             sidecar_process: Arc::new(Mutex::new(None)),
             connected: Arc::new(Mutex::new(false)),
+            diagnostics: Arc::new(Mutex::new(CameraDiagnosticsInternal::default())),
             app_handle,
             tx_pipe: Arc::new(Mutex::new(None)),
             starting: Arc::new(AtomicBool::new(false)),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            status_monitor_started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -49,14 +178,58 @@ impl CameraIpcClient {
         self.connected.lock().map(|g| *g).unwrap_or(false)
     }
 
+    pub fn note_camera_status(&self, status: &CameraStatusResponse) -> CameraAutoRestartDecision {
+        let now = Instant::now();
+        let mut diag = match self.diagnostics.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return CameraAutoRestartDecision {
+                    should_restart: false,
+                    reason: None,
+                };
+            }
+        };
+
+        note_camera_status_internal(&mut diag, status, now)
+    }
+
     /// Start the camera sidecar process and establish IPC connection
     pub async fn start_sidecar(&self) -> Result<(), String> {
         let correlation_id = generate_correlation_id();
         info!("[{}] Starting camera sidecar...", correlation_id);
+        self.set_ipc_state(IpcConnectionState::Reconnecting);
 
-        if self.starting.swap(true, Ordering::SeqCst) {
+        // If another start is already in progress (e.g. React dev StrictMode double-mount or rapid
+        // refreshes), wait briefly so callers don't get stuck seeing ipcState=reconnecting.
+        if self
+            .starting
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             warn!("[{}] Sidecar start already in progress", correlation_id);
-            return Ok(());
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+            while tokio::time::Instant::now() < deadline {
+                if self.is_connected() {
+                    return Ok(());
+                }
+                if !self.starting.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+
+            if self.is_connected() {
+                return Ok(());
+            }
+
+            // Try to become the starter if the other attempt has finished.
+            if self
+                .starting
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return Ok(());
+            }
         }
 
         struct StartGuard {
@@ -80,11 +253,12 @@ impl CameraIpcClient {
         }
 
         if self
-            .connect_to_pipe_with_retries(2, Duration::from_millis(100))
+            .connect_to_pipe_with_retries(2, Duration::from_millis(100), false)
             .await
             .is_ok()
         {
             self.start_event_listener();
+            self.start_status_monitor();
             info!("[{}] Connected to existing sidecar pipe", correlation_id);
             return Ok(());
         }
@@ -118,11 +292,12 @@ impl CameraIpcClient {
 
         if process_running {
             if self
-                .connect_to_pipe_with_retries(3, Duration::from_millis(200))
+                .connect_to_pipe_with_retries(3, Duration::from_millis(200), false)
                 .await
                 .is_ok()
             {
                 self.start_event_listener();
+                self.start_status_monitor();
                 info!("[{}] Connected to existing sidecar", correlation_id);
                 return Ok(());
             }
@@ -143,7 +318,12 @@ impl CameraIpcClient {
         );
 
         // Start sidecar process
-        let mut child = Command::new(&sidecar_path)
+        let mut command = Command::new(&sidecar_path);
+        if let Some(mode) = resolve_sidecar_mode() {
+            command.arg("--mode").arg(mode);
+        }
+
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -190,11 +370,13 @@ impl CameraIpcClient {
         // Connect to Named Pipe
         if let Err(err) = self.connect_to_pipe().await {
             self.stop_sidecar();
+            self.record_last_error(err.clone());
             return Err(err);
         }
 
         // Start event listener
         self.start_event_listener();
+        self.start_status_monitor();
 
         info!("[{}] Sidecar started and connected", correlation_id);
         Ok(())
@@ -211,6 +393,18 @@ impl CameraIpcClient {
         if let Ok(mut guard) = self.connected.lock() {
             *guard = false;
         }
+        self.set_ipc_state(IpcConnectionState::Disconnected);
+
+        // Ensure the UI refreshes even when this stop was triggered from a background poll / timeout path
+        // where we intentionally suppress boothy-camera-error events.
+        let _ = self.app_handle.emit(
+            "boothy-camera-status-hint",
+            serde_json::json!({
+                "source": "stopSidecar",
+                "correlationId": correlation_id,
+                "ipcState": "disconnected",
+            }),
+        );
 
         // Close pipe
         if let Ok(mut pipe_guard) = self.tx_pipe.lock() {
@@ -276,6 +470,16 @@ impl CameraIpcClient {
                 }
             }
 
+            // Prefer the repo resource sidecar when present so local runs don't depend on a separately installed x86 .NET runtime.
+            // (The Canon EDSDK we ship is x86, so the sidecar must remain win-x86.)
+            let repo_resource_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources")
+                .join("camera-sidecar")
+                .join("Boothy.CameraSidecar.exe");
+            if repo_resource_sidecar.exists() {
+                return Ok(repo_resource_sidecar);
+            }
+
             if let Some(path) = find_dev_sidecar("Debug") {
                 return Ok(path);
             }
@@ -317,7 +521,7 @@ impl CameraIpcClient {
 
     /// Connect to the Named Pipe
     async fn connect_to_pipe(&self) -> Result<(), String> {
-        self.connect_to_pipe_with_retries(10, Duration::from_millis(200))
+        self.connect_to_pipe_with_retries(10, Duration::from_millis(200), true)
             .await
     }
 
@@ -325,14 +529,22 @@ impl CameraIpcClient {
         &self,
         max_retries: usize,
         retry_delay: Duration,
+        record_error: bool,
     ) -> Result<(), String> {
         use std::fs::OpenOptions;
 
         let correlation_id = generate_correlation_id();
-        info!(
-            "[{}] Connecting to Named Pipe: {}",
-            correlation_id, PIPE_NAME
-        );
+        if record_error {
+            info!(
+                "[{}] Connecting to Named Pipe: {}",
+                correlation_id, PIPE_NAME
+            );
+        } else {
+            debug!(
+                "[{}] Probing for existing Named Pipe: {}",
+                correlation_id, PIPE_NAME
+            );
+        }
 
         // Retry connection with timeout
         let mut last_error = String::new();
@@ -351,6 +563,12 @@ impl CameraIpcClient {
                     if let Ok(mut guard) = self.connected.lock() {
                         *guard = true;
                     }
+                    self.set_ipc_state(IpcConnectionState::Connected);
+
+                    // Clear transient connection errors (e.g. initial "pipe not found" probes).
+                    if let Ok(mut diag) = self.diagnostics.lock() {
+                        diag.last_error = None;
+                    }
 
                     // Emit connection event
                     let _ = self.app_handle.emit("boothy-camera-connected", ());
@@ -366,16 +584,23 @@ impl CameraIpcClient {
             }
         }
 
-        Err(format!(
+        let message = format!(
             "Failed to connect to Named Pipe after {} retries: {}",
             max_retries, last_error
-        ))
+        );
+        if record_error {
+            self.set_ipc_state(IpcConnectionState::Disconnected);
+            self.record_last_error(message.clone());
+        }
+        Err(message)
     }
 
     /// Start listening for events from the sidecar
     fn start_event_listener(&self) {
         let app_handle = self.app_handle.clone();
         let connected = Arc::clone(&self.connected);
+        let pending_requests = Arc::clone(&self.pending_requests);
+        let diagnostics = Arc::clone(&self.diagnostics);
         let pipe = {
             let guard = self.tx_pipe.lock().unwrap();
             guard.as_ref().and_then(|pipe| pipe.try_clone().ok())
@@ -403,7 +628,12 @@ impl CameraIpcClient {
                                 "[{}] Received IPC message: {}",
                                 message.correlation_id, message.method
                             );
-                            handle_sidecar_event(&app_handle, message);
+                            handle_incoming_message(
+                                &app_handle,
+                                message,
+                                &pending_requests,
+                                &diagnostics,
+                            );
                         }
                         Err(e) => {
                             warn!("[{}] Failed to parse IPC message: {}", correlation_id, e);
@@ -416,11 +646,118 @@ impl CameraIpcClient {
                 }
             }
 
+            {
+                let mut pending = pending_requests.lock().unwrap();
+                for (_, sender) in pending.drain() {
+                    let _ = sender.send(Err(IpcError {
+                        code: IpcErrorCode::Disconnect,
+                        message: "Sidecar disconnected".to_string(),
+                        context: None,
+                    }));
+                }
+            }
+
             let mut guard = connected.lock().unwrap();
             if *guard {
                 *guard = false;
+                set_diagnostics_state(&diagnostics, IpcConnectionState::Disconnected);
                 let error = error::ipc::disconnect();
+                if let Ok(mut diag) = diagnostics.lock() {
+                    diag.last_error = Some(error.message.clone());
+                }
                 emit_camera_error(&app_handle, error, &correlation_id);
+            }
+        });
+    }
+
+    fn start_status_monitor(&self) {
+        if self.status_monitor_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let start_correlation_id = generate_correlation_id();
+        info!(
+            "[{}] Starting camera status monitor (poll=5s)",
+            start_correlation_id
+        );
+
+        let client = self.clone();
+        let app_handle = self.app_handle.clone();
+
+        tauri::async_runtime::spawn(async move {
+            let mut last_observed: Option<(bool, bool)> = None; // (connected, camera_detected)
+            let mut last_poll_had_error = false;
+            let mut error_backoff = STATUS_MONITOR_INTERVAL;
+
+            // Avoid immediately racing the frontend's initial getStatus during dev reload/StrictMode.
+            tokio::time::sleep(Duration::from_secs(STATUS_MONITOR_INITIAL_DELAY.as_secs())).await;
+
+            loop {
+                if !client.is_connected() {
+                    client.status_monitor_started.store(false, Ordering::SeqCst);
+                    let correlation_id = generate_correlation_id();
+                    info!("[{}] Camera status monitor stopped (disconnected)", correlation_id);
+                    return;
+                }
+
+                let correlation_id = generate_correlation_id();
+                let result = client
+                    .send_request_with_options(
+                        "camera.getStatus".to_string(),
+                        serde_json::json!({}),
+                        correlation_id.clone(),
+                        Duration::from_secs(STATUS_MONITOR_TIMEOUT.as_secs()),
+                        false,
+                    )
+                    .await;
+
+                if let Ok(payload) = result {
+                    last_poll_had_error = false;
+                    error_backoff = STATUS_MONITOR_INTERVAL;
+                    if let Ok(status) =
+                        serde_json::from_value::<CameraStatusResponse>(payload.clone())
+                    {
+                        let current = (status.connected, status.camera_detected);
+
+                        // Keep the auto-restart heuristics warm even when the frontend isn't polling.
+                        let _ = client.note_camera_status(&status);
+
+                        if last_observed.map_or(true, |prev| prev != current) {
+                            last_observed = Some(current);
+
+                            // Frontend listeners already treat this as a "refresh now" hint.
+                            // Payload is currently ignored by the UI, but include minimal context for future debugging.
+                            let _ = app_handle.emit(
+                                "boothy-camera-status-hint",
+                                serde_json::json!({
+                                    "source": "backendPoll",
+                                    "correlationId": correlation_id,
+                                    "connected": status.connected,
+                                    "cameraDetected": status.camera_detected,
+                                }),
+                            );
+                        }
+                    } else {
+                        debug!(
+                            "[{}] Status monitor: invalid camera.getStatus payload: {}",
+                            correlation_id, payload
+                        );
+                    }
+                } else if !last_poll_had_error {
+                    // Avoid spamming the UI: emit at most once until we observe a successful poll again.
+                    last_poll_had_error = true;
+                    error_backoff =
+                        std::cmp::min(error_backoff.saturating_mul(2u32), STATUS_MONITOR_ERROR_BACKOFF_MAX);
+                    let _ = app_handle.emit(
+                        "boothy-camera-status-hint",
+                        serde_json::json!({
+                            "source": "backendPollError",
+                            "correlationId": correlation_id,
+                        }),
+                    );
+                }
+
+                tokio::time::sleep(Duration::from_secs(error_backoff.as_secs())).await;
             }
         });
     }
@@ -432,11 +769,42 @@ impl CameraIpcClient {
         payload: serde_json::Value,
         correlation_id: String,
     ) -> Result<serde_json::Value, String> {
+        self.send_request_with_options(
+            method,
+            payload,
+            correlation_id,
+            Duration::from_millis(IPC_TIMEOUT_MS),
+            true,
+        )
+        .await
+    }
+
+    pub async fn send_request_with_timeout(
+        &self,
+        method: String,
+        payload: serde_json::Value,
+        correlation_id: String,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        self.send_request_with_options(method, payload, correlation_id, timeout, true)
+            .await
+    }
+
+    pub async fn send_request_with_options(
+        &self,
+        method: String,
+        payload: serde_json::Value,
+        correlation_id: String,
+        timeout: Duration,
+        emit_errors: bool,
+    ) -> Result<serde_json::Value, String> {
         if !self.is_connected() {
+            self.record_last_error("Sidecar not connected".to_string());
             return Err("Sidecar not connected".to_string());
         }
 
         let request_id = generate_request_id();
+        self.record_last_request(&request_id, &correlation_id);
         let message =
             IpcMessage::new_request(method, correlation_id.clone(), request_id.clone(), payload);
 
@@ -444,27 +812,84 @@ impl CameraIpcClient {
         let json = serde_json::to_string(&message)
             .map_err(|e| format!("Failed to serialize request: {}", e))?;
 
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending_requests.lock().unwrap();
+            pending.insert(request_id.clone(), tx);
+        }
+
         // Send via Named Pipe
         {
             let mut pipe_guard = self.tx_pipe.lock().unwrap();
             if let Some(pipe) = pipe_guard.as_mut() {
-                pipe.write_all(json.as_bytes())
-                    .map_err(|e| format!("Failed to write to pipe: {}", e))?;
-                pipe.write_all(b"\n")
-                    .map_err(|e| format!("Failed to write newline: {}", e))?;
-                pipe.flush()
-                    .map_err(|e| format!("Failed to flush pipe: {}", e))?;
+                if let Err(e) = pipe.write_all(json.as_bytes()) {
+                    self.pending_requests.lock().unwrap().remove(&request_id);
+                    self.record_last_error(format!("Failed to write to pipe: {}", e));
+                    return Err(format!("Failed to write to pipe: {}", e));
+                }
+                if let Err(e) = pipe.write_all(b"\n") {
+                    self.pending_requests.lock().unwrap().remove(&request_id);
+                    self.record_last_error(format!("Failed to write newline: {}", e));
+                    return Err(format!("Failed to write newline: {}", e));
+                }
+                if let Err(e) = pipe.flush() {
+                    self.pending_requests.lock().unwrap().remove(&request_id);
+                    self.record_last_error(format!("Failed to flush pipe: {}", e));
+                    return Err(format!("Failed to flush pipe: {}", e));
+                }
             } else {
+                self.pending_requests.lock().unwrap().remove(&request_id);
+                self.record_last_error("Pipe not available".to_string());
                 return Err("Pipe not available".to_string());
             }
         }
 
         debug!("[{}] Sent request: {}", correlation_id, message.method);
 
-        // TODO: Wait for response (requires response channel implementation)
-        // For MVP, we'll use a simplified approach
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        Ok(serde_json::json!({}))
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(payload))) => {
+                if let Ok(mut diag) = self.diagnostics.lock() {
+                    diag.last_error = None;
+                }
+                Ok(payload)
+            }
+            Ok(Ok(Err(ipc_error))) => {
+                self.record_last_error(ipc_error.diagnostic_message());
+                let boothy_error: BoothyError = ipc_error.into();
+                if emit_errors {
+                    emit_camera_error(&self.app_handle, boothy_error.clone(), &correlation_id);
+                }
+                Err(boothy_error.message)
+            }
+            Ok(Err(_)) => {
+                self.record_last_error("IPC response channel closed".to_string());
+                // Treat this as an unresponsive sidecar and force a restart on next request.
+                let client = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    client.stop_sidecar();
+                });
+                Err("IPC response channel closed".to_string())
+            }
+            Err(_) => {
+                self.pending_requests.lock().unwrap().remove(&request_id);
+                let timeout_error = error::ipc::timeout(&message.method);
+                self.record_last_error(timeout_error.message.clone());
+                if emit_errors {
+                    emit_camera_error(&self.app_handle, timeout_error.clone(), &correlation_id);
+                }
+                // If the sidecar doesn't respond within the deadline, it is often stuck in an EDSDK call.
+                // Force a restart so UI polling can recover without a full app restart.
+                warn!(
+                    "[{}] IPC timeout during {} - restarting sidecar",
+                    correlation_id, message.method
+                );
+                let client = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    client.stop_sidecar();
+                });
+                Err(timeout_error.message)
+            }
+        }
     }
 
     /// Set session destination (convenience method)
@@ -489,6 +914,34 @@ impl CameraIpcClient {
 
         Ok(())
     }
+
+    pub fn diagnostics_snapshot(&self) -> CameraDiagnosticsSnapshot {
+        let diagnostics = self.diagnostics.lock().unwrap().clone();
+        CameraDiagnosticsSnapshot {
+            ipc_state: diagnostics.ipc_state.as_str().to_string(),
+            last_error: diagnostics.last_error,
+            protocol_version: IPC_PROTOCOL_VERSION.to_string(),
+            request_id: diagnostics.last_request_id,
+            correlation_id: diagnostics.last_correlation_id,
+        }
+    }
+
+    fn record_last_request(&self, request_id: &str, correlation_id: &str) {
+        if let Ok(mut diag) = self.diagnostics.lock() {
+            diag.last_request_id = Some(request_id.to_string());
+            diag.last_correlation_id = Some(correlation_id.to_string());
+        }
+    }
+
+    fn record_last_error(&self, error: String) {
+        if let Ok(mut diag) = self.diagnostics.lock() {
+            diag.last_error = Some(error);
+        }
+    }
+
+    fn set_ipc_state(&self, state: IpcConnectionState) {
+        set_diagnostics_state(&self.diagnostics, state);
+    }
 }
 
 fn find_dev_sidecar(configuration: &str) -> Option<PathBuf> {
@@ -496,6 +949,21 @@ fn find_dev_sidecar(configuration: &str) -> Option<PathBuf> {
     dir.pop();
 
     for _ in 0..8 {
+        // Prefer a self-contained x86 publish output when present. This avoids requiring a separate
+        // x86 .NET runtime on the machine while still allowing Canon EDSDK (x86) interop.
+        let candidate = dir
+            .join("apps")
+            .join("camera-sidecar")
+            .join("bin")
+            .join(configuration)
+            .join("net8.0")
+            .join("win-x86")
+            .join("publish")
+            .join("Boothy.CameraSidecar.exe");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+
         let candidate = dir
             .join("apps")
             .join("camera-sidecar")
@@ -514,6 +982,16 @@ fn find_dev_sidecar(configuration: &str) -> Option<PathBuf> {
     None
 }
 
+fn resolve_sidecar_mode() -> Option<String> {
+    let mode = std::env::var("BOOTHY_CAMERA_MODE").ok()?;
+    let normalized = mode.trim().to_lowercase();
+    if normalized == "mock" || normalized == "real" {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
 fn emit_camera_error<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     error: BoothyError,
@@ -523,7 +1001,11 @@ fn emit_camera_error<R: tauri::Runtime>(
 }
 
 /// Handle events received from the sidecar
-fn handle_sidecar_event<R: tauri::Runtime>(app_handle: &AppHandle<R>, message: IpcMessage) {
+fn handle_sidecar_event<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    message: IpcMessage,
+    diagnostics: &Arc<Mutex<CameraDiagnosticsInternal>>,
+) {
     if message.message_type != IpcMessageType::Event {
         return;
     }
@@ -576,10 +1058,30 @@ fn handle_sidecar_event<R: tauri::Runtime>(app_handle: &AppHandle<R>, message: I
                         error_payload.error.message
                     );
 
+                    if let Ok(mut diag) = diagnostics.lock() {
+                        diag.last_error = Some(error_payload.error.diagnostic_message());
+                    }
+
                     let boothy_error: BoothyError = error_payload.error.into();
                     emit_camera_error(app_handle, boothy_error, &message.correlation_id);
                 }
             }
+        }
+        "event.camera.statusHint" => {
+            // Hint from sidecar that camera availability likely changed (power-cycle/hotplug).
+            // The UI can use this to refresh camera.getStatus immediately instead of waiting
+            // for polling intervals.
+            debug!(
+                "[{}] Camera status hint received",
+                message.correlation_id
+            );
+            let _ = app_handle.emit("boothy-camera-status-hint", message.payload);
+        }
+        "event.camera.statusChanged" => {
+            // Snapshot from sidecar representing the latest observed camera state.
+            // This is the source of truth for the UI lamp (push-first).
+            debug!("[{}] Camera status snapshot received", message.correlation_id);
+            let _ = app_handle.emit("boothy-camera-status", message.payload);
         }
 
         _ => {
@@ -588,6 +1090,80 @@ fn handle_sidecar_event<R: tauri::Runtime>(app_handle: &AppHandle<R>, message: I
                 message.correlation_id, message.method
             );
         }
+    }
+}
+
+fn handle_incoming_message<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    message: IpcMessage,
+    pending_requests: &Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, IpcError>>>>>,
+    diagnostics: &Arc<Mutex<CameraDiagnosticsInternal>>,
+) {
+    match message.message_type {
+        IpcMessageType::Event => {
+            handle_sidecar_event(app_handle, message, diagnostics);
+        }
+        IpcMessageType::Response => {
+            if let Some(request_id) = &message.request_id {
+                let sender = pending_requests.lock().unwrap().remove(request_id);
+                if let Some(sender) = sender {
+                    let payload = message.payload.unwrap_or_else(|| serde_json::json!({}));
+                    let _ = sender.send(Ok(payload));
+                } else {
+                    warn!(
+                        "[{}] No pending request for response {}",
+                        message.correlation_id, request_id
+                    );
+                }
+            } else {
+                warn!(
+                    "[{}] Response missing requestId for method {}",
+                    message.correlation_id, message.method
+                );
+            }
+        }
+        IpcMessageType::Error => {
+            if let Some(request_id) = &message.request_id {
+                let sender = pending_requests.lock().unwrap().remove(request_id);
+                if let Some(sender) = sender {
+                    let error = message.error.unwrap_or(IpcError {
+                        code: IpcErrorCode::Unknown,
+                        message: "Unknown IPC error".to_string(),
+                        context: None,
+                    });
+                    if let Ok(mut diag) = diagnostics.lock() {
+                        diag.last_error = Some(error.diagnostic_message());
+                    }
+                    let _ = sender.send(Err(error));
+                } else {
+                    warn!(
+                        "[{}] No pending request for error {}",
+                        message.correlation_id, request_id
+                    );
+                }
+            } else if let Some(error) = message.error {
+                if let Ok(mut diag) = diagnostics.lock() {
+                    diag.last_error = Some(error.diagnostic_message());
+                }
+                let boothy_error: BoothyError = error.into();
+                emit_camera_error(app_handle, boothy_error, &message.correlation_id);
+            }
+        }
+        IpcMessageType::Request => {
+            warn!(
+                "[{}] Unexpected request received from sidecar: {}",
+                message.correlation_id, message.method
+            );
+        }
+    }
+}
+
+fn set_diagnostics_state(
+    diagnostics: &Arc<Mutex<CameraDiagnosticsInternal>>,
+    state: IpcConnectionState,
+) {
+    if let Ok(mut diag) = diagnostics.lock() {
+        diag.ipc_state = state;
     }
 }
 
@@ -605,6 +1181,7 @@ mod tests {
         let app = tauri::test::mock_app();
         let app_handle = app.handle().clone();
         let (tx, rx) = mpsc::channel();
+        let diagnostics = Arc::new(Mutex::new(CameraDiagnosticsInternal::default()));
 
         app.listen_any("boothy-photo-transferred", move |event: tauri::Event| {
             let _ = tx.send(event.payload().to_string());
@@ -623,7 +1200,7 @@ mod tests {
             serde_json::to_value(payload).unwrap(),
         );
 
-        handle_sidecar_event(&app_handle, message);
+        handle_sidecar_event(&app_handle, message, &diagnostics);
 
         let payload_str = rx
             .recv_timeout(Duration::from_secs(1))
@@ -641,6 +1218,7 @@ mod tests {
         let app = tauri::test::mock_app();
         let app_handle = app.handle().clone();
         let (tx, rx) = mpsc::channel();
+        let diagnostics = Arc::new(Mutex::new(CameraDiagnosticsInternal::default()));
 
         app.listen_any("boothy-camera-error", move |event: tauri::Event| {
             let _ = tx.send(event.payload().to_string());
@@ -660,7 +1238,7 @@ mod tests {
             serde_json::to_value(payload).unwrap(),
         );
 
-        handle_sidecar_event(&app_handle, message);
+        handle_sidecar_event(&app_handle, message, &diagnostics);
 
         let payload_str = rx
             .recv_timeout(Duration::from_secs(1))
@@ -674,5 +1252,153 @@ mod tests {
         );
         assert_eq!(value["diagnostic"], "[CameraNotConnected] Camera missing");
         assert_eq!(value["correlationId"], "corr-err");
+    }
+
+    #[test]
+    fn routes_response_to_pending_request() {
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+        let pending_requests: Arc<
+            Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, IpcError>>>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
+        let diagnostics = Arc::new(Mutex::new(CameraDiagnosticsInternal::default()));
+
+        let (tx, rx) = oneshot::channel();
+        pending_requests
+            .lock()
+            .unwrap()
+            .insert("req-123".to_string(), tx);
+
+        let message = IpcMessage::new_response(
+            "camera.getStatus".to_string(),
+            "corr-123".to_string(),
+            "req-123".to_string(),
+            serde_json::json!({ "connected": true }),
+        );
+
+        handle_incoming_message(&app_handle, message, &pending_requests, &diagnostics);
+
+        let received = tokio::runtime::Runtime::new().unwrap().block_on(rx).unwrap().unwrap();
+        assert_eq!(received["connected"], true);
+    }
+
+    #[test]
+    fn records_diagnostics_on_error_response() {
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+        let pending_requests: Arc<
+            Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, IpcError>>>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
+        let diagnostics = Arc::new(Mutex::new(CameraDiagnosticsInternal::default()));
+
+        let (tx, rx) = oneshot::channel();
+        pending_requests
+            .lock()
+            .unwrap()
+            .insert("req-err".to_string(), tx);
+
+        let message = IpcMessage::new_error(
+            "camera.getStatus".to_string(),
+            "corr-err".to_string(),
+            Some("req-err".to_string()),
+            IpcError {
+                code: IpcErrorCode::CameraNotConnected,
+                message: "Camera missing".to_string(),
+                context: None,
+            },
+        );
+
+        handle_incoming_message(&app_handle, message, &pending_requests, &diagnostics);
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(rx);
+
+        let snapshot = diagnostics.lock().unwrap();
+        assert!(snapshot
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("CameraNotConnected"));
+    }
+
+    #[test]
+    fn note_camera_status_restarts_after_lost_detected() {
+        let mut diag = CameraDiagnosticsInternal::default();
+        diag.ipc_state = IpcConnectionState::Connected;
+        let base = Instant::now();
+
+        let detected = CameraStatusResponse {
+            connected: true,
+            camera_detected: true,
+            session_destination: None,
+            camera_model: Some("EOS".to_string()),
+        };
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &detected, base),
+            CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None
+            }
+        );
+
+        let not_detected = CameraStatusResponse {
+            connected: true,
+            camera_detected: false,
+            session_destination: None,
+            camera_model: None,
+        };
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(5)),
+            CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None
+            }
+        );
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(10)),
+            CameraAutoRestartDecision {
+                should_restart: true,
+                reason: Some(CameraAutoRestartReason::LostAfterDetected)
+            }
+        );
+
+        // Immediate follow-up is throttled.
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(12)),
+            CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None
+            }
+        );
+    }
+
+    #[test]
+    fn note_camera_status_restarts_after_prolonged_no_camera() {
+        let mut diag = CameraDiagnosticsInternal::default();
+        diag.ipc_state = IpcConnectionState::Connected;
+        let base = Instant::now();
+
+        let not_detected = CameraStatusResponse {
+            connected: true,
+            camera_detected: false,
+            session_destination: None,
+            camera_model: None,
+        };
+
+        for i in 0..2 {
+            assert_eq!(
+                note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(5 * i)),
+                CameraAutoRestartDecision {
+                    should_restart: false,
+                    reason: None
+                }
+            );
+        }
+
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(10)),
+            CameraAutoRestartDecision {
+                should_restart: true,
+                reason: Some(CameraAutoRestartReason::ProlongedNoCamera)
+            }
+        );
     }
 }

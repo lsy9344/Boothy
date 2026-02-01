@@ -1,0 +1,61 @@
+﻿schema: 1
+story: '4.2'
+story_title: 'Admin Camera Diagnostics & Reconnect Workflows'
+gate: CONCERNS
+status_reason: '필수 테스트(UI/오프라인/수동)가 미완료이고, reconnect 호출 시 IPC 상태가 reconnecting으로 고정될 수 있음.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-25T04:20:57.1147915+09:00'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'TEST-001'
+    severity: medium
+    finding: 'UI/오프라인/수동 검증 시나리오가 수행되지 않았고 관련 테스트가 없음.'
+    suggested_action: 'AC2/5/6에 대한 UI 스모크/수동 테스트를 추가하고 결과를 기록.'
+    suggested_owner: dev
+  - id: 'REL-001'
+    severity: medium
+    finding: 'CameraIpcClient.start_sidecar가 이미 연결된 경우 ipc_state를 reconnecting으로 남겨 UI가 재연결 중으로 고정될 수 있음.'
+    suggested_action: '이미 연결된 경우 ipc_state를 connected로 유지/복구하도록 로직 수정.'
+    suggested_owner: dev
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 2, low: 0 }
+  recommendations:
+    must_fix:
+      - 'TEST-001'
+      - 'REL-001'
+    monitor: []
+
+quality_score: 80
+expires: '2026-02-08T00:00:00+09:00'
+
+evidence:
+  tests_reviewed: 4
+  risks_identified: 2
+  trace:
+    ac_covered: []
+    ac_gaps: [1, 2, 3, 4, 5, 6]
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: '새 네트워크/권한 변경 없음, admin 전용 UI gating 확인.'
+  performance:
+    status: PASS
+    notes: '5초 폴링 수준, 추가 부하 낮음.'
+  reliability:
+    status: CONCERNS
+    notes: '재연결 상태 고정 가능성과 미완료 테스트.'
+  maintainability:
+    status: PASS
+    notes: 'IPC 모델/명령 분리 유지, 타입 정의 일관적.'
+
+recommendations:
+  immediate:
+    - action: '재연결 시 이미 연결된 경우 ipc_state 복구 로직 추가'
+      refs: ['apps/boothy/src-tauri/src/camera/ipc_client.rs']
+    - action: 'AC2/5/6 관련 UI/오프라인/수동 테스트 수행 및 기록'
+      refs: ['docs/architecture/testing-strategy.md', 'docs/stories/4.2.admin-camera-diagnostics-reconnect-workflows.md']
+  future: []

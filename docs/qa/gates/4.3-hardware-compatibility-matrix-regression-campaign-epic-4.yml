@@ -1,0 +1,60 @@
+schema: 1
+story: '4.3'
+story_title: 'Hardware Compatibility Matrix + Regression Campaign (Epic 4)'
+gate: CONCERNS
+status_reason: 'AC는 충족했으나, 스토리 상태 전제(Review) 불일치 및 요구 표준 문서 경로 누락으로 CONCERNS 판단.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-01-24T22:02:53.6711534+09:00'
+
+top_issues:
+  - id: QA-STATUS-REVIEW
+    severity: medium
+    summary: '스토리 상태가 "Ready for Review"이며 요구 전제인 "Review"가 아님.'
+    suggested_owner: sm
+    refs:
+      - 'docs/stories/4.3.hardware-compatibility-matrix-regression-campaign.md'
+  - id: QA-STANDARDS-PATHS
+    severity: medium
+    summary: '요구된 표준 문서 경로(docs/coding-standards.md 등)가 존재하지 않아 대체 문서를 사용.'
+    suggested_owner: po
+    refs:
+      - 'docs/architecture/coding-standards.md'
+      - 'docs/architecture/source-tree.md'
+      - 'docs/architecture/testing-strategy.md'
+
+waiver:
+  active: false
+
+quality_score: 90
+expires: '2026-02-07T22:02:53.6711534+09:00'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: '문서 산출물이며 보안 영향 없음.'
+  performance:
+    status: PASS
+    notes: '문서 산출물이며 성능 영향 없음.'
+  reliability:
+    status: PASS
+    notes: '회귀 캠페인에 실패/복구 시나리오가 포함됨.'
+  maintainability:
+    status: PASS
+    notes: '요구사항-테스트 매핑 및 증거 필드 정의로 유지보수성 양호.'
+
+recommendations:
+  immediate:
+    - action: '스토리 상태를 "Review"로 변경 후 QA 게이트 재확인'
+      refs: ['docs/stories/4.3.hardware-compatibility-matrix-regression-campaign.md']
+  future:
+    - action: '회귀 캠페인 결과 요약에 Matrix Row ID 필드 추가'
+      refs: ['docs/qa/assessments/4.3-regression-campaign-20260124.md']
+    - action: '증거 폴더 네이밍 규칙 명시'
+      refs: ['docs/qa/assessments/4.3-hardware-compatibility-matrix-20260124.md']

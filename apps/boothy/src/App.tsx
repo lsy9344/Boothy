@@ -121,6 +121,10 @@ import {
   ThumbnailSize,
   ThumbnailAspectRatio,
   CullingSuggestions,
+  BoothyCameraStatusReport,
+  BoothyCameraStatusSnapshot,
+  BoothyCameraReconnectResult,
+  BoothyCaptureStatus,
 } from './components/ui/AppProperties';
 import { ChannelConfig } from './components/adjustments/Curves';
 
@@ -237,6 +241,21 @@ const DEBUG = false;
 const STORAGE_CRITICAL_MESSAGE = '디스크 공간이 부족합니다. 직원에게 문의해 주세요.';
 const STORAGE_WARNING_MESSAGE = '저장 공간이 부족해지고 있습니다. 직원에게 문의해 주세요.';
 const REVOCATION_DELAY = 5000;
+const CAMERA_MESSAGE_NEEDS_CONNECTION = '카메라 연결을 확인해 주세요.';
+const CAMERA_MESSAGE_PREPARING = '촬영을 준비 중입니다. 잠시만 기다려 주세요.';
+const CAMERA_MESSAGE_UNAVAILABLE = '현재 촬영을 사용할 수 없습니다. 관리자에게 문의해 주세요.';
+const CAMERA_CUSTOMER_MESSAGES: Record<string, string> = {
+  CAMERA_NOT_CONNECTED: CAMERA_MESSAGE_NEEDS_CONNECTION,
+  CAMERA_DISCONNECT: CAMERA_MESSAGE_NEEDS_CONNECTION,
+  CAMERA_NOT_FOUND: CAMERA_MESSAGE_NEEDS_CONNECTION,
+  CAMERA_SETUP_FAILED: CAMERA_MESSAGE_PREPARING,
+  CAPTURE_FAILED: CAMERA_MESSAGE_PREPARING,
+  FILE_TRANSFER_FAILED: CAMERA_MESSAGE_PREPARING,
+  IPC_TIMEOUT: CAMERA_MESSAGE_PREPARING,
+  IPC_DISCONNECT: CAMERA_MESSAGE_UNAVAILABLE,
+  SIDECAR_START_FAILED: CAMERA_MESSAGE_UNAVAILABLE,
+  SIDECAR_CRASH: CAMERA_MESSAGE_UNAVAILABLE,
+};
 
 const useDelayedRevokeBlobUrl = (url: string | null | undefined) => {
   const previousUrlRef = useRef<string | null | undefined>(null);
@@ -503,6 +522,21 @@ function App() {
   const [boothyMode, setBoothyMode] = useState<'customer' | 'admin'>('customer');
   const [boothyHasAdminPassword, setBoothyHasAdminPassword] = useState(false);
   const [storageHealth, setStorageHealth] = useState<BoothyStorageHealthPayload | null>(null);
+  const [cameraStatus, setCameraStatus] = useState<BoothyCameraStatusReport | null>(null);
+  const [cameraStatusSnapshot, setCameraStatusSnapshot] = useState<BoothyCameraStatusSnapshot | null>(null);
+  const [cameraStatusLoading, setCameraStatusLoading] = useState(false);
+  const [cameraStatusError, setCameraStatusError] = useState<string | null>(null);
+  const cameraStatusRequestInFlightRef = useRef(false);
+  const cameraStatusRefreshQueuedRef = useRef(false);
+  const cameraStatusLastRequestAtRef = useRef<number | null>(null);
+  const cameraStatusRequestSeqRef = useRef(0);
+  const lastCameraSnapshotAtRef = useRef<number | null>(null);
+  const statusHintDebounceRef = useRef<number | null>(null);
+  const [cameraReconnectResult, setCameraReconnectResult] = useState<BoothyCameraReconnectResult | null>(null);
+  const [isCameraReconnecting, setIsCameraReconnecting] = useState(false);
+  const [captureStatus, setCaptureStatus] = useState<BoothyCaptureStatus>('idle');
+  const [captureErrorMessage, setCaptureErrorMessage] = useState<string | null>(null);
+  const captureStatusTimeoutRef = useRef<number | null>(null);
   const hasBoothySession = Boolean(boothySession?.session_name || boothySession?.session_folder_name);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isAdminActionRunning, setIsAdminActionRunning] = useState(false);
@@ -883,6 +917,115 @@ function App() {
   useEffect(() => {
     pendingResetRef.current = pendingReset;
   }, [pendingReset]);
+
+  const refreshCameraStatus = useCallback(async () => {
+    if (cameraStatusRequestInFlightRef.current) {
+      const startedAt = cameraStatusLastRequestAtRef.current;
+      if (typeof startedAt === 'number' && Date.now() - startedAt > 10000) {
+        console.warn('Camera status request appears stuck; allowing a new request.');
+        cameraStatusRequestInFlightRef.current = false;
+        cameraStatusLastRequestAtRef.current = null;
+        setCameraStatusLoading(false);
+        setCameraStatusError('카메라 상태 요청이 지연되어 재시도합니다.');
+      } else {
+        cameraStatusRefreshQueuedRef.current = true;
+        return;
+      }
+    }
+    cameraStatusLastRequestAtRef.current = Date.now();
+    cameraStatusRequestInFlightRef.current = true;
+    const requestSeq = (cameraStatusRequestSeqRef.current += 1);
+
+    setCameraStatusLoading(true);
+    try {
+      const invokePromise = invoke<BoothyCameraStatusReport>(Invokes.BoothyCameraGetStatus);
+      const timeoutMs = 9000;
+      const report = await Promise.race<BoothyCameraStatusReport>([
+        invokePromise,
+        new Promise<BoothyCameraStatusReport>((_resolve, reject) => {
+          window.setTimeout(() => reject(new Error('invoke-timeout')), timeoutMs);
+        }),
+      ]);
+      if (cameraStatusRequestSeqRef.current === requestSeq) {
+        setCameraStatus(report);
+        setCameraStatusError(null);
+        if (
+          report?.ipcState !== 'connected' ||
+          report?.status?.connected === false ||
+          report?.status?.cameraDetected === false
+        ) {
+          setCameraStatusSnapshot(null);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch camera status:', err);
+      if (cameraStatusRequestSeqRef.current === requestSeq) {
+        setCameraStatus(null);
+        setCameraStatusSnapshot(null);
+        if (err instanceof Error && err.message === 'invoke-timeout') {
+          setCameraStatusError('카메라 상태 요청이 시간 초과되었습니다. 잠시 후 다시 시도합니다.');
+        } else {
+          setCameraStatusError(typeof err === 'string' ? err : '카메라 상태를 가져오지 못했습니다.');
+        }
+      }
+    } finally {
+      if (cameraStatusRequestSeqRef.current === requestSeq) {
+        setCameraStatusLoading(false);
+        cameraStatusRequestInFlightRef.current = false;
+        cameraStatusLastRequestAtRef.current = null;
+        if (cameraStatusRefreshQueuedRef.current) {
+          cameraStatusRefreshQueuedRef.current = false;
+          window.setTimeout(() => {
+            void refreshCameraStatus();
+          }, 0);
+        }
+      }
+    }
+  }, []);
+
+  const clearCaptureStatusTimeout = useCallback(() => {
+    if (captureStatusTimeoutRef.current !== null) {
+      window.clearTimeout(captureStatusTimeoutRef.current);
+      captureStatusTimeoutRef.current = null;
+    }
+  }, []);
+
+  const setCaptureStatusState = useCallback(
+    (
+      status: BoothyCaptureStatus,
+      options?: { errorMessage?: string | null; resetAfterMs?: number },
+    ) => {
+      clearCaptureStatusTimeout();
+      setCaptureStatus(status);
+      if (typeof options?.errorMessage !== 'undefined') {
+        setCaptureErrorMessage(options.errorMessage);
+      } else if (status !== 'error') {
+        setCaptureErrorMessage(null);
+      }
+      if (options?.resetAfterMs) {
+        captureStatusTimeoutRef.current = window.setTimeout(() => {
+          setCaptureStatus('idle');
+          setCaptureErrorMessage(null);
+          captureStatusTimeoutRef.current = null;
+        }, options.resetAfterMs);
+      }
+    },
+    [clearCaptureStatusTimeout],
+  );
+
+  useEffect(() => () => clearCaptureStatusTimeout(), [clearCaptureStatusTimeout]);
+
+  useEffect(() => {
+    if (!hasBoothySession) {
+      setCaptureStatus('idle');
+      setCaptureErrorMessage(null);
+      clearCaptureStatusTimeout();
+    }
+  }, [hasBoothySession, clearCaptureStatusTimeout]);
+
+  useEffect(() => {
+    refreshCameraStatus();
+  }, [refreshCameraStatus]);
 
   const debouncedSetHistory = useMemo(
     () => debounce((newAdjustments) => setHistoryAdjustments(newAdjustments), 300),
@@ -1499,6 +1642,9 @@ function App() {
         invoke('frontend_ready')
           .then(() => {
             sendFrontendLog('info', 'frontend-ready');
+            // F5/WebView reload can restart the frontend while the Rust backend + sidecar remain connected.
+            // In that case, we may not receive boothy-camera-connected/statusHint events, so explicitly pull once.
+            refreshCameraStatus();
           })
           .catch((e) => {
             console.error('Failed to notify backend of readiness:', e);
@@ -1513,11 +1659,17 @@ function App() {
       .finally(() => {
         isInitialMount.current = false;
       });
-  }, [sendFrontendLog]);
+  }, [sendFrontendLog, refreshCameraStatus]);
 
   useEffect(() => {
     sendFrontendLog('info', 'app-mounted', { location: window.location.href });
   }, [sendFrontendLog]);
+
+  useEffect(() => {
+    // Ensure we pull camera status at least once on startup so the Library lamp doesn't remain red
+    // after push snapshots become stale (snapshots are emitted on change, not continuously).
+    refreshCameraStatus();
+  }, [refreshCameraStatus]);
 
   useEffect(() => {
     if (isInitialMount.current || !appSettings) {
@@ -3194,6 +3346,11 @@ function App() {
           handleShowEndScreen();
         }
       }),
+      listen('boothy-capture-started', () => {
+        if (isEffectActive) {
+          setCaptureStatusState('capturing');
+        }
+      }),
       listen('boothy-photo-transferred', (event: any) => {
         if (isEffectActive) {
           if (isEditingLockedRef.current) {
@@ -3211,13 +3368,27 @@ function App() {
             return;
           }
 
+          if (isCustomerMode && hasBoothySessionRef.current) {
+            setCaptureStatusState('transferring');
+          }
+
           invoke(Invokes.BoothyHandlePhotoTransferred, {
             path,
             correlationId: correlationId || '',
-          }).catch((err) => {
-            console.error('Failed to handle photo transfer:', err);
-            setError(typeof err === 'string' ? err : 'Failed to process the latest capture. Please try again.');
-          });
+          })
+            .then(() => {
+              if (isEffectActive && isCustomerMode && hasBoothySessionRef.current) {
+                setCaptureStatusState('stabilizing');
+              }
+            })
+            .catch((err) => {
+              const message = typeof err === 'string' ? err : '최신 촬영을 처리하지 못했습니다. 다시 시도해 주세요.';
+              console.error('Failed to handle photo transfer:', err);
+              setError(message);
+              if (isCustomerMode && hasBoothySessionRef.current) {
+                setCaptureStatusState('error', { errorMessage: message, resetAfterMs: 5000 });
+              }
+            });
         }
       }),
       listen('boothy-new-photo', (event: any) => {
@@ -3231,6 +3402,10 @@ function App() {
             return;
           }
 
+          if (isCustomerMode && hasBoothySessionRef.current) {
+            setCaptureStatusState('importing');
+          }
+
           void (async () => {
             try {
               const files = await refreshImageList();
@@ -3238,9 +3413,16 @@ function App() {
               if (files?.some((file) => file.path === path)) {
                 handleImageSelect(path);
               }
+              if (isCustomerMode && hasBoothySessionRef.current) {
+                setCaptureStatusState('ready', { resetAfterMs: 3000 });
+              }
             } catch (err) {
               console.error('Failed to refresh library for new photo:', err);
-              setError('Failed to refresh the library for the latest capture.');
+              const message = '최신 촬영 사진을 불러오지 못했습니다.';
+              setError(message);
+              if (isCustomerMode && hasBoothySessionRef.current) {
+                setCaptureStatusState('error', { errorMessage: message, resetAfterMs: 5000 });
+              }
             }
           })();
         }
@@ -3253,10 +3435,12 @@ function App() {
       listen('boothy-camera-error', (event: any) => {
         if (isEffectActive) {
           const payload = event.payload as BoothyCameraErrorPayload | string;
-          let message = 'Camera unavailable. Please check the connection.';
+          let message = CAMERA_MESSAGE_UNAVAILABLE;
 
           if (typeof payload === 'string') {
             message = payload;
+          } else if (typeof payload?.code === 'string' && CAMERA_CUSTOMER_MESSAGES[payload.code]) {
+            message = CAMERA_CUSTOMER_MESSAGES[payload.code];
           } else if (typeof payload?.message === 'string') {
             message = payload.message;
             if (boothyMode === 'admin' && typeof payload.diagnostic === 'string' && payload.diagnostic.trim()) {
@@ -3269,7 +3453,50 @@ function App() {
           }
 
           setError(message);
+          if (isCustomerMode && hasBoothySessionRef.current) {
+            setCaptureStatusState('error', { errorMessage: message, resetAfterMs: 5000 });
+          }
+          refreshCameraStatus();
         }
+      }),
+      listen('boothy-camera-connected', () => {
+        if (isEffectActive) {
+          refreshCameraStatus();
+        }
+      }),
+      listen('boothy-camera-status', (event: any) => {
+        if (!isEffectActive) return;
+        const payload = event.payload as BoothyCameraStatusSnapshot | string;
+        if (!payload || typeof payload !== 'object') {
+          return;
+        }
+        setCameraStatusSnapshot(payload);
+        lastCameraSnapshotAtRef.current = Date.now();
+      }),
+      listen('boothy-camera-status-hint', (event: any) => {
+        if (!isEffectActive) return;
+
+        const payload = event?.payload as any;
+        const hintSource = payload && typeof payload === 'object' ? payload.source : null;
+        const forceRefresh = hintSource === 'stopSidecar' || hintSource === 'backendPollError';
+
+        // If we already received a snapshot very recently, skip the pull fallback.
+        const lastSnapshotAt = lastCameraSnapshotAtRef.current;
+        if (!forceRefresh && typeof lastSnapshotAt === 'number' && Date.now() - lastSnapshotAt < 1000) {
+          return;
+        }
+
+        // Debounce: prevent duplicate refreshCameraStatus calls within 200ms
+        // This fixes the issue where multiple getStatus requests are triggered
+        // simultaneously when a single statusHint event is received
+        if (statusHintDebounceRef.current !== null) {
+          window.clearTimeout(statusHintDebounceRef.current);
+        }
+
+        statusHintDebounceRef.current = window.setTimeout(() => {
+          statusHintDebounceRef.current = null;
+          refreshCameraStatus();
+        }, 200);
       }),
       listen('boothy-storage-health', (event: any) => {
         if (isEffectActive) {
@@ -3292,6 +3519,12 @@ function App() {
     return () => {
       isEffectActive = false;
       listeners.forEach((p) => p.then((unlisten) => unlisten()));
+
+      // Clear statusHint debounce timer on cleanup
+      if (statusHintDebounceRef.current !== null) {
+        window.clearTimeout(statusHintDebounceRef.current);
+        statusHintDebounceRef.current = null;
+      }
     };
   }, [
     refreshAllFolderTrees,
@@ -3306,6 +3539,8 @@ function App() {
     handleShowEndScreen,
     startResetFlow,
     throttledSessionRefresh,
+    refreshCameraStatus,
+    setCaptureStatusState,
     boothyMode,
     isCustomerMode,
   ]);
@@ -3649,6 +3884,62 @@ function App() {
         console.error('Failed to sync Boothy mode state:', err);
       });
   }, []);
+
+  const handleCameraReconnect = useCallback(async () => {
+    if (isCameraReconnecting) {
+      return;
+    }
+    setIsCameraReconnecting(true);
+    setCameraReconnectResult(null);
+    try {
+      const result = await invoke<BoothyCameraReconnectResult>(Invokes.BoothyCameraReconnect);
+      setCameraReconnectResult(result);
+      await refreshCameraStatus();
+    } catch (err) {
+      setCameraReconnectResult({
+        ok: false,
+        attempts: 0,
+        lastError: typeof err === 'string' ? err : '재연결에 실패했습니다.',
+      });
+    } finally {
+      setIsCameraReconnecting(false);
+    }
+  }, [isCameraReconnecting, refreshCameraStatus]);
+
+  const handleTriggerCapture = useCallback(async () => {
+    if (!hasBoothySession) {
+      setError('세션을 시작해 주세요.');
+      return;
+    }
+
+    if (isEditingLocked) {
+      setError('현재 촬영할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
+
+    if (isStorageLockout) {
+      setError(STORAGE_CRITICAL_MESSAGE);
+      return;
+    }
+
+    if (!cameraStatus?.status?.connected || !cameraStatus?.status?.cameraDetected) {
+      setError(CAMERA_MESSAGE_NEEDS_CONNECTION);
+      return;
+    }
+
+    try {
+      await invoke(Invokes.BoothyTriggerCapture);
+    } catch (err) {
+      const message = typeof err === 'string' ? err : CAMERA_MESSAGE_UNAVAILABLE;
+      setError(message);
+    }
+  }, [
+    cameraStatus?.status?.cameraDetected,
+    cameraStatus?.status?.connected,
+    hasBoothySession,
+    isEditingLocked,
+    isStorageLockout,
+  ]);
 
   const handleAdminToggle = useCallback(() => {
     if (boothyMode === 'admin') {
@@ -4860,6 +5151,107 @@ function App() {
 
   const boothySessionLabel = boothySession?.session_name || boothySession?.session_folder_name || null;
 
+  const isCameraReady = Boolean(
+    cameraStatus?.ipcState === 'connected' &&
+      (((() => {
+        if (!cameraStatusSnapshot) return false;
+        const observedAtMs = Date.parse(cameraStatusSnapshot.observedAt);
+        if (!Number.isFinite(observedAtMs)) return false;
+        // Prefer push snapshots, but treat them as stale quickly so pull(getStatus) can take over
+        // when sidecar stops emitting events (power-cycle edge cases).
+        return Date.now() - observedAtMs <= 4000 && cameraStatusSnapshot.state === 'ready';
+      })()) ||
+        (cameraStatusSnapshot == null &&
+          cameraStatus?.status?.connected &&
+          cameraStatus?.status?.cameraDetected)),
+  );
+
+  const cameraStatusSnapshotFresh: BoothyCameraStatusSnapshot | null = (() => {
+    if (!cameraStatusSnapshot) return null;
+    const observedAtMs = Date.parse(cameraStatusSnapshot.observedAt);
+    if (!Number.isFinite(observedAtMs)) return null;
+    return Date.now() - observedAtMs <= 4000 ? cameraStatusSnapshot : null;
+  })();
+
+  const customerCameraStatusMessage = useMemo(() => {
+    if (!isCustomerMode || !hasBoothySession) {
+      return null;
+    }
+    if (cameraStatusError) {
+      return CAMERA_MESSAGE_UNAVAILABLE;
+    }
+    if (cameraStatus?.lastError && cameraStatus?.ipcState !== 'connected') {
+      return CAMERA_MESSAGE_UNAVAILABLE;
+    }
+    if (cameraStatusLoading || isCameraReconnecting || cameraStatus?.ipcState === 'reconnecting') {
+      return CAMERA_MESSAGE_PREPARING;
+    }
+    if (cameraStatus?.ipcState !== 'connected') {
+      return CAMERA_MESSAGE_PREPARING;
+    }
+    if (cameraStatusSnapshotFresh?.mode === 'mock') {
+      return CAMERA_MESSAGE_UNAVAILABLE;
+    }
+    if (cameraStatusSnapshotFresh?.state === 'connecting') {
+      return CAMERA_MESSAGE_PREPARING;
+    }
+    if (cameraStatusSnapshotFresh?.state === 'noCamera') {
+      return CAMERA_MESSAGE_NEEDS_CONNECTION;
+    }
+    if (cameraStatusSnapshotFresh?.state === 'error') {
+      return CAMERA_MESSAGE_UNAVAILABLE;
+    }
+    if (cameraStatus?.status && !cameraStatus.status.cameraDetected) {
+      return CAMERA_MESSAGE_NEEDS_CONNECTION;
+    }
+    if (cameraStatus?.status && !cameraStatus.status.connected) {
+      return CAMERA_MESSAGE_PREPARING;
+    }
+    if (cameraStatus?.lastError) {
+      return CAMERA_MESSAGE_UNAVAILABLE;
+    }
+    return null;
+  }, [
+    cameraStatus,
+    cameraStatusError,
+    cameraStatusLoading,
+    cameraStatusSnapshotFresh,
+    hasBoothySession,
+    isCameraReconnecting,
+    isCustomerMode,
+  ]);
+
+  const captureStatusMessage = useMemo(() => {
+    if (!isCustomerMode || !hasBoothySession) {
+      return null;
+    }
+    if (captureStatus === 'error') {
+      return captureErrorMessage || '촬영 중 오류가 발생했습니다.';
+    }
+    switch (captureStatus) {
+      case 'capturing':
+        return '촬영 중...';
+      case 'transferring':
+        return '전송 중...';
+      case 'stabilizing':
+        return '정리 중...';
+      case 'importing':
+        return '가져오는 중...';
+      case 'ready':
+        return '촬영 완료';
+      default:
+        return null;
+    }
+  }, [captureErrorMessage, captureStatus, hasBoothySession, isCustomerMode]);
+
+  const isCaptureDisabled =
+    !hasBoothySession ||
+    isEditingLocked ||
+    isStorageLockout ||
+    !isCameraReady ||
+    isCameraReconnecting ||
+    cameraStatusLoading;
+
   const handleLibraryExportClick = useCallback(() => {
     if (hasBoothySession) {
       handleExportDecisionOpen();
@@ -4872,12 +5264,20 @@ function App() {
     () => (
       <div className="flex flex-row flex-grow h-full min-h-0">
         <div className="flex-1 flex flex-col min-w-0 gap-2">
-          <MainLibrary
-            activePath={libraryActivePath}
-            appSettings={appSettings}
-            boothySessionName={boothySessionLabel}
-            sessionRemainingSeconds={sessionRemainingSeconds}
-            currentFolderPath={currentFolderPath}
+             <MainLibrary
+                activePath={libraryActivePath}
+                appSettings={appSettings}
+                boothySessionName={boothySessionLabel}
+                cameraStatusReport={cameraStatus}
+                cameraStatusSnapshot={cameraStatusSnapshotFresh}
+                isCameraStatusLoading={cameraStatusLoading}
+                isCameraReconnecting={isCameraReconnecting}
+                cameraStatusMessage={customerCameraStatusMessage}
+                isCameraUnavailable={customerCameraStatusMessage === CAMERA_MESSAGE_UNAVAILABLE}
+                captureStatus={captureStatus}
+                captureStatusMessage={captureStatusMessage}
+               sessionRemainingSeconds={sessionRemainingSeconds}
+             currentFolderPath={currentFolderPath}
             filterCriteria={filterCriteria}
             imageList={sortedImageList}
             imageRatings={imageRatings}
@@ -4901,9 +5301,11 @@ function App() {
             onLibraryRefresh={handleLibraryRefresh}
             onOpenFolder={handleOpenFolder}
             onStartSession={handleStartSession}
+            onTriggerCapture={handleTriggerCapture}
             onSettingsChange={handleSettingsChange}
             onThumbnailAspectRatioChange={setThumbnailAspectRatio}
             onThumbnailSizeChange={setThumbnailSize}
+            isCaptureDisabled={isCaptureDisabled}
             rootPath={rootPath}
             searchCriteria={searchCriteria}
             setFilterCriteria={setFilterCriteria}
@@ -4948,12 +5350,18 @@ function App() {
       libraryActivePath,
       appSettings,
       boothySessionLabel,
+      cameraStatus,
+      cameraStatusSnapshotFresh,
+      cameraStatusLoading,
+      customerCameraStatusMessage,
+      captureStatus,
+      captureStatusMessage,
+      isCaptureDisabled,
       filterCriteria,
       imageRatings,
       importState,
       isThumbnailsLoading,
       isViewLoading,
-      isTreeLoading,
       libraryScrollTop,
       libraryViewMode,
       multiSelectedPaths,
@@ -4970,12 +5378,36 @@ function App() {
       copiedAdjustments,
       libraryActiveAdjustments,
       isCustomerMode,
+      isCameraReconnecting,
       isEditingLocked,
       isStartingSession,
+      boothyMode,
+      handleClearSelection,
+      handleThumbnailContextMenu,
+      handleContinueSession,
+      handleMainLibraryContextMenu,
       handleLibraryExportClick,
+      handleCopyAdjustments,
+      handlePasteAdjustments,
+      handleRate,
+      handleResetAdjustments,
+      handleLibraryRefresh,
+      handleOpenFolder,
       handleReturnToEditor,
       handleExitToHome,
+      handleLibraryImageSingleClick,
+      handleImageSelect,
       handleStartSession,
+      handleTriggerCapture,
+      handleSettingsChange,
+      setFilterCriteria,
+      setLibraryScrollTop,
+      setLibraryViewMode,
+      setSearchCriteria,
+      setSortCriteria,
+      setThumbnailAspectRatio,
+      setThumbnailSize,
+      setIsCopyPasteSettingsModalOpen,
     ],
   );
 
@@ -5210,7 +5642,16 @@ function App() {
                             setExportState={setExportState}
                           />
                         )}
-                        {renderedRightPanel === Panel.CameraControls && <CameraControlsPanel />}
+                        {renderedRightPanel === Panel.CameraControls && (
+                          <CameraControlsPanel
+                            status={cameraStatus}
+                            snapshot={cameraStatusSnapshotFresh}
+                            isLoading={cameraStatusLoading}
+                            isReconnecting={isCameraReconnecting}
+                            reconnectResult={cameraReconnectResult}
+                            onReconnect={handleCameraReconnect}
+                          />
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>

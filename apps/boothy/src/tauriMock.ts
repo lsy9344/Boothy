@@ -1,4 +1,5 @@
 import { mockConvertFileSrc, mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { detectTauriRuntime, shouldMockTauri } from './tauriMockConfig';
 
 type MockSession = {
   base_path: string;
@@ -24,9 +25,20 @@ declare global {
   }
 }
 
-const shouldMockTauri = typeof window !== 'undefined' && !window.__TAURI_INTERNALS__;
+// NOTE:
+// In Tauri dev, `window.__TAURI_INTERNALS__` can appear to be missing during a WebView reload (e.g. F5),
+// which would incorrectly enable mocks and "disconnect" the UI from the real backend/sidecar.
+// Mocks are now opt-in only (DEV + env/query flag) to avoid accidentally breaking camera/IPC flows.
+const isTauriRuntime = typeof window !== 'undefined' && detectTauriRuntime(window);
+const shouldMock = typeof window !== 'undefined'
+  ? shouldMockTauri({
+      env: import.meta.env,
+      search: window.location.search,
+      isTauriRuntime,
+    })
+  : false;
 
-if (shouldMockTauri) {
+if (shouldMock) {
   mockWindows('main');
   mockConvertFileSrc('windows');
 
@@ -49,6 +61,19 @@ if (shouldMockTauri) {
       captured_at: '2026-01-01T00:00:00.000Z',
     },
     error: null,
+  };
+  const cameraStatusReportMock = {
+    ipcState: 'connected',
+    lastError: null,
+    protocolVersion: '1.0.0',
+    requestId: 'req-mock',
+    correlationId: 'corr-mock',
+    status: {
+      connected: true,
+      cameraDetected: true,
+      sessionDestination: defaultSession.raw_path,
+      cameraModel: 'Mock Canon EOS R5',
+    },
   };
   const cleanupSessionsMock = {
     ok: true,
@@ -101,6 +126,28 @@ if (shouldMockTauri) {
     };
 
     exportTimeouts.push(window.setTimeout(() => step(0), 150));
+  };
+
+  const triggerMockCapture = () => {
+    const correlationId = `corr-mock-${Date.now()}`;
+    const filename = `MOCK_${Date.now()}.CR3`;
+    const path = `${defaultSession.raw_path}\\${filename}`;
+
+    void emitEvent('boothy-capture-started');
+
+    window.setTimeout(() => {
+      void emitEvent('boothy-photo-transferred', {
+        path,
+        filename,
+        fileSize: 2048,
+        transferredAt: new Date().toISOString(),
+        correlationId,
+      });
+    }, 300);
+
+    window.setTimeout(() => {
+      void emitEvent('boothy-new-photo', { path, correlationId });
+    }, 800);
   };
 
   mockIPC(
@@ -156,6 +203,13 @@ if (shouldMockTauri) {
           return null;
         case 'boothy_get_mode_state':
           return { mode: 'customer', has_admin_password: false };
+        case 'boothy_camera_get_status':
+          return cameraStatusReportMock;
+        case 'boothy_camera_reconnect':
+          return { ok: true, attempts: 1, lastError: null };
+        case 'boothy_trigger_capture':
+          triggerMockCapture();
+          return null;
         case 'boothy_handle_export_decision': {
           const choice = (args?.choice as 'overwriteAll' | 'continueFromBackground') ?? 'continueFromBackground';
           scheduleExport(choice);

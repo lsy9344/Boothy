@@ -5,10 +5,29 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Canon EDSDK distributed for this project is x86; ensure the sidecar matches. -->
+    <PlatformTarget>x86</PlatformTarget>
+    <!-- Ship sidecar as a self-contained single-file exe so Boothy runs without requiring an x86 .NET runtime install. -->
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('..\\boothy\\src-tauri\\resources\\camera-sidecar\\edsdk\\EDSDK.dll')">
+    <None Include="..\\boothy\\src-tauri\\resources\\camera-sidecar\\edsdk\\EDSDK.dll">
+      <Link>edsdk\\EDSDK.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\\boothy\\src-tauri\\resources\\camera-sidecar\\edsdk\\EdsImage.dll" Condition="Exists('..\\boothy\\src-tauri\\resources\\camera-sidecar\\edsdk\\EdsImage.dll')">
+      <Link>edsdk\\EdsImage.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

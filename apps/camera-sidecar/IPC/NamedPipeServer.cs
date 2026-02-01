@@ -18,11 +18,16 @@ namespace Boothy.CameraSidecar.IPC
     public class NamedPipeServer
     {
         private const string PipeName = "boothy_camera_sidecar";
+        private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         private NamedPipeServerStream? pipeServer;
+        private StreamWriter? pipeWriter;
+        private readonly SemaphoreSlim sendLock = new SemaphoreSlim(1, 1);
         private CancellationTokenSource? cancellationTokenSource;
         private Task? listenerTask;
 
         public event EventHandler<IpcMessage>? OnMessageReceived;
+        public event EventHandler? OnClientConnected;
+        public event EventHandler? OnClientDisconnected;
         public bool IsRunning { get; private set; }
 
         /// <summary>
@@ -144,8 +149,10 @@ namespace Boothy.CameraSidecar.IPC
         {
             try
             {
-                using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
-                using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+                using var reader = new StreamReader(pipe, Utf8NoBom, leaveOpen: true);
+                using var writer = new StreamWriter(pipe, Utf8NoBom, leaveOpen: true) { AutoFlush = true };
+                pipeWriter = writer;
+                OnClientConnected?.Invoke(this, EventArgs.Empty);
 
                 while (pipe.IsConnected && !cancellationToken.IsCancellationRequested)
                 {
@@ -160,11 +167,11 @@ namespace Boothy.CameraSidecar.IPC
                         continue;
                     }
 
-                    // Validate protocol version
-                    if (message.ProtocolVersion != IpcProtocol.Version)
+                    // Validate protocol version (major-compatible)
+                    if (!IsProtocolCompatible(message.ProtocolVersion, IpcProtocol.Version))
                     {
                         Logger.Warning(message.CorrelationId,
-                            $"Protocol version mismatch: expected {IpcProtocol.Version}, got {message.ProtocolVersion}");
+                            $"Protocol version mismatch: expected {IpcProtocol.Version} (major-compatible), got {message.ProtocolVersion}");
 
                         var errorMsg = IpcMessage.NewError(
                             message.Method,
@@ -173,7 +180,7 @@ namespace Boothy.CameraSidecar.IPC
                             new IpcError
                             {
                                 Code = IpcErrorCode.VersionMismatch,
-                                Message = $"Protocol version mismatch: expected {IpcProtocol.Version}, got {message.ProtocolVersion}"
+                                Message = $"Protocol version mismatch: expected {IpcProtocol.Version} (major-compatible), got {message.ProtocolVersion}"
                             }
                         );
                         await SendMessageAsync(errorMsg, writer);
@@ -191,6 +198,39 @@ namespace Boothy.CameraSidecar.IPC
                 string correlationId = IpcHelpers.GenerateCorrelationId();
                 Logger.Error(correlationId, "Client communication error", ex);
             }
+            finally
+            {
+                pipeWriter = null;
+                OnClientDisconnected?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        private static bool IsProtocolCompatible(string actual, string expected)
+        {
+            static int? ParseMajor(string version)
+            {
+                if (string.IsNullOrWhiteSpace(version))
+                {
+                    return null;
+                }
+
+                var parts = version.Split('.', 2, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length <= 0)
+                {
+                    return null;
+                }
+
+                return int.TryParse(parts[0], out var major) ? major : null;
+            }
+
+            var actualMajor = ParseMajor(actual);
+            var expectedMajor = ParseMajor(expected);
+            if (actualMajor == null || expectedMajor == null)
+            {
+                return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return actualMajor.Value == expectedMajor.Value;
         }
 
         /// <summary>
@@ -198,7 +238,7 @@ namespace Boothy.CameraSidecar.IPC
         /// </summary>
         public async Task SendMessageAsync(IpcMessage message)
         {
-            if (pipeServer == null || !pipeServer.IsConnected)
+            if (pipeServer == null || !pipeServer.IsConnected || pipeWriter == null)
             {
                 Logger.Warning(message.CorrelationId, "Cannot send message: pipe not connected");
                 return;
@@ -206,8 +246,23 @@ namespace Boothy.CameraSidecar.IPC
 
             try
             {
-                using var writer = new StreamWriter(pipeServer, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-                await SendMessageAsync(message, writer);
+                await sendLock.WaitAsync();
+                try
+                {
+                    await SendMessageAsync(message, pipeWriter);
+                }
+                finally
+                {
+                    sendLock.Release();
+                }
+            }
+            catch (IOException)
+            {
+                Logger.Warning(message.CorrelationId, "Failed to send message: pipe disconnected");
+            }
+            catch (ObjectDisposedException)
+            {
+                Logger.Warning(message.CorrelationId, "Failed to send message: pipe disposed");
             }
             catch (Exception ex)
             {

@@ -1,4 +1,4 @@
-# 세션 생성 시 UI 깜빡임/클릭 불가 + `[TAURI] Couldn't find callback id ...`
+﻿# 세션 생성 시 UI 깜빡임/클릭 불가 + `[TAURI] Couldn't find callback id ...`
 
 ## 요약
 - **증상**: 프로그램 실행 후 세션을 생성/선택하면 화면이 깜빡이고 UI가 클릭 불가 상태가 되며, DevTools 콘솔에 Tauri 콜백 경고가 반복 출력됨.
@@ -99,4 +99,5 @@
 - `apps/boothy/src-tauri/src/main.rs` (앱 종료 시 sidecar 정리)
 - `apps/boothy/src-tauri/src/logging.rs` (stdout 로그에 target 포함)
 - `apps/camera-sidecar/Program.cs`, `apps/camera-sidecar/Logging/Logger.cs` (sidecar shutdown/log 파일)
+
 

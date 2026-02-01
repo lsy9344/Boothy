@@ -1,0 +1,53 @@
+schema: 1
+story: '4.1'
+story_title: 'Real Camera Capture + Transfer-Complete + Auto Ingest + Preset Apply + Export (E2E)'
+gate: CONCERNS
+status_reason: '실장비 전원 사이클(Shutdown→CameraAdded) 지연(~27s) 및 리로드(F5)/재진입 이후 상태 갱신이 끊기는 듯한 간헐 구간이 관측되어, 안정화/재현 확인 후 PASS로 승격 권장.'
+reviewer: 'James (Dev)'
+updated: '2026-02-01T11:08:53.0056644+09:00'
+
+top_issues:
+  - issue: '전원 사이클 후 상태 변화 지연(20~30초 체감)'
+    severity: 'medium'
+    refs:
+      - 'docs/problem_history/2026-01-30-camera-lamp-power-cycle-stuck.md'
+      - 'docs/qa/assessments/4.1-field-validation-20260201.md'
+  - issue: 'Frontend 리로드(F5) 이후 상태 갱신 중단처럼 보이는 간헐 패턴(원인 후보: mockIPC 오탐지)'
+    severity: 'high'
+    refs:
+      - 'apps/boothy/src/tauriMock.ts'
+      - 'docs/problem_history/2026-01-30-camera-lamp-power-cycle-stuck.md'
+      - 'docs/qa/assessments/4.1-field-validation-20260201.md'
+
+waiver:
+  active: false
+
+quality_score: 75
+expires: '2026-02-15T11:08:53.0056644+09:00'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 7]
+    ac_gaps: [3, 4, 5, 6, 8]
+
+nfr_validation:
+  security:
+    status: WAIVED
+    notes: '본 게이트는 실장비 E2E 안정화 중심으로, 보안 NFR은 별도 스토리/게이트에서 검증.'
+  performance:
+    status: CONCERNS
+    notes: '전원 사이클 후 재열거 지연 구간 존재(사용자 체감 영향).'
+  reliability:
+    status: CONCERNS
+    notes: '간헐적으로 상태 갱신이 끊기는 듯한 구간 존재 → field PASS 전 재현/해결 확인 필요.'
+  maintainability:
+    status: PASS
+    notes: '문제 히스토리/로그 기반 RCA 및 수정 이력 축적 중.'
+
+recommendations:
+  immediate:
+    - action: 'F5/화면 전환 후에도 실제 IPC로 연결되는지(tauriMock 오탐지) 재현/확정 및 재검증'
+      refs: ['apps/boothy/src/tauriMock.ts', 'docs/problem_history/2026-01-30-camera-lamp-power-cycle-stuck.md']
+  future: []

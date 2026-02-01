@@ -69,6 +69,9 @@ export enum Invokes {
   BoothySetAdminPassword = 'boothy_set_admin_password',
   BoothyAuthenticateAdmin = 'boothy_authenticate_admin',
   BoothySwitchToCustomerMode = 'boothy_switch_to_customer_mode',
+  BoothyCameraGetStatus = 'boothy_camera_get_status',
+  BoothyCameraReconnect = 'boothy_camera_reconnect',
+  BoothyTriggerCapture = 'boothy_trigger_capture',
   BoothyHandlePhotoTransferred = 'boothy_handle_photo_transferred',
   BoothyHandleExportDecision = 'boothy_handle_export_decision',
   BoothyGetExportedCount = 'boothy_get_exported_count',
@@ -292,3 +295,57 @@ export interface CullingSuggestions {
   blurryImages: ImageAnalysisResult[];
   failedPaths: string[];
 }
+
+export interface BoothyCameraStatus {
+  connected: boolean;
+  cameraDetected: boolean;
+  sessionDestination?: string | null;
+  cameraModel?: string | null;
+}
+
+export type BoothyCameraSnapshotState = 'noCamera' | 'connecting' | 'ready' | 'error';
+
+export interface BoothyCameraSdkSnapshot {
+  initialized: boolean;
+  diagnostic?: string | null;
+  resolvedPath?: string | null;
+  platform?: string | null;
+}
+
+export interface BoothyCameraStatusSnapshot {
+  seq: number;
+  observedAt: string;
+  reason: string;
+  mode: 'real' | 'mock';
+  sdk: BoothyCameraSdkSnapshot;
+  state: BoothyCameraSnapshotState;
+  connected: boolean;
+  cameraDetected: boolean;
+  cameraReady: boolean;
+  cameraCount?: number | null;
+  cameraModel?: string | null;
+}
+
+export interface BoothyCameraStatusReport {
+  ipcState: 'connected' | 'disconnected' | 'reconnecting';
+  lastError?: string | null;
+  protocolVersion: string;
+  requestId?: string | null;
+  correlationId?: string | null;
+  status?: BoothyCameraStatus | null;
+}
+
+export interface BoothyCameraReconnectResult {
+  ok: boolean;
+  attempts: number;
+  lastError?: string | null;
+}
+
+export type BoothyCaptureStatus =
+  | 'idle'
+  | 'capturing'
+  | 'transferring'
+  | 'stabilizing'
+  | 'importing'
+  | 'ready'
+  | 'error';

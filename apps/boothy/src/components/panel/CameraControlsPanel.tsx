@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Camera, ChevronDown, ChevronUp } from 'lucide-react';
+import { Camera, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { BoothyCameraStatusReport, BoothyCameraReconnectResult, BoothyCameraStatusSnapshot } from '../ui/AppProperties';
 
 const CAMERA_MODES = ['Manual', 'Aperture Priority', 'Shutter Priority', 'Program Auto'];
 const ISO_OPTIONS = ['Auto', '100', '200', '400', '800', '1600', '3200'];
@@ -9,11 +10,42 @@ const WHITE_BALANCE_OPTIONS = ['Auto', 'Daylight', 'Cloudy', 'Tungsten', 'Fluore
 
 interface CameraControlsPanelProps {
   title?: string;
+  status?: BoothyCameraStatusReport | null;
+  snapshot?: BoothyCameraStatusSnapshot | null;
+  isLoading?: boolean;
+  isReconnecting?: boolean;
+  reconnectResult?: BoothyCameraReconnectResult | null;
+  onReconnect?(): void;
 }
 
-export default function CameraControlsPanel({ title = 'Camera Controls' }: CameraControlsPanelProps) {
+export default function CameraControlsPanel({
+  title = 'Camera Controls',
+  status = null,
+  snapshot = null,
+  isLoading = false,
+  isReconnecting = false,
+  reconnectResult = null,
+  onReconnect,
+}: CameraControlsPanelProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
-  const isConnected = false;
+  const cameraStatus = status?.status ?? null;
+  const isConnected = Boolean(cameraStatus?.connected && cameraStatus?.cameraDetected);
+  const ipcState = status?.ipcState ?? 'disconnected';
+  const ipcLabel =
+    ipcState === 'connected' ? '연결됨' : ipcState === 'reconnecting' ? '재연결 중' : '연결 끊김';
+  const statusLabel = isConnected ? '카메라 연결됨' : '카메라 연결 필요';
+  const snapshotLabel = snapshot?.state === 'ready' ? 'ready' : snapshot?.state ?? null;
+  const statusDotClass =
+    isLoading || isReconnecting || ipcState === 'reconnecting'
+      ? 'bg-amber-400'
+      : snapshot?.state === 'ready'
+        ? 'bg-green-400'
+        : snapshot?.state === 'connecting'
+          ? 'bg-amber-400'
+          : isConnected
+            ? 'bg-green-400'
+            : 'bg-red-500';
+  const lastError = status?.lastError ?? (isLoading ? '상태 확인 중...' : '없음');
 
   const selectClassName =
     'w-full bg-bg-primary border border-border-color rounded-md px-2 py-1.5 text-sm text-text-primary disabled:opacity-50 disabled:cursor-not-allowed';
@@ -30,11 +62,69 @@ export default function CameraControlsPanel({ title = 'Camera Controls' }: Camer
       <div className="flex-grow overflow-y-auto p-4">
         <div className="flex items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-500'}`} />
-            <span className="text-sm text-text-secondary">
-              {isConnected ? 'Camera connected' : 'Camera not connected'}
-            </span>
+            <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
+            <span className="text-sm text-text-secondary">{statusLabel}</span>
+            <span className="text-xs text-text-secondary">IPC: {ipcLabel}</span>
+            {cameraStatus?.cameraModel && <span className="text-xs text-text-secondary">({cameraStatus.cameraModel})</span>}
           </div>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent text-button-text text-xs font-semibold disabled:opacity-60"
+            disabled={isReconnecting || !onReconnect}
+            onClick={onReconnect}
+            type="button"
+          >
+            <RefreshCw size={14} className={isReconnecting ? 'animate-spin' : ''} />
+            {isReconnecting ? '재연결 중...' : '재연결'}
+          </button>
+        </div>
+
+          <div className="bg-surface rounded-lg border border-border-color p-3 mb-4 space-y-2">
+            <div className="text-xs font-semibold text-text-secondary">Diagnostics</div>
+            <div className="grid grid-cols-[120px,1fr] gap-y-1 text-xs text-text-secondary">
+              <div>snapshot.state</div>
+              <div className="text-text-primary">{snapshotLabel ?? '-'}</div>
+              <div>snapshot.mode</div>
+              <div className="text-text-primary">{snapshot?.mode ?? '-'}</div>
+              <div>sdk.initialized</div>
+              <div className="text-text-primary">{typeof snapshot?.sdk?.initialized === 'boolean' ? String(snapshot.sdk.initialized) : '-'}</div>
+              <div>sdk.diagnostic</div>
+              <div className="text-text-primary break-all">{snapshot?.sdk?.diagnostic ?? '-'}</div>
+              <div>sdk.resolvedPath</div>
+              <div className="text-text-primary break-all">{snapshot?.sdk?.resolvedPath ?? '-'}</div>
+              <div>IPC 상태</div>
+              <div className="text-text-primary">{ipcLabel}</div>
+              <div>protocolVersion</div>
+              <div className="text-text-primary">{status?.protocolVersion ?? '-'}</div>
+              <div>requestId</div>
+            <div className="text-text-primary">{status?.requestId ?? '-'}</div>
+            <div>correlationId</div>
+            <div className="text-text-primary">{status?.correlationId ?? '-'}</div>
+            <div>camera.getStatus</div>
+            <div className="text-text-primary">
+              {cameraStatus
+                ? cameraStatus.connected
+                  ? cameraStatus.cameraDetected
+                    ? 'connected'
+                    : 'detected=false'
+                  : 'disconnected'
+                : 'unknown'}
+            </div>
+            <div>sessionDestination</div>
+            <div className="text-text-primary">{cameraStatus?.sessionDestination ?? '-'}</div>
+            <div>lastError</div>
+            <div className="text-text-primary">{lastError}</div>
+          </div>
+          {reconnectResult && (
+            <div
+              className={`mt-2 text-xs ${
+                reconnectResult.ok ? 'text-green-400' : 'text-red-400'
+              }`}
+            >
+              {reconnectResult.ok
+                ? `재연결 성공 (시도 ${reconnectResult.attempts}회)`
+                : `재연결 실패${reconnectResult.lastError ? `: ${reconnectResult.lastError}` : ''}`}
+            </div>
+          )}
         </div>
 
         <div className="bg-surface rounded-lg border border-border-color">

@@ -13,19 +13,83 @@ namespace Boothy.CameraSidecar.IPC
         public const string Version = "1.0.0";
     }
 
-    [JsonConverter(typeof(JsonStringEnumConverter))]
+    internal sealed class IpcMessageTypeJsonConverter : JsonStringEnumConverter
+    {
+        public IpcMessageTypeJsonConverter()
+            : base(JsonNamingPolicy.CamelCase, allowIntegerValues: false)
+        {
+        }
+    }
+
+    internal sealed class IpcErrorCodeJsonConverter : JsonConverter<IpcErrorCode>
+    {
+        public override IpcErrorCode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.String)
+            {
+                throw new JsonException($"Expected string for {nameof(IpcErrorCode)}");
+            }
+
+            var raw = reader.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                throw new JsonException($"Empty {nameof(IpcErrorCode)}");
+            }
+
+            // Accept both legacy ("CameraNotConnected") and canonical ("CAMERA_NOT_CONNECTED") forms.
+            if (Enum.TryParse(raw, ignoreCase: true, out IpcErrorCode parsed))
+            {
+                return parsed;
+            }
+
+            var normalized = raw.Replace("-", "_").Replace(" ", "_").Trim();
+            foreach (var value in Enum.GetValues<IpcErrorCode>())
+            {
+                if (string.Equals(ToScreamingSnakeCase(value.ToString()), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    return value;
+                }
+            }
+
+            throw new JsonException($"Unknown {nameof(IpcErrorCode)}: {raw}");
+        }
+
+        public override void Write(Utf8JsonWriter writer, IpcErrorCode value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(ToScreamingSnakeCase(value.ToString()));
+        }
+
+        private static string ToScreamingSnakeCase(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return name;
+            }
+
+            var chars = new List<char>(name.Length + 8);
+            for (int i = 0; i < name.Length; i++)
+            {
+                var c = name[i];
+                if (char.IsUpper(c) && i > 0)
+                {
+                    var prev = name[i - 1];
+                    if (char.IsLower(prev) || char.IsDigit(prev))
+                    {
+                        chars.Add('_');
+                    }
+                }
+                chars.Add(char.ToUpperInvariant(c));
+            }
+            return new string(chars.ToArray());
+        }
+    }
+
+    [JsonConverter(typeof(IpcMessageTypeJsonConverter))]
     public enum IpcMessageType
     {
-        [JsonPropertyName("request")]
         Request,
-
-        [JsonPropertyName("response")]
         Response,
-
-        [JsonPropertyName("event")]
         Event,
-
-        [JsonPropertyName("error")]
         Error
     }
 
@@ -112,37 +176,27 @@ namespace Boothy.CameraSidecar.IPC
         }
     }
 
-    [JsonConverter(typeof(JsonStringEnumConverter))]
+    [JsonConverter(typeof(IpcErrorCodeJsonConverter))]
     public enum IpcErrorCode
     {
-        [JsonPropertyName("VERSION_MISMATCH")]
         VersionMismatch,
 
-        [JsonPropertyName("TIMEOUT")]
         Timeout,
 
-        [JsonPropertyName("DISCONNECT")]
         Disconnect,
 
-        [JsonPropertyName("CAMERA_NOT_CONNECTED")]
         CameraNotConnected,
 
-        [JsonPropertyName("CAPTURE_FAILED")]
         CaptureFailed,
 
-        [JsonPropertyName("FILE_TRANSFER_FAILED")]
         FileTransferFailed,
 
-        [JsonPropertyName("INVALID_PAYLOAD")]
         InvalidPayload,
 
-        [JsonPropertyName("SESSION_DESTINATION_NOT_SET")]
         SessionDestinationNotSet,
 
-        [JsonPropertyName("FILE_SYSTEM_ERROR")]
         FileSystemError,
 
-        [JsonPropertyName("UNKNOWN")]
         Unknown
     }
 

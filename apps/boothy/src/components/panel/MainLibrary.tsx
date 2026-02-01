@@ -27,6 +27,9 @@ import SettingsPanel from './SettingsPanel';
 import { ThemeProps, THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
 import {
   AppSettings,
+  BoothyCameraStatusSnapshot,
+  BoothyCameraStatusReport,
+  BoothyCaptureStatus,
   FilterCriteria,
   ImageFile,
   LibraryViewMode,
@@ -67,6 +70,14 @@ interface MainLibraryProps {
   activePath: string | null;
   appSettings: AppSettings | null;
   boothySessionName?: string | null;
+  cameraStatusReport?: BoothyCameraStatusReport | null;
+  cameraStatusSnapshot?: BoothyCameraStatusSnapshot | null;
+  isCameraStatusLoading?: boolean;
+  isCameraReconnecting?: boolean;
+  cameraStatusMessage?: string | null;
+  isCameraUnavailable?: boolean;
+  captureStatus?: BoothyCaptureStatus;
+  captureStatusMessage?: string | null;
   sessionRemainingSeconds?: number | null;
   currentFolderPath: string | null;
   filterCriteria: FilterCriteria;
@@ -91,9 +102,11 @@ interface MainLibraryProps {
   onLibraryRefresh(): void;
   onOpenFolder(): void;
   onStartSession?(sessionName: string): void;
+  onTriggerCapture?(): void;
   onSettingsChange(settings: AppSettings): void;
   onThumbnailAspectRatioChange(aspectRatio: ThumbnailAspectRatio): void;
   onThumbnailSizeChange(size: ThumbnailSize): void;
+  isCaptureDisabled?: boolean;
   rootPath: string | null;
   searchCriteria: SearchCriteria;
   setFilterCriteria(criteria: FilterCriteria): void;
@@ -1094,6 +1107,14 @@ export default function MainLibrary({
   activePath,
   appSettings,
   boothySessionName,
+  cameraStatusReport = null,
+  cameraStatusSnapshot = null,
+  isCameraStatusLoading = false,
+  isCameraReconnecting = false,
+  cameraStatusMessage = null,
+  isCameraUnavailable = false,
+  captureStatus = 'idle',
+  captureStatusMessage,
   sessionRemainingSeconds,
   currentFolderPath,
   filterCriteria,
@@ -1119,6 +1140,7 @@ export default function MainLibrary({
   onLibraryRefresh,
   onOpenFolder,
   onStartSession,
+  onTriggerCapture = () => {},
   onSettingsChange,
   onThumbnailAspectRatioChange,
   onThumbnailSizeChange,
@@ -1134,7 +1156,20 @@ export default function MainLibrary({
   thumbnailAspectRatio,
   thumbnails,
   thumbnailSize,
+  isCaptureDisabled = false,
 }: MainLibraryProps) {
+  const cameraStatus = cameraStatusReport?.status ?? null;
+  const ipcState = cameraStatusReport?.ipcState ?? 'disconnected';
+  const hasSnapshot = Boolean(cameraStatusSnapshot && typeof cameraStatusSnapshot.state === 'string');
+  const isCameraReady = hasSnapshot
+    ? cameraStatusSnapshot?.state === 'ready'
+    : Boolean(ipcState === 'connected' && cameraStatus?.connected && cameraStatus?.cameraDetected);
+  const isCameraPreparing =
+    !isCameraUnavailable &&
+    ((isCameraStatusLoading && !isCameraReady) ||
+      isCameraReconnecting ||
+      ipcState === 'reconnecting' ||
+      (hasSnapshot && cameraStatusSnapshot?.state === 'connecting'));
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [sessionName, setSessionName] = useState('');
@@ -1487,6 +1522,32 @@ export default function MainLibrary({
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           <SessionCountdown remainingSeconds={sessionRemainingSeconds ?? null} />
+          {isCustomerMode && (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span
+                  data-testid="camera-lamp-dot"
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    isCameraReady ? 'bg-green-400' : isCameraPreparing ? 'bg-yellow-400' : 'bg-red-500'
+                  }`}
+                />
+                <span className="text-sm text-text-secondary">
+                  {isCameraReady ? '카메라 연결됨' : cameraStatusMessage || '카메라 연결을 확인해 주세요.'}
+                </span>
+              </div>
+              {captureStatus !== 'idle' && (
+                <span className="text-xs text-text-secondary">{captureStatusMessage}</span>
+              )}
+              <Button
+                className="rounded-md h-10 px-4 flex items-center justify-center"
+                disabled={isCaptureDisabled}
+                onClick={onTriggerCapture}
+                size="lg"
+              >
+                촬영
+              </Button>
+            </div>
+          )}
           {importState.status === Status.Importing && (
             <div className="flex items-center gap-2 text-sm text-accent animate-pulse">
               <FolderInput size={16} />

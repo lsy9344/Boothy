@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(test:*)",
-      "Bash(npm run test:*)"
+      "Bash(npm run test:*)",
+      "Bash(dotnet build:*)",
+      "Bash(taskkill:*)"
     ]
   }
 }
