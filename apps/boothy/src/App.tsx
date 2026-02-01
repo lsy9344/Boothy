@@ -126,6 +126,7 @@ import {
   BoothyCameraReconnectResult,
   BoothyCaptureStatus,
 } from './components/ui/AppProperties';
+import { nextCustomerCameraLampConnectionState } from './camera/customerCameraLamp';
 import { ChannelConfig } from './components/adjustments/Curves';
 
 interface CollapsibleSectionsState {
@@ -513,6 +514,10 @@ const findBestMatchingPreset = (adjustments: any, presets: Array<Preset>): Prese
 };
 
 function App() {
+  // Keep snapshot dominance extremely short so transient "connecting/noCamera" snapshots
+  // don't linger visually when pull(getStatus) already indicates the camera is ready.
+  const CAMERA_SNAPSHOT_TTL_MS = 500;
+
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const appSettingsRef = useRef<AppSettings | null>(null);
@@ -526,12 +531,17 @@ function App() {
   const [cameraStatusSnapshot, setCameraStatusSnapshot] = useState<BoothyCameraStatusSnapshot | null>(null);
   const [cameraStatusLoading, setCameraStatusLoading] = useState(false);
   const [cameraStatusError, setCameraStatusError] = useState<string | null>(null);
+  const cameraStatusLastOkAtRef = useRef<number | null>(null);
+  const cameraStatusFailureStreakRef = useRef(0);
+  const cameraStatusLastBriefRef = useRef<string | null>(null);
   const cameraStatusRequestInFlightRef = useRef(false);
   const cameraStatusRefreshQueuedRef = useRef(false);
   const cameraStatusLastRequestAtRef = useRef<number | null>(null);
   const cameraStatusRequestSeqRef = useRef(0);
   const lastCameraSnapshotAtRef = useRef<number | null>(null);
   const statusHintDebounceRef = useRef<number | null>(null);
+  const cameraStatusRecoveryPollIntervalRef = useRef<number | null>(null);
+  const cameraStatusRecoveryPollSlowSwitchTimeoutRef = useRef<number | null>(null);
   const [cameraReconnectResult, setCameraReconnectResult] = useState<BoothyCameraReconnectResult | null>(null);
   const [isCameraReconnecting, setIsCameraReconnecting] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<BoothyCaptureStatus>('idle');
@@ -947,6 +957,20 @@ function App() {
         }),
       ]);
       if (cameraStatusRequestSeqRef.current === requestSeq) {
+        cameraStatusLastOkAtRef.current = Date.now();
+        cameraStatusFailureStreakRef.current = 0;
+
+        const brief = JSON.stringify({
+          ipcState: report?.ipcState ?? null,
+          connected: report?.status?.connected ?? null,
+          cameraDetected: report?.status?.cameraDetected ?? null,
+          hasLastError: Boolean(report?.lastError),
+        });
+        if (cameraStatusLastBriefRef.current !== brief) {
+          cameraStatusLastBriefRef.current = brief;
+          sendFrontendLog('debug', 'camera-status-refresh-success', JSON.parse(brief));
+        }
+
         setCameraStatus(report);
         setCameraStatusError(null);
         if (
@@ -960,12 +984,30 @@ function App() {
     } catch (err) {
       console.warn('Failed to fetch camera status:', err);
       if (cameraStatusRequestSeqRef.current === requestSeq) {
-        setCameraStatus(null);
-        setCameraStatusSnapshot(null);
-        if (err instanceof Error && err.message === 'invoke-timeout') {
-          setCameraStatusError('카메라 상태 요청이 시간 초과되었습니다. 잠시 후 다시 시도합니다.');
+        cameraStatusFailureStreakRef.current += 1;
+        const now = Date.now();
+        const lastOkAt = cameraStatusLastOkAtRef.current;
+        const okAgeMs = typeof lastOkAt === 'number' ? now - lastOkAt : null;
+        const hardFail = okAgeMs == null || okAgeMs > 15000 || cameraStatusFailureStreakRef.current >= 3;
+
+        sendFrontendLog('warn', 'camera-status-refresh-failed', {
+          error: String(err),
+          streak: cameraStatusFailureStreakRef.current,
+          lastOkAgeMs: okAgeMs,
+          hardFail,
+        });
+
+        if (hardFail) {
+          setCameraStatus(null);
+          setCameraStatusSnapshot(null);
+          if (err instanceof Error && err.message === 'invoke-timeout') {
+            setCameraStatusError('카메라 상태 요청이 시간 초과되었습니다. 잠시 후 다시 시도합니다.');
+          } else {
+            setCameraStatusError(typeof err === 'string' ? err : '카메라 상태를 가져오지 못했습니다.');
+          }
         } else {
-          setCameraStatusError(typeof err === 'string' ? err : '카메라 상태를 가져오지 못했습니다.');
+          // Soft-fail: keep last known status to avoid red lamp flicker during transient reload/session transitions.
+          setCameraStatusError(null);
         }
       }
     } finally {
@@ -981,7 +1023,7 @@ function App() {
         }
       }
     }
-  }, []);
+  }, [sendFrontendLog]);
 
   const clearCaptureStatusTimeout = useCallback(() => {
     if (captureStatusTimeoutRef.current !== null) {
@@ -3493,10 +3535,12 @@ function App() {
           window.clearTimeout(statusHintDebounceRef.current);
         }
 
+        // Keep this very small to minimize how long the customer lamp stays yellow/red.
+        const debounceMs = hintSource === 'stopSidecar' ? 150 : 50;
         statusHintDebounceRef.current = window.setTimeout(() => {
           statusHintDebounceRef.current = null;
           refreshCameraStatus();
-        }, 200);
+        }, debounceMs);
       }),
       listen('boothy-storage-health', (event: any) => {
         if (isEffectActive) {
@@ -5159,7 +5203,9 @@ function App() {
         if (!Number.isFinite(observedAtMs)) return false;
         // Prefer push snapshots, but treat them as stale quickly so pull(getStatus) can take over
         // when sidecar stops emitting events (power-cycle edge cases).
-        return Date.now() - observedAtMs <= 4000 && cameraStatusSnapshot.state === 'ready';
+        return (
+          Date.now() - observedAtMs <= CAMERA_SNAPSHOT_TTL_MS && cameraStatusSnapshot.state === 'ready'
+        );
       })()) ||
         (cameraStatusSnapshot == null &&
           cameraStatus?.status?.connected &&
@@ -5170,8 +5216,34 @@ function App() {
     if (!cameraStatusSnapshot) return null;
     const observedAtMs = Date.parse(cameraStatusSnapshot.observedAt);
     if (!Number.isFinite(observedAtMs)) return null;
-    return Date.now() - observedAtMs <= 4000 ? cameraStatusSnapshot : null;
+    return Date.now() - observedAtMs <= CAMERA_SNAPSHOT_TTL_MS ? cameraStatusSnapshot : null;
   })();
+
+  const [customerCameraConnectionStateForLamp, setCustomerCameraConnectionStateForLamp] = useState<
+    'connected' | 'disconnected'
+  >(() => {
+    if (!isCustomerMode) return 'connected';
+    if (cameraStatus?.ipcState === 'disconnected') return 'disconnected';
+    if (cameraStatus?.status?.connected === false) return 'disconnected';
+    if (
+      cameraStatus?.ipcState === 'connected' &&
+      cameraStatus?.status?.connected === true &&
+      cameraStatus?.status?.cameraDetected === true
+    ) {
+      return 'connected';
+    }
+    return 'disconnected';
+  });
+
+  useEffect(() => {
+    if (!isCustomerMode) {
+      setCustomerCameraConnectionStateForLamp('connected');
+      return;
+    }
+    setCustomerCameraConnectionStateForLamp((prev) =>
+      nextCustomerCameraLampConnectionState({ prev, report: cameraStatus }),
+    );
+  }, [cameraStatus, isCustomerMode]);
 
   const customerCameraStatusMessage = useMemo(() => {
     if (!isCustomerMode || !hasBoothySession) {
@@ -5196,19 +5268,21 @@ function App() {
       return CAMERA_MESSAGE_PREPARING;
     }
     if (cameraStatusSnapshotFresh?.state === 'noCamera') {
-      return CAMERA_MESSAGE_NEEDS_CONNECTION;
+      // In customer mode we only want to communicate "connected vs not connected".
+      // Treat transient "noCamera" snapshots as "preparing" when the backend still reports the camera as connected.
+      if (cameraStatus?.status?.connected === false) {
+        return CAMERA_MESSAGE_NEEDS_CONNECTION;
+      }
+      return CAMERA_MESSAGE_PREPARING;
     }
     if (cameraStatusSnapshotFresh?.state === 'error') {
       return CAMERA_MESSAGE_UNAVAILABLE;
     }
     if (cameraStatus?.status && !cameraStatus.status.cameraDetected) {
-      return CAMERA_MESSAGE_NEEDS_CONNECTION;
-    }
-    if (cameraStatus?.status && !cameraStatus.status.connected) {
       return CAMERA_MESSAGE_PREPARING;
     }
-    if (cameraStatus?.lastError) {
-      return CAMERA_MESSAGE_UNAVAILABLE;
+    if (cameraStatus?.status && !cameraStatus.status.connected) {
+      return CAMERA_MESSAGE_NEEDS_CONNECTION;
     }
     return null;
   }, [
@@ -5219,6 +5293,57 @@ function App() {
     hasBoothySession,
     isCameraReconnecting,
     isCustomerMode,
+  ]);
+
+  useEffect(() => {
+    const shouldPoll =
+      isCustomerMode &&
+      hasBoothySession &&
+      (cameraStatusLoading || cameraStatusError != null || customerCameraStatusMessage != null);
+
+    const clearRecoveryPoll = () => {
+      if (cameraStatusRecoveryPollIntervalRef.current !== null) {
+        window.clearInterval(cameraStatusRecoveryPollIntervalRef.current);
+        cameraStatusRecoveryPollIntervalRef.current = null;
+      }
+      if (cameraStatusRecoveryPollSlowSwitchTimeoutRef.current !== null) {
+        window.clearTimeout(cameraStatusRecoveryPollSlowSwitchTimeoutRef.current);
+        cameraStatusRecoveryPollSlowSwitchTimeoutRef.current = null;
+      }
+    };
+
+    if (!shouldPoll) {
+      clearRecoveryPoll();
+      return;
+    }
+
+    // Fast recovery polling: when the lamp is yellow/red, refresh more aggressively so it can
+    // return to green quickly as soon as the backend/sidecar recovers.
+    //
+    // To avoid spamming IPC when the camera is truly disconnected for a long time, we switch to a
+    // slower interval after a short window.
+    const startInterval = (intervalMs: number) => {
+      if (cameraStatusRecoveryPollIntervalRef.current !== null) {
+        window.clearInterval(cameraStatusRecoveryPollIntervalRef.current);
+      }
+      cameraStatusRecoveryPollIntervalRef.current = window.setInterval(() => {
+        void refreshCameraStatus();
+      }, intervalMs);
+    };
+
+    startInterval(250);
+    cameraStatusRecoveryPollSlowSwitchTimeoutRef.current = window.setTimeout(() => {
+      startInterval(1000);
+    }, 30000);
+
+    return clearRecoveryPoll;
+  }, [
+    isCustomerMode,
+    hasBoothySession,
+    cameraStatusLoading,
+    cameraStatusError,
+    customerCameraStatusMessage,
+    refreshCameraStatus,
   ]);
 
   const captureStatusMessage = useMemo(() => {
@@ -5274,6 +5399,7 @@ function App() {
                 isCameraReconnecting={isCameraReconnecting}
                 cameraStatusMessage={customerCameraStatusMessage}
                 isCameraUnavailable={customerCameraStatusMessage === CAMERA_MESSAGE_UNAVAILABLE}
+                customerCameraConnectionState={customerCameraConnectionStateForLamp}
                 captureStatus={captureStatus}
                 captureStatusMessage={captureStatusMessage}
                sessionRemainingSeconds={sessionRemainingSeconds}

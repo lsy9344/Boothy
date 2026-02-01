@@ -72,6 +72,9 @@ interface MainLibraryProps {
   boothySessionName?: string | null;
   cameraStatusReport?: BoothyCameraStatusReport | null;
   cameraStatusSnapshot?: BoothyCameraStatusSnapshot | null;
+  // In customer mode we intentionally simplify the lamp to avoid misleading yellow/red flicker.
+  // The user only needs to understand "connected vs not connected".
+  customerCameraConnectionState?: 'connected' | 'disconnected';
   isCameraStatusLoading?: boolean;
   isCameraReconnecting?: boolean;
   cameraStatusMessage?: string | null;
@@ -1157,6 +1160,7 @@ export default function MainLibrary({
   thumbnails,
   thumbnailSize,
   isCaptureDisabled = false,
+  customerCameraConnectionState,
 }: MainLibraryProps) {
   const cameraStatus = cameraStatusReport?.status ?? null;
   const ipcState = cameraStatusReport?.ipcState ?? 'disconnected';
@@ -1170,6 +1174,10 @@ export default function MainLibrary({
       isCameraReconnecting ||
       ipcState === 'reconnecting' ||
       (hasSnapshot && cameraStatusSnapshot?.state === 'connecting'));
+  const isCustomerCameraConnected =
+    isCustomerMode &&
+    !isCameraUnavailable &&
+    (customerCameraConnectionState == null || customerCameraConnectionState === 'connected');
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [sessionName, setSessionName] = useState('');
@@ -1528,11 +1536,13 @@ export default function MainLibrary({
                 <span
                   data-testid="camera-lamp-dot"
                   className={`h-2.5 w-2.5 rounded-full ${
-                    isCameraReady ? 'bg-green-400' : isCameraPreparing ? 'bg-yellow-400' : 'bg-red-500'
+                    isCustomerCameraConnected ? 'bg-green-400' : 'bg-red-500'
                   }`}
                 />
                 <span className="text-sm text-text-secondary">
-                  {isCameraReady ? '카메라 연결됨' : cameraStatusMessage || '카메라 연결을 확인해 주세요.'}
+                  {isCustomerCameraConnected
+                    ? cameraStatusMessage || '카메라 연결됨'
+                    : cameraStatusMessage || '카메라 연결을 확인해 주세요.'}
                 </span>
               </div>
               {captureStatus !== 'idle' && (

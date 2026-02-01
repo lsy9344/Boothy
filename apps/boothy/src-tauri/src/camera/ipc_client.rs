@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,6 +20,13 @@ const STATUS_MONITOR_INTERVAL: StdDuration = StdDuration::from_secs(5);
 const STATUS_MONITOR_TIMEOUT: StdDuration = StdDuration::from_secs(4);
 const STATUS_MONITOR_INITIAL_DELAY: StdDuration = StdDuration::from_secs(2);
 const STATUS_MONITOR_ERROR_BACKOFF_MAX: StdDuration = StdDuration::from_secs(30);
+const IPC_WRITE_TIMEOUT: StdDuration = StdDuration::from_millis(1500);
+
+#[derive(Debug)]
+struct PipeWriteRequest {
+    bytes: Vec<u8>,
+    ack: oneshot::Sender<Result<(), String>>,
+}
 
 /// Camera IPC Client State
 /// Manages sidecar process lifecycle and Named Pipe communication
@@ -36,8 +44,11 @@ pub struct CameraIpcClient {
     /// App handle for emitting events
     app_handle: AppHandle,
 
-    /// Channel for sending IPC messages
-    tx_pipe: Arc<Mutex<Option<std::fs::File>>>,
+    /// Read handle for IPC messages (event listener uses a clone of this)
+    rx_pipe: Arc<Mutex<Option<std::fs::File>>>,
+
+    /// Write channel (single writer thread owns the actual pipe write handle)
+    tx_writer: Arc<Mutex<Option<mpsc::Sender<PipeWriteRequest>>>>,
 
     /// Prevent concurrent start attempts
     starting: Arc<AtomicBool>,
@@ -56,8 +67,10 @@ struct CameraDiagnosticsInternal {
     last_request_id: Option<String>,
     last_correlation_id: Option<String>,
     no_camera_streak: u32,
+    no_camera_since: Option<Instant>,
     last_camera_detected_at: Option<Instant>,
     last_forced_restart_at: Option<Instant>,
+    sidecar_connected_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -114,6 +127,7 @@ fn note_camera_status_internal(
 
     if status.connected && status.camera_detected {
         diag.no_camera_streak = 0;
+        diag.no_camera_since = None;
         diag.last_camera_detected_at = Some(now);
         return CameraAutoRestartDecision {
             should_restart: false,
@@ -121,7 +135,36 @@ fn note_camera_status_internal(
         };
     }
 
+    // If the camera is simply disconnected/off, restarting the sidecar is not useful and causes
+    // customer lamp flapping. Only consider auto-restart when the camera is connected but the SDK
+    // can't detect it (a "stuck" state).
+    if !status.connected {
+        diag.no_camera_streak = 0;
+        diag.no_camera_since = None;
+        return CameraAutoRestartDecision {
+            should_restart: false,
+            reason: None,
+        };
+    }
+
+    // Give the sidecar a short grace period after connecting/restarting.
+    // During boot, getStatus can legitimately return "not detected" briefly.
+    let startup_grace = StdDuration::from_secs(10);
+    if let Some(connected_at) = diag.sidecar_connected_at {
+        if now.duration_since(connected_at) < startup_grace {
+            diag.no_camera_streak = 0;
+            diag.no_camera_since = None;
+            return CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None,
+            };
+        }
+    }
+
     diag.no_camera_streak = diag.no_camera_streak.saturating_add(1);
+    if diag.no_camera_since.is_none() {
+        diag.no_camera_since = Some(now);
+    }
 
     let throttle = StdDuration::from_secs(30);
     if let Some(last_restart) = diag.last_forced_restart_at {
@@ -134,12 +177,24 @@ fn note_camera_status_internal(
     }
 
     let has_detected_before = diag.last_camera_detected_at.is_some();
-    let decision = if has_detected_before && diag.no_camera_streak >= 2 {
+    let no_camera_duration = diag
+        .no_camera_since
+        .map(|since| now.duration_since(since))
+        .unwrap_or_else(|| StdDuration::from_secs(0));
+
+    // Use a time-based gate to avoid false positives and periodic restarts.
+    let decision = if has_detected_before
+        && diag.no_camera_streak >= 4
+        && no_camera_duration >= StdDuration::from_secs(20)
+    {
         CameraAutoRestartDecision {
             should_restart: true,
             reason: Some(CameraAutoRestartReason::LostAfterDetected),
         }
-    } else if !has_detected_before && diag.no_camera_streak >= 3 {
+    } else if !has_detected_before
+        && diag.no_camera_streak >= 8
+        && no_camera_duration >= StdDuration::from_secs(45)
+    {
         CameraAutoRestartDecision {
             should_restart: true,
             reason: Some(CameraAutoRestartReason::ProlongedNoCamera),
@@ -166,7 +221,8 @@ impl CameraIpcClient {
             connected: Arc::new(Mutex::new(false)),
             diagnostics: Arc::new(Mutex::new(CameraDiagnosticsInternal::default())),
             app_handle,
-            tx_pipe: Arc::new(Mutex::new(None)),
+            rx_pipe: Arc::new(Mutex::new(None)),
+            tx_writer: Arc::new(Mutex::new(None)),
             starting: Arc::new(AtomicBool::new(false)),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
             status_monitor_started: Arc::new(AtomicBool::new(false)),
@@ -197,7 +253,21 @@ impl CameraIpcClient {
     pub async fn start_sidecar(&self) -> Result<(), String> {
         let correlation_id = generate_correlation_id();
         info!("[{}] Starting camera sidecar...", correlation_id);
-        self.set_ipc_state(IpcConnectionState::Reconnecting);
+
+        // If we're already connected, do not downgrade diagnostics to "reconnecting".
+        // This can happen after an F5/WebView reload where the frontend re-calls session
+        // setup, but the Rust backend + sidecar are still connected.
+        if self.is_connected() {
+            info!(
+                "[{}] Sidecar already connected; start_sidecar is a no-op",
+                correlation_id
+            );
+            self.set_ipc_state(IpcConnectionState::Connected);
+            if let Ok(mut diag) = self.diagnostics.lock() {
+                diag.last_error = None;
+            }
+            return Ok(());
+        }
 
         // If another start is already in progress (e.g. React dev StrictMode double-mount or rapid
         // refreshes), wait briefly so callers don't get stuck seeing ipcState=reconnecting.
@@ -210,6 +280,10 @@ impl CameraIpcClient {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
             while tokio::time::Instant::now() < deadline {
                 if self.is_connected() {
+                    self.set_ipc_state(IpcConnectionState::Connected);
+                    if let Ok(mut diag) = self.diagnostics.lock() {
+                        diag.last_error = None;
+                    }
                     return Ok(());
                 }
                 if !self.starting.load(Ordering::SeqCst) {
@@ -219,6 +293,10 @@ impl CameraIpcClient {
             }
 
             if self.is_connected() {
+                self.set_ipc_state(IpcConnectionState::Connected);
+                if let Ok(mut diag) = self.diagnostics.lock() {
+                    diag.last_error = None;
+                }
                 return Ok(());
             }
 
@@ -231,6 +309,9 @@ impl CameraIpcClient {
                 return Ok(());
             }
         }
+
+        // We're the active starter and not connected yet: now mark as reconnecting.
+        self.set_ipc_state(IpcConnectionState::Reconnecting);
 
         struct StartGuard {
             flag: Arc<AtomicBool>,
@@ -306,7 +387,7 @@ impl CameraIpcClient {
                 "[{}] Existing sidecar unresponsive, restarting",
                 correlation_id
             );
-            self.stop_sidecar();
+            self.stop_sidecar_for_restart();
         }
 
         // Get sidecar executable path
@@ -384,6 +465,14 @@ impl CameraIpcClient {
 
     /// Stop the camera sidecar process
     pub fn stop_sidecar(&self) {
+        self.stop_sidecar_internal(IpcConnectionState::Disconnected, "stopSidecar");
+    }
+
+    pub fn stop_sidecar_for_restart(&self) {
+        self.stop_sidecar_internal(IpcConnectionState::Reconnecting, "stopSidecar");
+    }
+
+    fn stop_sidecar_internal(&self, desired_state: IpcConnectionState, hint_source: &'static str) {
         let correlation_id = generate_correlation_id();
         info!("[{}] Stopping camera sidecar...", correlation_id);
 
@@ -393,22 +482,32 @@ impl CameraIpcClient {
         if let Ok(mut guard) = self.connected.lock() {
             *guard = false;
         }
-        self.set_ipc_state(IpcConnectionState::Disconnected);
+        let ipc_state_str = desired_state.as_str();
+        self.set_ipc_state(desired_state);
+        if let Ok(mut diag) = self.diagnostics.lock() {
+            diag.no_camera_streak = 0;
+            diag.no_camera_since = None;
+            diag.last_camera_detected_at = None;
+            diag.sidecar_connected_at = None;
+        }
 
         // Ensure the UI refreshes even when this stop was triggered from a background poll / timeout path
         // where we intentionally suppress boothy-camera-error events.
         let _ = self.app_handle.emit(
             "boothy-camera-status-hint",
             serde_json::json!({
-                "source": "stopSidecar",
+                "source": hint_source,
                 "correlationId": correlation_id,
-                "ipcState": "disconnected",
+                "ipcState": ipc_state_str,
             }),
         );
 
         // Close pipe
-        if let Ok(mut pipe_guard) = self.tx_pipe.lock() {
-            *pipe_guard = None;
+        if let Ok(mut guard) = self.tx_writer.lock() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.rx_pipe.lock() {
+            *guard = None;
         }
 
         // Kill process
@@ -445,19 +544,19 @@ impl CameraIpcClient {
             }
         };
 
-        let mut pipe_guard = match self.tx_pipe.lock() {
-            Ok(guard) => guard,
-            Err(_) => return,
+        let sender = self
+            .tx_writer
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned());
+        let Some(sender) = sender else {
+            return;
         };
 
-        if let Some(pipe) = pipe_guard.as_mut() {
-            if pipe.write_all(json.as_bytes()).is_err()
-                || pipe.write_all(b"\n").is_err()
-                || pipe.flush().is_err()
-            {
-                warn!("[{}] Failed to send shutdown request", correlation_id);
-            }
-        }
+        let mut bytes = json.into_bytes();
+        bytes.push(b'\n');
+        let (ack, _rx) = oneshot::channel::<Result<(), String>>();
+        let _ = sender.send(PipeWriteRequest { bytes, ack });
     }
 
     /// Get the path to the sidecar executable
@@ -470,21 +569,23 @@ impl CameraIpcClient {
                 }
             }
 
-            // Prefer the repo resource sidecar when present so local runs don't depend on a separately installed x86 .NET runtime.
-            // (The Canon EDSDK we ship is x86, so the sidecar must remain win-x86.)
+            // Prefer the self-contained publish output when available.
+            // This makes it easy to iterate on the sidecar without fighting file locks on the
+            // repo-bundled `resources/camera-sidecar/Boothy.CameraSidecar.exe` while Boothy is running.
+            if let Some(path) = find_dev_sidecar("Release") {
+                return Ok(path);
+            }
+            if let Some(path) = find_dev_sidecar("Debug") {
+                return Ok(path);
+            }
+
+            // Fallback: repo-bundled sidecar (typically copied during packaging).
             let repo_resource_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("resources")
                 .join("camera-sidecar")
                 .join("Boothy.CameraSidecar.exe");
             if repo_resource_sidecar.exists() {
                 return Ok(repo_resource_sidecar);
-            }
-
-            if let Some(path) = find_dev_sidecar("Debug") {
-                return Ok(path);
-            }
-            if let Some(path) = find_dev_sidecar("Release") {
-                return Ok(path);
             }
 
             let fallback = PathBuf::from(
@@ -554,9 +655,31 @@ impl CameraIpcClient {
                 Ok(pipe) => {
                     info!("[{}] Connected to Named Pipe", correlation_id);
 
-                    // Store pipe for sending
-                    if let Ok(mut pipe_guard) = self.tx_pipe.lock() {
-                        *pipe_guard = Some(pipe);
+                    let rx_pipe = pipe.try_clone().map_err(|e| {
+                        format!("Failed to clone Named Pipe handle for reader: {}", e)
+                    })?;
+
+                    let (sender, receiver) = mpsc::channel::<PipeWriteRequest>();
+                    let mut tx_pipe = pipe;
+                    tokio::task::spawn_blocking(move || {
+                        for request in receiver {
+                            let result = tx_pipe
+                                .write_all(&request.bytes)
+                                .map_err(|e| format!("Failed to write to pipe: {}", e));
+                            let should_stop = result.is_err();
+                            let _ = request.ack.send(result);
+                            // If writing fails, stop accepting further writes on this handle.
+                            if should_stop {
+                                break;
+                            }
+                        }
+                    });
+
+                    if let Ok(mut guard) = self.rx_pipe.lock() {
+                        *guard = Some(rx_pipe);
+                    }
+                    if let Ok(mut guard) = self.tx_writer.lock() {
+                        *guard = Some(sender);
                     }
 
                     // Mark as connected
@@ -568,6 +691,9 @@ impl CameraIpcClient {
                     // Clear transient connection errors (e.g. initial "pipe not found" probes).
                     if let Ok(mut diag) = self.diagnostics.lock() {
                         diag.last_error = None;
+                        diag.sidecar_connected_at = Some(Instant::now());
+                        diag.no_camera_streak = 0;
+                        diag.no_camera_since = None;
                     }
 
                     // Emit connection event
@@ -602,7 +728,7 @@ impl CameraIpcClient {
         let pending_requests = Arc::clone(&self.pending_requests);
         let diagnostics = Arc::clone(&self.diagnostics);
         let pipe = {
-            let guard = self.tx_pipe.lock().unwrap();
+            let guard = self.rx_pipe.lock().unwrap();
             guard.as_ref().and_then(|pipe| pipe.try_clone().ok())
         };
 
@@ -818,29 +944,68 @@ impl CameraIpcClient {
             pending.insert(request_id.clone(), tx);
         }
 
-        // Send via Named Pipe
-        {
-            let mut pipe_guard = self.tx_pipe.lock().unwrap();
-            if let Some(pipe) = pipe_guard.as_mut() {
-                if let Err(e) = pipe.write_all(json.as_bytes()) {
-                    self.pending_requests.lock().unwrap().remove(&request_id);
-                    self.record_last_error(format!("Failed to write to pipe: {}", e));
-                    return Err(format!("Failed to write to pipe: {}", e));
-                }
-                if let Err(e) = pipe.write_all(b"\n") {
-                    self.pending_requests.lock().unwrap().remove(&request_id);
-                    self.record_last_error(format!("Failed to write newline: {}", e));
-                    return Err(format!("Failed to write newline: {}", e));
-                }
-                if let Err(e) = pipe.flush() {
-                    self.pending_requests.lock().unwrap().remove(&request_id);
-                    self.record_last_error(format!("Failed to flush pipe: {}", e));
-                    return Err(format!("Failed to flush pipe: {}", e));
-                }
-            } else {
+        debug!("[{}] Preparing to send request: {}", correlation_id, message.method);
+
+        let sender = self
+            .tx_writer
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned());
+        let Some(sender) = sender else {
+            self.pending_requests.lock().unwrap().remove(&request_id);
+            self.record_last_error("Pipe not available".to_string());
+            return Err("Pipe not available".to_string());
+        };
+
+        let mut bytes = json.into_bytes();
+        bytes.push(b'\n');
+
+        let (ack, ack_rx) = oneshot::channel::<Result<(), String>>();
+        if sender.send(PipeWriteRequest { bytes, ack }).is_err() {
+            self.pending_requests.lock().unwrap().remove(&request_id);
+            let message = "Pipe writer is not available".to_string();
+            self.record_last_error(message.clone());
+            return Err(message);
+        }
+
+        match tokio::time::timeout(IPC_WRITE_TIMEOUT, ack_rx).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => {
                 self.pending_requests.lock().unwrap().remove(&request_id);
-                self.record_last_error("Pipe not available".to_string());
-                return Err("Pipe not available".to_string());
+                self.record_last_error(e.clone());
+                return Err(e);
+            }
+            Ok(Err(_)) => {
+                self.pending_requests.lock().unwrap().remove(&request_id);
+                let message = "Pipe writer ack channel closed".to_string();
+                self.record_last_error(message.clone());
+                return Err(message);
+            }
+            Err(_) => {
+                self.pending_requests.lock().unwrap().remove(&request_id);
+                let message = format!("IPC pipe write timeout during {}", message.method);
+                self.record_last_error(message.clone());
+                if let Ok(mut guard) = self.connected.lock() {
+                    *guard = false;
+                }
+                self.set_ipc_state(IpcConnectionState::Disconnected);
+                if let Ok(mut guard) = self.tx_writer.lock() {
+                    *guard = None;
+                }
+                if let Ok(mut guard) = self.rx_pipe.lock() {
+                    *guard = None;
+                }
+                warn!("[{}] {} - restarting sidecar", correlation_id, message);
+                let client = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    client.stop_sidecar_for_restart();
+                });
+                let client = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    let _ = client.start_sidecar().await;
+                });
+                return Err(message);
             }
         }
 
@@ -866,7 +1031,12 @@ impl CameraIpcClient {
                 // Treat this as an unresponsive sidecar and force a restart on next request.
                 let client = self.clone();
                 tokio::task::spawn_blocking(move || {
-                    client.stop_sidecar();
+                    client.stop_sidecar_for_restart();
+                });
+                let client = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    let _ = client.start_sidecar().await;
                 });
                 Err("IPC response channel closed".to_string())
             }
@@ -885,7 +1055,12 @@ impl CameraIpcClient {
                 );
                 let client = self.clone();
                 tokio::task::spawn_blocking(move || {
-                    client.stop_sidecar();
+                    client.stop_sidecar_for_restart();
+                });
+                let client = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    let _ = client.start_sidecar().await;
                 });
                 Err(timeout_error.message)
             }
@@ -1355,6 +1530,20 @@ mod tests {
         assert_eq!(
             note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(10)),
             CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None
+            }
+        );
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(15)),
+            CameraAutoRestartDecision {
+                should_restart: false,
+                reason: None
+            }
+        );
+        assert_eq!(
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(25)),
+            CameraAutoRestartDecision {
                 should_restart: true,
                 reason: Some(CameraAutoRestartReason::LostAfterDetected)
             }
@@ -1362,7 +1551,7 @@ mod tests {
 
         // Immediate follow-up is throttled.
         assert_eq!(
-            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(12)),
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(27)),
             CameraAutoRestartDecision {
                 should_restart: false,
                 reason: None
@@ -1383,7 +1572,7 @@ mod tests {
             camera_model: None,
         };
 
-        for i in 0..2 {
+        for i in 0..7 {
             assert_eq!(
                 note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(5 * i)),
                 CameraAutoRestartDecision {
@@ -1394,7 +1583,7 @@ mod tests {
         }
 
         assert_eq!(
-            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(10)),
+            note_camera_status_internal(&mut diag, &not_detected, base + Duration::from_secs(45)),
             CameraAutoRestartDecision {
                 should_restart: true,
                 reason: Some(CameraAutoRestartReason::ProlongedNoCamera)

@@ -1,12 +1,29 @@
 ﻿# 카메라 전원 사이클 후 램프(초록/빨강) 상태가 갱신되지 않는 문제 (Power-cycle)
 
+## 현재 상태(최신)
+- **해결됨(Closed)**: 전원 사이클(OFF→ON, ON→OFF→ON) 후에도 **Library 화면의 카메라 연결 상태/램프가 실시간으로 정상 갱신**됨.
+- **남은 이슈(Open)**: **`F5`(WebView reload) 이후** `camera.getStatus` 기반 갱신이 정상 동작하지 않아, 램프가 갱신되지 않거나(주황→빨강 전이 포함) `invoke-timeout`/hang 정황이 발생하는 문제.
+  - (2026-02-02 적용) **Rust NamedPipe write 블로킹**으로 전체 카메라 스택이 교착될 수 있어, `send_request_with_options()`에 **pipe write/flush 타임아웃(1.5s) + sidecar stop/restart 유도**를 추가함(현장 재검증 필요).
+  - (테스트 결과) **F5를 눌러도 상태 신호는 일치**함(신호/표시 불일치 문제는 해소).
+  - (개선 필요) 다만 고객 모드에서 램프가 **노랑 → 빨강 → 초록**으로 주기적으로 바뀌며, 텀이 길어 UX/로그 모두에 부담이 됨.
+    - 원인(구성): `camera.getStatus` 결과가 일시적으로 “연결은 됐지만(camera.connected=true) 감지 실패(cameraDetected=false)”로 흔들릴 때,
+      streak 기반 자동 재시작이 너무 공격적으로 발동하면서(sidecar stop/restart),
+      재시작 중 `ipcState=disconnected`로 내려가 빨강이 노출되는 플래핑이 발생할 수 있음.
+    - 조치(구성 재검토): streak(횟수) 중심이 아닌 **시간 + 상태 기반**(connected=true인데 감지 실패가 일정 시간 지속될 때만)으로 자동 재시작 조건을 완화하고,
+      재시작 중에는 UI에 `ipcState=reconnecting`으로 힌트를 주어 “빨강” 노출을 줄이도록 변경.
+  - (테스트 결과 추가, 다음 세션 참고) `test_flow_and_log_dir.txt` 기준으로 **11번(F5)까지는 일반적으로 받아들여짐**.
+    - **12번 램프는 여전히 노랑/빨강이 눈에 확연히 띄어 혼란을 주기 쉬움(미해결)**.
+    - 참고: “카메라 통신 상태”에 대한 램프/표시는 잘 반응하는 편이라, 문제는 “통신 자체”라기보다 **고객 모드 램프 색상 결정 조건/재시작·로딩 상태 노출** 쪽일 가능성이 있음.
+
 ## 요약
-- **증상**
+- **해결됨(Closed) — 초기 증상(과거 기록)**
   1) 카메라 전원 OFF 상태에서 앱 실행 → 빨강(OFF) 표시 → 카메라 ON → **초록으로 안 바뀜**
   2) 카메라 전원 ON 상태에서 앱 실행 → 초록(ON) 표시 → 카메라 OFF → 빨강 표시 → 카메라 ON → **초록으로 안 바뀜**
-- **영향**
-  - 고객 모드에서 “카메라 준비됨/연결됨” UX가 신뢰를 잃음
-  - 실제 촬영 가능 여부와 UI 표시가 불일치할 수 있음
+  - 영향(과거):
+    - 고객 모드에서 “카메라 준비됨/연결됨” UX가 신뢰를 잃음
+    - 실제 촬영 가능 여부와 UI 표시가 불일치할 수 있음
+- **남은 문제(Open)**
+  - `F5`(WebView reload) 이후, UI/Backend 상태 갱신이 정상 동작하지 않는 케이스가 있음(자세한 내용은 하단 “F5 이후…” 섹션 참조).
 - **관련 로그 파일**
   - Sidecar: `%APPDATA%\\Boothy\\logs\\boothy-sidecar-YYYYMMDD.log`
   - Boothy(Tauri): `%APPDATA%\\Boothy\\logs\\boothy-YYYYMMDD.log`
@@ -160,6 +177,12 @@ Sidecar가 Canon state event `Shutdown`을 받고 statusHint를 emit한 뒤, 곧
    - 전원 사이클 타이밍(너무 빠르면 드라이버가 재열거 전에 폴링이 먼저 도는 경우가 있음)
 
 ## 상태
+- **최신: 초기 Power-cycle(라이브러리 화면 실시간 연동/램프 갱신) 이슈는 해결됨 → Closed**
+  - 이 문서의 나머지 내용은 “해결 전”의 분석/시도 기록이며, 현재 남은 이슈는 `F5`(WebView reload) 이후 갱신 문제임.
+- **2026-02-02 적용(재검증 필요)**: `send_request_with_options()`의 NamedPipe write/flush가 블로킹될 경우, `invoke-timeout`으로 이어질 수 있어 write 타임아웃 + sidecar stop/restart 유도 로직 추가.
+- **테스트 결과(최신)**: F5를 눌러도 상태 신호는 일치하나, 고객 모드에서 램프가 노랑→빨강→초록으로 주기적으로 플래핑하는 현상이 있었고 텀이 길어 UX가 나쁨.
+  - 구성 재검토로 자동 재시작 조건을 완화(시간+상태 기반)하고, 재시작 중 `ipcState=reconnecting` 힌트를 사용하도록 조정함.
+
 - **2026-01-30 기준: 증상 지속 보고 반영 → “Sidecar hang/미응답” 복구 경로(D)까지 포함해 수정 적용**  
   - 다음 재현 테스트는 “OFF→ON 이후 `camera.getStatus`가 timeout되는지”와 “timeout 후 sidecar가 재시작되어 초록으로 복귀하는지”를 확인한다.
   - 실패 시에는 `boothy-sidecar-YYYYMMDD.log`에서 `camera.getStatus exceeded` / `terminating sidecar` 로그와, Boothy 로그에서 `IPC timeout` / `restarting sidecar` 로그가 찍히는지 확인한다.
@@ -870,14 +893,22 @@ return () => {
 - 추가로, **F5(WebView reload)** 시나리오에서는 backend/sidecar가 이미 연결된 상태라 `boothy-camera-connected`/`statusHint`가 새로 오지 않을 수 있는데,
   - 이때 frontend가 `boothy_camera_get_status`를 1회라도 성공적으로 호출하지 못하면(혹은 호출 자체가 누락되면) 램프가 빨강으로 남을 수 있음.
   - 로그 근거: `boothy-20260201.log`에서 F5 이후(`frontend-bootstrap` 재등장) **`Sent request: camera.getStatus` 로그가 발생하지 않음**.
+- 추가로, **F5 이후 “컨티뉴 세션”** 흐름에서는 `boothy_create_or_open_session`이 `start_sidecar()`를 다시 호출하는데,
+  - `start_sidecar()`가 진입 직후 무조건 `ipcState=reconnecting`으로 바꿔버리고, 이미 연결된 경우(`connected=true`)에 **바로 Ok로 반환**하는 코드 경로가 있어
+  - 실제로는 연결이 살아있어도 UI가 `ipcState=reconnecting`(노랑)로 보이거나, `lastError`가 남아있을 경우 “not connected + lastError” 조합으로 **몇 초 후 빨강으로 전이**할 수 있음(리로드/세션 재진입에서 특히 잘 드러남).
+- 추가로, **Frontend(UI) 고객 모드 램프 메시지 계산**에서 `cameraStatus.lastError`만으로도 “사용 불가(빨강)”를 띄우는 분기가 있었는데,
+  - `boothy_camera_get_status`가 **invoke 자체는 성공**했지만 `CameraStatusReport.lastError`가 일시적으로 채워지는 케이스(예: 세션 전환/리로드 타이밍의 transient error)에서
+  - `ipcState=connected` + `status.connected=true` + `status.cameraDetected=true` 임에도 UI가 “주황 → 몇 초 후 빨강”으로 전이할 수 있음.
 
 ### 해결(적용)
 - `apps/boothy/src-tauri/src/camera/ipc_client.rs`
   - Named Pipe “probe” 실패는 `last_error`/`ipcState`를 오염시키지 않도록 분리(`record_error=false`)
   - pipe 연결 성공 및 IPC 요청 성공 시 `last_error` clear
+  - `start_sidecar()`가 **이미 연결된 상태**에서는 `ipcState`를 `reconnecting`으로 내리지 않도록(= idempotent) 순서를 수정하고, stale `last_error`도 함께 clear
 - `apps/boothy/src/App.tsx`
   - 초기 `invoke(BoothyCameraGetStatus)` 타임아웃을 9초로 상향(5s → 9s)
   - `frontend_ready` 성공 시 `refreshCameraStatus()`를 1회 호출하여, F5 이후에도 반드시 pull(getStatus)로 상태를 동기화
+  - 고객 모드 램프 판단에서 `ipcState=connected`인 경우 `lastError`만으로 “사용 불가(빨강)” 처리하지 않도록 완화(실연결 상태 우선)
 
 ### 기대 결과
 - 카메라 ON → 앱 실행 시: 빨강으로 시작/고착되는 확률이 감소하고, (필요 시) 노랑(연결 중) → 초록(ready)로 자연스럽게 전환.
@@ -907,3 +938,121 @@ return () => {
 - 참고 로그:
   - `C:\Users\KimYS\AppData\Roaming\Boothy\logs\boothy-20260201.log`
   - `C:\Users\KimYS\AppData\Roaming\Boothy\logs\boothy-sidecar-20260201.log`
+
+### 부가 이슈: sidecar 로그 파일 선행 NUL(0x00) 덩어리 (2026-02-02)
+- 증상: `boothy-sidecar-YYYYMMDD.log` 파일 “가장 앞”에 NUL(0x00) 문자가 대량으로 존재하여, 에디터에서 빨간 배경의 `NUL`이 수없이 보이고 “긴 줄 토큰화 생략” 경고가 뜸.
+- 대응:
+  - Sidecar 로거 초기화 시, 파일 시작이 NUL(0x00)로 시작하면 “손상/스파스(sparse) 텍스트 로그”로 간주하고 **선행 NUL 구간을 제거하여 자동 복구**하도록 처리(정상 텍스트 tail은 보존).
+  - 구현: `apps/camera-sidecar/Logging/Logger.cs`의 `RepairLogFileIfNeeded()`
+  - 부가: 개발 모드에서 repo resources의 sidecar exe가 잠기는 문제를 피하기 위해, Boothy가 sidecar 경로를 선택할 때 `bin/*/win-x86/publish`를 우선하도록 순서를 조정.
+    - 구현: `apps/boothy/src-tauri/src/camera/ipc_client.rs`의 `get_sidecar_path()`
+
+---
+
+## 추가 작업 기록 (2026-02-02 KST, F5 이후 “컨티뉴 세션”에서 주황 → 몇 초 후 빨강으로 전이되는 문제 지속)
+
+### 재현 절차(사용자 반복 재현)
+- 카메라 전원 ON → 앱 실행 → Library 램프 **초록 확인**
+- 키보드 `F5`로 WebView reload
+- 메인 화면으로 나감 → **컨티뉴 세션** 버튼
+- 램프가 **주황(amber)** 으로 표시되며, 수 초 후 **빨강(red)** 으로 전이
+- 실제 카메라는 여전히 ON(connected) 상태
+
+### 핵심 로그 근거 (Boothy 로그: `boothy-20260202.log`)
+- 2026-02-02 01:02:13: `camera-status-refresh-success` (`connected=true`, `cameraDetected=true`, `ipcState=connected`)
+- 2026-02-02 01:02:27: `frontend-bootstrap` 재등장 (= F5 reload)
+- 2026-02-02 01:02:36 / 01:02:45: `camera-status-refresh-failed` with `Error: invoke-timeout` (streak 1 → 2, `hardFail=true`)
+- **중요 관찰:** 위 `invoke-timeout` 구간에는 Rust(Tauri) 쪽 `Sent request: camera.getStatus` 로그가 등장하지 않음.
+  - 즉, “UI 램프 계산 로직”만의 문제가 아니라, **Tauri `boothy_camera_get_status` invoke 응답 자체가 멈추거나(블로킹) 매우 지연되는 경로**가 존재할 가능성이 큼.
+
+### 이 세션에서 실제로 했던 일(탐색/추론/시도)
+- 로그 분석:
+  - `%APPDATA%\\Boothy\\logs\\boothy-20260201.log` / `boothy-20260202.log`에서 `frontend-bootstrap`, `frontend-ready`, `camera.getStatus`, `invoke-timeout` 타임라인을 비교
+  - `%APPDATA%\\Boothy\\logs\\boothy-sidecar-20260201.log`에서 `camera.getStatus` 처리/응답 여부 확인
+  - Sidecar 로그 파일 날짜가 UTC 기준이라(예: 2/2 KST에도 `boothy-sidecar-20260201.log`가 사용될 수 있음) 타임라인 비교 시 주의
+- 코드 탐색(정답 경로 확인):
+  - Frontend: `apps/boothy/src/App.tsx`에서 `refreshCameraStatus()` 트리거 경로(F5 포함)와 “고객 모드 램프” 판단 분기 확인
+  - Backend(Tauri): `apps/boothy/src-tauri/src/main.rs`의 `boothy_camera_get_status` 내부 흐름(bootstrapping → `camera.getStatus` IPC) 확인
+  - IPC: `apps/boothy/src-tauri/src/camera/ipc_client.rs`에서
+    - `start_sidecar()` / `start_status_monitor()` / `send_request_with_options()`(pipe write/flush + oneshot 응답) 경로 확인
+  - Sidecar: `apps/camera-sidecar`의 로깅/IPC/RealCameraController를 중심으로 “pipe read loop가 막히면 어떤 현상이 되는지” 확인
+- 적용했던 개선(증상 완화/관찰성 확보 목적):
+  - Frontend: `frontend_ready` 직후 `refreshCameraStatus()`를 1회 호출 + 성공/실패를 Boothy 로그에 남기도록 프론트 로그(`camera-status-refresh-success/failed`) 추가
+  - Frontend: `ipcState=connected`인 경우 `lastError`만으로 “사용 불가(빨강)”로 판단하지 않도록 완화, transient 실패는 일정 조건에서 soft-fail 처리
+  - Backend: `start_sidecar()`가 이미 연결된 상태에서 `ipcState=reconnecting`으로 오염시키지 않도록 idempotent 처리
+  - Sidecar: 로그 파일 선행 NUL(0x00) 덩어리 자동 복구 로직(`RepairLogFileIfNeeded`) 추가(단, 실제 실행 중인 sidecar exe에 반영되었는지 `Sidecar path:`로 재확인 필요)
+
+### 현재 결론(미해결 지점 명확화)
+- F5 이후 케이스는 “UI 메시지 계산” 문제가 아니라,
+  - **Tauri invoke(`boothy_camera_get_status`)가 응답을 못 하는 구간(= invoke-timeout)** 이 실제로 관측됨.
+- 따라서 다음 세션에서는 **원인 위치를 정확히 특정하는 계측(backend 로그)** 을 먼저 추가해야 함.
+
+### 유력 가설(추론)
+- `boothy_camera_get_status` 내부에서:
+  1) `send_request_with_options()`의 **pipe `write_all`/`flush`가 블로킹**되어 debug 로그(`Sent request: camera.getStatus`)까지 도달하지 못하고,
+  2) 그 결과 Rust 측 timeout(4s) 로직도 실행되지 못해 command 자체가 장시간 대기,
+  3) Frontend는 9초 invoke timeout으로 실패 → 램프 주황/빨강 전이로 이어졌을 수 있다.
+
+### 다음 세션 체크리스트(증거 수집 우선, “어디서 멈추는지” 고정)
+1) Backend 계측 추가(최우선):
+   - `boothy_camera_get_status` 진입/락 획득/`is_connected` 판정/`send_request_with_options` 진입/pipe write 직전/직후/응답 수신 직후를 `info!`로 남겨 “정확히 어느 라인에서 멈추는지” 단번에 확인
+2) IPC write 블로킹 방지:
+   - NamedPipe write/flush를 `spawn_blocking`으로 분리하거나, write 자체에도 timeout/abort를 도입(현재는 oneshot 응답만 timeout이라, write가 막히면 전체가 무한 대기 가능)
+3) Sidecar read loop / EDSDK hang 분리:
+   - EDSDK 호출이 길어져도 pipe read loop가 계속 돌 수 있도록(요청 큐 + worker thread 분리 등) 구조 점검
+4) sidecar 실행 경로 확인:
+   - Boothy 로그의 `Sidecar path:`가 “수정된 exe(로거 NUL 복구 포함)”를 가리키는지 확인
+   - dev 경로에 `apps/camera-sidecar/bin/Debug/.../publish` 처럼 **크기가 작은 framework-dependent 산출물**이 존재하면, 실수로 그걸 잡아 hostfxr.dll 이슈가 재발할 수 있으니 정리/가드 필요
+
+---
+
+## 후속 해결 기록 (2026-02-02 KST 이후, F5/컨티뉴 세션 공통으로 “불필요한 노랑/빨강 램프 노출” 개선)
+
+### 관찰: “연결은 정상인데 노랑/빨강이 오래 보임”
+- `F5`(WebView reload) 이후뿐 아니라, 메인 화면에서 **컨티뉴 세션**을 눌러 Library로 들어오는 흐름에서도 동일하게 발생.
+- 사용자 관점에서는 “카메라 연결이 끊긴 것”처럼 보이나, 실제로는 `camera.getStatus` 기준 `connected=true`로 정상인 경우가 많음.
+- 즉 “통신/연결 자체” 문제라기보다, **고객 모드에서 표시(램프/문구)가 내부 준비 상태까지 과도하게 노출**되는 UX 문제 성격이 큼.
+
+### Root Cause 확정: IPC write 플로우의 불필요한 `flush()`로 인한 sidecar 재시작 루프
+- Rust(Tauri) NamedPipe writer 스레드가 메시지 전송 후 `flush()`를 호출하고 있었음.
+- Windows NamedPipe에서 flush는 상대측 read 진행과 결합되어 **블로킹될 수 있어**, `IPC_WRITE_TIMEOUT`(기본 1.5s)에서 “write timeout”으로 오인될 수 있음.
+- 그 결과 `send_request_with_options()`가 **불필요하게 sidecar stop/restart**를 수행하고, `ipcState`가 `disconnected/reconnecting`으로 흔들리면서 고객 모드 램프가 노랑/빨강으로 플래핑함.
+- 해결: `apps/boothy/src-tauri/src/camera/ipc_client.rs`에서 pipe writer의 `flush()` 호출을 제거(= write 완료 ack 지연 제거).
+
+### 고객 모드 UX 재정의: 램프는 “연결/미연결”만 보여주기
+- 고객 모드 사용자는 내부 상태(`cameraDetected=false`, snapshot `noCamera/connecting` 등)보다 **카메라가 연결되어 촬영 흐름이 진행 가능한지**만 알면 충분함.
+- 내부 준비 상태 변동을 램프로 빨강/노랑으로 노출하면 오해가 발생하므로, 고객 모드 Library 램프는 **2상태(초록/빨강)** 로 단순화함.
+  - **초록(connected)**: `ipcState == connected` 이고 **`status.cameraDetected == true`(= 실제로 사용 가능한 카메라 감지)** 인 경우에만 표시.
+    - 참고: Sidecar 구현에서 `status.connected`는 “실카메라 연결”이 아니라 “SDK/프로세스가 살아있음”에 더 가까워, **전원 OFF여도 `connected=true`가 나올 수 있음**(오해 원인).
+  - **빨강(disconnected)**: `ipcState == disconnected` 이거나 `status.connected == false` 이거나 `status.cameraDetected == false`(또는 status가 비어있음)일 때 표시.
+  - 상태가 잠깐 비는 구간(`report=null`/`status=null`)은 **이전 램프 상태를 유지(sticky)** 하여 초록↔빨강 플래핑을 줄임.
+
+### 적용한 변경(요약)
+- Backend/Rust
+  - IPC writer: `flush()` 제거로 write-timeout/불필요 restart 감소 (`apps/boothy/src-tauri/src/camera/ipc_client.rs`)
+  - `boothy_camera_get_status` 계측/재시작 경로 정비 (`apps/boothy/src-tauri/src/main.rs`)
+- Frontend/React
+  - F5/컨티뉴 세션에서 상태 갱신을 더 빠르게 하는 폴링/TTL/디바운스 개선 (`apps/boothy/src/App.tsx`)
+  - 고객 모드 Library 램프를 초록/빨강만 표시하도록 단순화 (`apps/boothy/src/components/panel/MainLibrary.tsx`)
+  - 관련 테스트 업데이트 (`apps/boothy/src/components/panel/__tests__/MainLibrary.test.tsx`)
+
+### 검증(실행)
+- Rust: `cd apps/boothy/src-tauri && cargo test --bin boothy`
+- Frontend: `cd apps/boothy && npm test`
+- Build: `cd apps/boothy && npm run build`
+
+### 결과
+- `F5`/컨티뉴 세션 이후에도 고객 모드 Library에서 **불필요한 노랑/빨강 램프 노출로 인한 사용자 오해**가 크게 감소.
+- 실제 “연결 끊김/IPC 끊김”이 확정된 경우에만 빨강이 노출되도록 개선됨.
+
+### 추가 이슈/해결 (2026-02-01, 노랑 램프 제거 이후)
+- 증상: **카메라 전원 OFF(또는 연결 끊김) 상태인데도** 고객 모드 Library 램프가 **초록↔빨강으로 번갈아 표시**됨.
+- Root Cause: `camera.getStatus` 응답에서 `status.connected=true`가 “실카메라 연결” 의미가 아니어서(= SDK initialized) OFF 상태에서도 true가 나올 수 있었고,
+  UI가 이를 “connected”로 해석하면서 `ipcState` 흔들림/재시작 구간에서 초록이 섞여 플래핑이 발생.
+- 해결:
+  - 고객 모드 램프의 “초록” 기준을 **`cameraDetected==true`** 로 강화(실사용 가능한 카메라일 때만 초록).
+  - `report/status`가 일시적으로 비는 구간에서는 **이전 상태 유지(sticky)** 로 초록↔빨강 플래핑을 방지.
+  - 관련 코드/테스트: `apps/boothy/src/App.tsx`, `apps/boothy/src/camera/customerCameraLamp.ts`, `apps/boothy/src/camera/__tests__/customerCameraLamp.test.ts`
+
+### 현장 확인 (2026-02-01)
+- 결과: 고객 모드에서 **연결/미연결 상태 감지가 정상**이며, 연결 끊김 시 램프가 안정적으로 빨강으로 유지됨(플래핑 없음).

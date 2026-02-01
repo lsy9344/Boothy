@@ -92,7 +92,7 @@ describe('MainLibrary', () => {
     expect(screen.getByTestId('camera-lamp-dot').className).toContain('bg-green-400');
   });
 
-  it('shows yellow lamp while reconnecting', () => {
+  it('shows green lamp while reconnecting in customer mode', () => {
     render(
       <MainLibrary
         {...baseProps}
@@ -107,7 +107,7 @@ describe('MainLibrary', () => {
       />,
     );
 
-    expect(screen.getByTestId('camera-lamp-dot').className).toContain('bg-yellow-400');
+    expect(screen.getByTestId('camera-lamp-dot').className).toContain('bg-green-400');
   });
 
   it('shows red lamp when camera is unavailable', () => {

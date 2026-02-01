@@ -3187,6 +3187,13 @@ async fn boothy_camera_get_status(
         });
     };
 
+    let correlation_id = camera::generate_correlation_id();
+    log::debug!(
+        "[{}] boothy_camera_get_status: begin (connected={})",
+        correlation_id,
+        client.is_connected()
+    );
+
     // Allow getStatus to bootstrap the sidecar even when no session is active yet.
     // This keeps the customer UI camera lamp accurate before session start.
     if !client.is_connected() {
@@ -3195,7 +3202,7 @@ async fn boothy_camera_get_status(
         }
     }
 
-    let correlation_id = camera::generate_correlation_id();
+    log::debug!("[{}] boothy_camera_get_status: sending camera.getStatus", correlation_id);
     let status_result = client
         .send_request_with_options(
             "camera.getStatus".to_string(),
@@ -3223,17 +3230,17 @@ async fn boothy_camera_get_status(
                 report.status = Some(status.clone());
 
                 let decision = client.note_camera_status(&status);
-                if decision.should_restart {
-                    log::warn!(
-                        "Camera not detected (streak). Auto-restarting sidecar. reason={:?}",
-                        decision.reason
-                    );
-                    let client_for_stop = client.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        client_for_stop.stop_sidecar();
-                    })
-                    .await
-                    .ok();
+                    if decision.should_restart {
+                        log::warn!(
+                            "Camera not detected (streak). Auto-restarting sidecar. reason={:?}",
+                            decision.reason
+                        );
+                        let client_for_stop = client.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            client_for_stop.stop_sidecar_for_restart();
+                        })
+                        .await
+                        .ok();
 
                     if let Err(err) = client.start_sidecar().await {
                         report.last_error =

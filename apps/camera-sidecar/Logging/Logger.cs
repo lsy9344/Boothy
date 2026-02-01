@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 
 namespace Boothy.CameraSidecar.Logging
 {
@@ -23,6 +24,96 @@ namespace Boothy.CameraSidecar.Logging
         private static LogLevel minLevel = LogLevel.Info;
         private static StreamWriter? fileWriter;
         private static bool initialized;
+
+        private static void RepairLogFileIfNeeded(string logFile)
+        {
+            try
+            {
+                var info = new FileInfo(logFile);
+                if (!info.Exists || info.Length == 0)
+                {
+                    return;
+                }
+
+                using (var readStream = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    int headerLen = (int)Math.Min(4096, readStream.Length);
+                    var header = new byte[headerLen];
+                    int read = readStream.Read(header, 0, headerLen);
+                    if (read <= 0 || header[0] != 0)
+                    {
+                        return;
+                    }
+                }
+
+                long firstNonZeroOffset = -1;
+                using (var scanStream = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    var buffer = new byte[64 * 1024];
+                    long offset = 0;
+                    while (true)
+                    {
+                        int read = scanStream.Read(buffer, 0, buffer.Length);
+                        if (read <= 0)
+                        {
+                            break;
+                        }
+
+                        for (int i = 0; i < read; i++)
+                        {
+                            if (buffer[i] != 0)
+                            {
+                                firstNonZeroOffset = offset + i;
+                                break;
+                            }
+                        }
+
+                        if (firstNonZeroOffset >= 0)
+                        {
+                            break;
+                        }
+
+                        offset += read;
+                    }
+                }
+
+                string tempPath = logFile + ".repair.tmp";
+
+                if (firstNonZeroOffset < 0)
+                {
+                    using (var truncateStream = new FileStream(logFile, FileMode.Truncate, FileAccess.Write, FileShare.ReadWrite))
+                    {
+                    }
+                    return;
+                }
+
+                using (var input = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                {
+                    input.Position = firstNonZeroOffset;
+                    input.CopyTo(output);
+                    output.Flush(true);
+                }
+
+                try
+                {
+                    File.Move(tempPath, logFile, true);
+                }
+                catch
+                {
+                    try
+                    {
+                        File.Replace(tempPath, logFile, null, true);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
 
         public static void SetMinLevel(LogLevel level)
         {
@@ -54,8 +145,11 @@ namespace Boothy.CameraSidecar.Logging
                     $"boothy-sidecar-{DateTime.UtcNow:yyyyMMdd}.log"
                 );
 
+                RepairLogFileIfNeeded(logFile);
+
                 fileWriter = new StreamWriter(
-                    new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)
+                    new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite),
+                    new UTF8Encoding(false)
                 )
                 {
                     AutoFlush = true
