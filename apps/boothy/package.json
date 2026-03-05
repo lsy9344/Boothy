@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "predev": "node scripts/kill-port.mjs 1420",
-    "dev": "vite",
+    "dev": "tauri dev",
+    "dev:web": "vite",
     "build": "vite build",
     "packaging:prepare": "node scripts/prepare-sidecar-resources.mjs",
     "packaging:smoke": "node scripts/prepare-sidecar-resources.mjs && node scripts/packaging-smoke-check.mjs",

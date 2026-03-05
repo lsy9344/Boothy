@@ -56,6 +56,9 @@ pub struct CameraIpcClient {
     /// Pending request map for request/response correlation
     pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, IpcError>>>>>,
 
+    /// Serializes IPC request/response cycles to avoid overlapping camera commands on a single pipe.
+    request_lock: Arc<tokio::sync::Mutex<()>>,
+
     /// Background camera.getStatus poller state (to keep UI lamp updated even if the frontend reloads/stalls)
     status_monitor_started: Arc<AtomicBool>,
 }
@@ -225,6 +228,7 @@ impl CameraIpcClient {
             tx_writer: Arc::new(Mutex::new(None)),
             starting: Arc::new(AtomicBool::new(false)),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            request_lock: Arc::new(tokio::sync::Mutex::new(())),
             status_monitor_started: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -390,6 +394,13 @@ impl CameraIpcClient {
             self.stop_sidecar_for_restart();
         }
 
+        // If we are disconnected and don't own a live child handle, remove stale sidecar
+        // processes left behind by earlier crash/restart loops. Those orphans can hold named
+        // pipe instances and trigger repeated os error 231 (all pipe instances busy).
+        if !process_running {
+            self.cleanup_stale_sidecar_processes(&correlation_id);
+        }
+
         // Get sidecar executable path
         let sidecar_path = self.get_sidecar_path()?;
         info!(
@@ -517,6 +528,49 @@ impl CameraIpcClient {
                 let _ = child.wait();
                 info!("[{}] Sidecar process terminated", correlation_id);
             }
+        }
+
+        // Best-effort cleanup for orphaned sidecars not tracked by this client instance.
+        self.cleanup_stale_sidecar_processes(&correlation_id);
+    }
+
+    fn cleanup_stale_sidecar_processes(&self, correlation_id: &str) {
+        #[cfg(target_os = "windows")]
+        {
+            let output = Command::new("taskkill")
+                .args(["/IM", "Boothy.CameraSidecar.exe", "/F", "/T"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output();
+
+            match output {
+                Ok(result) => {
+                    if result.status.success() {
+                        info!(
+                            "[{}] Stale sidecar cleanup completed (taskkill)",
+                            correlation_id
+                        );
+                    } else {
+                        // Non-zero is expected when no matching process exists.
+                        debug!(
+                            "[{}] Stale sidecar cleanup skipped (code={:?})",
+                            correlation_id,
+                            result.status.code()
+                        );
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "[{}] Failed to execute stale sidecar cleanup: {}",
+                        correlation_id, err
+                    );
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = correlation_id;
         }
     }
 
@@ -924,6 +978,8 @@ impl CameraIpcClient {
         timeout: Duration,
         emit_errors: bool,
     ) -> Result<serde_json::Value, String> {
+        let _request_guard = self.request_lock.lock().await;
+
         if !self.is_connected() {
             self.record_last_error("Sidecar not connected".to_string());
             return Err("Sidecar not connected".to_string());

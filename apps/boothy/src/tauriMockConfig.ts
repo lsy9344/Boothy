@@ -13,15 +13,19 @@ export const detectTauriRuntime = (win: unknown): boolean => {
 
 export const shouldMockTauri = (params: { env: TauriMockEnv; search: string; isTauriRuntime: boolean }): boolean => {
   if (params.isTauriRuntime) return false;
-  if (!params.env?.DEV) return false;
+  const envValue = String(params.env?.VITE_BOOTHY_ENABLE_TAURI_MOCKS ?? '').trim().toLowerCase();
+  if (envValue === 'false') return false;
 
-  const envEnabled = String(params.env?.VITE_BOOTHY_ENABLE_TAURI_MOCKS ?? '').trim().toLowerCase() === 'true';
+  const envEnabled = envValue === 'true';
   if (envEnabled) return true;
 
   try {
-    return new URLSearchParams(params.search ?? '').has(TAURI_MOCK_QUERY_PARAM);
+    const hasQueryOptIn = new URLSearchParams(params.search ?? '').has(TAURI_MOCK_QUERY_PARAM);
+    if (hasQueryOptIn) return true;
   } catch {
-    return false;
+    // no-op
   }
-};
 
+  // In a plain browser runtime we default to mocks so UI/dev flows don't crash on invoke().
+  return true;
+};

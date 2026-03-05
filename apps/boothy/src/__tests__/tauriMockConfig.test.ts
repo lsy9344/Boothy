@@ -8,18 +8,23 @@ describe('tauriMockConfig', () => {
     expect(detectTauriRuntime({ __TAURI__: {} })).toBe(true);
   });
 
-  it('does not enable tauri mocks without explicit opt-in', () => {
+  it('enables tauri mocks by default in non-tauri runtime', () => {
     const env = { DEV: true, VITE_BOOTHY_ENABLE_TAURI_MOCKS: '' };
-    expect(shouldMockTauri({ env, search: '', isTauriRuntime: false })).toBe(false);
-    expect(shouldMockTauri({ env, search: '?something=1', isTauriRuntime: false })).toBe(false);
+    expect(shouldMockTauri({ env, search: '', isTauriRuntime: false })).toBe(true);
+    expect(shouldMockTauri({ env: { DEV: false }, search: '', isTauriRuntime: false })).toBe(true);
   });
 
-  it('enables tauri mocks via env opt-in in DEV', () => {
+  it('allows explicit env opt-in', () => {
     const env = { DEV: true, VITE_BOOTHY_ENABLE_TAURI_MOCKS: 'true' };
     expect(shouldMockTauri({ env, search: '', isTauriRuntime: false })).toBe(true);
   });
 
-  it('enables tauri mocks via query opt-in in DEV', () => {
+  it('allows explicit env opt-out', () => {
+    const env = { DEV: true, VITE_BOOTHY_ENABLE_TAURI_MOCKS: 'false' };
+    expect(shouldMockTauri({ env, search: '', isTauriRuntime: false })).toBe(false);
+  });
+
+  it('enables tauri mocks via query opt-in', () => {
     const env = { DEV: true };
     expect(shouldMockTauri({ env, search: '?boothyMockTauri=1', isTauriRuntime: false })).toBe(true);
   });
@@ -29,4 +34,3 @@ describe('tauriMockConfig', () => {
     expect(shouldMockTauri({ env, search: '?boothyMockTauri=1', isTauriRuntime: true })).toBe(false);
   });
 });
-

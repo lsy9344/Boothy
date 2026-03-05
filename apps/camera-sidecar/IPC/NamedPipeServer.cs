@@ -106,7 +106,8 @@ namespace Boothy.CameraSidecar.IPC
                     pipeServer = NamedPipeServerStreamAcl.Create(
                         pipeName: PipeName,
                         direction: PipeDirection.InOut,
-                        maxNumberOfServerInstances: 1,
+                        // Allow parallel server instances so reconnect races don't fail with ERROR_PIPE_BUSY (231).
+                        maxNumberOfServerInstances: NamedPipeServerStream.MaxAllowedServerInstances,
                         transmissionMode: PipeTransmissionMode.Byte,
                         options: PipeOptions.Asynchronous,
                         inBufferSize: 4096,
@@ -126,12 +127,16 @@ namespace Boothy.CameraSidecar.IPC
                 }
                 catch (OperationCanceledException)
                 {
+                    Logger.Info("system", "Named Pipe listener task cancelled (stopping)");
                     break; // Graceful shutdown
                 }
                 catch (Exception ex)
                 {
                     string correlationId = IpcHelpers.GenerateCorrelationId();
-                    Logger.Error(correlationId, "Pipe server error", ex);
+                    Logger.Error(correlationId, "Pipe server error - potential race or permission issue", ex);
+                    
+                    // Log backoff period to help identify restart loops in logs
+                    Logger.Warning(correlationId, "Backing off for 1000ms before recreating pipe instance...");
                     await Task.Delay(1000, cancellationToken); // Backoff before retry
                 }
                 finally

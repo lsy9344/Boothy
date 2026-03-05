@@ -26,9 +26,9 @@ declare global {
 }
 
 // NOTE:
-// In Tauri dev, `window.__TAURI_INTERNALS__` can appear to be missing during a WebView reload (e.g. F5),
-// which would incorrectly enable mocks and "disconnect" the UI from the real backend/sidecar.
-// Mocks are now opt-in only (DEV + env/query flag) to avoid accidentally breaking camera/IPC flows.
+// In a plain browser runtime (no Tauri), enable mocks by default so UI/dev flows don't crash on invoke().
+// In a real Tauri runtime, mocks must remain disabled to avoid disconnecting the UI from the backend/sidecar.
+// This can still be explicitly overridden via env/query flags in tauriMockConfig.
 const isTauriRuntime = typeof window !== 'undefined' && detectTauriRuntime(window);
 const shouldMock = typeof window !== 'undefined'
   ? shouldMockTauri({

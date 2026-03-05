@@ -127,6 +127,12 @@ import {
   BoothyCaptureStatus,
 } from './components/ui/AppProperties';
 import { nextCustomerCameraLampConnectionState } from './camera/customerCameraLamp';
+import {
+  CAMERA_MESSAGE_NEEDS_CONNECTION,
+  CAMERA_MESSAGE_PREPARING,
+  CAMERA_MESSAGE_UNAVAILABLE,
+  getCustomerCameraStatusMessage,
+} from './camera/customerCameraStatusMessage';
 import { ChannelConfig } from './components/adjustments/Curves';
 
 interface CollapsibleSectionsState {
@@ -242,9 +248,6 @@ const DEBUG = false;
 const STORAGE_CRITICAL_MESSAGE = '디스크 공간이 부족합니다. 직원에게 문의해 주세요.';
 const STORAGE_WARNING_MESSAGE = '저장 공간이 부족해지고 있습니다. 직원에게 문의해 주세요.';
 const REVOCATION_DELAY = 5000;
-const CAMERA_MESSAGE_NEEDS_CONNECTION = '카메라 연결을 확인해 주세요.';
-const CAMERA_MESSAGE_PREPARING = '촬영을 준비 중입니다. 잠시만 기다려 주세요.';
-const CAMERA_MESSAGE_UNAVAILABLE = '현재 촬영을 사용할 수 없습니다. 관리자에게 문의해 주세요.';
 const CAMERA_CUSTOMER_MESSAGES: Record<string, string> = {
   CAMERA_NOT_CONNECTED: CAMERA_MESSAGE_NEEDS_CONNECTION,
   CAMERA_DISCONNECT: CAMERA_MESSAGE_NEEDS_CONNECTION,
@@ -536,6 +539,7 @@ function App() {
   const cameraStatusLastBriefRef = useRef<string | null>(null);
   const cameraStatusRequestInFlightRef = useRef(false);
   const cameraStatusRefreshQueuedRef = useRef(false);
+  const cameraStatusLastResultReadyRef = useRef(false);
   const cameraStatusLastRequestAtRef = useRef<number | null>(null);
   const cameraStatusRequestSeqRef = useRef(0);
   const lastCameraSnapshotAtRef = useRef<number | null>(null);
@@ -946,6 +950,11 @@ function App() {
     cameraStatusRequestInFlightRef.current = true;
     const requestSeq = (cameraStatusRequestSeqRef.current += 1);
 
+    // Add log for tracking the start of the refresh request
+    if (cameraStatusRequestSeqRef.current % 5 === 0) { // Log every 5th request to avoid too much noise
+      sendFrontendLog('debug', 'camera-status-refresh-start', { seq: requestSeq });
+    }
+
     setCameraStatusLoading(true);
     try {
       const invokePromise = invoke<BoothyCameraStatusReport>(Invokes.BoothyCameraGetStatus);
@@ -957,6 +966,12 @@ function App() {
         }),
       ]);
       if (cameraStatusRequestSeqRef.current === requestSeq) {
+        const isReadyReport = Boolean(
+          report?.ipcState === 'connected' &&
+            report?.status?.connected === true &&
+            report?.status?.cameraDetected === true,
+        );
+        cameraStatusLastResultReadyRef.current = isReadyReport;
         cameraStatusLastOkAtRef.current = Date.now();
         cameraStatusFailureStreakRef.current = 0;
 
@@ -998,6 +1013,7 @@ function App() {
         });
 
         if (hardFail) {
+          cameraStatusLastResultReadyRef.current = false;
           setCameraStatus(null);
           setCameraStatusSnapshot(null);
           if (err instanceof Error && err.message === 'invoke-timeout') {
@@ -1017,9 +1033,14 @@ function App() {
         cameraStatusLastRequestAtRef.current = null;
         if (cameraStatusRefreshQueuedRef.current) {
           cameraStatusRefreshQueuedRef.current = false;
-          window.setTimeout(() => {
-            void refreshCameraStatus();
-          }, 0);
+          // When we just confirmed a ready camera, drop queued refreshes generated while the
+          // previous request was in-flight. This prevents immediate duplicate getStatus calls
+          // that can force unnecessary sidecar restarts and visible red/green lamp flicker.
+          if (!cameraStatusLastResultReadyRef.current) {
+            window.setTimeout(() => {
+              void refreshCameraStatus();
+            }, 0);
+          }
         }
       }
     }
@@ -1512,16 +1533,27 @@ function App() {
   };
 
   useEffect(() => {
+    const hasTauriRuntime =
+      typeof window !== 'undefined' &&
+      ('__TAURI__' in window || typeof (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== 'undefined');
+    if (!hasTauriRuntime) {
+      return;
+    }
+
     const appWindow = getCurrentWindow();
     const checkFullscreen = async () => {
-      setIsWindowFullScreen(await appWindow.isFullscreen());
+      try {
+        setIsWindowFullScreen(await appWindow.isFullscreen());
+      } catch (err) {
+        console.warn('Failed to read fullscreen state:', err);
+      }
     };
-    checkFullscreen();
+    void checkFullscreen();
 
     const unlistenPromise = appWindow.onResized(checkFullscreen);
 
     return () => {
-      unlistenPromise.then((unlisten: any) => unlisten());
+      unlistenPromise.then((unlisten: any) => unlisten()).catch(() => {});
     };
   }, []);
 
@@ -5245,55 +5277,29 @@ function App() {
     );
   }, [cameraStatus, isCustomerMode]);
 
-  const customerCameraStatusMessage = useMemo(() => {
-    if (!isCustomerMode || !hasBoothySession) {
-      return null;
-    }
-    if (cameraStatusError) {
-      return CAMERA_MESSAGE_UNAVAILABLE;
-    }
-    if (cameraStatus?.lastError && cameraStatus?.ipcState !== 'connected') {
-      return CAMERA_MESSAGE_UNAVAILABLE;
-    }
-    if (cameraStatusLoading || isCameraReconnecting || cameraStatus?.ipcState === 'reconnecting') {
-      return CAMERA_MESSAGE_PREPARING;
-    }
-    if (cameraStatus?.ipcState !== 'connected') {
-      return CAMERA_MESSAGE_PREPARING;
-    }
-    if (cameraStatusSnapshotFresh?.mode === 'mock') {
-      return CAMERA_MESSAGE_UNAVAILABLE;
-    }
-    if (cameraStatusSnapshotFresh?.state === 'connecting') {
-      return CAMERA_MESSAGE_PREPARING;
-    }
-    if (cameraStatusSnapshotFresh?.state === 'noCamera') {
-      // In customer mode we only want to communicate "connected vs not connected".
-      // Treat transient "noCamera" snapshots as "preparing" when the backend still reports the camera as connected.
-      if (cameraStatus?.status?.connected === false) {
-        return CAMERA_MESSAGE_NEEDS_CONNECTION;
-      }
-      return CAMERA_MESSAGE_PREPARING;
-    }
-    if (cameraStatusSnapshotFresh?.state === 'error') {
-      return CAMERA_MESSAGE_UNAVAILABLE;
-    }
-    if (cameraStatus?.status && !cameraStatus.status.cameraDetected) {
-      return CAMERA_MESSAGE_PREPARING;
-    }
-    if (cameraStatus?.status && !cameraStatus.status.connected) {
-      return CAMERA_MESSAGE_NEEDS_CONNECTION;
-    }
-    return null;
-  }, [
-    cameraStatus,
-    cameraStatusError,
-    cameraStatusLoading,
-    cameraStatusSnapshotFresh,
-    hasBoothySession,
-    isCameraReconnecting,
-    isCustomerMode,
-  ]);
+  const customerCameraStatusMessage = useMemo(
+    () =>
+      getCustomerCameraStatusMessage({
+        isCustomerMode,
+        hasBoothySession,
+        cameraStatus,
+        cameraStatusSnapshotFresh,
+        cameraStatusLoading,
+        isCameraReconnecting,
+        cameraStatusError,
+        customerCameraConnectionStateForLamp,
+      }),
+    [
+      cameraStatus,
+      cameraStatusError,
+      cameraStatusLoading,
+      cameraStatusSnapshotFresh,
+      customerCameraConnectionStateForLamp,
+      hasBoothySession,
+      isCameraReconnecting,
+      isCustomerMode,
+    ],
+  );
 
   useEffect(() => {
     const shouldPoll =
