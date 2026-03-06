@@ -110,6 +110,28 @@ describe('MainLibrary', () => {
     expect(screen.getByTestId('camera-lamp-dot').className).toContain('bg-green-400');
   });
 
+  it('shows camera status in admin mode library header', () => {
+    render(
+      <MainLibrary
+        {...baseProps}
+        isAdmin={true}
+        isCustomerMode={false}
+        cameraStatusMessage="카메라 연결됨"
+        cameraStatusReport={{
+          ipcState: 'connected',
+          protocolVersion: '1.0.0',
+          lastError: null,
+          requestId: null,
+          correlationId: null,
+          status: { connected: true, cameraDetected: true, cameraModel: 'EOS', sessionDestination: null },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('camera-lamp-dot').className).toContain('bg-green-400');
+    expect(screen.getByText('카메라 연결됨')).toBeInTheDocument();
+  });
+
   it('shows red lamp when camera is unavailable', () => {
     render(
       <MainLibrary

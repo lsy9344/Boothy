@@ -87,6 +87,7 @@ interface MainLibraryProps {
   imageList: Array<ImageFile>;
   imageRatings: Record<string, number>;
   importState: ImportState;
+  isAdmin?: boolean;
   isCustomerMode?: boolean;
   isLoading: boolean;
   isStartingSession?: boolean;
@@ -1178,6 +1179,15 @@ export default function MainLibrary({
     isCustomerMode &&
     !isCameraUnavailable &&
     (customerCameraConnectionState == null || customerCameraConnectionState === 'connected');
+  const shouldShowHeaderCameraStatus = isCustomerMode || isAdmin;
+  const isHeaderCameraConnected = isCustomerMode ? isCustomerCameraConnected : isCameraReady;
+  const headerCameraStatusMessage =
+    cameraStatusMessage ||
+    (isCameraPreparing
+      ? '카메라 준비 중...'
+      : isHeaderCameraConnected
+        ? '카메라 연결됨'
+        : '카메라 연결을 확인해 주세요.');
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [sessionName, setSessionName] = useState('');
@@ -1530,32 +1540,28 @@ export default function MainLibrary({
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           <SessionCountdown remainingSeconds={sessionRemainingSeconds ?? null} />
-          {isCustomerMode && (
+          {shouldShowHeaderCameraStatus && (
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
                 <span
                   data-testid="camera-lamp-dot"
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    isCustomerCameraConnected ? 'bg-green-400' : 'bg-red-500'
-                  }`}
+                  className={`h-2.5 w-2.5 rounded-full ${isHeaderCameraConnected ? 'bg-green-400' : 'bg-red-500'}`}
                 />
-                <span className="text-sm text-text-secondary">
-                  {isCustomerCameraConnected
-                    ? cameraStatusMessage || '카메라 연결됨'
-                    : cameraStatusMessage || '카메라 연결을 확인해 주세요.'}
-                </span>
+                <span className="text-sm text-text-secondary">{headerCameraStatusMessage}</span>
               </div>
-              {captureStatus !== 'idle' && (
+              {isCustomerMode && captureStatus !== 'idle' && (
                 <span className="text-xs text-text-secondary">{captureStatusMessage}</span>
               )}
-              <Button
-                className="rounded-md h-10 px-4 flex items-center justify-center"
-                disabled={isCaptureDisabled}
-                onClick={onTriggerCapture}
-                size="lg"
-              >
-                촬영
-              </Button>
+              {isCustomerMode && (
+                <Button
+                  className="rounded-md h-10 px-4 flex items-center justify-center"
+                  disabled={isCaptureDisabled}
+                  onClick={onTriggerCapture}
+                  size="lg"
+                >
+                  촬영
+                </Button>
+              )}
             </div>
           )}
           {importState.status === Status.Importing && (

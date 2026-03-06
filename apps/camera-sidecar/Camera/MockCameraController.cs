@@ -29,7 +29,7 @@ namespace Boothy.CameraSidecar.Camera
         public bool IsCameraConnected => true; // Mock always reports connected
         public string CameraModel => "Mock Canon EOS R5";
 
-        public void SetSessionDestination(string destinationPath)
+        public void SetSessionDestination(string destinationPath, bool prepareHostCaptureTarget = true)
         {
             sessionDestination = destinationPath;
             string correlationId = IpcHelpers.GenerateCorrelationId();
@@ -42,7 +42,10 @@ namespace Boothy.CameraSidecar.Camera
                 Logger.Info(correlationId, $"Created session destination directory: {destinationPath}");
             }
 
-            TriggerStatusProbe(correlationId, "startup");
+            if (prepareHostCaptureTarget)
+            {
+                TriggerStatusProbe(correlationId, "startup");
+            }
         }
 
         /// <summary>

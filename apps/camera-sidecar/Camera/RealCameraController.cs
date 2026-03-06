@@ -16,6 +16,8 @@ namespace Boothy.CameraSidecar.Camera
     /// </summary>
     public class RealCameraController : ICameraController, IDisposable
     {
+        private static readonly int[] DeviceBusyRetryDelaysMs = [150, 300, 500, 750];
+
         private readonly bool isOperational;
         private readonly string? diagnostic;
         private string? sessionDestination;
@@ -37,6 +39,8 @@ namespace Boothy.CameraSidecar.Camera
         private string? sdkDiagnostic;
         private IntPtr cameraRef;
         private bool sessionOpen;
+        private bool sessionOpenedForStatusProbe;
+        private bool hostCaptureTargetPrepared;
         private EdsdkNative.EdsObjectEventHandler? objectEventHandler;
         private EdsdkNative.EdsStateEventHandler? stateEventHandler;
         private EdsdkNative.EdsCameraAddedHandler? cameraAddedHandler;
@@ -118,7 +122,7 @@ namespace Boothy.CameraSidecar.Camera
             }
         }
 
-        public void SetSessionDestination(string destinationPath)
+        public void SetSessionDestination(string destinationPath, bool prepareHostCaptureTarget = true)
         {
             sessionDestination = destinationPath;
             Logger.Info("system", $"Session destination set to: {destinationPath}");
@@ -135,9 +139,14 @@ namespace Boothy.CameraSidecar.Camera
             }
 
             var correlationId = IpcHelpers.GenerateCorrelationId();
+            if (!prepareHostCaptureTarget)
+            {
+                return;
+            }
+
             lock (sdkLock)
             {
-                _ = EnsureCameraSessionOpen(correlationId);
+                _ = EnsureCameraSessionOpen(correlationId, prepareHostCaptureTarget: true);
             }
         }
 
@@ -155,34 +164,38 @@ namespace Boothy.CameraSidecar.Camera
                 return false;
             }
 
-            IntPtr cameraHandle;
+            uint err;
             lock (sdkLock)
             {
-                if (!EnsureCameraSessionOpen(correlationId))
+                if (!EnsureCameraSessionOpen(correlationId, prepareHostCaptureTarget: true))
                 {
                     EmitError(correlationId, IpcErrorCode.CameraNotConnected, sdkDiagnostic ?? diagnostic);
                     return false;
                 }
 
                 pendingTransferCorrelationId = correlationId;
-                cameraHandle = cameraRef;
-
                 DateTime startedAt = DateTime.UtcNow;
                 OnCaptureStarted?.Invoke(this, IpcMessage.NewEvent(
                     "event.camera.captureStarted",
                     correlationId,
                     new CaptureStartedPayload { StartedAt = startedAt }
                 ));
-            }
 
-            var err = EdsdkNative.EdsSendCommand(cameraHandle, EdsdkNative.CameraCommand_TakePicture, 0);
-            if (err != EdsdkNative.EDS_ERR_OK)
-            {
-                lock (sdkLock)
+                err = ExecuteWithDeviceBusyRetry(
+                    () => EdsdkNative.EdsSendCommand(cameraRef, EdsdkNative.CameraCommand_TakePicture, 0),
+                    correlationId,
+                    "EdsSendCommand(TakePicture)",
+                    DeviceBusyRetryDelaysMs
+                );
+                if (err != EdsdkNative.EDS_ERR_OK)
                 {
                     pendingTransferCorrelationId = null;
                     sdkDiagnostic = $"EdsSendCommand(TakePicture) failed (0x{err:X8})";
                 }
+            }
+
+            if (err != EdsdkNative.EDS_ERR_OK)
+            {
                 Logger.Warning(correlationId, sdkDiagnostic!);
                 EmitError(correlationId, IpcErrorCode.CaptureFailed, sdkDiagnostic);
                 return false;
@@ -287,7 +300,7 @@ namespace Boothy.CameraSidecar.Camera
 
                     // Stronger check: if any camera is present, attempt to open a session (detects "USB connected but camera off/busy" cases).
                     // This also helps recovery after power-cycle/hot-plug by forcing a fresh session open when possible.
-                    if (EnsureCameraSessionOpen(correlationId))
+                    if (EnsureCameraSessionOpen(correlationId, prepareHostCaptureTarget: false))
                     {
                         var err = EdsdkNative.EdsGetDeviceInfo(cameraRef, out var deviceInfo);
                         if (err == EdsdkNative.EDS_ERR_OK)
@@ -436,7 +449,7 @@ namespace Boothy.CameraSidecar.Camera
                         );
                         ResetSdkUnsafe(correlationId);
 
-                        if (EnsureSdkInitialized(correlationId) && EnsureCameraSessionOpen(correlationId))
+                        if (EnsureSdkInitialized(correlationId) && EnsureCameraSessionOpen(correlationId, prepareHostCaptureTarget: false))
                         {
                             var err = EdsdkNative.EdsGetDeviceInfo(cameraRef, out var deviceInfo);
                             if (err == EdsdkNative.EDS_ERR_OK)
@@ -702,7 +715,7 @@ namespace Boothy.CameraSidecar.Camera
             }
         }
 
-        private bool EnsureCameraSessionOpen(string correlationId)
+        private bool EnsureCameraSessionOpen(string correlationId, bool prepareHostCaptureTarget)
         {
             if (!EnsureSdkInitialized(correlationId))
             {
@@ -711,7 +724,41 @@ namespace Boothy.CameraSidecar.Camera
 
             if (sessionOpen && cameraRef != IntPtr.Zero)
             {
-                return true;
+                if (ShouldReopenSessionForCapturePreparation(
+                    sessionOpenedForStatusProbe,
+                    prepareHostCaptureTarget
+                ))
+                {
+                    Logger.Info(
+                        correlationId,
+                        "Reopening Canon session before capture because the current session came from a status probe"
+                    );
+                    CloseCameraSession();
+                }
+                else if (ShouldConfigureHostCaptureTarget(
+                    prepareHostCaptureTarget,
+                    hostCaptureTargetPrepared
+                ))
+                {
+                    if (ConfigureHostCaptureTarget(
+                        correlationId,
+                        GetHostCaptureConfigurationRetryDelays(prepareHostCaptureTarget)
+                    ))
+                    {
+                        sessionOpenedForStatusProbe = false;
+                        return true;
+                    }
+
+                    Logger.Warning(
+                        correlationId,
+                        "Host capture target configuration failed on existing Canon session; reporting failure without synchronous close"
+                    );
+                    return false;
+                }
+                else
+                {
+                    return true;
+                }
             }
 
             CloseCameraSession();
@@ -751,7 +798,12 @@ namespace Boothy.CameraSidecar.Camera
                     return false;
                 }
 
-                err = EdsdkNative.EdsOpenSession(newCameraRef);
+                err = ExecuteWithDeviceBusyRetry(
+                    () => EdsdkNative.EdsOpenSession(newCameraRef),
+                    correlationId,
+                    "EdsOpenSession",
+                    DeviceBusyRetryDelaysMs
+                );
                 if (err != EdsdkNative.EDS_ERR_OK)
                 {
                     sdkDiagnostic = $"EdsOpenSession failed (0x{err:X8})";
@@ -762,6 +814,8 @@ namespace Boothy.CameraSidecar.Camera
                 cameraRef = newCameraRef;
                 newCameraRef = IntPtr.Zero;
                 sessionOpen = true;
+                sessionOpenedForStatusProbe = !prepareHostCaptureTarget;
+                hostCaptureTargetPrepared = false;
 
                 objectEventHandler ??= HandleObjectEvent;
                 err = EdsdkNative.EdsSetObjectEventHandler(
@@ -789,37 +843,19 @@ namespace Boothy.CameraSidecar.Camera
                     Logger.Warning(correlationId, sdkDiagnostic);
                 }
 
-                // Prefer Host storage destination so camera transfers to PC when possible.
-                try
+                if (prepareHostCaptureTarget)
                 {
-                    int saveTo = (int)EdsdkNative.EdsSaveTo.Host;
-                    err = EdsdkNative.EdsSetPropertyData(
-                        cameraRef,
-                        EdsdkNative.PropID_SaveTo,
-                        0,
-                        Marshal.SizeOf<int>(),
-                        saveTo
-                    );
-                    if (err != EdsdkNative.EDS_ERR_OK)
+                    if (!ConfigureHostCaptureTarget(
+                        correlationId,
+                        GetHostCaptureConfigurationRetryDelays(prepareHostCaptureTarget)
+                    ))
                     {
-                        Logger.Warning(correlationId, $"EdsSetPropertyData(SaveTo=Host) failed (0x{err:X8})");
+                        sdkDiagnostic = "Failed to configure host capture target on newly opened Canon session";
+                        Logger.Warning(correlationId, sdkDiagnostic);
+                        return false;
                     }
 
-                    var capacity = new EdsdkNative.EdsCapacity
-                    {
-                        NumberOfFreeClusters = 0x7FFFFFFF,
-                        BytesPerSector = 0x1000,
-                        Reset = 1
-                    };
-                    err = EdsdkNative.EdsSetCapacity(cameraRef, capacity);
-                    if (err != EdsdkNative.EDS_ERR_OK)
-                    {
-                        Logger.Warning(correlationId, $"EdsSetCapacity failed (0x{err:X8})");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warning(correlationId, $"Failed to configure SaveTo/Capacity: {ex.Message}");
+                    sessionOpenedForStatusProbe = false;
                 }
 
                 sdkDiagnostic = null;
@@ -861,16 +897,21 @@ namespace Boothy.CameraSidecar.Camera
 
             try
             {
-                if (objectEvent != EdsdkNative.ObjectEvent_DirItemRequestTransfer)
+                if (!CanDownloadFromObjectEvent(objectEvent))
                 {
+                    Logger.Debug(
+                        "system",
+                        $"Ignoring Canon object event {DescribeObjectEvent(objectEvent)} (0x{objectEvent:X8})"
+                    );
                     return EdsdkNative.EDS_ERR_OK;
                 }
 
+                string? pendingCorrelationId;
                 lock (sdkLock)
                 {
                     sessionDestinationSnapshot = sessionDestination;
-                    correlationIdForTransfer = pendingTransferCorrelationId ?? IpcHelpers.GenerateCorrelationId();
-                    pendingTransferCorrelationId = null;
+                    pendingCorrelationId = pendingTransferCorrelationId;
+                    correlationIdForTransfer = pendingCorrelationId ?? IpcHelpers.GenerateCorrelationId();
                 }
 
                 if (string.IsNullOrWhiteSpace(sessionDestinationSnapshot))
@@ -890,6 +931,25 @@ namespace Boothy.CameraSidecar.Camera
                             $"EdsGetDirectoryItemInfo failed (0x{err:X8})"
                         );
                         return EdsdkNative.EDS_ERR_OK;
+                    }
+
+                    Logger.Info(
+                        correlationIdForTransfer!,
+                        $"Handling Canon object event {DescribeObjectEvent(objectEvent)} (0x{objectEvent:X8}) for {directoryItemInfo.szFileName}"
+                    );
+
+                    if (directoryItemInfo.isFolder != 0)
+                    {
+                        Logger.Debug(
+                            correlationIdForTransfer!,
+                            $"Skipping folder object event {DescribeObjectEvent(objectEvent)} (0x{objectEvent:X8})"
+                        );
+                        return EdsdkNative.EDS_ERR_OK;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(pendingCorrelationId))
+                    {
+                        pendingTransferCorrelationId = null;
                     }
 
                     originalFilename = directoryItemInfo.szFileName?.Trim();
@@ -988,6 +1048,136 @@ namespace Boothy.CameraSidecar.Camera
             }
         }
 
+        internal static bool CanDownloadFromObjectEvent(uint objectEvent)
+        {
+            return objectEvent == EdsdkNative.ObjectEvent_DirItemRequestTransfer
+                || objectEvent == EdsdkNative.ObjectEvent_DirItemCreated
+                || objectEvent == EdsdkNative.ObjectEvent_DirItemRequestTransferDT;
+        }
+
+        private static int[] GetHostCaptureConfigurationRetryDelays(bool prepareHostCaptureTarget)
+        {
+            return prepareHostCaptureTarget ? DeviceBusyRetryDelaysMs : Array.Empty<int>();
+        }
+
+        private static bool ShouldReopenSessionForCapturePreparation(
+            bool sessionOpenedForStatusProbe,
+            bool prepareHostCaptureTarget
+        )
+        {
+            return prepareHostCaptureTarget && sessionOpenedForStatusProbe;
+        }
+
+        private static bool ShouldConfigureHostCaptureTarget(
+            bool prepareHostCaptureTarget,
+            bool hostCaptureTargetPrepared
+        )
+        {
+            return prepareHostCaptureTarget && !hostCaptureTargetPrepared;
+        }
+
+        private bool ConfigureHostCaptureTarget(string correlationId, int[] retryDelaysMs)
+        {
+            try
+            {
+                hostCaptureTargetPrepared = false;
+                int saveTo = (int)EdsdkNative.EdsSaveTo.Host;
+                var err = ExecuteWithDeviceBusyRetry(
+                    () => EdsdkNative.EdsSetPropertyData(
+                        cameraRef,
+                        EdsdkNative.PropID_SaveTo,
+                        0,
+                        Marshal.SizeOf<int>(),
+                        saveTo
+                    ),
+                    correlationId,
+                    "EdsSetPropertyData(SaveTo=Host)",
+                    retryDelaysMs
+                );
+                if (err != EdsdkNative.EDS_ERR_OK)
+                {
+                    Logger.Warning(correlationId, $"EdsSetPropertyData(SaveTo=Host) failed (0x{err:X8})");
+                    return false;
+                }
+
+                var capacity = new EdsdkNative.EdsCapacity
+                {
+                    NumberOfFreeClusters = 0x7FFFFFFF,
+                    BytesPerSector = 0x1000,
+                    Reset = 1
+                };
+                err = ExecuteWithDeviceBusyRetry(
+                    () => EdsdkNative.EdsSetCapacity(cameraRef, capacity),
+                    correlationId,
+                    "EdsSetCapacity",
+                    retryDelaysMs
+                );
+                if (err != EdsdkNative.EDS_ERR_OK)
+                {
+                    Logger.Warning(correlationId, $"EdsSetCapacity failed (0x{err:X8})");
+                    return false;
+                }
+
+                hostCaptureTargetPrepared = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(correlationId, $"Failed to configure SaveTo/Capacity: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static uint ExecuteWithDeviceBusyRetry(
+            Func<uint> operation,
+            string correlationId,
+            string operationName,
+            int[] retryDelaysMs
+        )
+        {
+            ArgumentNullException.ThrowIfNull(operation);
+            ArgumentNullException.ThrowIfNull(retryDelaysMs);
+
+            var err = operation();
+            if (err != EdsdkNative.EDS_ERR_DEVICE_BUSY)
+            {
+                return err;
+            }
+
+            for (var retryIndex = 0; retryIndex < retryDelaysMs.Length; retryIndex += 1)
+            {
+                var delayMs = Math.Max(0, retryDelaysMs[retryIndex]);
+                Logger.Warning(
+                    correlationId,
+                    $"{operationName} returned DEVICE_BUSY (retry {retryIndex + 1}/{retryDelaysMs.Length}) after waiting {delayMs}ms"
+                );
+                if (delayMs > 0)
+                {
+                    Thread.Sleep(delayMs);
+                }
+
+                err = operation();
+                if (err != EdsdkNative.EDS_ERR_DEVICE_BUSY)
+                {
+                    return err;
+                }
+            }
+
+            return err;
+        }
+
+        private static string DescribeObjectEvent(uint objectEvent)
+        {
+            return objectEvent switch
+            {
+                EdsdkNative.ObjectEvent_DirItemCreated => "DirItemCreated",
+                EdsdkNative.ObjectEvent_DirItemRequestTransfer => "DirItemRequestTransfer",
+                EdsdkNative.ObjectEvent_DirItemRequestTransferDT => "DirItemRequestTransferDT",
+                EdsdkNative.ObjectEvent_DirItemCancelTransferDT => "DirItemCancelTransferDT",
+                _ => "UnknownObjectEvent",
+            };
+        }
+
         private static string MakeUniqueDestinationPath(string destinationDir, string filename)
         {
             var safeName = filename;
@@ -1010,6 +1200,8 @@ namespace Boothy.CameraSidecar.Camera
             if (cameraRef == IntPtr.Zero)
             {
                 sessionOpen = false;
+                sessionOpenedForStatusProbe = false;
+                hostCaptureTargetPrepared = false;
                 return;
             }
 
@@ -1029,6 +1221,8 @@ namespace Boothy.CameraSidecar.Camera
                 _ = EdsdkNative.EdsRelease(cameraRef);
                 cameraRef = IntPtr.Zero;
                 sessionOpen = false;
+                sessionOpenedForStatusProbe = false;
+                hostCaptureTargetPrepared = false;
             }
         }
 
@@ -1375,7 +1569,13 @@ namespace Boothy.CameraSidecar.Camera
                 return;
             }
 
-            var probeTask = Task.Run(() => CanonEdsdkProbe.ProbeFirstCamera());
+            var probeTask = Task.Run(() =>
+            {
+                lock (sdkLock)
+                {
+                    return CanonEdsdkProbe.ProbeFirstCamera();
+                }
+            });
             var completed = await Task.WhenAny(probeTask, Task.Delay(probeTimeoutMs));
             if (completed != probeTask)
             {

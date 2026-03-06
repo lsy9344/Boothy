@@ -16,11 +16,77 @@ use tokio::sync::oneshot;
 
 const PIPE_NAME: &str = "\\\\.\\pipe\\boothy_camera_sidecar";
 const IPC_TIMEOUT_MS: u64 = 5000;
+const CAPTURE_RESPONSE_TIMEOUT_MS: u64 = 10000;
 const STATUS_MONITOR_INTERVAL: StdDuration = StdDuration::from_secs(5);
 const STATUS_MONITOR_TIMEOUT: StdDuration = StdDuration::from_secs(4);
 const STATUS_MONITOR_INITIAL_DELAY: StdDuration = StdDuration::from_secs(2);
 const STATUS_MONITOR_ERROR_BACKOFF_MAX: StdDuration = StdDuration::from_secs(30);
-const IPC_WRITE_TIMEOUT: StdDuration = StdDuration::from_millis(1500);
+const STATUS_MONITOR_CAPTURE_BACKOFF: StdDuration = StdDuration::from_millis(250);
+const IPC_WRITE_TIMEOUT: StdDuration = StdDuration::from_millis(IPC_TIMEOUT_MS);
+const SET_SESSION_DESTINATION_RETRY_DELAYS_MS: [u64; 2] = [500, 1000];
+
+fn should_restart_on_write_timeout(method: &str, emit_errors: bool) -> bool {
+    // For polling getStatus calls we prefer a soft failure over a forced sidecar restart.
+    if method == "camera.getStatus" && !emit_errors {
+        return false;
+    }
+    true
+}
+
+fn should_retry_set_session_destination_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("ipc pipe write timeout during camera.setsessiondestination")
+        || normalized.contains("sidecar not connected")
+        || normalized.contains("pipe not available")
+        || normalized.contains("pipe writer ack channel closed")
+        || normalized.contains("ipc response channel closed")
+        || normalized.contains("failed to write to pipe")
+        || normalized.contains("os error 232")
+        || normalized.contains("the pipe is being closed")
+}
+
+fn should_recover_before_request(method: &str, last_error: Option<&str>) -> bool {
+    if method != "camera.setSessionDestination" {
+        return false;
+    }
+
+    let Some(last_error) = last_error else {
+        return false;
+    };
+
+    last_error
+        .to_ascii_lowercase()
+        .contains("ipc pipe write timeout during camera.getstatus")
+}
+
+fn next_last_error_for_connected_noop_start(last_error: Option<&str>) -> Option<String> {
+    let last_error = last_error?;
+    if should_recover_before_request("camera.setSessionDestination", Some(last_error)) {
+        return Some(last_error.to_string());
+    }
+    None
+}
+
+fn build_capture_request_payload(destination_path: PathBuf, session_name: String) -> serde_json::Value {
+    serde_json::json!({
+        "destinationPath": destination_path,
+        "sessionName": session_name,
+    })
+}
+
+fn should_skip_status_request(capture_in_progress: bool) -> bool {
+    capture_in_progress
+}
+
+fn request_response_timeout(method: &str) -> Duration {
+    if method == "camera.capture" {
+        // Capture can legitimately spend several seconds in Canon SDK DEVICE_BUSY retries
+        // before TakePicture returns, so it needs a longer response budget than generic IPC.
+        Duration::from_millis(CAPTURE_RESPONSE_TIMEOUT_MS)
+    } else {
+        Duration::from_millis(IPC_TIMEOUT_MS)
+    }
+}
 
 #[derive(Debug)]
 struct PipeWriteRequest {
@@ -58,6 +124,12 @@ pub struct CameraIpcClient {
 
     /// Serializes IPC request/response cycles to avoid overlapping camera commands on a single pipe.
     request_lock: Arc<tokio::sync::Mutex<()>>,
+
+    /// Serializes capture recovery/setup so status polling cannot race between reconnect and capture.
+    capture_flow_lock: Arc<tokio::sync::Mutex<()>>,
+
+    /// Temporarily suppress status polling while capture owns the sidecar connection.
+    capture_in_progress: Arc<AtomicBool>,
 
     /// Background camera.getStatus poller state (to keep UI lamp updated even if the frontend reloads/stalls)
     status_monitor_started: Arc<AtomicBool>,
@@ -229,6 +301,8 @@ impl CameraIpcClient {
             starting: Arc::new(AtomicBool::new(false)),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
             request_lock: Arc::new(tokio::sync::Mutex::new(())),
+            capture_flow_lock: Arc::new(tokio::sync::Mutex::new(())),
+            capture_in_progress: Arc::new(AtomicBool::new(false)),
             status_monitor_started: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -236,6 +310,10 @@ impl CameraIpcClient {
     /// Check if the sidecar is connected
     pub fn is_connected(&self) -> bool {
         self.connected.lock().map(|g| *g).unwrap_or(false)
+    }
+
+    pub fn is_capture_in_progress(&self) -> bool {
+        self.capture_in_progress.load(Ordering::SeqCst)
     }
 
     pub fn note_camera_status(&self, status: &CameraStatusResponse) -> CameraAutoRestartDecision {
@@ -268,7 +346,8 @@ impl CameraIpcClient {
             );
             self.set_ipc_state(IpcConnectionState::Connected);
             if let Ok(mut diag) = self.diagnostics.lock() {
-                diag.last_error = None;
+                diag.last_error =
+                    next_last_error_for_connected_noop_start(diag.last_error.as_deref());
             }
             return Ok(());
         }
@@ -286,7 +365,8 @@ impl CameraIpcClient {
                 if self.is_connected() {
                     self.set_ipc_state(IpcConnectionState::Connected);
                     if let Ok(mut diag) = self.diagnostics.lock() {
-                        diag.last_error = None;
+                        diag.last_error =
+                            next_last_error_for_connected_noop_start(diag.last_error.as_deref());
                     }
                     return Ok(());
                 }
@@ -299,7 +379,8 @@ impl CameraIpcClient {
             if self.is_connected() {
                 self.set_ipc_state(IpcConnectionState::Connected);
                 if let Ok(mut diag) = self.diagnostics.lock() {
-                    diag.last_error = None;
+                    diag.last_error =
+                        next_last_error_for_connected_noop_start(diag.last_error.as_deref());
                 }
                 return Ok(());
             }
@@ -880,6 +961,14 @@ impl CameraIpcClient {
                     return;
                 }
 
+                if should_skip_status_request(client.is_capture_in_progress()) {
+                    tokio::time::sleep(Duration::from_millis(
+                        STATUS_MONITOR_CAPTURE_BACKOFF.as_millis() as u64,
+                    ))
+                    .await;
+                    continue;
+                }
+
                 let correlation_id = generate_correlation_id();
                 let result = client
                     .send_request_with_options(
@@ -949,11 +1038,12 @@ impl CameraIpcClient {
         payload: serde_json::Value,
         correlation_id: String,
     ) -> Result<serde_json::Value, String> {
+        let timeout = request_response_timeout(&method);
         self.send_request_with_options(
             method,
             payload,
             correlation_id,
-            Duration::from_millis(IPC_TIMEOUT_MS),
+            timeout,
             true,
         )
         .await
@@ -979,6 +1069,25 @@ impl CameraIpcClient {
         emit_errors: bool,
     ) -> Result<serde_json::Value, String> {
         let _request_guard = self.request_lock.lock().await;
+
+        let last_error = self
+            .diagnostics
+            .lock()
+            .ok()
+            .and_then(|diag| diag.last_error.clone());
+        if should_recover_before_request(&method, last_error.as_deref()) {
+            warn!(
+                "[{}] Recovering sidecar before {} because the previous polling write timed out",
+                correlation_id, method
+            );
+            let client = self.clone();
+            tokio::task::spawn_blocking(move || {
+                client.stop_sidecar_for_restart();
+            })
+            .await
+            .map_err(|err| format!("Failed to stop sidecar before {}: {}", method, err))?;
+            self.start_sidecar().await?;
+        }
 
         if !self.is_connected() {
             self.record_last_error("Sidecar not connected".to_string());
@@ -1016,6 +1125,7 @@ impl CameraIpcClient {
         let mut bytes = json.into_bytes();
         bytes.push(b'\n');
 
+        let method_name = message.method.clone();
         let (ack, ack_rx) = oneshot::channel::<Result<(), String>>();
         if sender.send(PipeWriteRequest { bytes, ack }).is_err() {
             self.pending_requests.lock().unwrap().remove(&request_id);
@@ -1039,29 +1149,39 @@ impl CameraIpcClient {
             }
             Err(_) => {
                 self.pending_requests.lock().unwrap().remove(&request_id);
-                let message = format!("IPC pipe write timeout during {}", message.method);
-                self.record_last_error(message.clone());
-                if let Ok(mut guard) = self.connected.lock() {
-                    *guard = false;
+                let timeout_message = format!("IPC pipe write timeout during {}", method_name);
+                self.record_last_error(timeout_message.clone());
+                if should_restart_on_write_timeout(&method_name, emit_errors) {
+                    if let Ok(mut guard) = self.connected.lock() {
+                        *guard = false;
+                    }
+                    self.set_ipc_state(IpcConnectionState::Disconnected);
+                    if let Ok(mut guard) = self.tx_writer.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = self.rx_pipe.lock() {
+                        *guard = None;
+                    }
+                    warn!(
+                        "[{}] {} - restarting sidecar",
+                        correlation_id, timeout_message
+                    );
+                    let client = self.clone();
+                    tokio::task::spawn_blocking(move || {
+                        client.stop_sidecar_for_restart();
+                    });
+                    let client = self.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(400)).await;
+                        let _ = client.start_sidecar().await;
+                    });
+                } else {
+                    warn!(
+                        "[{}] {} - skipping sidecar restart for polling request",
+                        correlation_id, timeout_message
+                    );
                 }
-                self.set_ipc_state(IpcConnectionState::Disconnected);
-                if let Ok(mut guard) = self.tx_writer.lock() {
-                    *guard = None;
-                }
-                if let Ok(mut guard) = self.rx_pipe.lock() {
-                    *guard = None;
-                }
-                warn!("[{}] {} - restarting sidecar", correlation_id, message);
-                let client = self.clone();
-                tokio::task::spawn_blocking(move || {
-                    client.stop_sidecar_for_restart();
-                });
-                let client = self.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(400)).await;
-                    let _ = client.start_sidecar().await;
-                });
-                return Err(message);
+                return Err(timeout_message);
             }
         }
 
@@ -1135,15 +1255,91 @@ impl CameraIpcClient {
             session_name,
         })
         .map_err(|e| format!("Serialization error: {}", e))?;
+        let method = "camera.setSessionDestination".to_string();
 
-        self.send_request(
-            "camera.setSessionDestination".to_string(),
-            payload,
-            correlation_id,
+        for (attempt, retry_delay_ms) in SET_SESSION_DESTINATION_RETRY_DELAYS_MS
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            match self
+                .send_request(method.clone(), payload.clone(), correlation_id.clone())
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(error) if should_retry_set_session_destination_error(&error) => {
+                    warn!(
+                        "[{}] {} failed on attempt {} - retrying in {}ms",
+                        correlation_id,
+                        method,
+                        attempt + 1,
+                        retry_delay_ms
+                    );
+                    let client = self.clone();
+                    tokio::task::spawn_blocking(move || {
+                        client.stop_sidecar_for_restart();
+                    })
+                    .await
+                    .ok();
+                    tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
+                    if let Err(start_error) = self.start_sidecar().await {
+                        warn!(
+                            "[{}] Failed to restart sidecar before retrying {}: {}",
+                            correlation_id, method, start_error
+                        );
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        self.send_request(method, payload, correlation_id).await?;
+        Ok(())
+    }
+
+    pub async fn capture_with_session_destination(
+        &self,
+        destination_path: PathBuf,
+        session_name: String,
+        correlation_id: String,
+    ) -> Result<serde_json::Value, String> {
+        let _capture_guard = self.capture_flow_lock.lock().await;
+
+        struct CaptureFlagGuard {
+            flag: Arc<AtomicBool>,
+        }
+
+        impl Drop for CaptureFlagGuard {
+            fn drop(&mut self) {
+                self.flag.store(false, Ordering::SeqCst);
+            }
+        }
+
+        self.capture_in_progress.store(true, Ordering::SeqCst);
+        let _flag_guard = CaptureFlagGuard {
+            flag: Arc::clone(&self.capture_in_progress),
+        };
+
+        if !self.is_connected() {
+            self.start_sidecar().await?;
+        }
+
+        // Align capture with the historically working flow:
+        // configure the session destination first, then capture on the same stabilized connection
+        // while polling is suppressed by capture_in_progress.
+        self.set_session_destination(
+            destination_path.clone(),
+            session_name.clone(),
+            correlation_id.clone(),
         )
         .await?;
 
-        Ok(())
+        self.send_request(
+            "camera.capture".to_string(),
+            build_capture_request_payload(destination_path, session_name),
+            correlation_id,
+        )
+        .await
     }
 
     pub fn diagnostics_snapshot(&self) -> CameraDiagnosticsSnapshot {
@@ -1548,6 +1744,108 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("CameraNotConnected"));
+    }
+
+    #[test]
+    fn write_timeout_restart_policy_for_get_status_polling() {
+        assert!(!should_restart_on_write_timeout("camera.getStatus", false));
+        assert!(should_restart_on_write_timeout("camera.getStatus", true));
+        assert!(should_restart_on_write_timeout("camera.capture", true));
+    }
+
+    #[test]
+    fn ipc_write_timeout_not_shorter_than_request_timeout() {
+        assert!(
+            IPC_WRITE_TIMEOUT >= StdDuration::from_millis(IPC_TIMEOUT_MS),
+            "IPC_WRITE_TIMEOUT should be >= IPC_TIMEOUT_MS to avoid premature pipe restarts"
+        );
+    }
+
+    #[test]
+    fn session_destination_retries_on_transient_pipe_errors() {
+        assert!(should_retry_set_session_destination_error(
+            "IPC pipe write timeout during camera.setSessionDestination"
+        ));
+        assert!(should_retry_set_session_destination_error(
+            "Sidecar not connected"
+        ));
+        assert!(should_retry_set_session_destination_error("Pipe not available"));
+        assert!(should_retry_set_session_destination_error(
+            "Failed to write to pipe: 파이프가 닫히는 중입니다. (os error 232)"
+        ));
+    }
+
+    #[test]
+    fn session_destination_does_not_retry_on_non_transient_errors() {
+        assert!(!should_retry_set_session_destination_error(
+            "Serialization error: invalid payload"
+        ));
+        assert!(!should_retry_set_session_destination_error(
+            "Capture failed"
+        ));
+    }
+
+    #[test]
+    fn non_polling_requests_recover_after_poll_write_timeout() {
+        assert!(should_recover_before_request(
+            "camera.setSessionDestination",
+            Some("IPC pipe write timeout during camera.getStatus")
+        ));
+        assert!(!should_recover_before_request(
+            "camera.capture",
+            Some("IPC pipe write timeout during camera.getStatus")
+        ));
+        assert!(!should_recover_before_request(
+            "camera.getStatus",
+            Some("IPC pipe write timeout during camera.getStatus")
+        ));
+        assert!(!should_recover_before_request(
+            "camera.setSessionDestination",
+            Some("Pipe not available")
+        ));
+    }
+
+    #[test]
+    fn start_sidecar_noop_preserves_poll_write_timeout_for_followup_recovery() {
+        let poll_timeout = "IPC pipe write timeout during camera.getStatus".to_string();
+        assert_eq!(
+            next_last_error_for_connected_noop_start(Some(poll_timeout.as_str())).as_deref(),
+            Some(poll_timeout.as_str())
+        );
+    }
+
+    #[test]
+    fn capture_request_payload_embeds_destination_and_session_name() {
+        let payload = build_capture_request_payload(
+            PathBuf::from(r"C:\Users\KimYS\Pictures\dabi_shoot\3333\Raw"),
+            "3333".to_string(),
+        );
+
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "destinationPath": r"C:\Users\KimYS\Pictures\dabi_shoot\3333\Raw",
+                "sessionName": "3333",
+            })
+        );
+    }
+
+    #[test]
+    fn capture_requests_get_extended_response_timeout() {
+        assert_eq!(
+            request_response_timeout("camera.capture"),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            request_response_timeout("camera.getStatus"),
+            Duration::from_millis(IPC_TIMEOUT_MS)
+        );
+    }
+
+    #[test]
+    fn status_requests_are_suppressed_while_capture_is_active() {
+        assert!(should_skip_status_request(true));
+        assert!(!should_skip_status_request(false));
     }
 
     #[test]

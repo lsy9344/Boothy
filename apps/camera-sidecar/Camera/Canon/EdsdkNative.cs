@@ -12,6 +12,7 @@ namespace Boothy.CameraSidecar.Camera.Canon
     internal static class EdsdkNative
     {
         public const uint EDS_ERR_OK = 0x00000000;
+        public const uint EDS_ERR_DEVICE_BUSY = 0x00000081;
         private const int EDS_MAX_NAME = 256;
         private const ushort MachineX86 = 0x014c;
         private const ushort MachineX64 = 0x8664;
@@ -25,7 +26,10 @@ namespace Boothy.CameraSidecar.Camera.Canon
         public delegate uint EdsStateEventHandler(uint inEvent, uint inParameter, IntPtr inContext);
 
         public const uint ObjectEvent_All = 0x00000200;
+        public const uint ObjectEvent_DirItemCreated = 0x00000204;
         public const uint ObjectEvent_DirItemRequestTransfer = 0x00000208;
+        public const uint ObjectEvent_DirItemRequestTransferDT = 0x00000209;
+        public const uint ObjectEvent_DirItemCancelTransferDT = 0x0000020A;
 
         public const uint StateEvent_All = 0x00000300;
         public const uint StateEvent_Shutdown = 0x00000301;

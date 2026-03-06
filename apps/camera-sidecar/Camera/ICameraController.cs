@@ -13,7 +13,7 @@ namespace Boothy.CameraSidecar.Camera
         event EventHandler<IpcMessage>? OnStatusHint;
         event EventHandler<IpcMessage>? OnStatusChanged;
 
-        void SetSessionDestination(string destinationPath);
+        void SetSessionDestination(string destinationPath, bool prepareHostCaptureTarget = true);
         Task<bool> CaptureAsync(string correlationId, CancellationToken cancellationToken = default);
         CameraStatusResponse GetStatus(string correlationId);
 

@@ -11,9 +11,13 @@ namespace Boothy.CameraSidecar
 {
     class Program
     {
+        private const int StartupProbeCaptureWaitTimeoutMs = 2500;
         private static NamedPipeServer? pipeServer;
         private static ICameraController? camera;
         private static bool isRunning = true;
+        private static readonly object startupProbeLock = new();
+        private static TaskCompletionSource<bool> startupProbeCompletion =
+            CreateStartupProbeCompletion(completed: true);
 
         static async Task Main(string[] args)
         {
@@ -58,6 +62,7 @@ namespace Boothy.CameraSidecar
 
             camera.OnStatusChanged += async (sender, message) =>
             {
+                CompleteStartupProbe();
                 await pipeServer.SendMessageAsync(message);
             };
 
@@ -71,6 +76,7 @@ namespace Boothy.CameraSidecar
             {
                 try
                 {
+                    ResetStartupProbe();
                     string correlationId = IpcHelpers.GenerateCorrelationId();
                     Logger.Info(correlationId, "Boothy connected; emitting startup camera status snapshot");
                     camera?.TriggerStatusProbe(correlationId, "startup");
@@ -179,7 +185,10 @@ namespace Boothy.CameraSidecar
             Logger.Info(message.CorrelationId,
                 $"Setting session destination: {request.SessionName} -> {request.DestinationPath}");
 
-            camera!.SetSessionDestination(request.DestinationPath);
+            camera!.SetSessionDestination(
+                request.DestinationPath,
+                ShouldPrepareCameraForSessionDestinationUpdate(isCaptureRequest: false)
+            );
 
             var response = IpcMessage.NewResponse(
                 message.Method,
@@ -263,6 +272,34 @@ namespace Boothy.CameraSidecar
         private static async Task HandleCaptureAsync(IpcMessage message)
         {
             Logger.Info(message.CorrelationId, "Capture requested");
+            var startupProbeCompleted = await AwaitStartupProbeBeforeCaptureAsync(
+                GetStartupProbeTask(),
+                StartupProbeCaptureWaitTimeoutMs
+            );
+            if (startupProbeCompleted)
+            {
+                Logger.Debug(message.CorrelationId, "Startup camera status probe completed before capture");
+            }
+            else
+            {
+                Logger.Warning(
+                    message.CorrelationId,
+                    $"Startup camera status probe did not complete within {StartupProbeCaptureWaitTimeoutMs}ms; proceeding with capture"
+                );
+            }
+
+            var request = message.Payload?.Deserialize<CaptureRequest>();
+            if (!string.IsNullOrWhiteSpace(request?.DestinationPath))
+            {
+                Logger.Info(
+                    message.CorrelationId,
+                    $"Capture request applying session destination: {request.SessionName ?? "unknown"} -> {request.DestinationPath}"
+                );
+                camera!.SetSessionDestination(
+                    request.DestinationPath!,
+                    ShouldPrepareCameraForSessionDestinationUpdate(isCaptureRequest: true)
+                );
+            }
 
             bool success = await camera!.CaptureAsync(message.CorrelationId);
 
@@ -274,6 +311,60 @@ namespace Boothy.CameraSidecar
             );
 
             await pipeServer!.SendMessageAsync(response);
+        }
+
+        private static bool ShouldPrepareCameraForSessionDestinationUpdate(bool isCaptureRequest)
+        {
+            return !isCaptureRequest;
+        }
+
+        private static TaskCompletionSource<bool> CreateStartupProbeCompletion(bool completed)
+        {
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (completed)
+            {
+                completion.TrySetResult(true);
+            }
+
+            return completion;
+        }
+
+        private static void ResetStartupProbe()
+        {
+            lock (startupProbeLock)
+            {
+                startupProbeCompletion = CreateStartupProbeCompletion(completed: false);
+            }
+        }
+
+        private static void CompleteStartupProbe()
+        {
+            lock (startupProbeLock)
+            {
+                startupProbeCompletion.TrySetResult(true);
+            }
+        }
+
+        private static Task GetStartupProbeTask()
+        {
+            lock (startupProbeLock)
+            {
+                return startupProbeCompletion.Task;
+            }
+        }
+
+        private static async Task<bool> AwaitStartupProbeBeforeCaptureAsync(
+            Task startupProbeTask,
+            int timeoutMs
+        )
+        {
+            if (startupProbeTask.IsCompleted)
+            {
+                return true;
+            }
+
+            var completed = await Task.WhenAny(startupProbeTask, Task.Delay(timeoutMs));
+            return completed == startupProbeTask;
         }
 
         private static string ResolveMode(string[] args)

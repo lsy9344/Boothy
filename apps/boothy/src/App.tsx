@@ -75,6 +75,7 @@ import TimelineResetModal from './components/modals/TimelineResetModal';
 import SessionWarningModal from './components/modals/SessionWarningModal';
 import { useHistoryState } from './hooks/useHistoryState';
 import Resizer from './components/ui/Resizer';
+import { getLibraryViewIntentOnBackToLibrary, getSessionViewIntentOnApply } from './sessionViewState';
 import {
   Adjustments,
   Color,
@@ -133,6 +134,8 @@ import {
   CAMERA_MESSAGE_UNAVAILABLE,
   getCustomerCameraStatusMessage,
 } from './camera/customerCameraStatusMessage';
+import { isCameraReadyForCapture } from './cameraReadiness';
+import { getCaptureProgressTimeoutMs, isCaptureInFlight } from './captureStatus';
 import { ChannelConfig } from './components/adjustments/Curves';
 
 interface CollapsibleSectionsState {
@@ -260,6 +263,8 @@ const CAMERA_CUSTOMER_MESSAGES: Record<string, string> = {
   SIDECAR_START_FAILED: CAMERA_MESSAGE_UNAVAILABLE,
   SIDECAR_CRASH: CAMERA_MESSAGE_UNAVAILABLE,
 };
+const CAPTURE_PROGRESS_TIMEOUT_MESSAGE =
+  '촬영은 시작됐지만 전송 완료 신호를 받지 못했습니다. 카메라 연결을 확인한 뒤 다시 시도해 주세요.';
 
 const useDelayedRevokeBlobUrl = (url: string | null | undefined) => {
   const previousUrlRef = useRef<string | null | undefined>(null);
@@ -1085,6 +1090,38 @@ function App() {
       clearCaptureStatusTimeout();
     }
   }, [hasBoothySession, clearCaptureStatusTimeout]);
+
+  useEffect(() => {
+    const timeoutMs = getCaptureProgressTimeoutMs(captureStatus);
+    if (!isCustomerMode || !hasBoothySession || timeoutMs == null) {
+      return undefined;
+    }
+
+    const timedOutStatus = captureStatus;
+    const watchdogId = window.setTimeout(() => {
+      sendFrontendLog('warn', 'capture-progress-timeout', {
+        status: timedOutStatus,
+        timeoutMs,
+      });
+      setError(CAPTURE_PROGRESS_TIMEOUT_MESSAGE);
+      setCaptureStatusState('error', {
+        errorMessage: CAPTURE_PROGRESS_TIMEOUT_MESSAGE,
+        resetAfterMs: 5000,
+      });
+      void refreshCameraStatus();
+    }, timeoutMs);
+
+    return () => {
+      window.clearTimeout(watchdogId);
+    };
+  }, [
+    captureStatus,
+    hasBoothySession,
+    isCustomerMode,
+    refreshCameraStatus,
+    sendFrontendLog,
+    setCaptureStatusState,
+  ]);
 
   useEffect(() => {
     refreshCameraStatus();
@@ -2059,12 +2096,23 @@ function App() {
         return;
       }
       setBoothySession(session);
-      setShouldAutoOpenEditor(true);
-      setActiveView('editor');
 
       const rawPath = (session as any).raw_path || (session as any).rawPath;
       if (!rawPath) {
         return;
+      }
+
+      const sessionKey = session.session_folder_name || rawPath;
+      const sessionViewIntent = getSessionViewIntentOnApply({
+        sessionKey: sessionKey || null,
+        lastAppliedSessionKey: lastAppliedSessionRef.current,
+      });
+
+      if (sessionViewIntent.shouldQueueAutoOpenEditor) {
+        setShouldAutoOpenEditor(true);
+      }
+      if (sessionViewIntent.shouldActivateEditor) {
+        setActiveView('editor');
       }
 
       if (!appSettings) {
@@ -2072,8 +2120,7 @@ function App() {
         return;
       }
 
-      const sessionKey = session.session_folder_name || rawPath;
-      if (sessionKey && lastAppliedSessionRef.current === sessionKey) {
+      if (sessionViewIntent.isDuplicateSession) {
         pendingSessionRef.current = null;
         return;
       }
@@ -2278,7 +2325,9 @@ function App() {
 
   const handleBackToLibrary = useCallback(() => {
     const lastActivePath = selectedImage?.path ?? null;
-    setActiveView('library');
+    const libraryViewIntent = getLibraryViewIntentOnBackToLibrary();
+    setActiveView(libraryViewIntent.activeView);
+    setShouldAutoOpenEditor(libraryViewIntent.shouldQueueAutoOpenEditor);
     clearEditorSelection(lastActivePath);
   }, [selectedImage?.path, clearEditorSelection]);
 
@@ -3936,7 +3985,6 @@ function App() {
       setError(null);
       try {
         const session = await invoke(Invokes.BoothyCreateOrOpenSession, { sessionName });
-        setShouldAutoOpenEditor(true);
         applyBoothySession(session as BoothySession);
       } catch (err) {
         console.error('Failed to start session:', err);
@@ -3988,6 +4036,10 @@ function App() {
       return;
     }
 
+    if (isCaptureInFlight(captureStatus)) {
+      return;
+    }
+
     if (isEditingLocked) {
       setError('현재 촬영할 수 없습니다. 잠시 후 다시 시도해 주세요.');
       return;
@@ -4004,17 +4056,27 @@ function App() {
     }
 
     try {
+      setError(null);
+      if (isCustomerMode) {
+        setCaptureStatusState('capturing');
+      }
       await invoke(Invokes.BoothyTriggerCapture);
     } catch (err) {
       const message = typeof err === 'string' ? err : CAMERA_MESSAGE_UNAVAILABLE;
       setError(message);
+      if (isCustomerMode && hasBoothySession) {
+        setCaptureStatusState('error', { errorMessage: message, resetAfterMs: 5000 });
+      }
     }
   }, [
+    captureStatus,
     cameraStatus?.status?.cameraDetected,
     cameraStatus?.status?.connected,
     hasBoothySession,
     isEditingLocked,
+    isCustomerMode,
     isStorageLockout,
+    setCaptureStatusState,
   ]);
 
   const handleAdminToggle = useCallback(() => {
@@ -5227,29 +5289,18 @@ function App() {
 
   const boothySessionLabel = boothySession?.session_name || boothySession?.session_folder_name || null;
 
-  const isCameraReady = Boolean(
-    cameraStatus?.ipcState === 'connected' &&
-      (((() => {
-        if (!cameraStatusSnapshot) return false;
-        const observedAtMs = Date.parse(cameraStatusSnapshot.observedAt);
-        if (!Number.isFinite(observedAtMs)) return false;
-        // Prefer push snapshots, but treat them as stale quickly so pull(getStatus) can take over
-        // when sidecar stops emitting events (power-cycle edge cases).
-        return (
-          Date.now() - observedAtMs <= CAMERA_SNAPSHOT_TTL_MS && cameraStatusSnapshot.state === 'ready'
-        );
-      })()) ||
-        (cameraStatusSnapshot == null &&
-          cameraStatus?.status?.connected &&
-          cameraStatus?.status?.cameraDetected)),
-  );
-
   const cameraStatusSnapshotFresh: BoothyCameraStatusSnapshot | null = (() => {
     if (!cameraStatusSnapshot) return null;
     const observedAtMs = Date.parse(cameraStatusSnapshot.observedAt);
     if (!Number.isFinite(observedAtMs)) return null;
     return Date.now() - observedAtMs <= CAMERA_SNAPSHOT_TTL_MS ? cameraStatusSnapshot : null;
   })();
+
+  const isCameraReady = isCameraReadyForCapture({
+    cameraStatus,
+    cameraStatusSnapshot,
+    cameraStatusSnapshotFresh,
+  });
 
   const [customerCameraConnectionStateForLamp, setCustomerCameraConnectionStateForLamp] = useState<
     'connected' | 'disconnected'
@@ -5380,8 +5431,8 @@ function App() {
     isEditingLocked ||
     isStorageLockout ||
     !isCameraReady ||
-    isCameraReconnecting ||
-    cameraStatusLoading;
+    isCaptureInFlight(captureStatus) ||
+    isCameraReconnecting;
 
   const handleLibraryExportClick = useCallback(() => {
     if (hasBoothySession) {

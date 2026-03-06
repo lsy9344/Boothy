@@ -266,6 +266,17 @@ namespace Boothy.CameraSidecar.IPC
         public string DestinationPath { get; set; } = "";
     }
 
+    public class CaptureRequest
+    {
+        [JsonPropertyName("destinationPath")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? DestinationPath { get; set; }
+
+        [JsonPropertyName("sessionName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SessionName { get; set; }
+    }
+
     public class CameraStatusResponse
     {
         [JsonPropertyName("connected")]

@@ -3099,36 +3099,15 @@ async fn boothy_create_or_open_session(
         camera_client_guard.as_ref().cloned()
     };
 
-    // Start sidecar and set session destination (non-blocking - errors are logged but don't fail session creation)
+    // Start sidecar only. Destination configuration is deferred until capture/reconnect because
+    // eager setup during session start races with the initial status bootstrap and causes
+    // customer-visible flapping/toasts when the pipe is still stabilizing.
     if let Some(client) = client_opt {
-        let raw_path = session.raw_path.clone();
         if let Err(e) = client.start_sidecar().await {
             log::warn!("Failed to start camera sidecar: {}", e);
             let correlation_id = camera::generate_correlation_id();
             let error = error::ipc::sidecar_start_failed(e);
             let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
-        } else {
-            // Set the session destination for incoming captures
-            let correlation_id = camera::generate_correlation_id();
-            let correlation_id_for_error = correlation_id.clone();
-            let session_name = raw_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            if let Err(e) = client
-                .set_session_destination(raw_path, session_name, correlation_id)
-                .await
-            {
-                log::error!("Failed to set camera session destination: {}", e);
-                let error = error::camera::setup_failed(e);
-                let _ = app_handle.emit(
-                    "boothy-camera-error",
-                    error.to_ui_payload(correlation_id_for_error),
-                );
-            }
         }
     }
 
@@ -3193,6 +3172,22 @@ async fn boothy_camera_get_status(
         correlation_id,
         client.is_connected()
     );
+
+    if client.is_capture_in_progress() {
+        log::debug!(
+            "[{}] boothy_camera_get_status: skipped because capture is in progress",
+            correlation_id
+        );
+        let diagnostics = client.diagnostics_snapshot();
+        return Ok(CameraStatusReport {
+            ipc_state: diagnostics.ipc_state,
+            last_error: diagnostics.last_error,
+            protocol_version: diagnostics.protocol_version,
+            request_id: diagnostics.request_id,
+            correlation_id: diagnostics.correlation_id,
+            status: None,
+        });
+    }
 
     // Allow getStatus to bootstrap the sidecar even when no session is active yet.
     // This keeps the customer UI camera lamp accurate before session start.
@@ -3398,20 +3393,6 @@ async fn boothy_trigger_capture(
         return Err("Camera client unavailable.".to_string());
     };
 
-    if !client.is_connected() {
-        if let Err(e) = client.start_sidecar().await {
-            log::warn!("Failed to start camera sidecar for capture: {}", e);
-            let correlation_id = camera::generate_correlation_id();
-            let error = error::ipc::sidecar_start_failed(e);
-            let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
-            return Err("Camera service unavailable.".to_string());
-        }
-    }
-
-    if !client.is_connected() {
-        return Err("Camera service not connected.".to_string());
-    }
-
     let session_name = session
         .raw_path
         .parent()
@@ -3420,30 +3401,30 @@ async fn boothy_trigger_capture(
         .unwrap_or("unknown")
         .to_string();
 
-    let setup_correlation_id = camera::generate_correlation_id();
-    if let Err(e) = client
-        .set_session_destination(
+    let capture_correlation_id = camera::generate_correlation_id();
+    let response = match client
+        .capture_with_session_destination(
             session.raw_path.clone(),
             session_name,
-            setup_correlation_id,
+            capture_correlation_id.clone(),
         )
         .await
     {
-        log::error!("Failed to set camera session destination: {}", e);
-        let error = error::camera::setup_failed(e);
-        let correlation_id = camera::generate_correlation_id();
-        let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
-        return Err("Failed to configure camera.".to_string());
-    }
-
-    let capture_correlation_id = camera::generate_correlation_id();
-    let response = client
-        .send_request(
-            "camera.capture".to_string(),
-            serde_json::json!({}),
-            capture_correlation_id.clone(),
-        )
-        .await?;
+        Ok(response) => response,
+        Err(err) => {
+            log::error!("Failed to trigger capture: {}", err);
+            if err.contains("Failed to start sidecar")
+                || err.contains("Failed to connect to Named Pipe")
+                || err.contains("Sidecar not connected")
+            {
+                let correlation_id = camera::generate_correlation_id();
+                let error = error::ipc::sidecar_start_failed(err.clone());
+                let _ = app_handle.emit("boothy-camera-error", error.to_ui_payload(correlation_id));
+                return Err("Camera service unavailable.".to_string());
+            }
+            return Err(err);
+        }
+    };
 
     let success = response
         .get("success")
