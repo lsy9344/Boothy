@@ -1,738 +1,363 @@
 # Boothy Greenfield Rebuild Research
 
-작성일: 2026-03-06  
+작성일: 2026-03-07
 작성자: Codex  
-문서 용도: LLM 및 숙련 개발자가 "기존 구현을 수정하지 않고", 레퍼런스 2개를 기반으로 Boothy를 백지부터 다시 설계/구현할 때 사용하는 기준 문서
+상태: Primary redesign basis for future greenfield work
+문서 우선순위: `refactoring/research-codex.md`가 현재 기준 문서이며, `refactoring/research.md`는 superseded historical notes로만 본다.
+
+입력 문서:
+
+- `refactoring/research-redesign-workorder.md`
+- `docs/prd-2026-03-07-boothy-greenfield-mvp.md`
+- `docs/research-checklist-2026-03-07-boothy-greenfield.md`
+- `reference/uxui_presetfunction/*`
+- `reference/camerafunction/digiCamControl-2.0.0/*`
+
+전제:
+
+- RapidRAW 재사용 가능성과 Canon/EDSDK 배포 이슈는 곧 합법적으로 해결된다고 가정한다.
+- 따라서 레퍼런스 채택 여부의 1차 기준은 법적 가능성보다 기술 적합성, 전달 속도, 유지보수 비용, 경계 설계 용이성이다.
 
 ## 0. Decision Lock
 
-이 문서는 다음 결정을 이미 확정된 전제로 둔다.
+이 문서의 잠금 결론은 다음과 같다.
 
-1. 현재 `apps/boothy/src-tauri/src/camera/*`, `apps/camera-sidecar/*` 구현은 수정 대상이 아니다.
-2. 기존 구현은 재사용 후보가 아니라 실패 패턴과 요구사항을 알려주는 레거시 참고물이다.
-3. 새 시스템은 레퍼런스 2개를 기반으로 greenfield로 다시 시작한다.
-4. 새 시스템의 목적은 "카메라 제어 엔진 + 사진 편집/표시 앱"의 책임을 명확히 분리하는 것이다.
+> **Most efficient path: `RapidRAW Host/UI selective reuse + new Canon-focused Camera Engine Boundary`**
 
-따라서 이 문서는 in-place refactor 문서가 아니다.  
-이 문서는 greenfield rebuild 문서다.
+이 문장이 의미하는 바는 다음과 같다.
 
-## 1. Scope of the New Build
+- 제품의 핵심 가치는 Host/UI와 booth result pipeline 쪽에 남긴다.
+- RapidRAW는 Host/UI 아이디어와 일부 코드 자산을 선택적으로 재사용하는 대상으로 본다.
+- digiCamControl은 카메라 흐름과 Canon seam을 학습하는 연구 대상으로 본다.
+- Canon 우선 지원 전략이라면 `Canon.Eos.Framework`, `CanonSDKBase`, `CameraControl.Devices.Example/Form1.cs`, `CameraControlCmd/Program.cs`를 1차 추출 후보로 본다.
+- `CameraDeviceManager` 전체나 digiCamControl 전체 솔루션은 제품 베이스로 채택하지 않는다.
 
-### 1.1 제품의 실제 목적
+## 1. Product Alignment From the PRD
 
-새로 만들 시스템의 본질은 다음이다.
+현재 PRD와 discovery checklist를 기준으로 보면, 고객과 운영자에게 가장 중요한 순간은 카메라 내부가 아니라 Host/UI 쪽에 몰려 있다.
 
-- 고객은 버튼 또는 리모컨으로 촬영만 한다.
-- 카메라는 PC로 파일을 전송한다.
-- 편집 앱은 새 파일을 ingest 한다.
-- 미리 정한 필터를 자동 적용한다.
-- 고객은 결과를 즉시 본다.
+- 고객은 촬영 시작 가능 여부를 즉시 이해해야 한다.
+- 고객은 프리셋 선택, 최신 사진 확인, 진행 중 결과 누적, 종료 후 인계 흐름을 자연스럽게 경험해야 한다.
+- 고객은 `내보내기 중`, `전화 필요`, `세션명 인계` 같은 결과 중심 상태만 이해하면 된다.
+- 운영자는 복잡한 SDK 상태 전체가 아니라 `촬영 가능 / 준비 중 / 전화 필요` 같은 압축된 운영 신호와 최근 원인만 빠르게 파악하면 된다.
 
-즉, 제품의 핵심은 "고객용 실시간 결과 표시"다.  
-제품의 핵심은 "복잡한 카메라 제어 UI"가 아니다.
+즉, 지금 제품에서 가장 값비싼 자산은 "카메라를 어떻게 직접 만지느냐"보다 "고객 여정과 운영 여정을 어떻게 안정적으로 보여주느냐"다.
+그래서 가장 효율적인 재사용 대상은 레거시 카메라 허브가 아니라 Host/UI 쪽 구조와 흐름이다.
 
-### 1.2 새 시스템에서 유지해야 하는 제품 요구사항
+## 2. Most Efficient Path
 
-- Windows desktop
-- Canon camera tethering
-- 오프라인 우선
-- 세션 폴더 계약 유지
-  - `Raw/`: 카메라 원본 수신
-  - `Jpg/`: 결과/내보내기
-- 고객 모드 / 관리자 모드 분리
-- Boothy 내부 필터 적용 및 결과 표시
+### 2.1 Locked Recommendation
 
-### 1.3 새 시스템에서 버려야 하는 암묵적 목표
+권고안은 단순하다.
 
-다음은 greenfield 설계에서 목표로 삼지 않는다.
+- **Host/UI는 RapidRAW 계열에서 선택적으로 가져오고 줄인다.**
+- **Camera 쪽은 새 boundary 뒤로 격리한다.**
+- **Canon 흐름은 digiCamControl의 Canon seam에서 배우되, 솔루션 전체는 들고 오지 않는다.**
 
-- 현재 카메라 sidecar 구조를 최대한 보존하는 것
-- 현 Rust IPC 클라이언트의 로직을 이식하는 것
-- 현 UI readiness 계산 방식을 재현하는 것
-- Canon SDK 세부 상태를 고객 화면에 그대로 반영하는 것
+### 2.2 Why This Is More Efficient Than the Alternatives
 
-## 2. Reference-Driven Rebuild Strategy
+| 후보 경로 | 왜 덜 효율적인가 | 판단 |
+| --- | --- | --- |
+| 현재 sidecar 안정화 중심 | 기존 React/Rust/C# 분리와 복구 heuristic를 중심 계획으로 유지한다 | Reject as primary path |
+| Photino-first 또는 shell replacement | 셸을 다시 쓰는 비용을 먼저 지불하면서도 Camera Boundary 문제는 그대로 남긴다 | Demote |
+| 전체 WPF/WinUI 네이티브 재작성 | PRD가 요구하는 Host/UI 자산과 웹 UI 강점을 버리고 다시 시작한다 | Reject |
+| digiCamControl 전체 재사용 | WPF UI, .NET Framework 4.0 체인, 다기종 장치 허브까지 함께 떠안게 된다 | Reject |
+| Host도 완전 신규 작성 | 가능은 하지만 이미 있는 Host/UI 자산을 버려 delivery 속도를 늦춘다 | Concern |
+| RapidRAW Host selective reuse + 새 Camera Boundary | 가장 높은 가치 자산을 재사용하면서 카메라 위험을 격리한다 | Strong Recommend |
 
-### 2.1 Reference A: 사진 편집/UI 레이어
+### 2.3 Why It Is Beginner-Friendly to Implement
 
-기준 역할:
+이 경로는 구현 순서도 가장 단순하다.
 
-- 사진 보기
-- 필터/프리셋 적용
-- 결과 렌더링
-- 세션 라이브러리 표시
+1. Host-only pipeline부터 만든다.
+   `Raw/` 감시, 안정화, ingest, preset 적용, 결과 표시, 종료 인계 흐름을 먼저 검증한다.
+2. Canon spike를 별도로 만든다.
+   `configureSession -> capture(requestId) -> transfer -> Raw arrival`만 증명한다.
+3. 두 영역을 얇은 boundary로 연결한다.
+   이때도 Host는 camera truth를 다시 계산하지 않는다.
 
-현재 기준 레퍼런스:
+즉, 제품의 핵심 경험을 먼저 만들고, 가장 불안정한 하드웨어 문제는 뒤에서 격리된 형태로 붙인다.
 
-- RapidRAW 계열 UI/편집 구조
+### 2.4 What "Independent Product" Means
 
-이 레퍼런스는 "결과 소비자" 역할의 기준점이다.
+이 문서에서 "독립 제품"은 "모든 것을 0부터 다시 짠다"는 뜻이 아니다.
 
-### 2.2 Reference B: 카메라 엔진 레이어
+- 새 제품 구조를 가진다.
+- 새 Camera Boundary를 가진다.
+- 자체 public contract를 가진다.
+- 내부 구현에서만 선택적 재사용을 허용한다.
+- Host/UI를 0부터 다시 쓰는 것을 목표로 삼지 않는다.
 
-기준 역할:
+즉, 독립성은 소스 코드 출처보다 **경계와 계약의 주도권**에 관한 말이다.
 
-- Canon camera detect
-- capture trigger
-- tethered transfer
-- camera status surface
-- SDK/session recovery
+## 3. Facts From the Local References
 
-우선순위:
+### 3.1 Reference A: `reference/uxui_presetfunction`
 
-1. `digiCamControl` 기반 접근
-2. Canon 전용 참고 구현으로 `EosMonitor`
+로컬 확인 결과:
 
-이 레퍼런스는 "카메라 제어 엔진" 역할의 기준점이다.
+- Boothy용으로 수정된 RapidRAW fork다.
+- 스택은 `React 19 + Tauri 2 + Rust 2024`다.
+- `src/App.tsx`는 약 3,707 lines다.
+- `invoke()`와 `listen()` 호출이 `App.tsx`와 핵심 훅에 깊게 섞여 있다.
+- 따라서 이 코드는 "중립 UI 라이브러리"가 아니라 "Tauri backend에 결합된 Host/editor 앱"에 가깝다.
 
-### 2.3 핵심 원칙
+이 레퍼런스에서 가치가 큰 것:
 
-새 시스템은 "현재 Boothy를 계속 고치기"가 아니라 다음 조합으로 본다.
+- 라이브러리/에디터 분리 UX
+- 프리셋 선택, 썸네일 브라우징, 폴더 기반 세션 탐색
+- 결과 중심의 화면 배치
+- Host shell을 고객용/운영자용으로 나누기 쉬운 출발점
+- 일부 Host/UI 코드의 선택적 재사용 가능성
 
-- 편집/UI 앱: Reference A 계열
-- 카메라 엔진: Reference B 계열
-- 둘을 얇은 경계로 연결
+이 레퍼런스에서 직접 가져오면 안 되는 것:
 
-즉, 새 시스템은 기존 Boothy camera stack의 연장선이 아니라 "editor host + camera engine" 재구성이다.
+- Tauri `invoke/listen` 기반 contract
+- 전체 RAW editor 기능 집합
+- 거대한 단일 `App.tsx` 중심 구조
+- Host와 editor를 통째로 포크하는 결정
 
-## 3. Legacy Code Status
+결론:
 
-### 3.1 현재 구현의 취급 방식
+> RapidRAW는 **전체 베이스 앱**이 아니라
+> **Host/UI selective reuse 후보 + UX reference**다.
 
-현재 구현은 다음 용도로만 읽는다.
+### 3.2 Reference B: `reference/camerafunction/digiCamControl-2.0.0`
 
-1. 실패 패턴 파악
-2. 제품 요구사항 추출
-3. 세션 폴더/파일 계약 추출
-4. 운영 UX 제약 파악
+로컬 확인 결과:
 
-현재 구현은 다음 용도로 읽지 않는다.
+- 단일 camera engine이 아니라 여러 프로젝트 묶음이다.
+- `PhotoBooth`는 WPF/MahApps.Metro 기반 UI다.
+- `CameraControlCmd`와 `CameraControl.Devices.Example`에는 이미 `connect -> capture -> transfer -> session folder` 흐름이 드러나 있다.
+- `Canon.Eos.Framework`와 `CameraControl.Devices/Canon/CanonSDKBase.cs`는 Canon 제어 seam에 더 가깝다.
+- `CameraDeviceManager.cs`는 Canon뿐 아니라 Nikon, WIA, MTP, PTP-IP 등을 모두 다루는 장치 허브다.
 
-1. 재사용 가능한 카메라 아키텍처 베이스
-2. 옮겨 심을 상태 머신
-3. 유지해야 할 IPC/상태 동기화 패턴
+이 레퍼런스에서 가치가 큰 것:
 
-### 3.2 재사용 금지 영역
+- 장치 연결, 캡처, 전송 흐름
+- session folder와 filename 정책
+- Canon wrapper 계층
+- headless 제어 예시
+- out-of-process camera service로 재구성할 수 있는 기능 단위
 
-다음은 greenfield build에서 직접 계승하지 않는다.
+이 레퍼런스에서 직접 가져오면 안 되는 것:
 
-- `apps/boothy/src-tauri/src/camera/ipc_client.rs`의 polling / restart heuristic
-- `apps/boothy/src/App.tsx`의 snapshot/hint/pull 혼합 상태 처리
-- 현재 sidecar lifecycle orchestration
-- current hybrid camera status model
+- 전체 솔루션
+- WPF `PhotoBooth` UI
+- .NET Framework 4.0 체인 전체
+- `CameraDeviceManager` 전체
 
-### 3.3 참고만 할 가치가 있는 영역
+결론:
 
-다음은 개념 또는 계약 차원에서만 참고한다.
+> digiCamControl은 **제품 코어**가 아니라
+> **Canon 흐름과 camera seam을 추출하기 위한 연구 대상**이다.
 
-- 세션 폴더 구조
-- 파일 ingest 흐름
-- preset snapshot 적용 시점
-- 고객/관리자 모드 분리
-- 현장 로그에서 드러난 failure mode
+### 3.3 The Canon Extraction Seam, Concretely
 
-## 4. Postmortem: Why the Previous Architecture Failed
+다음 파일들이 Canon-focused extraction 전략의 근거다.
 
-### 4.1 failure summary
+- `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices.Example/Form1.cs`
+  - `CameraDeviceManager.PhotoCaptured` 이벤트를 받아 `TransferFile()`로 파일을 저장한다.
+  - 가장 얇은 `capture -> photo event -> transfer` 연결 예제로 볼 수 있다.
+- `reference/camerafunction/digiCamControl-2.0.0/CameraControlCmd/Program.cs`
+  - UI 없이 세션, 파일명, 임시 파일, 전송 완료 후 저장까지 처리한다.
+  - headless flow와 session-folder 중심 운영을 이해하기 좋다.
+- `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices/Canon/CanonSDKBase.cs`
+  - `CapturePhoto()`, `CapturePhotoNoAf()`, `TransferFile()`이 Canon wrapper 레벨에 모여 있다.
+  - live view pause/resume와 transfer progress 같은 Canon-specific concern이 여기서 드러난다.
+- `reference/camerafunction/digiCamControl-2.0.0/Canon.Eos.Framework/*`
+  - 특히 `EosCamera.cs`는 session open, save-to-host, event handler registration, `TakePicture()`, shutter reset 같은 더 낮은 레벨의 Canon EDSDK seam을 보여준다.
+- `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices/CameraDeviceManager.cs`
+  - Canon, Nikon, WIA, MTP, PTP-IP 등 다수 장치 계층을 한 허브에 모은다.
+  - 장치 탐색과 선택 허브로는 유용하지만, Canon 전용 최소 엔진의 직접 베이스로는 너무 넓다.
 
-기존 구조는 다음 이유로 장기 유지 비용이 과도했다.
+정리하면, 추출 포인트는 `CameraDeviceManager` 전체가 아니라 **Canon wrapper와 예제 흐름이 만나는 좁은 구간**이다.
 
-- 같은 종류의 상태를 여러 계층이 동시에 판단했다.
-- 상태 표시 경로가 촬영 경로를 방해했다.
-- 복구 권한이 여러 계층에 분산되었다.
-- `capture accepted`와 `file arrived`를 충분히 분리하지 못했다.
+## 4. Product Direction vs Prototype Path
 
-### 4.2 three-brain model
+### 4.1 Final Product Direction
 
-기존 구조는 사실상 아래 세 계층이 같은 camera truth를 각각 재해석했다.
-
-- sidecar
-- Rust backend
-- React UI
-
-이 패턴은 새 시스템에서 절대 재현하면 안 된다.
-
-### 4.3 문서 검토 결과의 의미
-
-기존 문서 검토 결과는 다음으로 요약된다.
-
-- 에픽 문서 방향 자체가 완전히 틀린 것은 아니었다.
-- 하위 설계에서 Rust에 camera orchestration 책임이 과도하게 들어갔다.
-- 이후 single-source-of-truth를 도입하려 했지만 기존 fallback을 충분히 제거하지 못했다.
-- 구현은 그 위에 heuristic을 더 올려 더 꼬였다.
-
-이 결론은 "기존 구조를 다듬으면 된다"가 아니라 "이 구조를 기반으로 다시 쌓지 말라"는 뜻으로 읽어야 한다.
-
-## 5. Greenfield Architecture Goal
-
-### 5.1 새 시스템의 상위 구조
-
-권장 상위 구조는 다음과 같다.
+최종 제품 방향은 아래 구조다.
 
 ```text
 [Customer/Admin UI]
         |
         v
-[Editor Host App]
-  - session manager
-  - file watcher / ingest
-  - preset application
-  - result rendering
+[Editor Host]
+  - check-in
+  - preset selection
+  - latest-photo reassurance
+  - exporting / handoff
+  - operator diagnostics surface
         |
-        +----------------------+
-        |                      |
-        v                      v
-[Camera Adapter]         [Session Filesystem]
-        |                      ^
-        v                      |
-[Camera Engine] ---capture---> Raw/
+        v
+[Camera Adapter Boundary]
+        |
+        v
+[Camera Engine Process]
+  - detect
+  - capture
+  - transfer
+  - SDK/session recovery
+        |
+        v
+[Session Filesystem: Raw/, Jpg/]
 ```
 
-### 5.2 역할 분리
+역할 분리는 다음과 같다.
 
-#### Editor Host App
+- Editor Host
+  - 세션 생성/선택
+  - `Raw/` 감시와 파일 안정화
+  - ingest / preset / render
+  - 고객 흐름과 운영자 흐름 표시
+  - PRD 기준의 `내보내기 중`, `세션명 인계`, `전화 필요` 화면 관리
+- Camera Adapter Boundary
+  - 최소 command/result/event contract 제공
+  - diagnostics와 customer-visible state 분리
+  - camera truth를 Host가 다시 추론하지 않게 차단
+- Camera Engine
+  - 장치 연결 감지
+  - capture 요청 수락/거절
+  - 파일 전송
+  - SDK/session recovery
+  - hardware truth 단독 소유
 
-책임:
+### 4.2 Short Spike Path
 
-- 세션 생성/선택
-- `Raw/` 감시
-- ingest
-- preset 적용
-- 결과 표시
-- 고객/관리자 화면 분기
+짧은 spike는 최종 제품 구조와 구분해서 본다.
 
-비책임:
+- 1차 spike 목표는 `configureSession -> capture(requestId) -> Raw arrival`을 단일 Canon 모델에서 증명하는 것이다.
+- 이때 `Form1.cs`와 `Program.cs`의 최소 흐름을 재현하거나, `CanonSDKBase`와 `EosCamera`를 얇게 감싼 throwaway 실험 코드를 쓸 수 있다.
+- spike의 산출물은 "작동했다"보다 "어디까지가 Canon seam이고 어디부터가 제품 contract인가"를 분리해내는 것이다.
 
-- Canon SDK session management
-- camera reconnect heuristic
-- hardware truth 판단
+### 4.3 Temporary Learning Scaffolds
 
-#### Camera Engine
+아래는 허용되는 임시 학습 발판이다.
 
-책임:
+- `Canon.Eos.Framework`를 직접 물고 동작 검증하기
+- `CanonSDKBase` 주변을 얇게 잘라 capture/transfer를 확인하기
+- `CameraControlCmd` 흐름을 따라 session folder 저장까지 headless로 검증하기
 
-- camera detect
-- capture
-- transfer
-- camera truth 판단
-- SDK/session recovery
+하지만 이것이 자동으로 최종 아키텍처를 의미하지는 않는다.
+Spike foundation과 product architecture는 분리해서 판단해야 한다.
 
-비책임:
+## 5. Architecture Guardrails
 
-- image ingest
-- filter application
-- gallery management
+### 5.1 Truth Domains
 
-#### Camera Adapter
+- **camera truth**: Camera Engine only
+- **process truth**: Adapter/Host backend
+- **file pipeline truth**: Editor Host
+- **customer-visible state**: UI translation layer
 
-책임:
+이 원칙은 다시 깨면 안 된다.
+Host와 UI는 camera internals를 재판정하는 계층이 아니라, 이미 정규화된 신호를 번역하는 계층이다.
 
-- Editor Host와 Camera Engine 사이의 최소 command/result 경계 제공
-- capture command 전달
-- engine status를 앱이 이해할 수 있는 최소 모델로 정규화
+### 5.2 Success Semantics
 
-비책임:
+성공은 세 단계로 나눈다.
 
-- camera 상태를 새로 추론
-- fallback polling 기반 복구 엔진 역할
+1. `Command Accepted`
+   - engine이 `capture(requestId)`를 수락했다.
+   - 아직 셔터 동작, 파일 전송, 결과 표시는 보장하지 않는다.
+2. `Raw Arrived`
+   - 상관관계가 있는 새 파일이 `Raw/`에 안전하게 도착했다.
+   - 파일 크기와 잠금 상태가 안정화되었다.
+3. `Booth Result Ready`
+   - ingest 성공
+   - preset/filter 적용 성공
+   - 고객에게 보여줄 결과가 준비됨
 
-## 6. Preferred Integration Model
+PRD 기준의 고객 경험 성공은 3단계다.
+따라서 `capture accepted`를 곧바로 고객 성공으로 번역하면 안 된다.
 
-### 6.1 filesystem-first integration
+### 5.3 Contract v0
 
-새 시스템은 가능하면 filesystem-first로 붙는 것이 좋다.
+최소 command:
 
-의미:
+- `configureSession({ sessionId, rawDir, jpgDir, namingPolicy })`
+- `capture({ requestId })`
+- `health()`
+- `getDiagnostics()`
+- `restart()`
 
-1. Camera Engine은 세션 `Raw/` 폴더로 파일을 쓴다.
-2. Editor Host는 `Raw/` 폴더를 감시한다.
-3. 최종 성공 기준은 새 파일의 실제 도착이다.
+최소 event:
 
-장점:
+- `engine_state_changed`
+- `capture_request_accepted`
+- `capture_request_rejected`
+- `transfer_started`
+- `transfer_completed`
+- `camera_fault`
 
-- 엔진 내부 이벤트 신뢰성에 덜 의존
-- transfer 완료를 앱 내부 추측 상태가 아니라 파일 존재로 검증 가능
-- camera/app coupling 감소
+filesystem contract:
 
-### 6.2 command channel은 최소화
+- engine은 전송 중 파일과 최종 파일을 구분할 수 있어야 한다.
+- 가능하면 atomic rename 또는 그에 준하는 finalize 규칙을 둔다.
+- Host는 파일 안정화 규칙을 통과한 뒤에만 ingest 한다.
+- 가능하면 `requestId`를 manifest 또는 metadata로 남겨 correlation을 보조한다.
 
-Editor Host가 Camera Engine에 요구하는 command는 최소화한다.
+UI translation:
 
-권장 최소 command:
+- 고객 상태는 작게 유지한다: `ready`, `capturing`, `importing`, `error`
+- 운영자 표시는 PRD에 맞춰 `촬영 가능 / 준비 중 / 전화 필요` 같은 압축 신호로 번역할 수 있다.
+- 그러나 그 뒤에는 더 풍부한 diagnostics 모델이 별도로 존재해야 한다.
 
-- `initializeSession(rawPath)`
-- `capture()`
-- `getAdminDiagnostics()` 또는 동등 기능
-- `restartEngine()` 또는 동등 기능
+## 6. Anti-Patterns and Non-Goals
 
-권장 status feed:
+다음은 명시적으로 금지한다.
 
-- `ready`
-- `busy`
-- `transferring`
-- `error`
+- digiCamControl 전체 솔루션을 제품 베이스로 삼는 것
+- `CameraDeviceManager` 전체를 Canon 엔진 베이스로 삼는 것
+- Host가 Canon SDK 복잡도를 직접 흡수하는 것
+- 옛 IPC 안정화를 다시 중심 계획으로 되살리는 것
+- Photino-first 또는 HTTP-sidecar-first를 현재 주 경로로 놓는 것
+- RapidRAW UI나 digiCamControl camera code를 거의 그대로 채택하는 것
+- engine, host, UI가 camera 상태를 동시에 추론하는 것
+- customer state와 admin diagnostics를 섞는 것
 
-여기서 status는 고객 화면을 위한 단순 모델이어야 한다.
+이 문서의 비목표도 분명하다.
 
-### 6.3 capture success semantics
+- 제품 코드 구현
+- 현재 앱 재작성
+- 새 camera engine 실제 개발
+- sidecar transport 현대화
+- reference source code 수정
 
-새 시스템에서 `capture()`의 성공은 "셔터 요청이 받아들여졌다" 수준의 중간 의미다.  
-진짜 성공은 다음이다.
+## 7. Reading Order for Future Work
 
-1. 새 파일이 `Raw/`에 도착
-2. 파일 안정화 완료
-3. ingest 성공
-4. preset 적용 성공
-5. 결과 표시 성공
+다음 세션은 아래 순서로 읽는 것이 좋다.
 
-## 7. Single-Owner Rules for the New System
-
-### 7.1 camera truth
-
-소유자: Camera Engine only
-
-예:
-
-- 카메라가 연결되었는가
-- 지금 촬영 가능한가
-- transfer 중인가
-- SDK/session이 정상인가
-
-### 7.2 process / adapter truth
-
-소유자: Camera Adapter / Host backend
-
-예:
-
-- engine 프로세스가 응답하는가
-- adapter 통신 경로가 살아있는가
-
-중요:
-
-process truth로 camera truth를 재구성하지 않는다.
-
-### 7.3 file pipeline truth
-
-소유자: Editor Host
-
-예:
-
-- `Raw/` 새 파일 감지
-- 파일 안정화 완료
-- ingest 성공
-- preset 적용 성공
-
-### 7.4 customer-visible state
-
-소유자: UI 표현 계층
-
-권장 고객 상태:
-
-- `ready`
-- `capturing`
-- `importing`
-- `error`
+1. `refactoring/research-redesign-workorder.md`
+2. `refactoring/research-codex.md`
+3. `refactoring/research.md`
+4. `docs/prd-2026-03-07-boothy-greenfield-mvp.md`
+5. `docs/research-checklist-2026-03-07-boothy-greenfield.md`
+6. `reference/uxui_presetfunction/README.md`
+7. `reference/uxui_presetfunction/src/App.tsx`
+8. `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices.Example/Form1.cs`
+9. `reference/camerafunction/digiCamControl-2.0.0/CameraControlCmd/Program.cs`
+10. `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices/Canon/CanonSDKBase.cs`
+11. `reference/camerafunction/digiCamControl-2.0.0/CameraControl.Devices/CameraDeviceManager.cs`
+12. `reference/camerafunction/digiCamControl-2.0.0/Canon.Eos.Framework/EosCamera.cs`
 
 중요:
 
-이 상태는 "카메라 내부 저수준 상태"가 아니라 "부스가 지금 고객에게 약속할 수 있는 경험 상태"다.
+- 현재 체크아웃에는 예전 문서가 언급하던 `apps/boothy/*`, `apps/camera-sidecar/*`, `work/*` 경로가 없다.
+- 따라서 future LLM은 로컬 reference와 현재 PRD를 먼저 기준으로 잡고, 레거시 코드가 복원된 경우에만 비교 읽기를 추가해야 한다.
 
-## 8. What the New Build Must Not Repeat
+## 8. Final Conclusion
 
-### 8.1 금지 패턴
+Boothy의 현재 greenfield 재설계는 "현재 sidecar를 어떻게 고칠까"가 아니라, "제품 가치가 있는 Host/UI를 얼마나 빨리 살리고 camera risk를 얼마나 작게 격리할까"의 문제다.
 
-- 카메라 상태를 engine, host backend, UI가 동시에 추론하는 것
-- status polling이 capture path를 방해하는 것
-- timeout heuristics를 여러 계층에 나눠 넣는 것
-- `statusHint -> getStatus -> restart -> capture retry` 같은 루프를 기본 흐름으로 삼는 것
-- destination/session 준비를 여러 계층에서 중복 적용하는 것
-- UI가 stale snapshot과 pull 결과를 섞어 hardware readiness를 재계산하는 것
+최종 권고는 바뀌지 않는다.
 
-### 8.2 금지 목표
+> **새 제품은 `RapidRAW Host/UI selective reuse + new Canon-focused Camera Engine Boundary`를 기본축으로 삼아야 한다.**
 
-- current sidecar의 구조적 연속성을 확보하는 것
-- 현재 IPC client의 복구 전략을 새 시스템의 베이스로 삼는 것
-- "현 코드와 최대 호환"을 중요한 목표로 두는 것
+그리고 이 문장을 해석할 때는 아래 두 가지를 같이 기억해야 한다.
 
-## 9. Build Recommendation
+- RapidRAW는 제품 가치를 빠르게 회복하는 Host/UI donor다.
+- digiCamControl은 Canon seam을 배우는 extraction reference다.
 
-### 9.1 recommended path
-
-현재 결정 조건을 반영하면 가장 바람직한 방향은 다음이다.
-
-1. Editor/UI는 RapidRAW 계열 레퍼런스를 기준으로 새로 구성
-2. Camera Engine은 `digiCamControl` 계열 접근을 1순위로 검토
-3. 둘 사이는 thin adapter로 연결
-4. success truth는 파일 도착과 ingest 완료로 판단
-
-### 9.2 why this is the best fit
-
-이 방향이 가장 적합한 이유는 다음과 같다.
-
-- 사용자 요구사항이 복잡한 camera UI가 아니라 결과 확인 중심이기 때문
-- camera complexity를 제품 코어에서 분리할 수 있기 때문
-- 기존 hybrid 구조의 실패 원인을 그대로 가져오지 않기 때문
-- file boundary가 명확해 integration이 단순해지기 때문
-
-### 9.3 fallback path
-
-만약 `digiCamControl` 채택이 어렵다면 다음이 차선책이다.
-
-- 현재 sidecar를 고쳐 쓰지 말고
-- Canon 전용 최소 camera engine을 새로 설계
-- 기능은 detect/capture/transfer/status push까지만 허용
-
-중요:
-
-이 경우에도 "현 sidecar를 점진적으로 고친다"가 아니라 "새 최소 엔진을 다시 만든다"가 기준이다.
-
-### 9.4 why this architecture is useful and effective
-
-이 아키텍처 제안은 단순히 "깔끔해 보이는 구조"라서 추천하는 것이 아니다.  
-다음과 같은 실질적 효용이 있기 때문에 추천한다.
-
-#### A. 문제의 중심을 제품 코어에서 분리한다
-
-현재 가장 어려운 영역은 Canon SDK, USB tethering, reconnect, transfer, busy/retry 같은 하드웨어 통합 영역이다.  
-이 영역은 편집 앱의 핵심 가치가 아니다.
-
-`editor host + camera engine` 분리는 이 복잡도를 제품 코어 밖으로 밀어낸다.  
-그 결과, 편집/UI 앱은 세션, ingest, preset, 결과 표시라는 본질에 집중할 수 있다.
-
-#### B. 실패 표면적이 줄어든다
-
-현재 구조는 상태 판단, recovery, capture orchestration이 여러 계층에 분산되어 있다.  
-새 구조는 truth domain마다 소유자를 하나로 제한한다.
-
-효과:
-
-- 상태 충돌 감소
-- 중복 retry/restart 감소
-- capture path와 status path 간섭 감소
-
-#### C. 최종 성공 기준이 명확해진다
-
-새 구조는 `capture accepted`보다 `file arrived in Raw/`를 더 강한 truth로 사용한다.
-
-이 방식은 현장 품질 관점에서 유리하다.
-
-- 셔터 요청 수락과 실제 파일 도착을 구분 가능
-- 고객이 보는 결과와 시스템의 성공 기준이 일치
-- transfer 관련 버그를 control-plane 추측이 아니라 파일 기준으로 검증 가능
-
-#### D. 테스트 가능성이 높아진다
-
-camera engine과 editor host가 분리되면 테스트 전략도 분리된다.
-
-- engine: detect/capture/transfer 상태 테스트
-- editor host: file arrival/ingest/preset/render 테스트
-- end-to-end: `Raw/` 파일 도착을 기준으로 검증
-
-즉, 새 구조는 "카메라 이벤트를 맞게 흉내 내는 테스트"보다 "실제 제품 성공 기준을 검증하는 테스트"를 쓰기 쉬워진다.
-
-#### E. 카메라 엔진 교체 가능성이 생긴다
-
-새 구조는 camera engine을 replaceable component로 다룬다.
-
-효과:
-
-- 초기에 `digiCamControl` 기반으로 시작
-- 이후 필요하면 Canon 전용 최소 엔진으로 교체 가능
-- 앱 코어가 특정 SDK binding 구조에 고정되지 않음
-
-#### F. 고객 UX와 관리자 UX를 자연스럽게 분리한다
-
-고객은 단순 상태만 보면 된다.
-
-- `ready`
-- `capturing`
-- `importing`
-- `error`
-
-관리자는 진단을 더 자세히 볼 수 있다.
-
-- 엔진 프로세스 상태
-- 마지막 오류
-- 카메라 모델
-- 재시작 가능 여부
-
-이 분리는 현재처럼 "관리자에게 필요한 상태 복잡도"가 고객 UI로 새어 나오는 문제를 막는다.
-
-### 9.5 explicit review prompts for other agents
-
-다른 에이전트가 이 문서를 검토할 때는 아래 주장 단위로 평가해야 한다.
-
-#### Claim 1. 이 구조는 기존 three-brain 문제를 재생산하지 않는다
-
-검토 질문:
-
-- camera truth의 단일 소유자가 실제로 정의되어 있는가?
-- backend와 UI가 camera truth를 다시 계산할 여지가 남아 있는가?
-- fallback이 주 경로로 승격될 위험이 있는가?
-
-#### Claim 2. 이 구조는 현장 신뢰성을 높인다
-
-검토 질문:
-
-- capture 성공 기준이 실제 파일 도착 기준으로 귀결되는가?
-- status path가 capture path를 방해할 여지가 제거되었는가?
-- transfer 누락/지연을 파일 기반으로 검증할 수 있는가?
-
-#### Claim 3. 이 구조는 MVP 구현 난이도를 낮춘다
-
-검토 질문:
-
-- camera engine이 외부 reference를 활용해 충분히 대체 가능한가?
-- editor host가 과도한 camera orchestration 책임을 다시 갖지 않는가?
-- 초기 구현 범위를 최소 command/status/filesystem contract로 제한했는가?
-
-#### Claim 4. 이 구조는 운영성과 디버깅 가능성을 높인다
-
-검토 질문:
-
-- 고객 상태 모델이 충분히 작고 안정적인가?
-- 관리자 진단 모델이 별도로 존재하는가?
-- 문제 발생 시 어느 계층이 책임자인지 추적이 쉬운가?
-
-#### Claim 5. 이 구조는 미래 교체 비용을 줄인다
-
-검토 질문:
-
-- camera engine 교체 시 editor host 수정량이 제한되는가?
-- 앱 코어가 특정 SDK 또는 특정 IPC 방식에 과도하게 결합되지 않는가?
-- filesystem boundary와 minimal adapter contract가 유지되는가?
-
-다른 에이전트는 위 다섯 claim에 대해 각각 `accept`, `concern`, `reject`로 판단하는 것이 바람직하다.
-
-## 10. Greenfield Build Boundaries
-
-### 10.1 새 시스템에 가져갈 것
-
-- 제품 요구사항
-- 세션 폴더 계약
-- 고객/관리자 UX 분리 원칙
-- ingest / preset / export 개념
-- 현장 장애 로그에서 얻은 failure knowledge
-
-### 10.2 새 시스템에 가져가지 않을 것
-
-- current camera IPC stack
-- current sidecar lifecycle logic
-- current frontend camera readiness logic
-- current camera status reconciliation heuristic
-
-### 10.3 "참고하되 복사하지 말 것"
-
-다음은 구조가 아니라 아이디어만 참고한다.
-
-- event naming 방식
-- diagnostics surface 방식
-- session destination 개념
-- 관리자 복구 액션의 존재 자체
-
-## 11. Reading Order for Future LLM Work
-
-새 시스템을 설계/구현할 LLM은 다음 순서로 읽는 것이 좋다.
-
-1. `refactoring/research-codex.md`
-2. `work/capture.md`
-3. `work/tethering.md`
-4. `work/camera_connection.md`
-5. 제품 요구사항 관련 story/epic 문서
-6. `reference` 폴더의 편집/UI 레퍼런스
-7. 채택 후보 camera engine 레퍼런스
-8. 마지막으로 현재 구현 코드
-
-중요:
-
-현재 구현 코드는 "무엇을 만들지"보다 "무엇을 다시 만들면 안 되는지" 확인하기 위해 늦게 읽는 편이 낫다.
-
-## 12. New-System Invariants
-
-greenfield build 동안 다음 규칙은 깨지면 안 된다.
-
-### 12.1 one owner per truth domain
-
-같은 truth domain에 최종 판단자는 하나여야 한다.
-
-### 12.2 file arrival beats control-plane optimism
-
-command 응답보다 파일 도착이 더 강한 truth다.
-
-### 12.3 customer UI reflects booth state, not SDK internals
-
-고객 UI는 Canon SDK 내부 상태를 번역해 보여주는 화면이 아니다.
-
-### 12.4 admin diagnostics may be detailed, customer state must stay small
-
-관리자 진단은 풍부해도 되지만 고객 상태 모델은 작아야 한다.
-
-### 12.5 camera engine is replaceable
-
-새 구조는 camera engine을 교체 가능하게 설계해야 한다.
-
-즉, app core는 특정 Canon SDK binding 구조에 잠기면 안 된다.
-
-## 13. Practical Implications for the Next LLM
-
-다음 작업을 하는 LLM은 아래처럼 행동해야 한다.
-
-### 13.1 해야 할 일
-
-- 현재 앱을 patching 대상으로 보지 말 것
-- 새 app core와 새 camera integration boundary를 먼저 정의할 것
-- camera engine contract를 최소 command/status/filesystem 관점에서 정의할 것
-- customer state model을 작게 유지할 것
-- admin diagnostics는 별도 모델로 분리할 것
-
-### 13.2 하지 말아야 할 일
-
-- `ipc_client.rs`를 개선해 새 구조를 만들려 하지 말 것
-- 현재 sidecar와 호환되는 방향으로 인터페이스를 먼저 고정하지 말 것
-- old status event model을 그대로 유지하려 하지 말 것
-- pull/push/hint 혼합 상태 모델을 다시 설계하지 말 것
-
-## 14. Final Conclusion
-
-이번 결정의 핵심은 "리팩토링"이 아니라 "재시작"이다.
-
-기존 Boothy camera stack은 참고 자료다.  
-새 시스템의 출발점은 기존 코드가 아니라 두 개의 레퍼런스다.
-
-따라서 앞으로의 설계 질문은 다음처럼 바뀌어야 한다.
-
-- "현 sidecar를 어떻게 안정화할까?"가 아니라
-- "편집 앱과 카메라 엔진을 어떤 최소 경계로 연결할까?"
-
-- "UI가 카메라 상태를 어떻게 더 정확히 알까?"가 아니라
-- "고객 경험에 필요한 상태를 얼마나 작게 정의할까?"
-
-- "현재 IPC 구조를 어떻게 고칠까?"가 아니라
-- "새 camera engine contract를 어떻게 최소화할까?"
-
-요약하면 다음과 같다.
-
-> 새 시스템은 기존 camera stack을 수리하는 프로젝트가 아니라,  
-> 편집/UI 레이어와 카메라 엔진 레이어를 분리한 새 제품을 다시 만드는 프로젝트다.
-
-## 15. Primary References
-
-### 15.1 legacy observation sources
-
-- `work/capture.md`
-- `work/tethering.md`
-- `work/camera_connection.md`
-
-### 15.2 product / architecture docs
-
-- `docs/decisions/adr-001-camera-integration.md`
-- `docs/architecture/component-architecture.md`
-- `docs/architecture/camera-status-realtime.md`
-- `docs/architecture/api-design-and-integration.md`
-- `docs/stories/epic-1-unified-boothy.md`
-- `docs/stories/epic-2-session-timeline-smart-export.md`
-- `docs/stories/epic-3-storage-health-disk-space-guardrails.md`
-- `docs/stories/epic-4-real-camera-hardware-integration.md`
-
-### 15.3 current implementation to study late
-
-- `apps/boothy/src/App.tsx`
-- `apps/boothy/src/cameraReadiness.ts`
-- `apps/boothy/src-tauri/src/camera/ipc_client.rs`
-- `apps/camera-sidecar/Program.cs`
-- `apps/camera-sidecar/Camera/RealCameraController.cs`
-
-### 15.4 external / reference candidates
-
-- RapidRAW: <https://github.com/CyberTimon/RapidRAW>
-- digiCamControl: <https://github.com/dukus/digiCamControl>
-- EosMonitor: <https://github.com/Helge07/EosMonitor>
-
-### 15.5 open-source reference inventory from prior research
-
-이 섹션은 사용자가 사전에 수집한 오픈소스 후보군을 greenfield rebuild 관점으로 다시 분류한 목록이다.
-
-#### A. Windows desktop camera applications
-
-1. `digiCamControl`
-   - URL: <https://github.com/dukus/digiCamControl>
-   - 역할: 가장 현실적인 camera engine 후보
-   - 이유: Windows tethering app, Canon 지원, 외부 제어 단서 존재
-   - 본 문서에서의 위치: primary candidate
-
-2. `EosMonitor`
-   - URL: <https://github.com/Helge07/EosMonitor>
-   - 역할: Canon 전용 참고 구현
-   - 이유: Canon DSLR/DSLM 제어, LiveView, parameter setting, download 흐름 참고 가능
-   - 본 문서에서의 위치: secondary reference / Canon-specific example
-
-#### B. Canon EDSDK wrapper / library references
-
-3. `canon-sdk-java`
-   - URL: <https://github.com/Blackdread/canon-sdk-java>
-   - 역할: Java 기반 Canon EDSDK framework
-   - 이유: capture, download, parameter setting, live view, multi-camera 패턴 참고 가능
-   - 본 문서에서의 위치: event / control abstraction 참고용
-
-4. `EDSDK-cpp`
-   - URL: <https://github.com/hezhao/EDSDK-cpp>
-   - 역할: C++ 기반 Canon EDSDK wrapper
-   - 이유: keepalive, liveview, tethering, multi-camera 예제 존재
-   - 본 문서에서의 위치: low-level native wrapper 설계 참고용
-
-5. `edsdk-python`
-   - URL: <https://github.com/Jiloc/edsdk-python>
-   - 역할: Python 기반 Canon EDSDK wrapper
-   - 이유: 별도 프로세스 기반 camera service 패턴 검토에 유용
-   - 본 문서에서의 위치: process boundary / service split 참고용
-
-6. `edsdk-processing`
-   - 역할: EDSDK 사용 예제군
-   - 본 문서에서의 위치: low-level call pattern 참고용
-
-7. `edsdk4j`
-   - 역할: Java 계열 EDSDK 예제군
-   - 본 문서에서의 위치: event / callback / camera control 패턴 참고용
-
-#### C. Rust / PTP / lower-level transport references
-
-8. `cam` crate
-   - URL: <https://lib.rs/crates/cam>
-   - 역할: pure Rust camera/PTP 설계 참고
-   - 이유: vendor extension와 event model 방향성 참고 가능
-   - 본 문서에서의 위치: exploratory only
-
-9. `mtp-rs`
-   - URL: <https://github.com/vdavid/mtp-rs>
-   - 역할: Rust MTP/PTP 구현 참고
-   - 이유: pure Rust transport 구현을 검토할 때 기반 지식 제공
-   - 본 문서에서의 위치: exploratory only
-
-### 15.6 reference prioritization for the greenfield rebuild
-
-새 시스템 기준 우선순위는 다음과 같다.
-
-#### Tier 1: 직접 채택 후보
-
-- `digiCamControl`
-- RapidRAW 계열 편집/UI 레퍼런스
-
-#### Tier 2: 설계 참고 후보
-
-- `EosMonitor`
-- `canon-sdk-java`
-- `EDSDK-cpp`
-- `edsdk-python`
-
-#### Tier 3: 탐색 전용 후보
-
-- `cam`
-- `mtp-rs`
-- `edsdk-processing`
-- `edsdk4j`
-
-이 우선순위의 의미는 다음과 같다.
-
-- Tier 1은 제품 구조의 출발점으로 사용 가능
-- Tier 2는 구현 패턴, event 흐름, SDK wrapping 방식 참고용
-- Tier 3는 직접 채택보다 아이디어/기술 조사 성격이 강함
+즉, 앞으로의 설계는 "무엇을 통째로 가져올까"가 아니라, "어떤 경계와 계약 아래에서 무엇을 작게 재사용할까"를 기준으로 진행해야 한다.

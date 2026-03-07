@@ -1,6 +1,7 @@
 {
   "name": "rapidraw",
   "author": "Timon Käch",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "vite",

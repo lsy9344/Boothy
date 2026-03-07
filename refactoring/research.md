@@ -1,56 +1,54 @@
-# Boothy 프로젝트 아키텍처 리팩토링 연구 (Research)
+# Boothy Refactoring Research (Superseded)
 
-## 1. 현재 시스템의 본질적 문제 진단
+작성일: 2026-03-07
+작성자: Codex
+상태: Historical alternatives only
+현재 기준 문서: `refactoring/research-codex.md`
 
-Boothy는 단순한 카메라 뷰어가 아닌 **PC와 전문가용 카메라(Canon 등)를 연결하는 테더링(Tethering) 앱**입니다. 이 시스템이 현재 심각한 안정성 문제(잦은 타임아웃, 캡처 실패, 상태 유실 등)를 겪고 있는 이유는 "카메라 제어가 어려워서"가 아니라 **"과도하게 분리된 아키텍처와 불안정한 통신 방식(IPC)"** 때문입니다.
+이 문서는 더 이상 현재 권고안을 정의하는 주 문서가 아니다.
+이 문서는 이전에 검토했던 대안들과, 왜 그 대안들이 현재 주 경로에서 내려왔는지를 짧게 정리하는 용도로만 남긴다.
 
-### 1.1. 현재의 3계층 구조가 낳은 비극
-현재 앱은 3개의 분리된 계층으로 동작합니다.
-1. **프론트엔드 (React)**: UI/UX 담당
-2. **백엔드 (Rust/Tauri)**: 세션 및 파일 감시
-3. **사이드카 (C#)**: Canon EDSDK와 통신하여 카메라 실제 제어
+## 1. What This Older Thread Still Contributes
 
-### 1.2. 핵심 실패 원인 (Log 분석 기반)
-1. **파이프(Named Pipe) 병목**: Rust와 C# 사이드카가 '네임드 파이프'로 통신합니다. UI가 카메라 상태를 묻는 폴링(`getStatus`)과 사용자의 캡처 명령(`capture`)이 이 좁은 단일 파이프에서 충돌(경합)하면서 `IPC pipe write timeout`이나 `os error 231(Pipe busy)` 에러를 발생시킵니다.
-2. **프로세스 재시작으로 인한 상태 유실**: 통신이 막히면 Rust는 C# 프로세스를 강제로 재시작합니다. 이때 C# 메모리에 있던 '저장 경로(Destination)'가 날아가 버려, 직후에 촬영을 시도하면 `Session destination not set` 오류와 함께 촬영이 실패합니다.
-3. **분산 시스템의 복잡성 스스로 떠안음**: 단일 PC 앱임에도 불구하고 서로 다른 프로세스가 비동기적으로 통신하며 에러를 복구해야 하는 '분산 시스템'의 복잡성을 가집니다. 임시방편(Workaround) 코드를 넣을수록 부작용이 계속 발생합니다.
+이전 연구에서 여전히 유효한 통찰은 있다.
 
----
+- 현재 React/Rust/C# 분리 구조는 통신 병목과 책임 분산 문제를 만들었다.
+- `capture accepted`와 실제 파일 도착을 같은 성공으로 취급하면 현장 품질이 무너진다.
+- session destination 손실, sidecar restart, three-brain 상태 추론은 다시 만들면 안 되는 실패 패턴이다.
 
-## 2. 레퍼런스 제약 사항 및 팩트 체크
+즉, 이 문서는 "현재 구조를 왜 중심 계획으로 두면 안 되는가"를 설명하는 postmortem 자료로는 여전히 가치가 있다.
 
-* **의문점**: "카메라 제어를 위해 SDK를 쓰면 꼭 C#을 써야 하나?"
-  * **팩트**: 아닙니다. Canon EDSDK는 C/C++ 기반이므로 Rust에서도 FFI로 직접 호출할 수 있습니다. 단지 과거에 기존 C# 래퍼 코드를 재사용하기 위해 현재 구조가 선택되었을 확률이 높습니다.
-* **비즈니스 요구사항**: `c:\Code\Project\Boothy\reference\uxui_presetfunction` 에 있는 웹 기반(React, Konva 등)의 뛰어난 사진 편집 UI/UX를 반드시 이식해야 합니다.
-* **제약 결론**: 기존 제안이었던 "전체 앱을 순수 C# WPF/WinUI 3로 재구축"하는 것은 불가능합니다. 웹 UI 코드를 모두 버리고 네이티브로 재작성해야 하므로 개발 비용이 기하급수적으로 늘어납니다. **웹 프론트엔드(React) 기술은 반드시 유지해야 합니다.**
+## 2. Historical Options That Are Now Demoted
 
----
+| 이전 대안 | 왜 현재 주 경로가 아닌가 |
+| --- | --- |
+| Photino.NET single-process 방향 | 셸 재작성 비용을 먼저 지불하면서도 RapidRAW Host/UI 자산 활용이 늦어진다 |
+| HTTP sidecar modernization | 옛 sidecar 구조를 계속 중심에 두게 만들어 새 boundary 설계를 미룬다 |
+| current-stack stabilization first | 기존 실패 구조를 더 오래 유지하게 만든다 |
+| full native desktop rewrite | 웹 UI 강점과 기존 Host 흐름 자산을 불필요하게 버린다 |
 
-## 3. 리팩토링 대안 (웹 UI를 살리면서 통신 에러를 없애는 법)
+이 대안들은 완전히 무의미한 것은 아니지만, 현재 문맥에서는 **historical alternatives**일 뿐이다.
 
-### 대안 1: Photino.NET 기반 단일 프로세스 통합 (가장 추천하는 근본적 해결책)
-Tauri(Rust)를 대체할 C# 기반의 웹뷰 래퍼인 `Photino.NET`을 사용합니다.
-* **구조**: `React UI (기존 레퍼런스 100% 재사용)` + `Photino.NET (데스크톱 껍데기)` + `C# 백엔드 및 카메라 제어`
-* **장점**: 
-  * 기존의 골칫거리였던 분리된 C# 사이드카 프로세스와 'Named Pipe' 통신이 완전히 사라집니다.
-  * React 프론트엔드가 Javascript 브릿지를 통해 같은 메모리 공간(단일 프로세스) 내의 C# 카메라 제어 코드를 즉시 호출합니다.
-  * 통신 타임아웃, 파이프 막힘, 상태 유실 에러가 구조적으로 원천 차단됩니다. UI 레퍼런스 코드도 그대로 살릴 수 있습니다.
+## 3. Current Recommendation That Replaces This Document
 
-### 대안 2: 현재 구조(Tauri) 유지하되 통신 방식을 HTTP로 전면 교체 (현실적 타협점)
-구조 자체를 엎는 것이 부담스럽다면, 현재의 3계층(React -> Rust -> C#)을 유지하면서 통신 배관만 최신화합니다.
-* **구조 변경**: C# 사이드카의 `NamedPipeServer.cs` 코드를 폐기하고, **ASP.NET Core Minimal API**를 사용하여 로컬 HTTP 웹 서버로 개조합니다.
-* **동작 방식**: Rust 백엔드는 파이프 통신 대신 `http://localhost:<포트>/capture` 와 같은 REST API 요청을 C# 서버로 보냅니다.
-* **장점**: 
-  * HTTP 통신은 동시 다발적인 요청(상태 폴링과 캡처 요청 등) 처리에 최적화되어 있으므로 파이프 경합(`os error 231`)이 발생하지 않습니다.
-  * API 요청이 실패하더라도 C# 서버 프로세스 자체가 다운되지 않으므로 '저장 경로 유실' 등의 치명적 결함이 크게 줄어듭니다.
+현재 기준 권고안은 아래 한 줄이다.
 
----
+> **`RapidRAW Host/UI selective reuse + new Canon-focused Camera Engine Boundary`**
 
-## 4. 최종 결론 및 권고 사항
+이 권고안은 다음 판단을 포함한다.
 
-현재 시스템이 헤매는 이유는 기술적 난이도 때문이 아니라, **"간단한 목적을 위해 너무 복잡한 배관(IPC)을 깔아두었기 때문"**입니다. 
-다른 오픈소스를 찾아 억지로 믹싱(Mixing)하려는 시도는 멈춰야 합니다.
+- RapidRAW는 Host/UI selective reuse 대상으로 본다.
+- digiCamControl은 Canon 흐름 추출 reference로 본다.
+- 전체 digiCamControl 솔루션, 전체 `CameraDeviceManager`, 옛 sidecar 안정화는 주 경로가 아니다.
 
-**권고 행동 지침**:
-1. **아키텍처 통합을 원한다면 (대안 1)**: 백엔드를 Rust에서 C#으로 교체하여 단일 앱(Photino.NET)으로 통합하십시오.
-2. **당장의 버그 해결과 현행 유지를 원한다면 (대안 2)**: C# 사이드카의 네임드 파이프 통신 코드를 당장 버리고, 로컬 HTTP 웹 서버(REST API) 구조로 통신 방식을 현대화하십시오. 파이프 관련 버그가 즉시 해소될 것입니다.
+상세 설계와 근거는 모두 `refactoring/research-codex.md`를 따른다.
+
+## 4. When to Read This File
+
+이 파일은 아래 경우에만 읽는다.
+
+- 왜 Photino-first, HTTP-sidecar-first, current-stack stabilization이 내려갔는지 확인할 때
+- 현재 구조의 실패 패턴을 짧게 되짚을 때
+
+이 파일을 읽고 바로 아키텍처를 결정하면 안 된다.
+현재 설계 결정은 반드시 `refactoring/research-codex.md`를 기준으로 내려야 한다.

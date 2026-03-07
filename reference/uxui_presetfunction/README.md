@@ -10,7 +10,7 @@
 [![wgpu](https://img.shields.io/badge/wgpu-%23282C34.svg?style=for-the-badge&logo=webgpu&logoColor=white)](https://wgpu.rs/)
 [![React](https://img.shields.io/badge/react-%2320232a.svg?style=for-the-badge&logo=react&logoColor=%2361DAFB)](https://react.dev/)
 [![Tauri](https://img.shields.io/badge/Tauri-24C8DB?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app/)
-[![AGPL-3.0](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](https://opensource.org/licenses/AGPL-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/CyberTimon/RapidRAW?style=for-the-badge&logo=github&label=Stars)](https://github.com/CyberTimon/RapidRAW/stargazers)
 <br>
 [![Website](https://img.shields.io/website?up_message=getrapidraw.com&down_message=offline&url=https%3A%2F%2Fwww.getrapidraw.com&label=Website&style=for-the-badge&logo=google-chrome&logoColor=white)](https://www.getrapidraw.com)
@@ -495,6 +495,6 @@ As an 18-year-old developer balancing this project with an apprenticeship, your 
 
 ## License & Philosophy
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. I chose this license to ensure that RapidRAW and any of its derivatives will always remain open-source and free for the community. It protects the project from being used in closed-source commercial software, ensuring that improvements benefit everyone.
+This project is licensed under the **MIT License**. I chose this license to provide maximum flexibility for the community, allowing RapidRAW and its components to be used, modified, and distributed with minimal restrictions.
 
 See the [LICENSE](LICENSE) file for more details.
