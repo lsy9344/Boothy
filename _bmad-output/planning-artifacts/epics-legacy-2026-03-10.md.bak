@@ -1,0 +1,950 @@
+---
+stepsCompleted:
+  - 'step-01-validate-prerequisites'
+  - 'step-02-design-epics'
+  - 'step-03-create-stories'
+  - 'step-04-final-validation'
+inputDocuments:
+  - '_bmad-output/planning-artifacts/prd.md'
+  - '_bmad-output/planning-artifacts/architecture.md'
+  - '_bmad-output/planning-artifacts/ux-design-specification.md'
+  - '_bmad-output/planning-artifacts/research/technical-boothy-wrapping-efficiency-research-2026-03-08.md'
+---
+
+# Boothy - Epic Breakdown
+
+## Overview
+
+This document provides the complete epic and story breakdown for Boothy, decomposing the requirements from the PRD, UX Design, Architecture, and supporting technical research into implementable stories.
+
+## Requirements Inventory
+
+### Functional Requirements
+
+FR1: Customers can begin check-in from the first booth screen without navigating the OS or other apps, and the system can show customer-safe preparation and camera-readiness guidance before shooting begins.
+FR2: The system can validate reservation name and last four phone digits, create a unique session identity, and allow the user to continue even if reservation matching is not confirmed.
+FR3: Customers can choose from a bounded preset list with visual previews and can change presets during the session for subsequent shots.
+FR4: Customers can confirm successful shooting by seeing the current preset, actual shoot end time, latest saved photo, and session-scoped thumbnails with delete controls.
+FR5: The system can calculate and manage actual shoot end time for standard, coupon-extended, and operator-extended sessions, including warnings and end-of-shoot behavior.
+FR6: The system can prepare results during the session, manage export waiting states, and hand customers off to the next room using a session-name based handoff flow.
+FR7: The system can detect customer-visible failure states, block continued shooting when required, attempt automated recovery where possible, and escalate to phone support when defined thresholds are exceeded.
+FR8: Remote operators can view a limited diagnostic surface with normalized booth state and can perform only the approved recovery actions needed for unmanned booth exceptions.
+FR9: The system can record lifecycle and intervention logs that support KPI reporting and support-issue classification without storing unnecessary sensitive data.
+
+### NonFunctional Requirements
+
+NFR1: All primary customer-facing state screens must stay within the approved copy budget and expose no internal diagnostic terminology.
+NFR2: All active branches must share the same core customer journey states, copy, preset catalog, and time rules except for approved branch-level phone number configuration.
+NFR3: Stored customer identifiers must be minimized to reservation name plus last four phone digits, and the product must prevent all cross-session photo exposure.
+NFR4: Operators must be able to identify the current exception category and available recovery action within 60 seconds for the defined top exception drills.
+NFR5: The system must move unfinished sessions to a clear `complete` or `phone required` outcome quickly after actual shoot end and must escalate delayed exports by the defined deadline.
+NFR6: The full customer flow must run on the approved Windows booth environment without requiring browser navigation, a mobile device, or an on-screen keyboard.
+
+### Additional Requirements
+
+- Starter template: Epic 1 Story 1 must initialize the product with the official `Vite react-ts` setup plus manual `Tauri CLI` initialization.
+- The durable source of truth for capture artifacts must be local session folders, with a versioned session manifest used to correlate capture and handoff state.
+- The host-facing camera boundary must use a versioned contract based on `Tauri commands + channels + sidecar stdio + filesystem handoff`.
+- Camera connection truth must be normalized once in the host and translated into two surfaces: customer-friendly connection guidance and operator-facing diagnostics.
+- Customer and operator surfaces must remain separate, and UI components must call typed adapter or service layers instead of invoking Tauri directly.
+- Local `SQLite` must store lifecycle, intervention, and rollout-audit logs.
+- `Tauri Store` must hold approved branch configuration and small local settings; MVP branch variance is limited to phone number and approved operational toggles.
+- TypeScript boundary validation must use `Zod 4`, and Rust command handlers must revalidate DTO shape and business invariants before touching the filesystem or sidecar.
+- Release safety must support signed Windows bundles, staged rollout, rollback, and a strict rule that no forced update interrupts an active session.
+- Implementation strategy should follow selective Host/UI reuse with a bundled Windows camera sidecar or adapter and branch-by-abstraction migration.
+- The first integration milestone must prove a Host-only booth flow with mocked camera behavior before live camera integration expands, and real booth acceptance must be tracked as a separate live camera integration workstream.
+- Local IPC should remain `command + sidecar + filesystem handoff`; HTTP-first or gRPC-first local architecture should be avoided unless the sidecar boundary proves insufficient.
+- Durable booth truth must stay in the host and filesystem, while camera truth stays inside the adapter boundary.
+- The design system must use the `Hard Frame` direction: warm outlined editorial surfaces, square corners, strong black outlines, and restrained accent colors.
+- Primary UI typography must use `Pretendard Variable`.
+- The customer surface must be full-screen and touch-first, while the operator surface must be desktop-first with mouse-and-keyboard recovery workflows.
+- Responsive behavior must support booth-first breakpoints and height-aware adaptation so primary state, end time, and latest-photo confidence remain visible on constrained displays.
+- Accessibility baseline must be `WCAG 2.2 AA`, including visible focus states, accessible live regions, reduced-motion support, and no reliance on color alone for critical state.
+- Customer primary controls must support at least `56x56px` touch targets, and operator interactive controls must support at least `44x44px` targets.
+- Validation must include booth-like testing at `1920x1080`, `1366x768`, `1280x800`, `1024x768`, Windows scaling at `100%`, `125%`, and `150%`, touch-first customer flows, and keyboard-only operator flows.
+
+### FR Coverage Map
+
+FR1: Epic 1, Epic 6 - 첫 화면 진입과 고객 친화 준비 상태, 그리고 실제 하드웨어 readiness 검증
+FR2: Epic 1 - 체크인 검증과 세션 생성
+FR3: Epic 2 - 프리셋 선택과 변경
+FR4: Epic 2, Epic 6 - 촬영 피드백 UX와 실제 캡처 산출물 검증
+FR5: Epic 2, Epic 3 - authoritative session end-time baseline, warning, and shoot-stop control
+FR6: Epic 3, Epic 6 - 내보내기와 셀렉실 인계, 그리고 실제 세션 산출물 기반 handoff 검증
+FR7: Epic 4, Epic 6 - 실패 감지, 자동 복구, 전화 전환, 실제 하드웨어 fault routing
+FR8: Epic 4, Epic 6 - 운영자 진단과 제한된 복구 액션, 실제 helper restart/reconnect 검증
+FR9: Epic 5 - 운영 로그, KPI, 운영 분석
+
+## Epic List
+
+### Epic 1: Guided Session Start and Booth Readiness
+Customers can enter the booth, complete check-in, receive customer-safe preparation and camera-readiness guidance, and reach a valid contract-backed session-ready state without operator help. Epic 1 validates the mocked or helper-agnostic readiness milestone; final real hardware booth readiness is delivered in Epic 6.
+**FRs covered:** FR1, FR2
+
+### Epic 2: Confident Capture and Photo Review
+Customers can choose or change presets, see current session timing and latest capture feedback, and review only their current session photos with confidence.
+**FRs covered:** FR3, FR4, FR5
+**Dependency note:** Real booth acceptance depends on Epic 6 completing live camera helper integration and hardware validation.
+
+### Epic 3: Timed Session Control and Result Handoff
+Customers can move through end-of-shoot warning, export waiting, and session-name based handoff to the next room without ambiguity.
+**FRs covered:** FR5, FR6
+**Dependency note:** Real booth acceptance depends on Epic 6 completing live camera helper integration and hardware validation.
+
+### Epic 4: Exception Recovery and Operator Control
+The booth can detect customer-visible failures, route sessions through safe recovery or phone escalation, and give operators a bounded recovery surface for unmanned exceptions.
+**FRs covered:** FR7, FR8
+**Dependency note:** Real booth acceptance depends on Epic 6 completing live camera helper integration and hardware validation.
+
+### Epic 5: Operational Visibility and Safe Branch Delivery
+Operators and owners can rely on lifecycle logging, KPI-ready operational data, and safe branch rollout or rollback controls to run the product consistently across stores.
+**FRs covered:** FR9
+
+### Epic 6: Live Camera Helper Integration and Hardware Validation
+The booth can detect a real connected camera, transition from preparation into true ready-to-shoot state, write real capture artifacts into the current session folder, and validate reconnect, recovery, and booth acceptance behavior against actual hardware.
+**FRs covered:** FR1, FR4, FR6, FR7, FR8
+
+## Epic 1: Guided Session Start and Booth Readiness
+
+Customers can enter the booth, complete check-in, receive customer-safe preparation and camera-readiness guidance, and reach a valid contract-backed session-ready state without operator help. Epic 1 validates the mocked or helper-agnostic readiness milestone; final real hardware booth readiness is delivered in Epic 6.
+
+### Story 1.1: Initialize Booth Project from Approved Starter Template
+
+**Implements:** FR1; Additional Requirements - starter template, `Tauri Store` baseline, `Hard Frame`, `Pretendard Variable`, accessibility baseline
+
+As a product team,
+I want the booth app to be initialized from the approved `Vite react-ts + Tauri CLI` starter with a full-screen booth shell baseline,
+So that later booth features build on the required desktop foundation instead of an ad hoc scaffold.
+
+**Acceptance Criteria:**
+
+**Given** implementation of Boothy begins from the approved architecture direction
+**When** the initial project is created
+**Then** the app is initialized from the official `Vite react-ts` starter with manual `Tauri CLI` setup
+**And** the baseline project dependencies and configuration required to run the desktop shell are established
+
+**Given** the approved starter foundation is initialized
+**When** the first runnable booth shell is added
+**Then** the application launches into a customer-facing full-screen shell without browser chrome or unrelated OS navigation paths
+**And** that shell provides the baseline start surface for later Epic 1 check-in work
+
+**Given** the first customer shell renders
+**When** the start surface is shown
+**Then** it uses the approved `Hard Frame` design direction and `Pretendard Variable` typography
+**And** the screen stays within the copy budget of one primary guidance sentence and one supporting sentence
+
+**Given** the booth app is running on a branch machine
+**When** local branch configuration is loaded
+**Then** the app reads approved branch-level settings from `Tauri Store`
+**And** MVP branch variance is limited to approved local settings such as branch phone number
+
+**Given** the booth app is shown on supported booth display sizes
+**When** the user interacts by touch or keyboard
+**Then** the primary action area remains readable and operable in the approved Windows booth environment
+**And** customer primary controls meet the required touch target and accessibility baseline
+
+### Story 1.2: Baseline Signed Build and Release Verification
+
+**Implements:** Additional Requirements - signed Windows bundle, no forced update, staged rollout baseline
+
+As a product team,
+I want the greenfield booth app to have a verified signed build path early,
+So that feature development does not advance without a working release artifact and installation baseline.
+
+**Acceptance Criteria:**
+
+**Given** the approved starter-based booth app exists
+**When** the baseline desktop build pipeline is configured
+**Then** the project can produce an installable Windows build artifact from the approved Tauri stack
+**And** the baseline output is suitable for later branch rollout work
+
+**Given** a build artifact is produced
+**When** release verification is performed
+**Then** the build is handled through the approved signed bundle path or its validated signing-ready equivalent for the environment
+**And** the team can verify that the artifact matches the intended booth app identity
+
+**Given** the baseline release path is established
+**When** future updates are designed
+**Then** the product foundation already supports the rule that active customer sessions must not be interrupted by forced updates
+**And** later rollout policy stories can build on that verified baseline rather than defining it from scratch
+
+**Given** the baseline release path fails
+**When** the team evaluates readiness to proceed with deeper feature work
+**Then** the failure is visible as an explicit delivery blocker
+**And** implementation does not assume branch deployment readiness that has not been validated
+
+### Story 1.3: Host-Facing Camera Contract and Session Schema Baseline
+
+**Implements:** FR1; Additional Requirements - `commands + channels + sidecar stdio + filesystem handoff`, versioned session manifest, `Zod 4`, host/adapter boundary
+
+As a product team,
+I want the host-facing camera contract, shared DTO validation, error envelope, and session manifest baseline to be defined before live booth flows expand,
+So that later readiness, capture, export, and operator stories can rely on one stable boundary.
+
+**Acceptance Criteria:**
+
+**Given** the booth host must interact with a separate camera-control subsystem
+**When** the host boundary is defined
+**Then** the integration contract is explicitly based on approved `Tauri commands + channels + sidecar stdio + filesystem handoff` paths
+**And** customer and operator UI layers do not call the sidecar or filesystem directly
+
+**Given** host-to-adapter and host-to-UI data crosses process or layer boundaries
+**When** shared DTOs are defined
+**Then** the boundary uses typed schemas with `Zod 4` validation in TypeScript
+**And** Rust command handlers revalidate payload shape and core invariants before mutating host state or filesystem artifacts
+
+**Given** readiness, capture, export, or storage failures can occur at the adapter boundary
+**When** error payloads are normalized
+**Then** the host uses an approved versioned error envelope that can support both customer-safe state translation and operator diagnostics
+**And** the same normalized error structure is reused by later recovery-routing stories
+
+**Given** a session is created and later evolves through capture and handoff
+**When** durable booth truth is persisted
+**Then** the session folder and versioned session manifest schema are defined as the canonical local correlation model
+**And** later capture, export, and handoff stories extend that schema instead of inventing parallel state formats
+
+**Given** the first integration milestone is executed
+**When** booth flow is exercised before live camera expansion
+**Then** the host-only booth flow can run against mocked camera behavior through the approved contract
+**And** later live camera integration can be introduced without changing customer-facing workflow semantics
+
+### Story 1.4: Minimal Lifecycle and Intervention Logging Foundation
+
+**Implements:** Additional Requirements - local `SQLite` operational log baseline; enables FR9
+
+As a product team,
+I want the booth to establish a minimal local lifecycle and intervention logging foundation before dependent flows are built,
+So that later stories can record operational events without relying on a future epic.
+
+**Acceptance Criteria:**
+
+**Given** the booth app needs durable operational records before full KPI work exists
+**When** the logging foundation is introduced
+**Then** the app has an approved local log store baseline using `SQLite`
+**And** the schema supports later extension without breaking earlier recorded events
+
+**Given** the earliest booth flows need auditable timestamps and intervention records
+**When** the minimal event model is defined
+**Then** it supports at least first-screen display, session creation, readiness reached, warning shown, actual shoot end, export state transition, completion, phone-required transition, and operator intervention outcome
+**And** each event stores only the approved minimum context needed for later analysis
+
+**Given** a lifecycle or intervention event is written by an early feature story
+**When** the event is persisted
+**Then** the data excludes full phone numbers, payment data, and other disallowed sensitive reservation fields
+**And** the same baseline event model can be reused by later KPI and support classification stories
+
+**Given** the booth is running without a cloud dependency
+**When** early operational events are recorded
+**Then** those events remain durable in the approved local store
+**And** dependent stories can treat logging as an already available platform capability
+
+### Story 1.5: Check-In Validation and Session Identity Provisioning
+
+**Implements:** FR2; NFR3
+
+As a booth customer,
+I want to enter my reservation name and phone last four digits and immediately start a valid session,
+So that I can move into the booth flow without waiting for operator confirmation.
+
+**Acceptance Criteria:**
+
+**Given** the guided start screen is visible
+**When** the customer enters a reservation name
+**Then** the field accepts only Hangul input and cannot be left empty
+**And** invalid format is shown inline before submission
+
+**Given** the guided start screen is visible
+**When** the customer enters the phone suffix field
+**Then** the field accepts digits only and requires exactly 4 digits
+**And** invalid format is shown inline before submission
+
+**Given** both check-in fields are valid
+**When** the customer presses `Enter`
+**Then** the system starts session provisioning without requiring a separate `Next` button
+**And** the customer proceeds into the post-check-in booth flow
+
+**Given** the entered format is valid
+**When** reservation matching cannot be confirmed against an external source
+**Then** the customer is not blocked from continuing
+**And** the system still creates an internal session identity for the booth flow
+
+**Given** a valid check-in submission is received
+**When** the system provisions the session
+**Then** it creates the session name as `reservation name + last four digits`
+**And** if the same session name already exists for the same day it appends `_2`, `_3`, and so on to keep the identity unique
+
+**Given** a new session is provisioned
+**When** session setup completes
+**Then** the app creates the session folder instance and manifest instance according to the approved baseline schema
+**And** the lifecycle log records the session creation event with only the approved minimum customer identifier data
+
+### Story 1.6: Customer-Safe Preparation and Camera Readiness State
+
+**Implements:** FR1; NFR1
+
+As a booth customer,
+I want the booth to clearly tell me whether it is still preparing, ready to shoot, or requires a phone call,
+So that I know what to do next without seeing technical diagnostics.
+
+**Acceptance Criteria:**
+
+**Given** a session has been provisioned after valid check-in
+**When** the booth is still initializing the session or checking camera readiness
+**Then** the customer sees a blocked preparation state with approved customer-safe guidance
+**And** customer controls for shooting actions remain unavailable
+
+**Given** the booth is checking camera connection through the approved host boundary
+**When** readiness has not yet been confirmed
+**Then** the customer sees customer-friendly camera connection wording such as waiting for camera connection confirmation
+**And** no internal diagnostic terms, SDK states, file paths, or device-specific error text are exposed
+
+**Given** camera readiness becomes confirmed
+**When** the booth transitions out of preparation
+**Then** the customer sees an approved ready-to-shoot state or equivalent approved readiness guidance
+**And** the lifecycle log records the readiness-reached event using the approved logging foundation
+
+**Given** preparation or camera connection does not complete within the allowed threshold
+**When** the configured phone-escalation rule is reached
+**Then** the booth transitions to a phone-required customer state with the branch phone number
+**And** the customer is no longer left in an indefinite silent waiting state
+
+**Given** the host receives detailed camera connection truth from the adapter boundary
+**When** customer-facing readiness state is derived
+**Then** the host normalizes that device truth into customer-safe state copy using the approved contract and error model
+**And** the same underlying truth remains available for the operator-facing diagnostics surface later without changing customer wording
+
+## Epic 2: Confident Capture and Photo Review
+
+Customers can choose or change presets, see current session timing and latest capture feedback, and review only their current session photos with confidence.
+
+**Dependency note:** Contract and customer UX work can proceed in Epic 2, but real booth acceptance is gated on Epic 6 completion.
+
+### Story 2.1: Preset Selection Entry with Bounded Catalog
+
+**Implements:** FR3; NFR2
+
+As a booth customer,
+I want to choose a preset from a small, visually clear preset list before shooting starts,
+So that I can quickly begin with the mood I want without confusion.
+
+**Acceptance Criteria:**
+
+**Given** the booth has reached the customer-ready state after preparation
+**When** the customer enters preset selection
+**Then** the screen shows no more than 6 presets in the approved catalog
+**And** each preset is presented with a descriptive name and visual preview
+
+**Given** the preset selection screen is displayed
+**When** the customer reviews the available options
+**Then** the screen uses customer-safe wording and the approved copy budget
+**And** the visual layout remains clear and touch-friendly in the supported booth environment
+
+**Given** a customer has a previously used preset in the current session context
+**When** the preset list loads
+**Then** the most recently used preset is marked as the default selection
+**And** the customer can still choose any other available preset
+
+**Given** the customer selects a preset
+**When** the selection is confirmed by the interaction defined in the flow
+**Then** the booth immediately advances to the capture-ready experience without an unnecessary extra confirmation step
+**And** the selected preset becomes the active preset for subsequent captures through the approved host state model
+
+**Given** the branch is running the MVP configuration
+**When** the preset catalog is loaded
+**Then** all branches use the same preset names, ordering, and customer-visible catalog structure
+**And** branch-level variance does not alter the approved customer preset set
+
+### Story 2.2: In-Session Preset Change with Forward-Only Application
+
+**Implements:** FR3
+
+As a booth customer,
+I want to change presets while shooting and understand when the new preset takes effect,
+So that I can adjust the look of future photos without confusion about past shots.
+
+**Acceptance Criteria:**
+
+**Given** the customer is already in the capture flow with an active preset
+**When** the customer opens preset change during the session
+**Then** the booth shows the same approved bounded preset catalog and descriptive preview structure used in initial preset selection
+**And** the current active preset is clearly indicated
+
+**Given** the customer chooses a different preset during the session
+**When** the change is applied
+**Then** the booth updates the active preset for future captures only
+**And** previously captured photos remain unchanged
+
+**Given** a preset change is successfully applied
+**When** the booth returns the customer to the capture flow
+**Then** the customer sees a toast or equivalent lightweight confirmation stating that the new preset applies from the next shot
+**And** the customer can continue shooting without additional blocking steps
+
+**Given** the preset change interaction is used repeatedly in one session
+**When** the customer switches between approved presets
+**Then** the system preserves only the latest active preset as the session’s current preset state
+**And** subsequent captures use that latest approved preset
+
+### Story 2.3: Actual Shoot End Time Policy and Session Time State
+
+**Implements:** FR5
+
+As a booth customer,
+I want the booth to calculate and maintain my real shoot end time based on my session type,
+So that the session follows the correct timing rules without confusing generic slot assumptions.
+
+**Acceptance Criteria:**
+
+**Given** a session is created for a standard customer
+**When** the booth initializes time policy for that session
+**Then** the actual shoot end time is calculated as reservation start time plus 50 minutes
+**And** that end time becomes the session's authoritative stored session time for later display and flow control
+
+**Given** a session is identified as a coupon-extended customer
+**When** the booth initializes time policy for that session
+**Then** the actual shoot end time is calculated as reservation start time plus 1 hour 40 minutes
+**And** the customer is shown only the resulting end time without separate coupon explanation copy
+
+**Given** an approved session extension input updates an active session
+**When** the timing policy is recalculated
+**Then** the session adds time in 1-hour increments from the current stored end time
+**And** the updated end time becomes the new source of truth for warnings and session completion rules
+
+**Given** the customer is in the booth flow
+**When** time-related information is displayed
+**Then** the booth presents the authoritative stored session end time as the customer-facing time reference
+**And** it does not substitute a generic slot-end message that conflicts with the stored timing policy
+
+**Given** session timing state is created or changed
+**When** the timing policy is persisted
+**Then** the current end-time state is written to the session manifest and related host state
+**And** later capture, warning, export, and handoff steps can read the same authoritative timing value
+
+### Story 2.4: Capture Confidence Screen with Latest Photo and Session Time Display
+
+**Implements:** FR4; NFR1
+
+As a booth customer,
+I want to see the current preset, the current session end time shown by the booth, and the latest saved photo,
+So that I know the booth is working and how much time I have left.
+
+**Acceptance Criteria:**
+
+**Given** the customer has entered the active capture flow
+**When** the capture screen is rendered
+**Then** it shows the authoritative stored session end time as a primary piece of information
+**And** it shows the currently active preset and the most recently saved photo for the current session
+
+**Given** a new photo is saved for the current session
+**When** the capture result is received through the approved host contract and filesystem flow
+**Then** the latest photo area updates to show that new image
+**And** the customer does not need to leave the capture flow to confirm that shooting worked
+
+**Given** the booth is in the active capture flow
+**When** customer-facing capture information is shown
+**Then** the screen excludes internal diagnostics and only presents customer-safe capture status information
+**And** any optional shooting guidance remains within the approved copy budget
+
+**Given** the booth is running on supported customer display configurations
+**When** the capture screen is used for repeated shots
+**Then** the latest photo, active preset, and session end time remain readable and visually prioritized
+**And** the primary interaction areas remain touch-friendly and accessible
+
+### Story 2.5: Session-Scoped Thumbnail Review and Photo Deletion
+
+**Implements:** FR4; NFR3
+
+As a booth customer,
+I want to browse only my current session photos, enlarge any photo, and delete unwanted shots safely,
+So that I can review results confidently without seeing other customers' images.
+
+**Acceptance Criteria:**
+
+**Given** the customer is in the capture or review experience for an active session
+**When** session thumbnails are displayed
+**Then** the thumbnail rail shows only photos that belong to the current session folder
+**And** no photos from previous or other sessions are exposed
+
+**Given** the customer selects a thumbnail from the current session
+**When** the thumbnail is activated
+**Then** the main photo view updates to show that selected image
+**And** the customer can move through prior photos using the session-scoped thumbnail list
+
+**Given** the customer opens an enlarged photo view
+**When** the photo is shown in expanded form
+**Then** the delete action remains available in that state
+**And** the customer can still clearly identify that the photo belongs to the current session context
+
+**Given** the customer chooses to delete a current-session photo
+**When** the delete action is triggered
+**Then** the booth requires explicit confirmation before deletion
+**And** after successful deletion the customer sees an approved confirmation message that the photo was deleted
+
+**Given** a deletion succeeds
+**When** the current session gallery state refreshes
+**Then** the deleted image is removed from the latest-photo and thumbnail views if applicable
+**And** the gallery remains consistent without exposing cross-session artifacts
+
+## Epic 3: Timed Session Control and Result Handoff
+
+Customers can move through end-of-shoot warning, export waiting, and session-name based handoff to the next room without ambiguity.
+
+**Dependency note:** Timing and export workflow work can proceed in Epic 3, but real booth acceptance is gated on Epic 6 completion.
+
+### Story 3.1: End-Time Warning and Shoot Stop Transition
+
+**Implements:** FR5
+
+As a booth customer,
+I want the booth to warn me before shooting ends and clearly stop capture at the correct time,
+So that I understand when my shooting time is ending and what happens next.
+
+**Acceptance Criteria:**
+
+**Given** an active session has an authoritative stored session end time
+**When** the session reaches 5 minutes before that time
+**Then** the booth shows the approved 5-minute warning message
+**And** the warning is based on the stored session end time rather than a generic slot rule
+
+**Given** a session end time is updated after the original warning threshold
+**When** the end-time schedule is recalculated
+**Then** future warning and end-of-shoot behavior are recomputed from the updated end time
+**And** stale warning timing from the previous end time is not used
+
+**Given** the session reaches its stored session end time
+**When** the time threshold is crossed
+**Then** the booth transitions out of the active capture state immediately
+**And** the customer sees the approved end-of-shoot message indicating that export will begin
+
+**Given** the customer is in a session with an extended stored end time
+**When** the booth shows warning and end-of-shoot messages
+**Then** those messages are driven by the same stored end time already shown to the customer
+**And** the customer is not shown conflicting generic slot-end guidance
+
+**Given** the end-of-shoot transition occurs
+**When** the state changes from capture to post-capture processing
+**Then** the lifecycle log records the warning and actual shoot end events
+**And** downstream export and handoff logic can begin from that explicit transition point
+
+### Story 3.2: Export Progress and Delayed Handoff Waiting State
+
+**Implements:** FR6; NFR5
+
+As a booth customer,
+I want the booth to clearly show that export is in progress and tell me when I need to keep waiting or call,
+So that I am not left uncertain after shooting ends.
+
+**Acceptance Criteria:**
+
+**Given** the session has moved out of active capture at stored session end time
+**When** export preparation or handoff work is still in progress
+**Then** the booth enters an explicit export-waiting state
+**And** the customer is told to remain in place while the result is being prepared
+
+**Given** the booth is in the export-waiting state
+**When** progress information is available from the approved host contract and filesystem pipeline
+**Then** the customer sees a visible progress indicator
+**And** the message remains customer-safe and non-technical
+
+**Given** export progress continues but does not complete promptly
+**When** the system detects a prolonged wait while progress is still incomplete
+**Then** the booth shows the approved delayed-export wording indicating that extra time is needed
+**And** the progress display still reflects the current available percentage or status
+
+**Given** export has not completed by stored session end time plus 2 minutes
+**When** the escalation threshold is reached
+**Then** the booth transitions from export-waiting to the phone-required state
+**And** the customer sees the branch phone number with the approved escalation guidance
+
+**Given** the booth transitions into export-waiting or phone-required after shooting ends
+**When** the state change occurs
+**Then** the lifecycle log records the relevant export or escalation transition
+**And** the customer is never left in a silent post-shoot state without an explicit next step
+
+### Story 3.3: Completed Handoff with Session-Name Guidance
+
+**Implements:** FR6
+
+As a booth customer,
+I want the booth to clearly tell me when export is complete and exactly what session name to use in the next room,
+So that I can move to selection and printing without confusion.
+
+**Acceptance Criteria:**
+
+**Given** post-shoot export work has completed successfully
+**When** the booth transitions to the completed handoff state
+**Then** the customer sees the approved completion message
+**And** the message tells the customer to move to the next room and use the session name as the single handoff identifier
+
+**Given** the completed handoff state is displayed
+**When** the customer reviews the instruction
+**Then** the booth presents the current session name clearly and prominently
+**And** the customer is not required to remember any other technical path, folder detail, or identifier beyond that session name
+
+**Given** export work completes after a waiting period
+**When** the booth transitions from export-waiting to completed
+**Then** the customer sees a clear state change from waiting to completion
+**And** the lifecycle log records the completion transition time for KPI and handoff tracking
+
+## Epic 4: Exception Recovery and Operator Control
+
+The booth can detect customer-visible failures, route sessions through safe recovery or phone escalation, and give operators a bounded recovery surface for unmanned exceptions.
+
+**Dependency note:** Fault classification, reconnect, and recovery workflow work can proceed in Epic 4, but real booth acceptance is gated on Epic 6 completion.
+
+### Story 4.1: Customer-Facing Failure Detection and Phone Routing
+
+**Implements:** FR7; NFR1
+
+As a booth customer,
+I want the booth to detect critical problems and clearly tell me whether to wait or call,
+So that I am not asked to troubleshoot technical failures myself.
+
+**Acceptance Criteria:**
+
+**Given** the booth is in preparation before capture starts
+**When** readiness cannot be established within the allowed threshold
+**Then** the booth prevents shooting from starting
+**And** the customer is shown the approved phone-required guidance with the branch phone number
+
+**Given** the booth is in active capture or post-capture processing
+**When** the system detects that new photos are not being saved for the current session as expected
+**Then** the booth transitions to the approved customer-visible failure state
+**And** the customer sees clear phone guidance without technical troubleshooting steps
+
+**Given** the system detects a storage-path or handoff-readiness problem that blocks normal booth progress
+**When** the failure crosses the customer-visible escalation rule
+**Then** the booth stops presenting the flow as healthy
+**And** the customer receives a customer-safe failure message with the next action
+
+**Given** a failure state is shown to the customer
+**When** customer-facing copy is rendered
+**Then** the booth exposes no internal diagnostic labels, SDK details, or filesystem terminology
+**And** the message tells the customer only whether to wait or call
+
+**Given** the booth detects a failure that can be resolved by automatic recovery without exposing another session
+**When** that recovery path is available
+**Then** the system attempts safe automatic recovery before phone escalation
+**And** the customer still never sees another customer's photos or data during that process
+
+### Story 4.2: Operator Summary and Diagnostic Surface
+
+**Implements:** FR8; NFR4
+
+As a remote operator,
+I want to see a concise but decision-ready booth summary with current state and recent failure context,
+So that I can identify the exception category and next recovery action quickly.
+
+**Acceptance Criteria:**
+
+**Given** an operator opens the booth's operator surface
+**When** the current booth state is loaded
+**Then** the operator sees a bounded status summary using the approved three-state model for booth status
+**And** the state is visually distinguishable for quick scanning
+
+**Given** the operator summary is displayed
+**When** session and fault context are available
+**Then** the screen shows the current session name, current flow stage, authoritative stored session end time, extension status, camera connection state, camera readiness state, storage-path state, and recent failure history
+**And** those fields are sufficient to support the defined rapid exception drill workflow
+
+**Given** customer-facing readiness wording and operator-facing diagnostic truth are both available
+**When** the operator reviews the current issue
+**Then** the operator surface can compare the customer-visible camera state against the operator diagnostic state
+**And** the customer wording remains unchanged by operator inspection
+
+**Given** recent booth problems have occurred
+**When** the operator views the exception summary
+**Then** the screen shows the current cause and the most recent 5 relevant failure reasons
+**And** the summary supports identifying the likely recovery path within the target operator response time
+
+**Given** the operator surface is rendered
+**When** it presents diagnostics
+**Then** it remains separate from the customer-facing booth flow and does not expose unrestricted product controls
+**And** it preserves keyboard-friendly access and bounded operational scope
+
+### Story 4.3: Bounded Operator Recovery Actions
+
+**Implements:** FR8
+
+As a remote operator,
+I want to run only the approved recovery actions for booth exceptions,
+So that I can restore customer flow without gaining unsafe or unrelated control over the system.
+
+**Acceptance Criteria:**
+
+**Given** the operator is on the bounded recovery surface
+**When** the booth is in an eligible exception state
+**Then** the operator can access only the approved recovery actions: retry start flow, restart camera or app boundary, retry export, apply exception extension, and session split recovery
+**And** no pricing, refund, or reservation-policy override actions are available
+
+**Given** the operator triggers a recovery action
+**When** the action is accepted by the host boundary
+**Then** the booth executes the recovery through the approved command path
+**And** the resulting booth state is reflected back into the operator summary and customer-safe state flow
+
+**Given** the operator applies an exception extension
+**When** the target session is in active capture or export-waiting
+**Then** the updated end time is applied according to the approved extension rule
+**And** the session timing state is recalculated without breaking the existing session context
+
+**Given** the operator triggers session split recovery for mixed or unsafe session artifacts
+**When** safe separation is possible
+**Then** the system creates or restores the approved separated session context
+**And** the customer-facing booth flow never exposes another session's photos or identifiers
+
+**Given** any operator recovery action succeeds or fails
+**When** the command completes
+**Then** the operator intervention log records the action type, time, session context, and outcome
+**And** the result remains queryable for later support analysis
+
+### Story 4.4: Normalized Fault Classification and Safe Recovery Routing
+
+**Implements:** FR7, FR8
+
+As a remote operator and booth platform,
+I want booth failures to be classified into normalized fault categories with explicit recovery routing rules,
+So that customer messaging, operator diagnostics, and automated recovery all stay consistent.
+
+**Acceptance Criteria:**
+
+**Given** the booth receives error or degraded-state signals from readiness checks, capture saving, export progress, or session isolation checks
+**When** the host evaluates the event
+**Then** it classifies the issue into an approved normalized fault category
+**And** the classification is stable enough to drive both customer-safe state and operator diagnostics
+
+**Given** a normalized fault category is assigned
+**When** the system determines the next handling path
+**Then** it chooses among safe automatic recovery, bounded operator recovery, or direct phone escalation according to approved routing rules
+**And** the same routing decision is not reinterpreted differently by separate UI surfaces
+
+**Given** the issue is a start-of-session readiness failure, a save failure, an export-delay failure, or a session-mixing risk
+**When** the booth routes the issue
+**Then** the corresponding customer-safe state and operator-visible cause remain aligned to the same underlying classification
+**And** session privacy protections remain enforced throughout the handling path
+
+**Given** a normalized fault is recorded
+**When** logs and diagnostics are updated
+**Then** the lifecycle and operator logs store the approved fault category and handling outcome
+**And** later KPI analysis and support issue regrouping can rely on those normalized categories
+
+## Epic 5: Operational Visibility and Safe Branch Delivery
+
+Operators and owners can rely on lifecycle logging, KPI-ready operational data, and safe branch rollout or rollback controls to run the product consistently across stores.
+
+### Story 5.1: Expanded Lifecycle and Intervention Logging Model
+
+**Implements:** FR9
+
+As an operator and owner,
+I want the booth to expand the early logging foundation into a complete operational event model,
+So that support analysis and KPI measurement can rely on consistent lifecycle and intervention data.
+
+**Acceptance Criteria:**
+
+**Given** the minimal lifecycle and intervention logging foundation already exists
+**When** the full operational model is completed
+**Then** the system records the approved event set including session creation, readiness reached, first photo saved, five-minute warning, actual shoot end, export start, export completion, phone-required transition, operator intervention, and handoff completion
+**And** the expanded model remains backward-compatible with earlier logged events
+
+**Given** a lifecycle or intervention event is recorded
+**When** the event payload is persisted
+**Then** it includes the approved fields such as timestamp, branch, session name, current stage, stored session end time, extension status, recent fault cause, and operator intervention state
+**And** it excludes full phone numbers, payment data, and other disallowed sensitive reservation data
+
+**Given** an operator action is executed
+**When** the intervention is logged
+**Then** the action type is recorded using the approved bounded intervention categories
+**And** the log can distinguish retry, restart, export retry, exception extension, and session split recovery outcomes
+
+**Given** the local booth product is operating offline or under partial degradation
+**When** events continue to occur
+**Then** the log remains durable in the approved local store without depending on a cloud round trip
+**And** later KPI queries can still use the same retained event history
+
+### Story 5.2: KPI Query and Support Issue Classification Views
+
+**Implements:** FR9
+
+As an operator and owner,
+I want to query booth lifecycle data into KPI outputs and recurring support issue categories,
+So that I can measure whether the product is reducing support burden and identify where failures cluster.
+
+**Acceptance Criteria:**
+
+**Given** approved lifecycle and intervention logs exist in the local operational store
+**When** KPI queries are executed
+**Then** the system can derive the required operational measures for support volume, self-start success, handoff timing, successful result transfer, and operator response timing
+**And** those calculations use only the approved logged events and fields
+
+**Given** logged booth failures and interventions exist
+**When** support issue regrouping is performed
+**Then** the system can classify support cases into the approved issue buckets such as shooting start, export, coupon timing confusion, and other
+**And** the same classification model can use normalized fault categories and intervention outcomes from prior stories
+
+**Given** an owner or operator reviews operational history
+**When** KPI or issue summaries are presented
+**Then** the summaries remain based on approved local data structures and do not require additional sensitive customer information
+**And** the output is sufficient to support weekly operational review and trend analysis
+
+**Given** log data is incomplete or degraded for a session
+**When** KPI or classification queries are run
+**Then** the result can distinguish incomplete evidence from valid completed metrics
+**And** the reporting flow does not silently misclassify unknown states as healthy outcomes
+
+### Story 5.3: Branch Rollout Policy and Rollback Controls
+
+**Implements:** FR9; Additional Requirements - staged rollout, rollback, no forced update
+
+As an owner and operator,
+I want booth releases to support safe staged rollout policy and rollback control at the branch level,
+So that updates do not interrupt active sessions and problematic builds can be reverted safely.
+
+**Acceptance Criteria:**
+
+**Given** a baseline signed build and release verification path already exists
+**When** branch rollout is configured
+**Then** the release process supports staged branch-by-branch promotion rather than mandatory all-branch simultaneous activation
+**And** branch-level configuration remains within the approved variance model
+
+**Given** a booth branch is running an active customer session
+**When** an update becomes available
+**Then** the product does not force the update during the active session
+**And** update application is deferred to an approved idle or operator-approved transition window
+
+**Given** a new build blocks check-in, capture readiness, export, or handoff in branch validation
+**When** rollback is required
+**Then** the branch can return to the last approved build
+**And** the rollback path preserves compatibility with approved local configuration and retained operational data
+
+**Given** booth release artifacts are prepared for deployment
+**When** they are promoted to branches
+**Then** rollout and rollback activity is auditable in the approved operational record
+**And** branch release control builds on the already verified signed build baseline rather than redefining it
+
+## Epic 6: Live Camera Helper Integration and Hardware Validation
+
+The booth can detect a real connected camera, transition from preparation into true ready-to-shoot state, write real capture artifacts into the current session folder, and validate reconnect, recovery, and booth acceptance behavior against actual hardware.
+
+### Story 6.1: Real Camera Helper Execution and Packaging Baseline
+
+**Implements:** Additional Requirements - bundled helper execution, sidecar capability boundaries, live helper handshake
+
+As a product team,
+I want the booth host to launch and supervise a real bundled camera helper on the approved Windows booth image,
+So that live hardware integration begins from the same contract boundary already proven by the mocked milestone.
+
+**Acceptance Criteria:**
+
+**Given** the booth app is running on the approved Windows booth image
+**When** the host initializes live camera integration
+**Then** it can launch the bundled camera helper through the approved sidecar capability path
+**And** the helper launch is constrained by explicit capability configuration rather than broad shell access
+
+**Given** the real helper is launched
+**When** the first contract exchange occurs
+**Then** the host and helper complete a versioned readiness handshake through the approved protocol
+**And** protocol incompatibility is surfaced as a typed host error rather than undefined behavior
+
+**Given** the real helper exits unexpectedly or cannot be launched
+**When** the failure is detected
+**Then** the host records the failure through the approved diagnostics path
+**And** customer or operator surfaces receive only the normalized fault outcome allowed by their role
+
+### Story 6.2: Live Camera Readiness Detection and State Normalization
+
+**Implements:** FR1, FR7, FR8
+
+As a booth platform,
+I want real camera connection and readiness truth to be normalized once in the host from actual hardware signals,
+So that both customer-safe readiness guidance and operator diagnostics reflect live booth reality instead of mock assumptions.
+
+**Acceptance Criteria:**
+
+**Given** a supported target camera is physically connected on the approved booth image
+**When** the helper reports device state through the approved protocol
+**Then** the host derives one normalized readiness model for the booth
+**And** the customer surface moves from preparation to ready only when the camera is actually usable
+
+**Given** the camera is disconnected, degraded, or still initializing
+**When** the host receives that truth from the helper
+**Then** the customer surface remains in the approved customer-safe waiting or phone-required path as appropriate
+**And** the operator surface can inspect richer diagnostic state without changing customer wording
+
+**Given** readiness becomes confirmed or later degrades
+**When** the normalized readiness model changes
+**Then** lifecycle and operator diagnostics logs record the transition using approved fault and state categories
+**And** the booth does not rely on UI-local heuristics to infer camera usability
+
+### Story 6.3: Real Capture to Session Folder Handoff
+
+**Implements:** FR4, FR6
+
+As a booth platform,
+I want real captures to land in the current session folder with manifest correlation,
+So that latest-photo feedback, export readiness, and handoff logic use durable booth truth instead of placeholder data.
+
+**Acceptance Criteria:**
+
+**Given** the booth is in a live ready-to-shoot state
+**When** a capture is triggered through the approved host boundary
+**Then** the resulting image artifact is written into the current session folder according to the manifest and filename policy
+**And** the host updates session state without sending raw image bytes through JSON IPC
+
+**Given** a live capture is saved successfully
+**When** the host refreshes the current session state
+**Then** the latest-photo and session-scoped gallery flows can consume the real artifact from the approved session boundary
+**And** no other session's artifacts are exposed during that process
+
+**Given** capture storage or manifest correlation fails
+**When** the failure is detected
+**Then** the host routes the issue through the approved normalized error envelope
+**And** downstream export or handoff logic does not treat the session as healthy until the failure is resolved
+
+### Story 6.4: Helper Reconnect Restart and Fault Routing
+
+**Implements:** FR7, FR8
+
+As a remote operator and booth platform,
+I want real helper disconnects, degraded camera states, and restart actions to follow explicit routing rules,
+So that recovery behavior stays safe, bounded, and consistent on real hardware.
+
+**Acceptance Criteria:**
+
+**Given** the real helper or target camera disconnects, stalls, or reports a degraded state
+**When** the host evaluates the event
+**Then** it classifies the issue into the approved normalized fault categories
+**And** customer and operator surfaces stay aligned to the same underlying routing decision
+
+**Given** the issue is eligible for bounded operator recovery
+**When** the operator invokes restart or retry actions through the approved surface
+**Then** the host executes the recovery through the approved command path
+**And** the outcome is logged with action type, session context, and success or failure result
+
+**Given** the helper recovers or the camera reconnects
+**When** readiness becomes valid again
+**Then** the booth re-enters the correct session state without leaking diagnostics or other-session data
+**And** the customer is not left in a stale ready state when the camera is still unusable
+
+### Story 6.5: Booth Hardware Smoke Validation and Release Gates
+
+**Implements:** FR1, FR4, FR6, FR7, FR8; Additional Requirements - release gates, approved Windows booth validation
+
+As a product team,
+I want a repeatable hardware smoke validation path for the approved booth image and target camera,
+So that live booth readiness becomes a real release gate rather than an implicit assumption.
+
+**Acceptance Criteria:**
+
+**Given** the live helper integration stories are complete
+**When** smoke validation is run on the approved Windows booth image with the target camera
+**Then** the booth can move from preparation to ready, capture at least one real photo, and persist the result into the active session folder
+**And** the run records the evidence needed for release review
+
+**Given** the target camera is disconnected and reconnected during validation
+**When** the booth reevaluates readiness
+**Then** customer-safe waiting, ready, and escalation behavior remain aligned with the approved readiness model
+**And** operator diagnostics and recovery actions remain usable on real hardware
+
+**Given** a release candidate is evaluated for booth deployment
+**When** live hardware smoke validation has not passed
+**Then** the build cannot claim final booth readiness
+**And** the unmet gate is tracked explicitly in planning and release documentation

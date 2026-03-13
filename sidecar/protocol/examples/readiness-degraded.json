@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "boothy.camera.protocol.v1",
+  "requestId": "req-ready-001",
+  "correlationId": "corr-session-001",
+  "event": "camera.statusChanged",
+  "sessionId": "session-001",
+  "payload": {
+    "connectionState": "reconnecting",
+    "readiness": "degraded",
+    "lastUpdatedAt": "2026-03-08T09:00:00.000Z"
+  }
+}

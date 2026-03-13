@@ -1,0 +1,137 @@
+name: release-windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - 'main'
+  push:
+    branches:
+      - 'main'
+    tags:
+      - 'boothy-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-release-baseline:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release baseline
+        run: pnpm test:run src/release-verification/releaseBaseline.spec.ts
+
+      - name: Lint sources
+        run: pnpm lint
+
+      - name: Build unsigned Windows release baseline
+        run: pnpm build:desktop
+
+  draft-release:
+    needs: validate-release-baseline
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')
+    runs-on: windows-latest
+
+    env:
+      BOOTHY_WINDOWS_CERT_BASE64: ${{ secrets.BOOTHY_WINDOWS_CERT_BASE64 }}
+      BOOTHY_WINDOWS_CERT_PASSWORD: ${{ secrets.BOOTHY_WINDOWS_CERT_PASSWORD }}
+      BOOTHY_WINDOWS_TIMESTAMP_URL: ${{ vars.BOOTHY_WINDOWS_TIMESTAMP_URL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate signing secret contract
+        shell: pwsh
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:BOOTHY_WINDOWS_CERT_BASE64)) {
+            $missing += 'BOOTHY_WINDOWS_CERT_BASE64'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:BOOTHY_WINDOWS_CERT_PASSWORD)) {
+            $missing += 'BOOTHY_WINDOWS_CERT_PASSWORD'
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Error "Signing-ready blocker: missing release secrets: $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: Materialize signing certificate
+        shell: pwsh
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP 'boothy-signing-cert.pfx'
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:BOOTHY_WINDOWS_CERT_BASE64))
+          "BOOTHY_WINDOWS_CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build signed Windows release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOOTHY_WINDOWS_CERT_PATH: ${{ env.BOOTHY_WINDOWS_CERT_PATH }}
+          BOOTHY_WINDOWS_CERT_PASSWORD: ${{ env.BOOTHY_WINDOWS_CERT_PASSWORD }}
+          BOOTHY_WINDOWS_TIMESTAMP_URL: ${{ env.BOOTHY_WINDOWS_TIMESTAMP_URL }}
+        with:
+          args: --config src-tauri/tauri.windows-release.conf.json --bundles nsis
+          includeDebug: false
+          prerelease: false
+          releaseDraft: true
+          releaseName: Boothy v__VERSION__
+          tagName: boothy-v__VERSION__
+          releaseBody: |
+            Baseline Boothy Windows release verification artifact.
+            Primary artifact: NSIS installer generated from the approved Tauri path.
+
+      - name: Verify installer artifact identity
+        shell: pwsh
+        run: |
+          $packageJson = Get-Content package.json | ConvertFrom-Json
+          $version = $packageJson.version
+          $expectedInstaller = "Boothy_${version}_x64-setup.exe"
+          $bundleDir = Join-Path $PWD 'src-tauri/target/release/bundle/nsis'
+          $installerPath = Join-Path $bundleDir $expectedInstaller
+
+          if (-not (Test-Path -LiteralPath $installerPath)) {
+            Write-Error "Signing-ready blocker: expected installer '$expectedInstaller' was not produced in '$bundleDir'."
+            exit 1
+          }
+
+          Write-Host "Verified installer artifact: $installerPath"

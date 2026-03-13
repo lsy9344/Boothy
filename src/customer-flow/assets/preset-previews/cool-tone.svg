@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" role="img" aria-labelledby="title desc">
+  <title id="title">쿨톤 프리셋 미리보기</title>
+  <desc id="desc">차분한 블루와 실버 색감의 기준 미리보기</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#d9ebff"/>
+      <stop offset="100%" stop-color="#7ea8d8"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="360" fill="url(#bg)"/>
+  <circle cx="240" cy="148" r="88" fill="#f4f8ff" opacity="0.94"/>
+  <rect x="102" y="252" width="276" height="40" rx="20" fill="#f9fbff"/>
+  <rect x="126" y="114" width="228" height="96" rx="48" fill="#8db3e0" opacity="0.75"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" role="img" aria-labelledby="title desc">
+  <title id="title">배경지 핑크 미리보기</title>
+  <desc id="desc">부드러운 핑크 배경과 중립광 기준 미리보기</desc>
+  <rect width="480" height="360" fill="#ffdbe4"/>
+  <rect x="74" y="46" width="332" height="268" rx="24" fill="#fff3f7" stroke="#e69eb3" stroke-width="10"/>
+  <circle cx="240" cy="142" r="78" fill="#f8c1d0"/>
+  <rect x="132" y="246" width="216" height="26" rx="13" fill="#e48fa8"/>
+</svg>

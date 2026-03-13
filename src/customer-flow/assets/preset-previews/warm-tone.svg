@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" role="img" aria-labelledby="title desc">
+  <title id="title">웜톤 프리셋 미리보기</title>
+  <desc id="desc">따뜻한 베이지와 오렌지 색감의 기준 미리보기</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe2b5"/>
+      <stop offset="100%" stop-color="#ff9e5b"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="360" fill="url(#bg)"/>
+  <circle cx="240" cy="148" r="88" fill="#fff3dd" opacity="0.9"/>
+  <rect x="102" y="252" width="276" height="40" rx="20" fill="#fff6ea"/>
+  <rect x="126" y="114" width="228" height="96" rx="48" fill="#f2b272" opacity="0.7"/>
+</svg>

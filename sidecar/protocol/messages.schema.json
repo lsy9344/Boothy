@@ -1,0 +1,559 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "const": "camera.capture"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "activePreset": {
+              "type": "object",
+              "properties": {
+                "presetId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "presetId",
+                "label"
+              ],
+              "additionalProperties": false
+            },
+            "captureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "originalFileName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "processedFileName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "originalOutputPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "processedOutputPath": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "activePreset",
+            "captureId",
+            "originalFileName",
+            "processedFileName",
+            "originalOutputPath",
+            "processedOutputPath"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "method",
+        "sessionId",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "const": "camera.checkReadiness"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "desiredCameraId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mockScenario": {
+              "type": "string",
+              "enum": [
+                "readinessSuccess",
+                "readinessDegraded",
+                "normalizedError"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "method",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "type": "string",
+          "const": "camera.statusChanged"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "connectionState": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "reconnecting",
+                "disconnected",
+                "offline"
+              ]
+            },
+            "readiness": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "ready",
+                "degraded"
+              ]
+            },
+            "lastUpdatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            }
+          },
+          "required": [
+            "connectionState",
+            "readiness",
+            "lastUpdatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "event",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "type": "string",
+          "const": "capture.progress"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "enum": [
+                "captureStarted",
+                "captureCompleted"
+              ]
+            },
+            "captureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "percentComplete": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "lastUpdatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            }
+          },
+          "required": [
+            "stage",
+            "captureId",
+            "percentComplete",
+            "lastUpdatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "event",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "type": "string",
+          "const": "export.progress"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "const": "exportQueued"
+            },
+            "percentComplete": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "lastUpdatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            }
+          },
+          "required": [
+            "stage",
+            "percentComplete",
+            "lastUpdatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "event",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "status": {
+          "type": "object",
+          "properties": {
+            "connectionState": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "reconnecting",
+                "disconnected",
+                "offline"
+              ]
+            },
+            "readiness": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "ready",
+                "degraded"
+              ]
+            },
+            "lastUpdatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            }
+          },
+          "required": [
+            "connectionState",
+            "readiness",
+            "lastUpdatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "ok",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.contract.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "captureId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "originalFileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "processedFileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        "manifestPath": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "ok",
+        "sessionId",
+        "captureId",
+        "originalFileName",
+        "processedFileName",
+        "capturedAt",
+        "manifestPath"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "boothy.camera.protocol.v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "string",
+              "const": "boothy.camera.error-envelope.v1"
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "error",
+                "critical"
+              ]
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "customerState": {
+              "type": "string",
+              "enum": [
+                "cameraReconnectNeeded",
+                "cameraUnavailable"
+              ]
+            },
+            "customerCameraConnectionState": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "needsAttention",
+                "offline"
+              ]
+            },
+            "operatorCameraConnectionState": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "reconnecting",
+                "disconnected",
+                "offline"
+              ]
+            },
+            "operatorAction": {
+              "type": "string",
+              "enum": [
+                "checkCableAndRetry",
+                "restartHelper",
+                "contactSupport"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "details": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "code",
+            "severity",
+            "retryable",
+            "customerState",
+            "customerCameraConnectionState",
+            "operatorCameraConnectionState",
+            "operatorAction",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "correlationId",
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

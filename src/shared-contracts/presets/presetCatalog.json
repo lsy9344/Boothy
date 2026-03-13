@@ -1,0 +1,26 @@
+[
+  {
+    "id": "warm-tone",
+    "name": "웜톤",
+    "description": "따뜻한 피부톤과 자연스러운 밝기",
+    "previewRef": "preset-preview/warm-tone"
+  },
+  {
+    "id": "cool-tone",
+    "name": "쿨톤",
+    "description": "차분하고 또렷한 푸른 계열 톤",
+    "previewRef": "preset-preview/cool-tone"
+  },
+  {
+    "id": "background-ivory",
+    "name": "배경지 - 아이보리",
+    "description": "부드러운 아이보리 배경으로 차분한 인상",
+    "previewRef": "preset-preview/background-ivory"
+  },
+  {
+    "id": "background-pink",
+    "name": "배경지 - 핑크",
+    "description": "은은한 핑크 배경으로 화사한 인상",
+    "previewRef": "preset-preview/background-pink"
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "boothy.camera.protocol.v1",
+  "requestId": "req-capture-001",
+  "correlationId": "corr-session-001",
+  "event": "capture.progress",
+  "sessionId": "session-001",
+  "payload": {
+    "stage": "captureCompleted",
+    "captureId": "capture-001",
+    "percentComplete": 100,
+    "lastUpdatedAt": "2026-03-08T09:00:05.000Z"
+  }
+}

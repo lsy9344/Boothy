@@ -1,0 +1,15 @@
+export const captureScreenCopy = {
+  activePresetBadge: '현재 적용 중',
+  activePresetLabel: '현재 프리셋',
+  captureAction: '촬영하기',
+  eyebrow: 'Capture',
+  latestPhotoEmpty: '아직 저장된 사진이 없어요.',
+  latestPhotoLabel: '최근 사진',
+  openPresetSelector: '프리셋 변경',
+  presetDialogTitle: '프리셋 변경',
+  sessionLabel: '현재 세션',
+  sessionTimeLabel: '촬영 종료 시간',
+  supporting: '프리셋을 바꾸면 다음 촬영부터 적용됩니다.',
+  title: '촬영을 이어서 진행해 주세요.',
+  toast: '다음 촬영부터 적용됩니다.',
+} as const

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "boothy.camera.contract.v1",
+  "requestId": "req-capture-001",
+  "correlationId": "corr-session-001",
+  "ok": true,
+  "sessionId": "session-001",
+  "captureId": "capture-001",
+  "originalFileName": "originals/capture-001.nef",
+  "processedFileName": "capture-001.png",
+  "capturedAt": "2026-03-08T09:00:05.000Z",
+  "manifestPath": "C:/Boothy/Sessions/2026-03-08/홍길동1234/session.json"
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "boothy.camera.protocol.v1",
+  "requestId": "req-capture-001",
+  "correlationId": "corr-session-001",
+  "method": "camera.capture",
+  "sessionId": "session-001",
+  "payload": {
+    "activePreset": {
+      "presetId": "background-pink",
+      "label": "배경지 - 핑크"
+    },
+    "captureId": "capture-001",
+    "originalFileName": "originals/capture-001.nef",
+    "processedFileName": "capture-001.png",
+    "originalOutputPath": "C:/Boothy/Sessions/2026-03-08/홍길동1234/originals/capture-001.nef",
+    "processedOutputPath": "C:/Boothy/Sessions/2026-03-08/홍길동1234/processed/capture-001.png"
+  }
+}

@@ -4,7 +4,7 @@
 목적: 다음 세션에서 기술 논의가 아니라 제품/운영/고객 관점의 추가 질문을 이어가기 위한 체크리스트
 
 관련 문서:
-- `docs/prd-2026-03-07-boothy-greenfield-mvp.md`
+- `_bmad-output/planning-artifacts/prd.md`
 - `docs/business_context/context.md`
 
 ## 0. 사용 원칙

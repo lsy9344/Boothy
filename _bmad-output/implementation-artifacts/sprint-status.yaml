@@ -1,0 +1,155 @@
+# generated: 2026-03-13
+# project: Boothy
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: C:\Code\Project\Boothy\_bmad-output\implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: when at least one story in the epic leaves backlog
+#   - in-progress -> done: when all stories in the epic reach done
+#
+# Story Status:
+#   - backlog: Story exists only in the planning baseline
+#   - ready-for-dev: Story artifact exists and is ready once execution guard allows a start
+#   - in-progress: Active implementation work is underway
+#   - review: Implementation work is awaiting review or close-out
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - This file reflects the corrected 7-epic execution baseline.
+# - ready-for-dev indicates story-level readiness, not program-level clearance for new starts.
+# - The active execution guard below is the only current execution-control source.
+
+generated: 2026-03-13
+project: Boothy
+project_key: NOKEY
+tracking_system: file-system
+story_location: 'C:\Code\Project\Boothy\_bmad-output\implementation-artifacts'
+
+development_status:
+  epic-1: in-progress
+  1-1-initialize-booth-project-from-approved-starter-template: done
+  1-2-booth-app-shell-and-session-start-screen: review
+  1-3-session-identity-creation-and-session-root-manifest: done
+  1-4-session-context-storage-and-next-surface-handoff: done
+  epic-1-retrospective: optional
+
+  epic-2: in-progress
+  2-1-approved-preset-catalog-load-and-display: done
+  2-2-preset-selection-and-active-preset-binding: done
+  2-3-preset-selection-consistency-across-branches: review
+  epic-2-retrospective: optional
+
+  epic-3: in-progress
+  3-1-readiness-states-and-capture-gating: review
+  3-2-capture-persistence-and-latest-photo-confirmation: review
+  3-3-current-session-review-and-deletion: done
+  3-4-in-session-preset-change-for-future-captures: in-progress
+  epic-3-retrospective: optional
+
+  epic-4: in-progress
+  4-1-session-timing-model-and-visible-adjusted-end-time: review
+  4-2-5-minute-warning-and-exact-end-alerts: ready-for-dev
+  4-3-post-end-state-transition-and-guidance: review
+  epic-4-retrospective: optional
+
+  epic-5: in-progress
+  5-1-authoring-surface-access-and-preset-library: ready-for-dev
+  5-2-create-or-edit-preset-draft-with-internal-controls: ready-for-dev
+  5-3-approve-and-publish-preset-to-booth-catalog: ready-for-dev
+  5-4-safe-publication-rollback-to-prior-approved-version: ready-for-dev
+  epic-5-retrospective: optional
+
+  epic-6: in-progress
+  6-1-operator-summary-and-session-context-visibility: ready-for-dev
+  6-2-bounded-operator-recovery-actions: ready-for-dev
+  6-3-normalized-fault-classification-and-customer-safe-routing: ready-for-dev
+  6-4-lifecycle-and-intervention-audit-logging: ready-for-dev
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-active-session-update-guard-and-staged-rollout-control: backlog
+  7-2-approved-preset-and-timing-consistency-audit: backlog
+  7-3-customer-copy-budget-compliance-gate: backlog
+  7-4-timing-reliability-and-privacy-validation-report: backlog
+  epic-7-retrospective: optional
+
+current_sprint_plan:
+  planning_baseline:
+    prd: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\prd.md'
+    architecture: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\architecture.md'
+    ux: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\ux-design-specification.md'
+    epics: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\epics.md'
+    implementation_readiness_report: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\implementation-readiness-report-2026-03-13.md'
+  totals:
+    epics: 7
+    stories: 26
+    epics_in_progress: 6
+    stories_done: 5
+    stories_review: 8
+    stories_in_progress: 1
+    stories_ready_for_dev: 8
+    stories_backlog: 4
+
+next_development_target:
+  story_key: 3-4-in-session-preset-change-for-future-captures
+  status: in-progress
+  rationale: Story 3.2 returned to review on 2026-03-13 after the reopened capture host/contract fixes landed, leaving Story 3.4 as the remaining active in-progress implementation item in the current tracker
+  start_condition: continue Story 3.4 until it reaches review or sprint direction changes
+
+change_control:
+  correction_history:
+    - id: course-correction-2026-03-11
+      status: approved
+      approved_on: 2026-03-11
+      scope_classification: major
+      source_proposal: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\sprint-change-proposal-2026-03-11.md'
+      implementation_policy: selective-implementation-salvage
+      planning_policy: full-planning-reset
+    - id: planning-alignment-correction-2026-03-12
+      status: approved
+      approved_on: 2026-03-12
+      scope_classification: moderate
+      source_proposal: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\sprint-change-proposal-2026-03-12.md'
+      implementation_policy: preserve-foundation-stories-and-revalidate-salvage-candidates
+      planning_policy: reconcile-epics-ux-boundaries-and-readiness-gates-to-the-approved-execution-baseline
+      affected_artifacts:
+        - 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\epics.md'
+        - 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\ux-design-specification.md'
+        - 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\implementation-readiness-report-2026-03-12.md'
+
+  active_execution_guard:
+    status: cleared
+    assessed_on: 2026-03-13
+    source_readiness_report: 'C:\Code\Project\Boothy\_bmad-output\planning-artifacts\implementation-readiness-report-2026-03-13.md'
+    readiness_status: ready
+    allows_new_story_starts: true
+    allows_in_flight_story_completion: true
+    scope: implementation may resume against the corrected planning baseline
+    rationale: the 2026-03-13 implementation-readiness assessment marked the planning baseline READY TO RESUME IMPLEMENTATION, so the stale broad execution stop is no longer applicable
+    ready_for_dev_interpretation: ready-for-dev stories may now be started normally under the refreshed 2026-03-13 readiness baseline
+    unblock_conditions: []
+
+  replacement_epic_map:
+    epic-1: Minimal Session Start and Session Name Provisioning
+    epic-2: Approved Preset Catalog and Customer Preset Selection
+    epic-3: Guided Capture, Latest-Photo Confidence, and Current-Session Review
+    epic-4: Coupon-Adjusted Timing, Warning Alerts, and Completion/Handoff
+    epic-5: Internal Preset Authoring and Approved Catalog Publication
+    epic-6: Exception Recovery, Operator Control, and Diagnostics
+    epic-7: Operational Visibility and Safe Branch Delivery
+
+  story_revalidation_policy: salvage-and-revalidate-existing-implementation-artifact-stories-against-the-2026-03-11-planning-baseline
+  story_revalidation_note: preserve-foundation-stories-and-revalidate-salvage-candidates remains in force under the 2026-03-12 planning-alignment correction

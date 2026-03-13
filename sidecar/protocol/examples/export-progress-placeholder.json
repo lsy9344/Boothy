@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "boothy.camera.protocol.v1",
+  "requestId": "req-export-001",
+  "correlationId": "corr-session-001",
+  "event": "export.progress",
+  "sessionId": "session-001",
+  "payload": {
+    "stage": "exportQueued",
+    "percentComplete": 0,
+    "lastUpdatedAt": "2026-03-08T09:01:00.000Z"
+  }
+}

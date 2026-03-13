@@ -107,3 +107,6 @@ test-results/
 # ----------------------------------------
 /.bmad-*/
 !/.bmad-core/
+.codex-temp/
+git-status.txt
+src-tauri/target*/

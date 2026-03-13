@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "boothy.camera.protocol.v1",
+  "requestId": "req-ready-001",
+  "correlationId": "corr-session-001",
+  "ok": false,
+  "error": {
+    "schemaVersion": "boothy.camera.error-envelope.v1",
+    "code": "camera.reconnecting",
+    "severity": "warning",
+    "retryable": true,
+    "customerState": "cameraReconnectNeeded",
+    "customerCameraConnectionState": "needsAttention",
+    "operatorCameraConnectionState": "reconnecting",
+    "operatorAction": "checkCableAndRetry",
+    "message": "Camera connection is unstable.",
+    "details": "PTP session reopened after an adapter timeout."
+  }
+}
