@@ -1,10 +1,10 @@
 import { z } from 'zod'
 
-export const sessionManifestSchemaVersion = 'session-manifest/v1' as const
+import { sessionIdSchema } from './ids'
+import { activePresetBindingSchema } from './preset-core'
+import { sessionCaptureRecordSchema } from './session-capture'
 
-export const sessionIdSchema = z
-  .string()
-  .regex(/^session_[a-z0-9]{26}$/i, '유효한 세션 식별자가 아니에요.')
+export const sessionManifestSchemaVersion = 'session-manifest/v1' as const
 
 export const boothAliasSchema = z
   .string()
@@ -32,10 +32,11 @@ export const sessionManifestSchema = z.object({
   updatedAt: z.string().datetime(),
   lifecycle: z.object({
     status: z.literal('active'),
-    stage: z.literal('session-started'),
+    stage: z.string().trim().min(1),
   }),
-  activePresetId: z.string().min(1).nullable(),
-  captures: z.array(z.unknown()),
+  activePreset: activePresetBindingSchema.nullable(),
+  activePresetId: z.string().trim().min(1).nullable().optional(),
+  captures: z.array(sessionCaptureRecordSchema),
   postEnd: z.null(),
 })
 
@@ -44,4 +45,3 @@ export const sessionStartResultSchema = z.object({
   boothAlias: boothAliasSchema,
   manifest: sessionManifestSchema,
 })
-

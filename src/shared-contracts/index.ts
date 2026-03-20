@@ -1,4 +1,6 @@
 export * from './dto/booth-session'
+export * from './dto/capture'
+export * from './dto/preset'
 export * from './dto/session'
 export * from './schemas'
 export * from './events'

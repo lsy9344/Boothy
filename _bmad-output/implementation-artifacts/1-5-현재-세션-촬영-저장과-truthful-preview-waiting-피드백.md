@@ -1,6 +1,6 @@
 # Story 1.5: 현재 세션 촬영 저장과 truthful `Preview Waiting` 피드백
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -19,32 +19,32 @@ booth customer로서,
 
 ## Tasks / Subtasks
 
-- [ ] 세션 캡처 truth와 프리뷰 상태 계약을 고정한다. (AC: 1, 2, 3, 4)
-  - [ ] `session.json` 계약에 최소 `sessionId`, `boothAlias`, `activePresetVersion`, `captureId`, `requestId`, `raw`, `preview`, `final`, `renderStatus`, `postEndState` 상관 필드를 포함하도록 정의 또는 보강한다.
-  - [ ] `src/shared-contracts/`와 `src-tauri/src/contracts/`가 같은 contract family를 공유하도록 유지하고, 프런트엔드/호스트/sidecar에 중복된 별도 정의를 만들지 않는다.
-  - [ ] 이미지 자체는 IPC payload로 넘기지 않고 파일시스템 handoff 경로와 typed 상태 payload만 계약에 남긴다.
-- [ ] 호스트 캡처 파이프라인에서 "저장 성공"을 먼저 보장한다. (AC: 1)
-  - [ ] capture request 성공 시 source photo를 active session root 아래에 먼저 저장하고 manifest를 갱신한 뒤에만 고객 성공 피드백을 허용한다.
-  - [ ] raw persistence, preview render enqueue, preview ready를 별도 lifecycle 이벤트로 기록해 capture success와 render success를 분리한다.
-  - [ ] 활성 프리셋 identity/version이 각 capture record에 고정되도록 한다.
-- [ ] booth-safe `Preview Waiting` 상태와 copy 계층을 구현한다. (AC: 2, 4)
-  - [ ] `Preview Waiting Panel` 또는 동등 컴포넌트에서 첫 문장은 저장 완료 사실, 둘째 문장은 확인용 사진 준비 중, 보조 문구는 레일 비어 있음이 정상일 수 있음을 설명하도록 만든다.
-  - [ ] 가능한 다음 행동은 하나만 강조하고, 고객이 무엇을 할 수 있는지 또는 잠시 기다리면 되는지를 plain-language로 보여준다.
-  - [ ] active preset name/state가 capture surface와 confirmation surface 모두에서 계속 보이도록 유지한다.
-  - [ ] customer copy에는 darktable, helper, render queue, filesystem, SDK, raw failure 원인을 직접 노출하지 않는다.
-- [ ] preview readiness 스트리밍과 현재 세션 레일 갱신을 연결한다. (AC: 2, 3, 4)
-  - [ ] host normalized state/channel에서 `captureSaved`, `previewWaiting`, `previewReady`처럼 의미가 분명한 상태 전이를 전달한다.
-  - [ ] 최신 사진 레일은 active session에 상관된 preview asset만 사용하고, preview ready 이후에만 새 항목을 노출한다.
-  - [ ] in-memory cache는 화면 반응성을 위해 사용할 수 있지만 session folder truth보다 우선하면 안 된다.
-- [ ] 성능 계측과 truthful fallback을 추가한다. (AC: 3)
-  - [ ] capture acknowledged 시각과 preview visible 시각을 기록할 seam을 두어 1초/5초 예산 검증이 가능하도록 한다.
-  - [ ] 5초를 넘는 경우 false completion 또는 빈 성공 상태를 보여주지 말고 explicit `Preview Waiting`을 유지한다.
-  - [ ] retry 가능한 지연과 safe boundary 초과를 host error envelope로 구분하되, 고객에게는 wait/call guidance만 전달한다.
-- [ ] 테스트로 truthfulness와 세션 격리를 잠근다. (AC: 1, 2, 3, 4)
-  - [ ] contract test: session manifest, capture result payload, preview status payload의 필수 필드와 schema version을 검증한다.
-  - [ ] integration test: `capture -> raw persisted -> preview waiting -> preview ready` 흐름이 순서대로 일어나는지 검증한다.
-  - [ ] privacy/integration test: 다른 세션 asset이 현재 세션 레일이나 확인 상태에 섞이지 않는지 검증한다.
-  - [ ] UI test: waiting copy의 문장 순서, active preset visibility, rail-empty helper copy, single-primary-action 원칙을 검증한다.
+- [x] 세션 캡처 truth와 프리뷰 상태 계약을 고정한다. (AC: 1, 2, 3, 4)
+  - [x] `session.json` 계약에 최소 `sessionId`, `boothAlias`, `activePresetVersion`, `captureId`, `requestId`, `raw`, `preview`, `final`, `renderStatus`, `postEndState` 상관 필드를 포함하도록 정의 또는 보강한다.
+  - [x] `src/shared-contracts/`와 `src-tauri/src/contracts/`가 같은 contract family를 공유하도록 유지하고, 프런트엔드/호스트/sidecar에 중복된 별도 정의를 만들지 않는다.
+  - [x] 이미지 자체는 IPC payload로 넘기지 않고 파일시스템 handoff 경로와 typed 상태 payload만 계약에 남긴다.
+- [x] 호스트 캡처 파이프라인에서 "저장 성공"을 먼저 보장한다. (AC: 1)
+  - [x] capture request 성공 시 source photo를 active session root 아래에 먼저 저장하고 manifest를 갱신한 뒤에만 고객 성공 피드백을 허용한다.
+  - [x] raw persistence, preview render enqueue, preview ready를 별도 lifecycle 이벤트로 기록해 capture success와 render success를 분리한다.
+  - [x] 활성 프리셋 identity/version이 각 capture record에 고정되도록 한다.
+- [x] booth-safe `Preview Waiting` 상태와 copy 계층을 구현한다. (AC: 2, 4)
+  - [x] `Preview Waiting Panel` 또는 동등 컴포넌트에서 첫 문장은 저장 완료 사실, 둘째 문장은 확인용 사진 준비 중, 보조 문구는 레일 비어 있음이 정상일 수 있음을 설명하도록 만든다.
+  - [x] 가능한 다음 행동은 하나만 강조하고, 고객이 무엇을 할 수 있는지 또는 잠시 기다리면 되는지를 plain-language로 보여준다.
+  - [x] active preset name/state가 capture surface와 confirmation surface 모두에서 계속 보이도록 유지한다.
+  - [x] customer copy에는 darktable, helper, render queue, filesystem, SDK, raw failure 원인을 직접 노출하지 않는다.
+- [x] preview readiness 스트리밍과 현재 세션 레일 갱신을 연결한다. (AC: 2, 3, 4)
+  - [x] host normalized state/channel에서 `captureSaved`, `previewWaiting`, `previewReady`처럼 의미가 분명한 상태 전이를 전달한다.
+  - [x] 최신 사진 레일은 active session에 상관된 preview asset만 사용하고, preview ready 이후에만 새 항목을 노출한다.
+  - [x] in-memory cache는 화면 반응성을 위해 사용할 수 있지만 session folder truth보다 우선하면 안 된다.
+- [x] 성능 계측과 truthful fallback을 추가한다. (AC: 3)
+  - [x] capture acknowledged 시각과 preview visible 시각을 기록할 seam을 두어 1초/5초 예산 검증이 가능하도록 한다.
+  - [x] 5초를 넘는 경우 false completion 또는 빈 성공 상태를 보여주지 말고 explicit `Preview Waiting`을 유지한다.
+  - [x] retry 가능한 지연과 safe boundary 초과를 host error envelope로 구분하되, 고객에게는 wait/call guidance만 전달한다.
+- [x] 테스트로 truthfulness와 세션 격리를 잠근다. (AC: 1, 2, 3, 4)
+  - [x] contract test: session manifest, capture result payload, preview status payload의 필수 필드와 schema version을 검증한다.
+  - [x] integration test: `capture -> raw persisted -> preview waiting -> preview ready` 흐름이 순서대로 일어나는지 검증한다.
+  - [x] privacy/integration test: 다른 세션 asset이 현재 세션 레일이나 확인 상태에 섞이지 않는지 검증한다.
+  - [x] UI test: waiting copy의 문장 순서, active preset visibility, rail-empty helper copy, single-primary-action 원칙을 검증한다.
 
 ## Dev Notes
 
@@ -52,7 +52,7 @@ booth customer로서,
 
 - 이 스토리는 Epic 1 안에서 FR-004의 핵심을 구현한다. 핵심은 "촬영 성공"과 "확인용 프리뷰 준비 완료"를 하나의 성공 메시지로 뭉개지 않는 것이다.
 - 고객이 실제로 믿어야 하는 첫 번째 truth boundary는 "source photo가 현재 세션에 안전하게 저장되었다"는 사실이다. preview readiness와 final readiness는 그 뒤의 별도 truth다.
-- 이 스토리는 현재 세션 레일과 `Preview Waiting` 보호 경험까지 포함하지만, 삭제 정책 완성(Story 2.2), 이후 촬영용 프리셋 변경(Story 2.3), post-end completion 전체(Story 3.x)를 앞당겨 구현하는 이야기는 아니다.
+- 이 스토리는 현재 세션 레일과 `Preview Waiting` 보호 경험까지 포함하지만, 삭제 정책 완성(Story 2.2), 세션 전역 프리셋 변경 UX 확장(Story 2.3), post-end completion 전체(Story 3.x)를 앞당겨 구현하는 이야기는 아니다.
 
 ### 선행 의존성과 구현 순서
 
@@ -195,17 +195,49 @@ GPT-5 Codex
 
 ### Debug Log References
 
-- 현재 워크스페이스에는 실제 앱 scaffold가 없고 planning artifacts와 Story 1.1 문서만 존재한다.
-- git 저장소가 초기화되어 있지 않아 commit history 기반 intelligence는 사용할 수 없었다.
-- Story 1.2, 1.3, 1.4 문서는 아직 생성되지 않았으므로, Story 1.5는 선행 계약과 경계를 중복 구현하지 않도록 가드레일을 강하게 포함했다.
+- Story 문서의 초기 메모와 달리 현재 워크스페이스에는 React/Tauri scaffold와 Story 1.2-1.4 범위 구현 흔적이 이미 존재해, 기존 경계를 확장하는 방식으로 작업했다.
+- host `request_capture`는 기존에 저장 없는 `accepted` 응답만 반환하고 있었으므로, raw persistence와 preview lifecycle을 분리하는 ingest pipeline을 추가했다.
+- 기존 테스트 fixture 다수가 Story 1.4 계약을 가정하고 있어, Story 1.5 계약으로 엄격화하되 이전 fixture도 normalize되도록 shared contract parsing을 보강했다.
 
 ### Completion Notes List
 
-- Story 1.5는 `ready-for-dev` 기준으로 작성되었다.
-- 스토리 목적은 "capture saved"와 "preview ready"를 분리해 truthful booth feedback을 만드는 것이다.
-- 실제 구현 전에는 Story 1.1 bootstrap과 최소 shared-contract scaffold가 먼저 필요하다.
-- latest photo rail, preview waiting copy, capture correlation, manifest update, performance instrumentation이 이 스토리의 핵심 범위다.
+- `session.json` captures 배열을 typed capture record로 고정하고, shared contracts/Rust DTO가 같은 capture contract family를 공유하도록 정리했다.
+- host capture pipeline이 raw 파일 저장 후에만 `capture-saved` 응답을 반환하고, preview render enqueue/ready를 별도 상태로 추적하도록 구현했다.
+- booth UI에 `Preview Waiting` 보호 패널과 현재 세션 전용 최신 사진 레일을 추가해, 저장 사실과 preview 준비 중 상태를 분리해 안내하도록 만들었다.
+- Vitest 72개와 Cargo test 24개를 통과했고, Story 1.5용 contract/integration/UI/privacy 테스트를 추가했다.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md
+- _bmad-output/implementation-artifacts/sprint-status.yaml
+- src/shared-contracts/dto/capture.ts
+- src/shared-contracts/schemas/capture-readiness.ts
+- src/shared-contracts/schemas/session-capture.ts
+- src/shared-contracts/schemas/session-manifest.ts
+- src/shared-contracts/schemas/index.ts
+- src/shared-contracts/contracts.test.ts
+- src/capture-adapter/services/capture-runtime.ts
+- src/capture-adapter/services/capture-runtime.test.ts
+- src/session-domain/selectors/current-session-previews.ts
+- src/session-domain/selectors/index.ts
+- src/session-domain/state/session-provider.tsx
+- src/session-domain/state/session-provider.test.tsx
+- src/booth-shell/selectors/customerStatusCopy.ts
+- src/booth-shell/selectors/customerStatusCopy.test.ts
+- src/booth-shell/components/PreviewWaitingPanel.tsx
+- src/booth-shell/components/LatestPhotoRail.tsx
+- src/booth-shell/screens/CaptureScreen.tsx
+- src/booth-shell/screens/CaptureScreen.test.tsx
+- src/index.css
+- src-tauri/src/session/session_manifest.rs
+- src-tauri/src/session/session_repository.rs
+- src-tauri/src/contracts/dto.rs
+- src-tauri/src/capture/mod.rs
+- src-tauri/src/capture/ingest_pipeline.rs
+- src-tauri/src/capture/normalized_state.rs
+- src-tauri/src/commands/capture_commands.rs
+- src-tauri/tests/capture_readiness.rs
+
+### Change Log
+
+- 2026-03-21 01:13:25 +09:00 - Story 1.5 구현 완료: typed capture/session contract 확장, raw-first host capture persistence, truthful `Preview Waiting` UI, 현재 세션 전용 preview rail, contract/integration/UI/privacy 테스트 추가

@@ -1,6 +1,6 @@
 # Story 1.1: 초기 프로젝트를 스타터 템플릿에서 설정
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

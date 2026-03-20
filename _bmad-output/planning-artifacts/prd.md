@@ -213,7 +213,7 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 - Truthful preview waiting and current-session preview confidence
 - Current-session review only
 - Deletion of current-session captures according to the current-session deletion policy
-- Forward-only preset changes for future captures
+- In-session preset changes at any time, with changes applying from that moment forward without rewriting past captures
 - Adjusted end-time visibility from session start
 - Sound-backed 5-minute warning and exact-end alert
 - Export waiting, completion, and handoff guidance
@@ -249,7 +249,7 @@ The customer preset promise is locked to the following booth-facing behaviors. D
 - The customer selects one active preset at a time from a bounded catalog of 1-6 options.
 - Each preset has a descriptive name and representative preview tile or sample cut that represents the approved published preset artifact.
 - The active preset remains visible enough for the customer to understand the current look.
-- In-session preset changes affect future captures only unless a later approved PRD revision says otherwise.
+- The customer can change the active preset at any point during the session. Each change applies from that moment forward and must not rewrite already captured assets.
 - The booth customer never opens a direct editing workspace or sees darktable terms, XMP terms, style or library terms, module names, masking tools, curve tools, or low-level color controls.
 
 ### Published Preset Artifact Model
@@ -569,7 +569,7 @@ Users can choose one approved published preset from a bounded catalog before sho
 - The booth presents only 1-6 approved published presets to the customer.
 - Each preset includes a customer-facing name and one preview image or standardized preview tile.
 - Each booth-consumable preset has a stable published identity and version under the approved preset catalog.
-- The customer can activate one preset before capture begins.
+- The customer can activate one preset at session start and can revisit or change it later during the same session.
 - The activated preset becomes the active preset for subsequent captures until the customer changes it.
 - No direct photo-editing workspace, darktable terminology, or detailed image-adjustment controls are exposed in preset selection.
 
@@ -609,15 +609,15 @@ Users can capture photos into the active session and receive truthful current-se
 - [Preview, Review, and Cleanup](#preview-review-and-cleanup)
 - [Domain Requirements](#domain-requirements)
 
-### FR-005 Current-Session Review, Deletion, and Future-Capture Preset Change
+### FR-005 Current-Session Review, Deletion, and In-Session Preset Change
 
 Users can review only current-session photos, delete current-session captures according to the `Current-Session Deletion Policy`, and change the active preset for future captures.
 
 **Acceptance Criteria**
 - The review surface exposes current-session assets only.
 - The customer can delete current-session captures and their correlated current-session booth artifacts only when the `Current-Session Deletion Policy` allows it.
-- The customer can change the active preset during the session.
-- Preset changes affect future captures only unless a later approved PRD revision changes that rule.
+- The customer can change the active preset at any point during the session.
+- Each preset change applies to subsequent captures without rewriting already captured assets.
 - The product does not expose a direct photo-editing workspace, detailed editing controls, or authoring tools as part of review.
 
 **Sources**

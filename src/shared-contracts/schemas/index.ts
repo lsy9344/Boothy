@@ -1,3 +1,7 @@
 export * from './capabilities'
+export * from './capture-readiness'
+export * from './ids'
+export * from './presets'
+export * from './session-capture'
 export * from './session-manifest'
 export * from './session-start'

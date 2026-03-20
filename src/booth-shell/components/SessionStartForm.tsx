@@ -71,6 +71,7 @@ export function SessionStartForm() {
           name="name"
           autoComplete="name"
           value={name}
+          disabled={isStarting}
           onChange={(event) => {
             setName(event.target.value)
             setFieldErrors((current) => ({ ...current, name: undefined }))
@@ -94,10 +95,10 @@ export function SessionStartForm() {
           name="phoneLastFour"
           inputMode="numeric"
           autoComplete="off"
-          maxLength={4}
           value={phoneLastFour}
+          disabled={isStarting}
           onChange={(event) => {
-            setPhoneLastFour(event.target.value.replace(/\D/g, '').slice(0, 4))
+            setPhoneLastFour(event.target.value)
             setFieldErrors((current) => ({
               ...current,
               phoneLastFour: undefined,

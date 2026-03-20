@@ -40,6 +40,7 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
     "status": "active",
     "stage": "session-started"
   },
+  "activePreset": null,
   "activePresetId": null,
   "captures": [],
   "postEnd": null
@@ -56,7 +57,8 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - `createdAt`, `updatedAt`: UTC RFC3339 문자열
 - `lifecycle.status`: 초기값은 `active`
 - `lifecycle.stage`: 초기값은 `session-started`
-- `activePresetId`: Story 1.2에서는 `null`
+- `activePreset`: Story 1.3부터 `{ presetId, publishedVersion }` binding 또는 `null`
+- `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror. Story 1.2에서는 `null`
 - `captures`: Story 1.2에서는 빈 배열
 - `postEnd`: Story 1.2에서는 `null`
 
@@ -65,3 +67,4 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - Rust host만 이 파일을 생성/수정한다.
 - React는 host가 반환한 DTO만 소비하고 durable truth를 직접 만들지 않는다.
 - 후속 스토리는 기존 필드를 유지한 채 확장한다.
+- 새 구현은 `activePreset`을 canonical field로 사용하고, `activePresetId`는 구버전 호환을 위해 함께 유지한다.

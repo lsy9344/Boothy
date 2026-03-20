@@ -52,7 +52,7 @@
 ### 기술 영향
 
 - 코드 구현 전에 story 계약을 먼저 보강하면 운영자 복구, 게시 불변성, 배포 거부 규칙에서 테스트 가능한 실패 경계가 생긴다.
-- 특히 `active session protection`, `future-session-only publication`, `previous preset binding preservation`는 구현 시 해석 차이를 막는 핵심 경계다.
+- 특히 `active session protection`, `future-session-only publication`, `previous preset binding preservation`는 구현 시 해석 차이를 막는 핵심 경계다. 세션 중 프리셋 변경은 언제든 허용되지만, 이미 저장된 capture binding을 다시 쓰지 않는다는 점은 그대로 유지해야 한다.
 
 ## 3. 권장 접근 방식
 
@@ -138,7 +138,7 @@ OLD:
 ```md
 **Given** an active session with an already selected preset
 **When** the customer chooses a different approved published preset
-**Then** the new preset becomes the active preset for future captures only
+**Then** the new preset becomes the active preset immediately for the session
 **And** previously captured session assets remain bound to the preset version used at capture time
 
 **Given** the customer is reviewing existing captures
@@ -152,7 +152,7 @@ NEW:
 ```md
 **Given** an active session with an already selected preset
 **When** the customer chooses a different approved published preset
-**Then** the new preset becomes the active preset for future captures only
+**Then** the new preset becomes the active preset immediately for the session
 **And** previously captured session assets remain bound to the preset version used at capture time
 
 **Given** the customer is reviewing existing captures
@@ -162,13 +162,13 @@ NEW:
 
 **Given** the customer requests a preset switch
 **When** the selected preset is no longer available or the preset binding cannot be applied safely
-**Then** the previously active preset remains the active preset for future captures
+**Then** the previously active preset remains the active preset for the session
 **And** the customer sees plain-language guidance to keep the current preset or choose another approved preset
 
 **Given** a preset switch succeeds
 **When** the booth acknowledges the change
 **Then** the active-preset confirmation is acknowledged within 1 second on approved hardware
-**And** no current-session asset outside future captures is mutated by the switch
+**And** no previously saved current-session asset is mutated by the switch
 ```
 
 근거:
