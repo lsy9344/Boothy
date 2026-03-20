@@ -20,7 +20,14 @@ class StaticCapabilityService implements CapabilityService {
   }
 
   canAccess(surface: SurfaceCapability) {
-    return this.snapshot.allowedSurfaces.includes(surface)
+    if (surface === 'booth') {
+      return true
+    }
+
+    return (
+      this.snapshot.isAdminAuthenticated &&
+      this.snapshot.allowedSurfaces.includes(surface)
+    )
   }
 
   getSnapshot() {

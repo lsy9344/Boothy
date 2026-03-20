@@ -18,7 +18,11 @@ export interface StartSessionService {
 }
 
 class DefaultStartSessionService implements StartSessionService {
-  constructor(private readonly gateway: StartSessionGateway) {}
+  private readonly gateway: StartSessionGateway
+
+  constructor(gateway: StartSessionGateway) {
+    this.gateway = gateway
+  }
 
   async startSession(input: SessionStartInput) {
     const parsedInput = sessionStartInputSchema.parse(input)

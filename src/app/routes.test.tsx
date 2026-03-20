@@ -48,6 +48,24 @@ describe('app routing baseline', () => {
     expect(router.state.location.pathname).toBe('/booth')
   })
 
+  it('still blocks restricted surfaces when capability flags exist without admin authentication', async () => {
+    const router = renderRoute(
+      ['/authoring'],
+      createCapabilityService({
+        isAdminAuthenticated: false,
+        allowedSurfaces: ['booth', 'authoring'],
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /Preset Authoring/i }),
+    ).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/booth')
+  })
+
   it('keeps a typed capability seam for future admin-authenticated flows', async () => {
     renderRoute(
       ['/operator'],
