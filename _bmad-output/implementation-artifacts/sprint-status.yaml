@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-03-21 01:13:25 +09:00"
+last_updated: "2026-03-21 02:52:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -47,7 +47,7 @@ development_status:
   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
-  1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: review
+  1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
   epic-1-retrospective: optional
 
   epic-2: backlog

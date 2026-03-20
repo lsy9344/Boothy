@@ -1,6 +1,6 @@
 # Story 1.5: 현재 세션 촬영 저장과 truthful `Preview Waiting` 피드백
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
