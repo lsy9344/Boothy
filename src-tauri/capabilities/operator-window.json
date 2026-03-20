@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "operator-window",
+  "description": "Reserved permissions for a future operator window surface.",
+  "windows": ["operator-window"],
+  "permissions": ["core:default"]
+}
