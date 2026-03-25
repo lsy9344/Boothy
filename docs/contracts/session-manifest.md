@@ -61,6 +61,7 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror. Story 1.2에서는 `null`
 - `captures`: Story 1.2에서는 빈 배열
 - `postEnd`: Story 1.2에서는 `null`
+- `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 app-local-data 절대경로 아래의 현재 세션 루트(`.../booth-runtime/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `booth-runtime/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
 
 ## 변경 규칙
 

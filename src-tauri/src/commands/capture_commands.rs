@@ -6,12 +6,14 @@ use crate::{
     capture::{
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
-            get_capture_readiness_in_dir, normalize_capture_readiness, request_capture_in_dir,
+            delete_capture_in_dir, get_capture_readiness_in_dir, normalize_capture_readiness,
+            request_capture_in_dir,
         },
     },
     contracts::dto::{
-        CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
-        CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
+        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureReadinessDto,
+        CaptureReadinessInputDto, CaptureReadinessUpdateDto, CaptureRequestInputDto,
+        CaptureRequestResultDto, HostErrorEnvelope,
     },
     session::{
         session_paths::SessionPaths,
@@ -32,6 +34,19 @@ pub fn get_capture_readiness(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
 
     get_capture_readiness_in_dir(&base_dir, input)
+}
+
+#[tauri::command]
+pub fn delete_capture(
+    app: tauri::AppHandle,
+    input: CaptureDeleteInputDto,
+) -> Result<CaptureDeleteResultDto, HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+
+    delete_capture_in_dir(&base_dir, input)
 }
 
 #[tauri::command]

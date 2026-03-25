@@ -69,7 +69,10 @@ pub struct SessionCaptureRecord {
     pub schema_version: String,
     pub session_id: String,
     pub booth_alias: String,
+    pub active_preset_id: String,
     pub active_preset_version: String,
+    #[serde(default)]
+    pub active_preset_display_name: Option<String>,
     pub capture_id: String,
     pub request_id: String,
     pub raw: RawCaptureAsset,
@@ -95,6 +98,8 @@ pub struct SessionManifest {
     pub active_preset: Option<ActivePresetBinding>,
     #[serde(default)]
     pub active_preset_id: Option<String>,
+    #[serde(default)]
+    pub active_preset_display_name: Option<String>,
     #[serde(default)]
     pub captures: Vec<SessionCaptureRecord>,
     pub post_end: Option<serde_json::Value>,
@@ -168,6 +173,7 @@ pub fn build_session_manifest_at(
         },
         active_preset: None,
         active_preset_id: None,
+        active_preset_display_name: None,
         captures: Vec::new(),
         post_end: None,
     })

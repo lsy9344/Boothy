@@ -1,0 +1,5710 @@
+diff --git a/src/shared-contracts/schemas/capture-readiness.ts b/src/shared-contracts/schemas/capture-readiness.ts
+new file mode 100644
+index 0000000..33662be
+--- /dev/null
++++ b/src/shared-contracts/schemas/capture-readiness.ts
+@@ -0,0 +1,136 @@
++import { z } from 'zod'
++
++import { sessionIdSchema } from './ids'
++import {
++  captureReadinessSchemaVersion,
++  captureReadinessUpdateSchemaVersion,
++  captureRequestResultSchemaVersion,
++  captureSurfaceStateSchema,
++  sessionCaptureRecordSchema,
++} from './session-capture'
++
++const fallbackSessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m' as const
++
++export const customerReadinessStateSchema = z.enum([
++  'Preparing',
++  'Ready',
++  'Preview Waiting',
++  'Phone Required',
++])
++
++export const capturePrimaryActionSchema = z.enum([
++  'wait',
++  'capture',
++  'choose-preset',
++  'start-session',
++  'call-support',
++])
++
++export const captureReasonCodeSchema = z.enum([
++  'session-missing',
++  'preset-missing',
++  'camera-preparing',
++  'helper-preparing',
++  'preview-waiting',
++  'export-waiting',
++  'completed',
++  'phone-required',
++  'warning',
++  'ready',
++  'blocked',
++])
++
++const customerGuidanceSchema = z.string().trim().min(1).max(120)
++
++function inferSurfaceState(input: {
++  canCapture: boolean
++  reasonCode: z.infer<typeof captureReasonCodeSchema>
++  latestCapture: z.infer<typeof sessionCaptureRecordSchema> | null
++}) {
++  if (input.latestCapture?.renderStatus === 'previewReady') {
++    return 'previewReady' as const
++  }
++
++  if (input.latestCapture?.renderStatus === 'previewWaiting') {
++    return 'previewWaiting' as const
++  }
++
++  if (input.reasonCode === 'preview-waiting') {
++    return input.latestCapture === null ? 'captureSaved' : 'previewWaiting'
++  }
++
++  return input.canCapture ? 'captureReady' : 'blocked'
++}
++
++const captureReadinessSnapshotInputSchema = z.object({
++  schemaVersion: z.literal(captureReadinessSchemaVersion).optional(),
++  sessionId: sessionIdSchema.optional(),
++  surfaceState: captureSurfaceStateSchema.optional(),
++  customerState: customerReadinessStateSchema,
++  canCapture: z.boolean(),
++  primaryAction: capturePrimaryActionSchema,
++  customerMessage: customerGuidanceSchema,
++  supportMessage: customerGuidanceSchema,
++  reasonCode: captureReasonCodeSchema,
++  latestCapture: sessionCaptureRecordSchema.nullable().optional(),
++})
++
++export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchema.transform(
++  (snapshot) => {
++    const sessionId = snapshot.sessionId ?? fallbackSessionId
++    const latestCapture = snapshot.latestCapture ?? null
++
++    return {
++      schemaVersion: snapshot.schemaVersion ?? captureReadinessSchemaVersion,
++      sessionId,
++      surfaceState:
++        snapshot.surfaceState ??
++        inferSurfaceState({
++          canCapture: snapshot.canCapture,
++          reasonCode: snapshot.reasonCode,
++          latestCapture,
++        }),
++      customerState: snapshot.customerState,
++      canCapture: snapshot.canCapture,
++      primaryAction: snapshot.primaryAction,
++      customerMessage: snapshot.customerMessage,
++      supportMessage: snapshot.supportMessage,
++      reasonCode: snapshot.reasonCode,
++      latestCapture,
++    }
++  },
++)
++
++export const captureReadinessInputSchema = z.object({
++  sessionId: sessionIdSchema,
++})
++
++export const captureReadinessUpdateSchema = z.object({
++  schemaVersion: z.literal(captureReadinessUpdateSchemaVersion).default(
++    captureReadinessUpdateSchemaVersion,
++  ),
++  sessionId: sessionIdSchema,
++  readiness: captureReadinessSnapshotSchema,
++})
++
++export const captureRequestInputSchema = z.object({
++  sessionId: sessionIdSchema,
++})
++
++const captureRequestResultInputSchema = z.object({
++  schemaVersion: z.literal(captureRequestResultSchemaVersion).optional(),
++  sessionId: sessionIdSchema,
++  status: z.literal('capture-saved'),
++  capture: sessionCaptureRecordSchema,
++  readiness: captureReadinessSnapshotSchema,
++})
++
++export const captureRequestResultSchema = captureRequestResultInputSchema.transform(
++  (result) => ({
++    schemaVersion: result.schemaVersion ?? captureRequestResultSchemaVersion,
++    sessionId: result.sessionId,
++    status: 'capture-saved' as const,
++    capture: result.capture,
++    readiness: result.readiness,
++  }),
++)
+diff --git a/src/shared-contracts/events/index.ts b/src/shared-contracts/events/index.ts
+index 880b281..b77d776 100644
+--- a/src/shared-contracts/events/index.ts
++++ b/src/shared-contracts/events/index.ts
+@@ -1,3 +1,5 @@
++export const captureReadinessUpdateEvent = 'capture-readiness-update' as const
++
+ export type HostLifecycleEvent =
+   | 'booth-runtime-started'
+   | 'operator-surface-requested'
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 491d3e4..dcf3450 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -1,10 +1,17 @@
+ import { describe, expect, it } from 'vitest'
+ 
+ import {
++  activePresetBindingSchema,
+   boothSessionStubSchema,
++  captureReadinessSnapshotSchema,
++  captureRequestResultSchema,
+   capabilitySnapshotSchema,
+   hostErrorEnvelopeSchema,
++  presetCatalogResultSchema,
++  presetSelectionInputSchema,
++  publishedPresetSummarySchema,
+   sessionManifestSchema,
++  sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
+ } from './index'
+@@ -73,7 +80,7 @@ describe('shared contracts baseline', () => {
+         status: 'active',
+         stage: 'session-started',
+       },
+-      activePresetId: null,
++      activePreset: null,
+       captures: [],
+       postEnd: null,
+     })
+@@ -83,6 +90,32 @@ describe('shared contracts baseline', () => {
+     expect(parsed.lifecycle.stage).toBe('session-started')
+   })
+ 
++  it('accepts later lifecycle stages so follow-up stories can preserve session progress', () => {
++    const parsed = sessionManifestSchema.parse({
++      schemaVersion: 'session-manifest/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      customer: {
++        name: 'Kim',
++        phoneLastFour: '4821',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:00.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'capture-ready',
++      },
++      activePreset: {
++        presetId: 'preset_soft-glow',
++        publishedVersion: '2026.03.20',
++      },
++      captures: [],
++      postEnd: null,
++    })
++
++    expect(parsed.lifecycle.stage).toBe('capture-ready')
++  })
++
+   it('parses a typed session start result and serializable host error envelope', () => {
+     const result = sessionStartResultSchema.parse({
+       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+@@ -101,7 +134,7 @@ describe('shared contracts baseline', () => {
+           status: 'active',
+           stage: 'session-started',
+         },
+-        activePresetId: null,
++        activePreset: null,
+         captures: [],
+         postEnd: null,
+       },
+@@ -118,4 +151,164 @@ describe('shared contracts baseline', () => {
+     expect(result.manifest.sessionId).toBe(result.sessionId)
+     expect(error.fieldErrors?.phoneLastFour).toBe('숫자 4자리여야 해요.')
+   })
++
++  it('accepts a booth-safe published preset summary with a customer preview asset', () => {
++    const parsed = publishedPresetSummarySchema.parse({
++      presetId: 'preset_soft-glow',
++      displayName: 'Soft Glow',
++      publishedVersion: '2026.03.20',
++      boothStatus: 'booth-safe',
++      preview: {
++        kind: 'preview-tile',
++        assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
++        altText: 'Soft Glow sample portrait',
++      },
++    })
++
++    expect(parsed.preview.kind).toBe('preview-tile')
++    expect(parsed.displayName).toBe('Soft Glow')
++  })
++
++  it('rejects preset summaries that do not expose a booth-safe preview asset', () => {
++    expect(() =>
++      publishedPresetSummarySchema.parse({
++        presetId: 'preset_soft-glow',
++        displayName: 'Soft Glow',
++        publishedVersion: '2026.03.20',
++        boothStatus: 'booth-safe',
++      }),
++    ).toThrow()
++  })
++
++  it('parses a preset catalog result with at most six published entries', () => {
++    const preset = {
++      presetId: 'preset_soft-glow',
++      displayName: 'Soft Glow',
++      publishedVersion: '2026.03.20',
++      boothStatus: 'booth-safe',
++      preview: {
++        kind: 'preview-tile',
++        assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
++        altText: 'Soft Glow sample portrait',
++      },
++    }
++
++    const parsed = presetCatalogResultSchema.parse({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      state: 'ready',
++      presets: Array.from({ length: 6 }, () => preset),
++    })
++
++    expect(parsed.presets).toHaveLength(6)
++  })
++
++  it('parses a typed preset selection payload with stable preset identity and version', () => {
++    const binding = activePresetBindingSchema.parse({
++      presetId: 'preset_soft-glow',
++      publishedVersion: '2026.03.20',
++    })
++
++    const parsed = presetSelectionInputSchema.parse({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      preset: binding,
++    })
++
++    expect(parsed.preset.publishedVersion).toBe('2026.03.20')
++  })
++
++  it('parses customer-safe readiness snapshots and capture-saved request responses', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetVersion: '2026.03.20',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: null,
++        enqueuedAtMs: 100,
++        readyAtMs: null,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewWaiting',
++      postEndState: 'activeSession',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: null,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'pending',
++      },
++    })
++
++    const readiness = captureReadinessSnapshotSchema.parse({
++      schemaVersion: 'capture-readiness/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      surfaceState: 'previewWaiting',
++      latestCapture: capture,
++      customerState: 'Ready',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '사진이 안전하게 저장되었어요.',
++      supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++      reasonCode: 'preview-waiting',
++    })
++    const captureResult = captureRequestResultSchema.parse({
++      schemaVersion: 'capture-request-result/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      status: 'capture-saved',
++      capture,
++      readiness,
++    })
++
++    expect(captureResult.readiness.latestCapture?.captureId).toBe(capture.captureId)
++    expect(captureResult.capture.raw.assetPath).toContain('captures/originals')
++    expect(captureResult.status).toBe('capture-saved')
++  })
++
++  it('parses blocked capture errors with embedded customer-safe readiness guidance', () => {
++    const error = hostErrorEnvelopeSchema.parse({
++      code: 'capture-not-ready',
++      message: '지금은 촬영할 수 없어요.',
++      readiness: {
++        customerState: 'Phone Required',
++        canCapture: false,
++        primaryAction: 'call-support',
++        customerMessage: '지금은 도움이 필요해요.',
++        supportMessage: '가까운 직원에게 알려 주세요.',
++        reasonCode: 'phone-required',
++      },
++    })
++
++    expect(error.readiness?.primaryAction).toBe('call-support')
++  })
++
++  it('rejects capture request responses that omit the persisted capture record', () => {
++    expect(() =>
++      captureRequestResultSchema.parse({
++        schemaVersion: 'capture-request-result/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        status: 'capture-saved',
++        readiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'captureSaved',
++          customerState: 'Preview Waiting',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '사진이 안전하게 저장되었어요.',
++          supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++          reasonCode: 'preview-waiting',
++          latestCapture: null,
++        },
++      }),
++    ).toThrow()
++  })
+ })
+diff --git a/src/capture-adapter/services/capture-runtime.ts b/src/capture-adapter/services/capture-runtime.ts
+new file mode 100644
+index 0000000..8751950
+--- /dev/null
++++ b/src/capture-adapter/services/capture-runtime.ts
+@@ -0,0 +1,427 @@
++import { invoke } from '@tauri-apps/api/core'
++import { listen } from '@tauri-apps/api/event'
++
++import {
++  captureReadinessUpdateEvent,
++  captureReadinessInputSchema,
++  captureReadinessSnapshotSchema,
++  captureReadinessUpdateSchema,
++  captureRequestInputSchema,
++  captureRequestResultSchema,
++  hostErrorEnvelopeSchema,
++  type CaptureReadinessInput,
++  type CaptureReadinessSnapshot,
++  type CaptureRequestInput,
++  type CaptureRequestResult,
++  type HostErrorEnvelope,
++} from '../../shared-contracts'
++
++const CAPTURE_READINESS_POLL_MS = 1500
++const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++
++export interface CaptureRuntimeGateway {
++  getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
++  requestCapture(input: CaptureRequestInput): Promise<unknown>
++  subscribeToCaptureReadiness(
++    onEvent: (payload: unknown) => void,
++  ): Promise<() => void>
++}
++
++export interface CaptureRuntimeService {
++  getCaptureReadiness(
++    input: CaptureReadinessInput,
++  ): Promise<CaptureReadinessSnapshot>
++  requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
++  subscribeToCaptureReadiness(input: {
++    sessionId: string
++    onReadiness(readiness: CaptureReadinessSnapshot): void
++  }): Promise<() => void>
++}
++
++function buildPreparingCaptureReadiness(): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: BROWSER_SESSION_FIXTURE_ID,
++    surfaceState: 'blocked',
++    customerState: 'Preparing',
++    canCapture: false,
++    primaryAction: 'wait',
++    customerMessage: '촬영 준비 중이에요.',
++    supportMessage: '잠시만 기다려 주세요.',
++    reasonCode: 'camera-preparing',
++    latestCapture: null,
++  }
++}
++
++function buildReadyCaptureReadiness(): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: BROWSER_SESSION_FIXTURE_ID,
++    surfaceState: 'captureReady',
++    customerState: 'Ready',
++    canCapture: true,
++    primaryAction: 'capture',
++    customerMessage: '지금 촬영할 수 있어요.',
++    supportMessage: '버튼을 누르면 바로 시작돼요.',
++    reasonCode: 'ready',
++    latestCapture: null,
++  }
++}
++
++function buildPresetMissingCaptureReadiness(): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: BROWSER_SESSION_FIXTURE_ID,
++    surfaceState: 'blocked',
++    customerState: 'Preparing',
++    canCapture: false,
++    primaryAction: 'choose-preset',
++    customerMessage: '촬영 전에 룩을 먼저 골라 주세요.',
++    supportMessage: '선택이 끝나면 바로 찍을 수 있어요.',
++    reasonCode: 'preset-missing',
++    latestCapture: null,
++  }
++}
++
++function buildSessionMissingCaptureReadiness(): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: BROWSER_SESSION_FIXTURE_ID,
++    surfaceState: 'blocked',
++    customerState: 'Preparing',
++    canCapture: false,
++    primaryAction: 'start-session',
++    customerMessage: '세션을 다시 시작해 주세요.',
++    supportMessage: '이름과 휴대전화 뒤 4자리를 다시 확인할게요.',
++    reasonCode: 'session-missing',
++    latestCapture: null,
++  }
++}
++
++function buildPhoneRequiredCaptureReadiness(): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: BROWSER_SESSION_FIXTURE_ID,
++    surfaceState: 'blocked',
++    customerState: 'Phone Required',
++    canCapture: false,
++    primaryAction: 'call-support',
++    customerMessage: '지금은 도움이 필요해요.',
++    supportMessage: '가까운 직원에게 알려 주세요.',
++    reasonCode: 'phone-required',
++    latestCapture: null,
++  }
++}
++
++function buildSessionMismatchHostError(): HostErrorEnvelope {
++  return {
++    code: 'host-unavailable',
++    message: '현재 세션 상태를 다시 확인할게요.',
++  }
++}
++
++function withSessionId(
++  readiness: CaptureReadinessSnapshot,
++  sessionId?: string,
++): CaptureReadinessSnapshot {
++  if (sessionId === undefined) {
++    return readiness
++  }
++
++  return {
++    ...readiness,
++    sessionId,
++  }
++}
++
++class DefaultCaptureRuntimeService implements CaptureRuntimeService {
++  private readonly gateway: CaptureRuntimeGateway
++
++  constructor(gateway: CaptureRuntimeGateway) {
++    this.gateway = gateway
++  }
++
++  async getCaptureReadiness(input: CaptureReadinessInput) {
++    const parsedInput = captureReadinessInputSchema.parse(input)
++    const parsedResponse = await (async () => {
++      try {
++        const response = await this.gateway.getCaptureReadiness(parsedInput)
++
++        return captureReadinessSnapshotSchema.parse(response)
++      } catch (error) {
++        throw normalizeHostError(error, parsedInput.sessionId)
++      }
++    })()
++
++    if (parsedResponse.sessionId !== parsedInput.sessionId) {
++      throw buildSessionMismatchHostError()
++    }
++
++    return parsedResponse
++  }
++
++  async requestCapture(input: CaptureRequestInput) {
++    const parsedInput = captureRequestInputSchema.parse(input)
++    const parsedResponse = await (async () => {
++      try {
++        const response = await this.gateway.requestCapture(parsedInput)
++
++        return captureRequestResultSchema.parse(response)
++      } catch (error) {
++        throw normalizeHostError(error, parsedInput.sessionId)
++      }
++    })()
++
++    if (
++      parsedResponse.sessionId !== parsedInput.sessionId ||
++      parsedResponse.capture.sessionId !== parsedInput.sessionId ||
++      parsedResponse.readiness.sessionId !== parsedInput.sessionId
++    ) {
++      throw buildSessionMismatchHostError()
++    }
++
++    return parsedResponse
++  }
++
++  async subscribeToCaptureReadiness(input: {
++    sessionId: string
++    onReadiness(readiness: CaptureReadinessSnapshot): void
++  }) {
++    const parsedInput = captureReadinessInputSchema.parse({
++      sessionId: input.sessionId,
++    })
++    let latestReadinessKey: string | null = null
++
++    const emitReadiness = (readiness: CaptureReadinessSnapshot) => {
++      const nextKey = JSON.stringify(readiness)
++
++      if (nextKey === latestReadinessKey) {
++        return
++      }
++
++      latestReadinessKey = nextKey
++      input.onReadiness(readiness)
++    }
++
++    const unlisten = await this.gateway.subscribeToCaptureReadiness((payload) => {
++      const parsedPayload = captureReadinessUpdateSchema.safeParse(payload)
++
++      if (
++        parsedPayload.success &&
++        parsedPayload.data.sessionId === parsedInput.sessionId
++      ) {
++        emitReadiness(parsedPayload.data.readiness)
++      }
++    })
++
++    const pollId = globalThis.setInterval(() => {
++      void this.getCaptureReadiness(parsedInput)
++        .then((readiness) => {
++          emitReadiness(readiness)
++        })
++        .catch((error) => {
++          const hostError = error as HostErrorEnvelope
++
++          if (hostError.readiness) {
++            emitReadiness(hostError.readiness)
++          }
++        })
++    }, CAPTURE_READINESS_POLL_MS)
++
++    return () => {
++      globalThis.clearInterval(pollId)
++      unlisten()
++    }
++  }
++}
++
++function normalizeHostError(
++  error: unknown,
++  requestedSessionId?: string,
++): HostErrorEnvelope {
++  const parsed = hostErrorEnvelopeSchema.safeParse(error)
++
++  if (parsed.success) {
++    if (parsed.data.readiness) {
++      return parsed.data
++    }
++
++    switch (parsed.data.code) {
++      case 'session-not-found':
++        return {
++          ...parsed.data,
++          message: '세션을 다시 시작해 주세요.',
++          readiness: withSessionId(
++            buildSessionMissingCaptureReadiness(),
++            requestedSessionId,
++          ),
++        }
++      case 'preset-not-available':
++        return {
++          ...parsed.data,
++          message: '촬영 전에 룩을 다시 골라 주세요.',
++          readiness: withSessionId(
++            buildPresetMissingCaptureReadiness(),
++            requestedSessionId,
++          ),
++        }
++      case 'capture-not-ready':
++        return {
++          ...parsed.data,
++          message: '지금은 도움이 필요해요.',
++          readiness: withSessionId(
++            buildPhoneRequiredCaptureReadiness(),
++            requestedSessionId,
++          ),
++        }
++      case 'host-unavailable':
++      case 'preset-catalog-unavailable':
++      case 'session-persistence-failed':
++      case 'validation-error':
++        return {
++          ...parsed.data,
++          message: '지금은 도움이 필요해요.',
++          readiness: withSessionId(
++            buildPhoneRequiredCaptureReadiness(),
++            requestedSessionId,
++          ),
++        }
++      default:
++        return parsed.data
++    }
++  }
++
++  if (error instanceof Error) {
++    return {
++      code: 'host-unavailable',
++      message: '지금은 도움이 필요해요.',
++      readiness: withSessionId(
++        buildPhoneRequiredCaptureReadiness(),
++        requestedSessionId,
++      ),
++    }
++  }
++
++  return {
++    code: 'host-unavailable',
++    message: '지금은 도움이 필요해요.',
++    readiness: withSessionId(
++      buildPhoneRequiredCaptureReadiness(),
++      requestedSessionId,
++    ),
++  }
++}
++
++function isTauriRuntime() {
++  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
++}
++
++export function buildLocalCaptureReadiness(input: {
++  sessionId?: string | null
++  hasSession: boolean
++  hasPreset: boolean
++}): CaptureReadinessSnapshot {
++  const sessionId = input.sessionId ?? BROWSER_SESSION_FIXTURE_ID
++
++  if (!input.hasSession) {
++    return {
++      ...buildSessionMissingCaptureReadiness(),
++      sessionId,
++    }
++  }
++
++  if (!input.hasPreset) {
++    return {
++      ...buildPresetMissingCaptureReadiness(),
++      sessionId,
++    }
++  }
++
++  return {
++    ...buildPreparingCaptureReadiness(),
++    sessionId,
++  }
++}
++
++function readBrowserCaptureReadinessFixture() {
++  const fixture = (
++    globalThis as typeof globalThis & {
++      __BOOTHY_BROWSER_CAPTURE_READINESS__?: unknown
++    }
++  ).__BOOTHY_BROWSER_CAPTURE_READINESS__
++
++  if (fixture === undefined) {
++    return null
++  }
++
++  const parsed = captureReadinessSnapshotSchema.safeParse(fixture)
++
++  if (parsed.success) {
++    return parsed.data
++  }
++
++  throw {
++    code: 'host-unavailable',
++    message: '브라우저 readiness fixture 형식이 올바르지 않아요.',
++  } satisfies HostErrorEnvelope
++}
++
++export function createBrowserCaptureRuntimeGateway(): CaptureRuntimeGateway {
++  return {
++    async getCaptureReadiness() {
++      const fixture = readBrowserCaptureReadinessFixture()
++
++      if (fixture !== null) {
++        return fixture
++      }
++
++      return buildReadyCaptureReadiness()
++    },
++    async requestCapture() {
++      throw {
++        code: 'host-unavailable',
++        message: '지금은 도움이 필요해요.',
++        readiness: buildPhoneRequiredCaptureReadiness(),
++      } satisfies HostErrorEnvelope
++    },
++    async subscribeToCaptureReadiness() {
++      return () => undefined
++    },
++  }
++}
++
++export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
++  return {
++    async getCaptureReadiness(input) {
++      return invoke<unknown>('get_capture_readiness', { input })
++    },
++    async requestCapture(input) {
++      return invoke<unknown>('request_capture', { input })
++    },
++    async subscribeToCaptureReadiness(onEvent) {
++      try {
++        return await listen(captureReadinessUpdateEvent, (event) => {
++          onEvent(event.payload)
++        })
++      } catch {
++        return () => undefined
++      }
++    },
++  }
++}
++
++export function createDefaultCaptureRuntimeGateway() {
++  return isTauriRuntime()
++    ? createTauriCaptureRuntimeGateway()
++    : createBrowserCaptureRuntimeGateway()
++}
++
++type CreateCaptureRuntimeServiceOptions = {
++  gateway?: CaptureRuntimeGateway
++}
++
++export function createCaptureRuntimeService({
++  gateway = createDefaultCaptureRuntimeGateway(),
++}: CreateCaptureRuntimeServiceOptions = {}) {
++  return new DefaultCaptureRuntimeService(gateway)
++}
+diff --git a/src/capture-adapter/services/capture-runtime.test.ts b/src/capture-adapter/services/capture-runtime.test.ts
+new file mode 100644
+index 0000000..b947e4a
+--- /dev/null
++++ b/src/capture-adapter/services/capture-runtime.test.ts
+@@ -0,0 +1,375 @@
++import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++
++import {
++  createCaptureRuntimeService,
++  createTauriCaptureRuntimeGateway,
++} from './capture-runtime'
++
++function createCaptureRecord() {
++  return {
++    schemaVersion: 'session-capture/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetVersion: '2026.03.20',
++    captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    raw: {
++      assetPath: 'fixtures/capture-raw.jpg',
++      persistedAtMs: 100,
++    },
++    preview: {
++      assetPath: null,
++      enqueuedAtMs: 100,
++      readyAtMs: null,
++    },
++    final: {
++      assetPath: null,
++      readyAtMs: null,
++    },
++    renderStatus: 'previewWaiting',
++    postEndState: 'activeSession',
++    timing: {
++      captureAcknowledgedAtMs: 100,
++      previewVisibleAtMs: null,
++      captureBudgetMs: 1000,
++      previewBudgetMs: 5000,
++      previewBudgetState: 'pending',
++    },
++  }
++}
++
++afterEach(() => {
++  clearMocks()
++  vi.useRealTimers()
++})
++
++describe('capture runtime adapter', () => {
++  it('parses typed readiness and capture request responses from tauri IPC', async () => {
++    mockIPC((cmd, payload) => {
++      if (cmd === 'get_capture_readiness') {
++        expect(payload).toEqual({
++          input: {
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          },
++        })
++
++        return {
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          customerState: 'Ready',
++          canCapture: true,
++          primaryAction: 'capture',
++          customerMessage: '지금 촬영할 수 있어요.',
++          supportMessage: '버튼을 누르면 바로 시작돼요.',
++          reasonCode: 'ready',
++        }
++      }
++
++      if (cmd === 'request_capture') {
++        return {
++          schemaVersion: 'capture-request-result/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          status: 'capture-saved',
++          capture: createCaptureRecord(),
++          readiness: {
++            schemaVersion: 'capture-readiness/v1',
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            surfaceState: 'captureSaved',
++            customerState: 'Preview Waiting',
++            canCapture: false,
++            primaryAction: 'wait',
++            customerMessage: '사진이 안전하게 저장되었어요.',
++            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++            reasonCode: 'preview-waiting',
++            latestCapture: createCaptureRecord(),
++          },
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.getCaptureReadiness({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).resolves.toMatchObject({
++      customerState: 'Ready',
++      canCapture: true,
++    })
++
++    await expect(
++      service.requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).resolves.toMatchObject({
++      status: 'capture-saved',
++      capture: {
++        renderStatus: 'previewWaiting',
++      },
++    })
++  })
++
++  it('normalizes a blocked capture response with customer-safe next action', async () => {
++    mockIPC((cmd) => {
++      if (cmd === 'request_capture') {
++        throw {
++          code: 'capture-not-ready',
++          message: '지금은 촬영할 수 없어요.',
++          readiness: {
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            customerState: 'Phone Required',
++            canCapture: false,
++            primaryAction: 'call-support',
++            customerMessage: '지금은 도움이 필요해요.',
++            supportMessage: '가까운 직원에게 알려 주세요.',
++            reasonCode: 'phone-required',
++          },
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).rejects.toMatchObject({
++      code: 'capture-not-ready',
++      readiness: {
++        primaryAction: 'call-support',
++      },
++    })
++  })
++
++  it('rejects readiness responses whose session id does not match the request', async () => {
++    mockIPC((cmd) => {
++      if (cmd === 'get_capture_readiness') {
++        return {
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          customerState: 'Ready',
++          canCapture: true,
++          primaryAction: 'capture',
++          customerMessage: '지금 촬영할 수 있어요.',
++          supportMessage: '버튼을 누르면 바로 시작돼요.',
++          reasonCode: 'ready',
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.getCaptureReadiness({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).rejects.toMatchObject({
++      code: 'host-unavailable',
++      message: '현재 세션 상태를 다시 확인할게요.',
++    })
++  })
++
++  it('adds customer-safe blocked readiness when capture-not-ready arrives without readiness', async () => {
++    mockIPC((cmd) => {
++      if (cmd === 'request_capture') {
++        throw {
++          code: 'capture-not-ready',
++          message: 'camera helper busy',
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).rejects.toMatchObject({
++      code: 'capture-not-ready',
++      message: '지금은 도움이 필요해요.',
++      readiness: {
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        customerState: 'Phone Required',
++        primaryAction: 'call-support',
++        canCapture: false,
++      },
++    })
++  })
++
++  it('sanitizes raw host failures into customer-safe phone-required guidance', async () => {
++    mockIPC((cmd) => {
++      if (cmd === 'request_capture') {
++        throw {
++          code: 'session-persistence-failed',
++          message: 'serde_json parse failure at captures/manifest.json',
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).rejects.toMatchObject({
++      code: 'session-persistence-failed',
++      message: '지금은 도움이 필요해요.',
++      readiness: {
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        customerState: 'Phone Required',
++        primaryAction: 'call-support',
++      },
++    })
++  })
++
++  it('rejects capture responses whose session id does not match the request', async () => {
++    mockIPC((cmd) => {
++      if (cmd === 'request_capture') {
++        return {
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          status: 'capture-saved',
++          capture: {
++            ...createCaptureRecord(),
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          },
++          readiness: {
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++            customerState: 'Ready',
++            canCapture: true,
++            primaryAction: 'capture',
++            customerMessage: '지금 촬영할 수 있어요.',
++            supportMessage: '버튼을 누르면 바로 시작돼요.',
++            reasonCode: 'ready',
++          },
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++
++    await expect(
++      service.requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      }),
++    ).rejects.toMatchObject({
++      code: 'host-unavailable',
++      message: '현재 세션 상태를 다시 확인할게요.',
++    })
++  })
++
++  it('polls readiness snapshots and stops after cleanup', async () => {
++    vi.useFakeTimers()
++    let pollCount = 0
++
++    mockIPC((cmd) => {
++      if (cmd === 'get_capture_readiness') {
++        pollCount += 1
++
++        return pollCount === 1
++          ? {
++              sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++              customerState: 'Preparing',
++              canCapture: false,
++              primaryAction: 'wait',
++              customerMessage: '촬영 준비 중이에요.',
++              supportMessage: '잠시만 기다려 주세요.',
++              reasonCode: 'camera-preparing',
++            }
++          : {
++              sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++              customerState: 'Ready',
++              canCapture: true,
++              primaryAction: 'capture',
++              customerMessage: '지금 촬영할 수 있어요.',
++              supportMessage: '버튼을 누르면 바로 시작돼요.',
++              reasonCode: 'ready',
++            }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++    const onReadiness = vi.fn()
++
++    const unlisten = await service.subscribeToCaptureReadiness({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      onReadiness,
++    })
++
++    await vi.advanceTimersByTimeAsync(1500)
++    await vi.advanceTimersByTimeAsync(1500)
++
++    expect(onReadiness).toHaveBeenCalledTimes(2)
++
++    unlisten()
++    await vi.advanceTimersByTimeAsync(1500)
++
++    expect(onReadiness).toHaveBeenCalledTimes(2)
++  })
++
++  it('emits customer-safe readiness when polling hits a normalized host error', async () => {
++    vi.useFakeTimers()
++
++    mockIPC((cmd) => {
++      if (cmd === 'get_capture_readiness') {
++        throw {
++          code: 'session-not-found',
++          message: 'manifest missing',
++        }
++      }
++
++      return undefined
++    })
++
++    const service = createCaptureRuntimeService({
++      gateway: createTauriCaptureRuntimeGateway(),
++    })
++    const onReadiness = vi.fn()
++
++    const unlisten = await service.subscribeToCaptureReadiness({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      onReadiness,
++    })
++
++    await vi.advanceTimersByTimeAsync(1500)
++
++    expect(onReadiness).toHaveBeenCalledWith(
++      expect.objectContaining({
++        primaryAction: 'start-session',
++        customerState: 'Preparing',
++      }),
++    )
++
++    unlisten()
++  })
++})
+diff --git a/src/session-domain/state/session-provider.tsx b/src/session-domain/state/session-provider.tsx
+index f808f80..0677c45 100644
+--- a/src/session-domain/state/session-provider.tsx
++++ b/src/session-domain/state/session-provider.tsx
+@@ -1,7 +1,25 @@
+ import type { ReactNode } from 'react'
+-import { useState } from 'react'
++import { useEffect, useEffectEvent, useRef, useState } from 'react'
+ 
+-import type { SessionStartInput } from '../../shared-contracts'
++import type {
++  HostErrorEnvelope,
++  SessionManifest,
++  PresetCatalogResult,
++  SessionStartInput,
++} from '../../shared-contracts'
++import {
++  buildLocalCaptureReadiness,
++  createCaptureRuntimeService,
++  type CaptureRuntimeService,
++} from '../../capture-adapter/services/capture-runtime'
++import {
++  createPresetCatalogService,
++  type PresetCatalogService,
++} from '../../preset-catalog/services/preset-catalog-service'
++import {
++  createActivePresetService,
++  type ActivePresetService,
++} from '../services/active-preset'
+ import {
+   createStartSessionService,
+   type StartSessionService,
+@@ -12,41 +30,691 @@ import { DEFAULT_SESSION_DRAFT, type SessionDraft } from './session-draft'
+ type SessionProviderProps = {
+   children: ReactNode
+   sessionService?: StartSessionService
++  presetCatalogService?: PresetCatalogService
++  activePresetService?: ActivePresetService
++  captureRuntimeService?: CaptureRuntimeService
++}
++
++const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
++const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
++
++function mergeCaptureIntoManifest(
++  manifest: SessionManifest | null,
++  capture: NonNullable<
++    NonNullable<SessionDraft['captureReadiness']>['latestCapture']
++  >,
++): SessionManifest | null {
++  if (manifest === null || capture === null || capture === undefined) {
++    return null
++  }
++
++  if (capture.sessionId !== manifest.sessionId) {
++    return null
++  }
++
++  const nextCaptures = [...manifest.captures]
++  const existingIndex = nextCaptures.findIndex(
++    (currentCapture) =>
++      currentCapture !== undefined && currentCapture.captureId === capture.captureId,
++  )
++
++  if (existingIndex === -1) {
++    nextCaptures.push(capture)
++  } else {
++    nextCaptures[existingIndex] = capture
++  }
++
++  return {
++    ...manifest,
++    captures: nextCaptures,
++  }
++}
++
++function deriveLifecycleStage(
++  readiness: NonNullable<SessionDraft['captureReadiness']>,
++  currentStage: string | null,
++) {
++  switch (readiness.surfaceState) {
++    case 'captureSaved':
++    case 'previewWaiting':
++      return 'preview-waiting'
++    case 'previewReady':
++    case 'captureReady':
++      return 'capture-ready'
++    case 'blocked':
++      if (readiness.reasonCode === 'phone-required') {
++        return 'phone-required'
++      }
++
++      return currentStage ?? 'preparing'
++    default:
++      return currentStage ?? 'preparing'
++  }
+ }
+ 
+ export function SessionProvider({
+   children,
+-  sessionService = createStartSessionService(),
++  sessionService: sessionServiceProp,
++  presetCatalogService: presetCatalogServiceProp,
++  activePresetService: activePresetServiceProp,
++  captureRuntimeService: captureRuntimeServiceProp,
+ }: SessionProviderProps) {
++  const sessionServiceRef = useRef(
++    sessionServiceProp ?? createStartSessionService(),
++  )
++  const presetCatalogServiceRef = useRef(
++    presetCatalogServiceProp ?? createPresetCatalogService(),
++  )
++  const activePresetServiceRef = useRef(
++    activePresetServiceProp ?? createActivePresetService(),
++  )
++  const captureRuntimeServiceRef = useRef(
++    captureRuntimeServiceProp ?? createCaptureRuntimeService(),
++  )
++  const sessionDraftRef = useRef(DEFAULT_SESSION_DRAFT)
++  const presetCatalogRequestRef = useRef<Promise<PresetCatalogResult> | null>(null)
++  const presetCatalogRequestSessionIdRef = useRef<string | null>(null)
++  const presetCatalogRequestVersionRef = useRef(0)
++  const captureReadinessRequestVersionRef = useRef(0)
++  const requestCaptureRequestVersionRef = useRef(0)
++  const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
++  const capturePresetCatalogRetryCountRef = useRef(0)
+   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(DEFAULT_SESSION_DRAFT)
+   const [isStarting, setIsStarting] = useState(false)
++  const [isLoadingPresetCatalog, setIsLoadingPresetCatalog] = useState(false)
++  const [isSelectingPreset, setIsSelectingPreset] = useState(false)
++  const [isLoadingCaptureReadiness, setIsLoadingCaptureReadiness] = useState(false)
++  const [isRequestingCapture, setIsRequestingCapture] = useState(false)
++  const isStartingRef = useRef(false)
++  const isLoadingPresetCatalogRef = useRef(false)
++  const isSelectingPresetRef = useRef(false)
++  const isRequestingCaptureRef = useRef(false)
++
++  useEffect(() => {
++    sessionDraftRef.current = sessionDraft
++  }, [sessionDraft])
++
++  function invalidatePresetCatalogRequests() {
++    presetCatalogRequestVersionRef.current += 1
++    presetCatalogRequestRef.current = null
++    presetCatalogRequestSessionIdRef.current = null
++    isLoadingPresetCatalogRef.current = false
++    setIsLoadingPresetCatalog(false)
++  }
++
++  function invalidateCaptureRequests() {
++    captureReadinessRequestVersionRef.current += 1
++    requestCaptureRequestVersionRef.current += 1
++    isRequestingCaptureRef.current = false
++    setIsLoadingCaptureReadiness(false)
++    setIsRequestingCapture(false)
++  }
++
++  function clearTransientSessionActivity() {
++    invalidatePresetCatalogRequests()
++    invalidateCaptureRequests()
++    isSelectingPresetRef.current = false
++    setIsSelectingPreset(false)
++  }
++
++  function resetToSessionStart() {
++    clearTransientSessionActivity()
++    setSessionDraft(DEFAULT_SESSION_DRAFT)
++  }
++
++  function resetToPresetSelection() {
++    invalidatePresetCatalogRequests()
++    invalidateCaptureRequests()
++    setSessionDraft((current) => ({
++      ...current,
++      flowStep: 'preset-selection',
++      selectedPreset: null,
++      presetCatalog: [],
++      presetCatalogState: 'idle',
++      captureReadiness: null,
++      manifest:
++        current.manifest === null
++          ? null
++          : {
++              ...current.manifest,
++              activePreset: null,
++            },
++    }))
++  }
++
++  function applyReadinessState(readiness: SessionDraft['captureReadiness']) {
++    if (readiness === null) {
++      return
++    }
++
++    const latestCapture = readiness.latestCapture ?? null
++
++    if (readiness.primaryAction === 'start-session') {
++      resetToSessionStart()
++      return
++    }
++
++    if (readiness.primaryAction === 'choose-preset') {
++      resetToPresetSelection()
++      return
++    }
++
++    setSessionDraft((current) => ({
++      ...current,
++      captureReadiness: readiness,
++      manifest:
++        current.manifest === null
++          ? null
++          : {
++              ...(latestCapture === null
++                ? current.manifest
++                : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
++                  current.manifest),
++              lifecycle: {
++                ...current.manifest.lifecycle,
++                stage: deriveLifecycleStage(readiness, current.manifest.lifecycle.stage),
++              },
++            },
++    }))
++  }
++
++  function hasActiveSession(sessionId: string) {
++    return sessionDraftRef.current.sessionId === sessionId
++  }
++
++  function buildCurrentCaptureFallbackReadiness() {
++    const current = sessionDraftRef.current
++
++    return (
++      current.captureReadiness ??
++      buildLocalCaptureReadiness({
++        sessionId: current.sessionId,
++        hasSession: current.sessionId !== null,
++        hasPreset: current.selectedPreset !== null,
++      })
++    )
++  }
++
++  function shouldInvalidateCaptureRequest(
++    readiness: SessionDraft['captureReadiness'],
++  ) {
++    return readiness !== null && (!readiness.canCapture || readiness.primaryAction !== 'capture')
++  }
++
++  function createStaleSessionError(
++    message: string,
++    readiness?: SessionDraft['captureReadiness'] | null,
++  ): HostErrorEnvelope {
++    return readiness === undefined || readiness === null
++      ? {
++          code: 'host-unavailable',
++          message,
++        }
++      : {
++          code: 'host-unavailable',
++          message,
++          readiness,
++        }
++  }
+ 
+   async function startSession(input: SessionStartInput) {
++    if (isStartingRef.current) {
++      throw {
++        code: 'host-unavailable',
++        message: '이미 시작하는 중이에요. 잠시만 기다려 주세요.',
++      } satisfies HostErrorEnvelope
++    }
++
++    isStartingRef.current = true
+     setIsStarting(true)
+ 
+     try {
+-      const result = await sessionService.startSession(input)
++      const result = await sessionServiceRef.current.startSession(input)
++      const hasPreset = result.manifest.activePreset !== null
+ 
+       setSessionDraft({
+-        flowStep: 'preset-selection',
++        flowStep: hasPreset ? 'capture' : 'preset-selection',
+         sessionId: result.sessionId,
+         boothAlias: result.boothAlias,
+-        selectedPresetId: result.manifest.activePresetId,
++        selectedPreset: result.manifest.activePreset,
++        presetCatalog: [],
++        presetCatalogState: 'idle',
++        captureReadiness: buildLocalCaptureReadiness({
++          sessionId: result.sessionId,
++          hasSession: true,
++          hasPreset,
++        }),
+         manifest: result.manifest,
+       })
+ 
+       return result
+     } finally {
++      isStartingRef.current = false
+       setIsStarting(false)
+     }
+   }
+ 
++  async function loadPresetCatalog(input: { sessionId: string }) {
++    if (
++      isLoadingPresetCatalogRef.current &&
++      presetCatalogRequestRef.current !== null &&
++      presetCatalogRequestSessionIdRef.current === input.sessionId
++    ) {
++      return presetCatalogRequestRef.current
++    }
++
++    const requestVersion = presetCatalogRequestVersionRef.current + 1
++
++    presetCatalogRequestVersionRef.current = requestVersion
++    isLoadingPresetCatalogRef.current = true
++    setIsLoadingPresetCatalog(true)
++    setSessionDraft((current) => ({
++      ...current,
++      presetCatalogState: 'loading',
++    }))
++
++    const request = presetCatalogServiceRef.current
++      .loadPresetCatalog(input)
++      .then((result) => {
++        if (
++          !hasActiveSession(input.sessionId) ||
++          presetCatalogRequestVersionRef.current !== requestVersion
++        ) {
++          throw createStaleSessionError(
++            '이전 세션의 프리셋 응답이 늦게 도착했어요. 현재 세션으로 다시 불러올게요.',
++          )
++        }
++
++        setSessionDraft((current) => ({
++          ...current,
++          presetCatalog: result.presets,
++          presetCatalogState: result.state === 'ready' ? 'ready' : 'empty',
++        }))
++
++        return result
++      })
++      .catch((error) => {
++        const hostError = error as HostErrorEnvelope
++
++        if (
++          !hasActiveSession(input.sessionId) ||
++          presetCatalogRequestVersionRef.current !== requestVersion
++        ) {
++          throw error
++        }
++
++        if (hostError.code === 'session-not-found') {
++          resetToSessionStart()
++        } else {
++          setSessionDraft((current) => ({
++            ...current,
++            presetCatalog: [],
++            presetCatalogState: 'error',
++          }))
++        }
++
++        throw error
++      })
++      .finally(() => {
++        if (presetCatalogRequestVersionRef.current !== requestVersion) {
++          return
++        }
++
++        isLoadingPresetCatalogRef.current = false
++        presetCatalogRequestRef.current = null
++        presetCatalogRequestSessionIdRef.current = null
++        setIsLoadingPresetCatalog(false)
++      })
++
++    presetCatalogRequestRef.current = request
++    presetCatalogRequestSessionIdRef.current = input.sessionId
++
++    return request
++  }
++
++  async function selectActivePreset(input: {
++    sessionId: string
++    preset: { presetId: string; publishedVersion: string }
++  }) {
++    if (isSelectingPresetRef.current) {
++      throw {
++        code: 'host-unavailable',
++        message: '선택을 저장하는 중이에요. 잠시만 기다려 주세요.',
++      } satisfies HostErrorEnvelope
++    }
++
++    isSelectingPresetRef.current = true
++    setIsSelectingPreset(true)
++
++    try {
++      const result = await activePresetServiceRef.current.selectActivePreset(input)
++
++      if (!hasActiveSession(input.sessionId)) {
++        throw createStaleSessionError(
++          '이전 세션의 프리셋 선택 응답이 늦게 도착했어요. 현재 세션에서 다시 골라 주세요.',
++        )
++      }
++
++      setSessionDraft((current) => ({
++        ...current,
++        flowStep: 'capture',
++        selectedPreset: result.activePreset,
++        captureReadiness: buildLocalCaptureReadiness({
++          sessionId: input.sessionId,
++          hasSession: true,
++          hasPreset: true,
++        }),
++        manifest: result.manifest,
++      }))
++
++      return result
++    } catch (error) {
++      const hostError = error as HostErrorEnvelope
++
++      if (!hasActiveSession(input.sessionId)) {
++        throw error
++      }
++
++      if (hostError.code === 'session-not-found') {
++        resetToSessionStart()
++      } else if (hostError.code === 'preset-not-available') {
++        resetToPresetSelection()
++      }
++
++      throw error
++    } finally {
++      isSelectingPresetRef.current = false
++      setIsSelectingPreset(false)
++    }
++  }
++
++  async function getCaptureReadiness(input: { sessionId: string }) {
++    const requestVersion = captureReadinessRequestVersionRef.current + 1
++
++    captureReadinessRequestVersionRef.current = requestVersion
++    setIsLoadingCaptureReadiness(true)
++
++    try {
++      const readiness = await captureRuntimeServiceRef.current.getCaptureReadiness(input)
++
++      if (
++        !hasActiveSession(input.sessionId) ||
++        readiness.sessionId !== input.sessionId ||
++        captureReadinessRequestVersionRef.current !== requestVersion
++      ) {
++        throw createStaleSessionError(
++          '이전 세션의 준비 상태 응답이 늦게 도착했어요. 현재 세션 상태를 다시 확인할게요.',
++        )
++      }
++
++      applyReadinessState(readiness)
++
++      return readiness
++    } catch (error) {
++      const hostError = error as HostErrorEnvelope
++
++      if (
++        !hasActiveSession(input.sessionId) ||
++        captureReadinessRequestVersionRef.current !== requestVersion
++      ) {
++        throw error
++      }
++
++      if (hostError.readiness?.sessionId === input.sessionId) {
++        applyReadinessState(hostError.readiness)
++      } else if (hostError.code === 'session-not-found') {
++        resetToSessionStart()
++      } else if (hostError.code === 'preset-not-available') {
++        resetToPresetSelection()
++      }
++
++      throw error
++    } finally {
++      if (captureReadinessRequestVersionRef.current === requestVersion) {
++        setIsLoadingCaptureReadiness(false)
++      }
++    }
++  }
++
++  async function requestCapture(input: { sessionId: string }) {
++    if (isRequestingCaptureRef.current) {
++      throw {
++        code: 'host-unavailable',
++        message: '이미 촬영을 준비하는 중이에요. 잠시만 기다려 주세요.',
++      } satisfies HostErrorEnvelope
++    }
++
++    const requestVersion = requestCaptureRequestVersionRef.current + 1
++
++    requestCaptureRequestVersionRef.current = requestVersion
++    isRequestingCaptureRef.current = true
++    setIsRequestingCapture(true)
++
++    try {
++      const result = await captureRuntimeServiceRef.current.requestCapture(input)
++      const hasMatchingActiveSession = hasActiveSession(input.sessionId)
++      const staleReadiness = hasMatchingActiveSession
++        ? buildCurrentCaptureFallbackReadiness()
++        : undefined
++
++      if (result.sessionId !== input.sessionId) {
++        throw createStaleSessionError(
++          '현재 세션 상태를 다시 확인할게요.',
++          staleReadiness,
++        )
++      }
++
++      if (
++        !hasMatchingActiveSession ||
++        requestCaptureRequestVersionRef.current !== requestVersion
++      ) {
++        throw createStaleSessionError(
++          '이전 세션의 촬영 응답이 늦게 도착했어요. 현재 세션에서 다시 시도해 주세요.',
++          staleReadiness,
++        )
++      }
++
++      setSessionDraft((current) => ({
++        ...current,
++        captureReadiness: result.readiness,
++        manifest:
++          current.manifest === null
++            ? null
++            : {
++                ...(mergeCaptureIntoManifest(current.manifest, result.capture) ??
++                  current.manifest),
++                lifecycle: {
++                  ...current.manifest.lifecycle,
++                  stage: deriveLifecycleStage(
++                    result.readiness,
++                    current.manifest.lifecycle.stage,
++                  ),
++                },
++              },
++      }))
++
++      return result
++    } catch (error) {
++      const hostError = error as HostErrorEnvelope
++
++      if (
++        !hasActiveSession(input.sessionId) ||
++        requestCaptureRequestVersionRef.current !== requestVersion
++      ) {
++        throw error
++      }
++
++      if (hostError.readiness?.sessionId === input.sessionId) {
++        applyReadinessState(hostError.readiness)
++      } else if (hostError.code === 'session-not-found') {
++        resetToSessionStart()
++      } else if (hostError.code === 'preset-not-available') {
++        resetToPresetSelection()
++      }
++
++      throw error
++    } finally {
++      if (requestCaptureRequestVersionRef.current === requestVersion) {
++        isRequestingCaptureRef.current = false
++        setIsRequestingCapture(false)
++      }
++    }
++  }
++
++  const applyCaptureReadiness = useEffectEvent((sessionId: string) => {
++    void getCaptureReadiness({ sessionId }).catch(() => undefined)
++  })
++
++  const syncSubscribedReadiness = useEffectEvent((readiness: SessionDraft['captureReadiness']) => {
++    if (
++      readiness === null ||
++      readiness.sessionId !== sessionDraftRef.current.sessionId
++    ) {
++      return
++    }
++
++    captureReadinessRequestVersionRef.current += 1
++    setIsLoadingCaptureReadiness(false)
++
++    if (shouldInvalidateCaptureRequest(readiness)) {
++      requestCaptureRequestVersionRef.current += 1
++      isRequestingCaptureRef.current = false
++      setIsRequestingCapture(false)
++    }
++
++    applyReadinessState(readiness)
++  })
++
++  const hydrateCapturePresetCatalog = useEffectEvent((sessionId: string) => {
++    if (
++      sessionDraftRef.current.flowStep !== 'capture' ||
++      sessionDraftRef.current.sessionId !== sessionId ||
++      sessionDraftRef.current.selectedPreset === null
++    ) {
++      return
++    }
++
++    void loadPresetCatalog({
++      sessionId,
++    }).catch(() => undefined)
++  })
++
++  useEffect(() => {
++    const retryKey =
++      sessionDraft.flowStep === 'capture' && sessionDraft.selectedPreset !== null
++        ? `${sessionDraft.sessionId}:${sessionDraft.selectedPreset.presetId}:${sessionDraft.selectedPreset.publishedVersion}`
++        : null
++
++    if (capturePresetCatalogRetryKeyRef.current === retryKey) {
++      return
++    }
++
++    capturePresetCatalogRetryKeyRef.current = retryKey
++    capturePresetCatalogRetryCountRef.current = 0
++  }, [
++    sessionDraft.flowStep,
++    sessionDraft.sessionId,
++    sessionDraft.selectedPreset,
++  ])
++
++  useEffect(() => {
++    if (sessionDraft.flowStep !== 'capture' || sessionDraft.sessionId === null) {
++      return
++    }
++
++    let isDisposed = false
++    let stopListening: (() => void) | undefined
++
++    applyCaptureReadiness(sessionDraft.sessionId)
++
++    void captureRuntimeServiceRef.current
++      .subscribeToCaptureReadiness({
++        sessionId: sessionDraft.sessionId,
++        onReadiness(readiness) {
++          if (!isDisposed) {
++            syncSubscribedReadiness(readiness)
++          }
++        },
++      })
++      .then((unlisten) => {
++        if (isDisposed) {
++          unlisten()
++          return
++        }
++
++        stopListening = unlisten
++      })
++      .catch(() => undefined)
++
++    return () => {
++      isDisposed = true
++
++      if (stopListening) {
++        stopListening()
++      }
++    }
++  }, [
++    sessionDraft.flowStep,
++    sessionDraft.sessionId,
++  ])
++
++  useEffect(() => {
++    if (
++      sessionDraft.flowStep !== 'capture' ||
++      sessionDraft.sessionId === null ||
++      sessionDraft.selectedPreset === null ||
++      sessionDraft.presetCatalog.length > 0
++    ) {
++      return
++    }
++
++    if (sessionDraft.presetCatalogState === 'idle') {
++      hydrateCapturePresetCatalog(sessionDraft.sessionId)
++      return
++    }
++
++    if (sessionDraft.presetCatalogState !== 'error') {
++      return
++    }
++
++    if (
++      capturePresetCatalogRetryKeyRef.current === null ||
++      capturePresetCatalogRetryCountRef.current >= CAPTURE_PRESET_CATALOG_MAX_RETRIES
++    ) {
++      return
++    }
++
++    capturePresetCatalogRetryCountRef.current += 1
++
++    const retryId = globalThis.setTimeout(() => {
++      hydrateCapturePresetCatalog(sessionDraft.sessionId!)
++    }, CAPTURE_PRESET_CATALOG_RETRY_MS)
++
++    return () => {
++      globalThis.clearTimeout(retryId)
++    }
++  }, [
++    sessionDraft.flowStep,
++    sessionDraft.sessionId,
++    sessionDraft.selectedPreset,
++    sessionDraft.presetCatalogState,
++    sessionDraft.presetCatalog.length,
++  ])
++
+   return (
+     <SessionStateContext.Provider
+       value={{
+         isStarting,
++        isLoadingPresetCatalog,
++        isSelectingPreset,
++        isLoadingCaptureReadiness,
++        isRequestingCapture,
+         sessionDraft,
+         startSession,
++        loadPresetCatalog,
++        selectActivePreset,
++        getCaptureReadiness,
++        requestCapture,
+       }}
+     >
+       {children}
+diff --git a/src/session-domain/state/session-provider.test.tsx b/src/session-domain/state/session-provider.test.tsx
+new file mode 100644
+index 0000000..4efa0c3
+--- /dev/null
++++ b/src/session-domain/state/session-provider.test.tsx
+@@ -0,0 +1,1503 @@
++import { act, render, waitFor } from '@testing-library/react'
++import { useEffect } from 'react'
++import { describe, expect, it, vi } from 'vitest'
++
++import {
++  createCaptureRuntimeService,
++  type CaptureRuntimeGateway,
++  type CaptureRuntimeService,
++} from '../../capture-adapter/services/capture-runtime'
++import {
++  createPresetCatalogService,
++  type PresetCatalogGateway,
++} from '../../preset-catalog/services/preset-catalog-service'
++import type {
++  CaptureReadinessSnapshot,
++  CaptureRequestResult,
++  PresetCatalogResult,
++  SessionCaptureRecord,
++  SessionStartResult,
++} from '../../shared-contracts'
++import {
++  createStartSessionService,
++  type StartSessionGateway,
++} from '../services/start-session'
++import type { SessionStateContextValue } from './session-context'
++import { SessionProvider } from './session-provider'
++import { useSessionState } from './use-session-state'
++
++function createSessionStartResult(
++  sessionId: string,
++  boothAlias: string,
++): SessionStartResult {
++  return {
++    sessionId,
++    boothAlias,
++    manifest: {
++      schemaVersion: 'session-manifest/v1',
++      sessionId,
++      boothAlias,
++      customer: {
++        name: boothAlias.split(' ')[0] ?? boothAlias,
++        phoneLastFour: boothAlias.split(' ')[1] ?? '0000',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:00.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'session-started',
++      },
++      activePreset: null,
++      captures: [],
++      postEnd: null,
++    },
++  }
++}
++
++function createPresetCatalogResult(sessionId: string): PresetCatalogResult {
++  return {
++    sessionId,
++    state: 'ready',
++    presets: [
++      {
++        presetId: 'preset_soft-glow',
++        displayName: 'Soft Glow',
++        publishedVersion: '2026.03.20',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'preview-tile',
++          assetPath: 'fixtures/soft-glow.jpg',
++          altText: 'Soft Glow sample portrait',
++        },
++      },
++    ],
++  }
++}
++
++function createCaptureRecord(
++  overrides: Partial<SessionCaptureRecord> = {},
++): SessionCaptureRecord {
++  return {
++    schemaVersion: 'session-capture/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetVersion: '2026.03.20',
++    captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    raw: {
++      assetPath: 'fixtures/capture-raw.jpg',
++      persistedAtMs: 100,
++    },
++    preview: {
++      assetPath: null,
++      enqueuedAtMs: 100,
++      readyAtMs: null,
++    },
++    final: {
++      assetPath: null,
++      readyAtMs: null,
++    },
++    renderStatus: 'previewWaiting',
++    postEndState: 'activeSession',
++    timing: {
++      captureAcknowledgedAtMs: 100,
++      previewVisibleAtMs: null,
++      captureBudgetMs: 1000,
++      previewBudgetMs: 5000,
++      previewBudgetState: 'pending',
++    },
++    ...overrides,
++  }
++}
++
++function createReadinessSnapshot(
++  overrides: Partial<CaptureReadinessSnapshot> = {},
++): CaptureReadinessSnapshot {
++  return {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    surfaceState: 'captureReady',
++    customerState: 'Ready',
++    canCapture: true,
++    primaryAction: 'capture',
++    customerMessage: '지금 촬영할 수 있어요.',
++    supportMessage: '버튼을 누르면 바로 시작돼요.',
++    reasonCode: 'ready',
++    latestCapture: null,
++    ...overrides,
++  }
++}
++
++function createCaptureRequestResult(
++  overrides: Partial<CaptureRequestResult> = {},
++): CaptureRequestResult {
++  return {
++    schemaVersion: 'capture-request-result/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    status: 'capture-saved',
++    capture: createCaptureRecord(),
++    readiness: createReadinessSnapshot({
++      surfaceState: 'captureSaved',
++      customerState: 'Preview Waiting',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '사진이 안전하게 저장되었어요.',
++      supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++      reasonCode: 'preview-waiting',
++      latestCapture: createCaptureRecord(),
++    }),
++    ...overrides,
++  }
++}
++
++function SessionStateProbe({
++  onChange,
++}: {
++  onChange(state: SessionStateContextValue): void
++}) {
++  const state = useSessionState()
++
++  useEffect(() => {
++    onChange(state)
++  }, [onChange, state])
++
++  return null
++}
++
++describe('SessionProvider', () => {
++  it('ignores stale preset catalog failures after the active session changes', async () => {
++    let resolveCatalog!: (value: PresetCatalogResult) => void
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValueOnce(
++        createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++      )
++      .mockResolvedValueOnce(
++        createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          'Lee 1234',
++        ),
++      )
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockImplementation(
++        () =>
++          new Promise((resolve) => {
++            resolveCatalog = resolve
++          }),
++      )
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        presetCatalogService={createPresetCatalogService({
++          gateway: {
++            loadPresetCatalog,
++          },
++        })}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    const staleCatalogRequest = latestState!
++      .loadPresetCatalog({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      .catch((error) => error)
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Lee',
++        phoneLastFour: '1234',
++      })
++    })
++
++    expect(latestState!.sessionDraft.sessionId).toBe(
++      'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++    )
++    expect(latestState!.sessionDraft.presetCatalogState).toBe('idle')
++
++    await act(async () => {
++      resolveCatalog(
++        createPresetCatalogResult('session_01hs6n1r8b8zc5v4ey2x7b9g1m'),
++      )
++
++      await expect(staleCatalogRequest).resolves.toMatchObject({
++        code: 'host-unavailable',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.sessionId).toBe(
++        'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++      )
++      expect(latestState!.sessionDraft.presetCatalogState).toBe('idle')
++      expect(latestState!.sessionDraft.presetCatalog).toHaveLength(0)
++    })
++  })
++
++  it('allows the next session to load its preset catalog while the previous session request is still pending', async () => {
++    let resolveFirstCatalog!: (value: PresetCatalogResult) => void
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValueOnce(
++        createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++      )
++      .mockResolvedValueOnce(
++        createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          'Lee 1234',
++        ),
++      )
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockImplementationOnce(
++        () =>
++          new Promise((resolve) => {
++            resolveFirstCatalog = resolve
++          }),
++      )
++      .mockResolvedValueOnce(
++        createPresetCatalogResult('session_01hs6n1r8b8zc5v4ey2x7b9g1n'),
++      )
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        presetCatalogService={createPresetCatalogService({
++          gateway: {
++            loadPresetCatalog,
++          },
++        })}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    const staleCatalogRequest = latestState!
++      .loadPresetCatalog({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      .catch((error) => error)
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Lee',
++        phoneLastFour: '1234',
++      })
++    })
++
++    await expect(
++      latestState!.loadPresetCatalog({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++      }),
++    ).resolves.toMatchObject({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.sessionId).toBe(
++        'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++      )
++      expect(latestState!.sessionDraft.presetCatalogState).toBe('ready')
++      expect(latestState!.sessionDraft.presetCatalog).toHaveLength(1)
++    })
++
++    await act(async () => {
++      resolveFirstCatalog(
++        createPresetCatalogResult('session_01hs6n1r8b8zc5v4ey2x7b9g1m'),
++      )
++
++      await expect(staleCatalogRequest).resolves.toMatchObject({
++        code: 'host-unavailable',
++      })
++    })
++  })
++
++  it('ignores stale capture readiness responses after the active session changes', async () => {
++    let resolveReadiness!: (value: CaptureReadinessSnapshot) => void
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValueOnce({
++        ...createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++        manifest: {
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ).manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++      .mockResolvedValueOnce(
++        createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          'Lee 1234',
++        ),
++      )
++
++    const getCaptureReadiness = vi
++      .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
++      .mockImplementation(
++        () =>
++          new Promise((resolve) => {
++            resolveReadiness = resolve
++          }),
++      )
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={createCaptureRuntimeService({
++          gateway: {
++            getCaptureReadiness,
++            requestCapture: vi.fn(),
++            subscribeToCaptureReadiness: vi
++              .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
++              .mockResolvedValue(() => undefined),
++          },
++        })}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    const staleReadinessRequest = latestState!
++      .getCaptureReadiness({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      .catch((error) => error)
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Lee',
++        phoneLastFour: '1234',
++      })
++    })
++
++    await act(async () => {
++      resolveReadiness(createReadinessSnapshot())
++
++      await expect(staleReadinessRequest).resolves.toMatchObject({
++        code: 'host-unavailable',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.sessionId).toBe(
++        'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++      )
++      expect(latestState!.sessionDraft.flowStep).toBe('preset-selection')
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'choose-preset',
++      })
++    })
++  })
++
++  it('invalidates older readiness work after the same session resets back to preset selection', async () => {
++    let resolveReadiness!: (value: CaptureReadinessSnapshot) => void
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++        manifest: {
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ).manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++
++    const captureRuntimeService = createCaptureRuntimeService({
++      gateway: {
++        getCaptureReadiness: vi
++          .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
++          .mockImplementation(
++            () =>
++              new Promise((resolve) => {
++                resolveReadiness = resolve
++              }),
++          ),
++        requestCapture: vi
++          .fn<CaptureRuntimeGateway['requestCapture']>()
++          .mockRejectedValue({
++            code: 'capture-not-ready',
++            message: '촬영 전에 룩을 다시 골라 주세요.',
++            readiness: {
++              sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++              customerState: 'Preparing',
++              canCapture: false,
++              primaryAction: 'choose-preset',
++              customerMessage: '촬영 전에 룩을 다시 골라 주세요.',
++              supportMessage: '선택이 끝나면 바로 찍을 수 있어요.',
++              reasonCode: 'preset-missing',
++            },
++          }),
++        subscribeToCaptureReadiness: vi
++          .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
++          .mockResolvedValue(() => undefined),
++      },
++    })
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    const staleReadinessRequest = latestState!
++      .getCaptureReadiness({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      .catch((error) => error)
++
++    await act(async () => {
++      await expect(
++        latestState!.requestCapture({
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        }),
++      ).rejects.toMatchObject({
++        code: 'capture-not-ready',
++      })
++    })
++
++    expect(latestState!.sessionDraft.flowStep).toBe('preset-selection')
++    expect(latestState!.sessionDraft.selectedPreset).toBeNull()
++
++    await act(async () => {
++      resolveReadiness(createReadinessSnapshot())
++
++      await expect(staleReadinessRequest).resolves.toMatchObject({
++        code: 'host-unavailable',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.flowStep).toBe('preset-selection')
++      expect(latestState!.sessionDraft.selectedPreset).toBeNull()
++      expect(latestState!.sessionDraft.captureReadiness).toBeNull()
++    })
++  })
++
++  it('applies customer-safe blocked readiness when capture-not-ready arrives without readiness payload', async () => {
++    let latestState: SessionStateContextValue | null = null
++
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(sessionId, 'Kim 4821'),
++        manifest: {
++          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++
++    const captureRuntimeService = createCaptureRuntimeService({
++      gateway: {
++        getCaptureReadiness: vi
++          .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
++          .mockResolvedValue({
++            sessionId,
++            customerState: 'Ready',
++            canCapture: true,
++            primaryAction: 'capture',
++            customerMessage: '지금 촬영할 수 있어요.',
++            supportMessage: '버튼을 누르면 바로 시작돼요.',
++            reasonCode: 'ready',
++          }),
++        requestCapture: vi
++          .fn<CaptureRuntimeGateway['requestCapture']>()
++          .mockRejectedValue({
++            code: 'capture-not-ready',
++            message: 'camera helper busy',
++          }),
++        subscribeToCaptureReadiness: vi
++          .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
++          .mockResolvedValue(() => undefined),
++      },
++    })
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await act(async () => {
++      await expect(
++        latestState!.requestCapture({
++          sessionId,
++        }),
++      ).rejects.toMatchObject({
++        code: 'capture-not-ready',
++        readiness: {
++          primaryAction: 'call-support',
++          customerState: 'Phone Required',
++        },
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.flowStep).toBe('capture')
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'call-support',
++        customerState: 'Phone Required',
++        canCapture: false,
++      })
++    })
++  })
++
++  it('keeps the latest subscribed blocked readiness when the initial readiness request resolves late', async () => {
++    let resolveReadiness!: (value: CaptureReadinessSnapshot) => void
++    let emitReadiness:
++      | ((readiness: CaptureReadinessSnapshot) => void)
++      | null = null
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++        manifest: {
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ).manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++
++    const getCaptureReadiness = vi
++      .fn<CaptureRuntimeService['getCaptureReadiness']>()
++      .mockImplementation(
++        () =>
++          new Promise((resolve) => {
++            resolveReadiness = resolve
++          }),
++      )
++    const subscribeToCaptureReadiness = vi
++      .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++      .mockImplementation(async ({ onReadiness }) => {
++        emitReadiness = onReadiness as typeof emitReadiness
++        return () => {
++          emitReadiness = null
++        }
++      })
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness,
++      requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++      subscribeToCaptureReadiness,
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(getCaptureReadiness).toHaveBeenCalledWith({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      expect(subscribeToCaptureReadiness).toHaveBeenCalledTimes(1)
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    await act(async () => {
++      emitReadiness?.(createReadinessSnapshot({
++        surfaceState: 'blocked',
++        customerState: 'Phone Required',
++        canCapture: false,
++        primaryAction: 'call-support',
++        customerMessage: '지금은 도움이 필요해요.',
++        supportMessage: '가까운 직원에게 알려 주세요.',
++        reasonCode: 'phone-required',
++      }))
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'call-support',
++        canCapture: false,
++        reasonCode: 'phone-required',
++      })
++    })
++
++    await act(async () => {
++      resolveReadiness(createReadinessSnapshot())
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'call-support',
++        canCapture: false,
++        reasonCode: 'phone-required',
++      })
++    })
++  })
++
++  it('retries capture preset hydration once after a transient failure and then stops retrying', async () => {
++    try {
++      let latestState: SessionStateContextValue | null = null
++
++      const startSession = vi
++        .fn<StartSessionGateway['startSession']>()
++        .mockResolvedValue({
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ),
++          manifest: {
++            ...createSessionStartResult(
++              'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++              'Kim 4821',
++            ).manifest,
++            activePreset: {
++              presetId: 'preset_soft-glow',
++              publishedVersion: '2026.03.20',
++            },
++          },
++        })
++      const loadPresetCatalog = vi
++        .fn<PresetCatalogGateway['loadPresetCatalog']>()
++        .mockRejectedValue({
++          code: 'preset-catalog-unavailable',
++          message: '지금은 프리셋을 불러올 수 없어요.',
++        })
++
++      render(
++        <SessionProvider
++          sessionService={createStartSessionService({
++            gateway: {
++              startSession,
++            },
++          })}
++          presetCatalogService={createPresetCatalogService({
++            gateway: {
++              loadPresetCatalog,
++            },
++          })}
++          captureRuntimeService={{
++            getCaptureReadiness: vi
++              .fn<CaptureRuntimeService['getCaptureReadiness']>()
++              .mockResolvedValue(createReadinessSnapshot()),
++            requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++            subscribeToCaptureReadiness: vi
++              .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++              .mockResolvedValue(() => undefined),
++          }}
++        >
++          <SessionStateProbe
++            onChange={(state) => {
++              latestState = state
++            }}
++          />
++        </SessionProvider>,
++      )
++
++      await waitFor(() => {
++        expect(latestState).not.toBeNull()
++      })
++
++      vi.useFakeTimers()
++
++      await act(async () => {
++        await latestState!.startSession({
++          name: 'Kim',
++          phoneLastFour: '4821',
++        })
++        await Promise.resolve()
++      })
++
++      expect(loadPresetCatalog).toHaveBeenCalledTimes(1)
++      expect(latestState!.sessionDraft.presetCatalogState).toBe('error')
++
++      await act(async () => {
++        await vi.advanceTimersByTimeAsync(1500)
++      })
++
++      expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++
++      await act(async () => {
++        await vi.advanceTimersByTimeAsync(6000)
++      })
++
++      expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++    } finally {
++      vi.useRealTimers()
++    }
++  })
++
++  it('invalidates an in-flight capture request when a newer subscribed blocked readiness arrives', async () => {
++    let resolveCapture!: (value: CaptureRequestResult) => void
++    let emitReadiness:
++      | ((readiness: CaptureReadinessSnapshot) => void)
++      | null = null
++    let latestState: SessionStateContextValue | null = null
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++        manifest: {
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ).manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi
++        .fn<CaptureRuntimeService['getCaptureReadiness']>()
++        .mockResolvedValue(createReadinessSnapshot()),
++      requestCapture: vi
++        .fn<CaptureRuntimeService['requestCapture']>()
++        .mockImplementation(
++          () =>
++            new Promise((resolve) => {
++              resolveCapture = resolve
++            }),
++        ),
++      subscribeToCaptureReadiness: vi
++        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++        .mockImplementation(async ({ onReadiness }) => {
++          emitReadiness = onReadiness as typeof emitReadiness
++          return () => {
++            emitReadiness = null
++          }
++        }),
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    const staleCaptureRequest = latestState!
++      .requestCapture({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      })
++      .catch((error) => error)
++
++    await waitFor(() => {
++      expect(latestState!.isRequestingCapture).toBe(true)
++    })
++
++    await act(async () => {
++      emitReadiness?.(createReadinessSnapshot({
++        surfaceState: 'blocked',
++        customerState: 'Phone Required',
++        canCapture: false,
++        primaryAction: 'call-support',
++        customerMessage: '지금은 도움이 필요해요.',
++        supportMessage: '가까운 직원에게 알려 주세요.',
++        reasonCode: 'phone-required',
++      }))
++    })
++
++    await waitFor(() => {
++      expect(latestState!.isRequestingCapture).toBe(false)
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'call-support',
++        canCapture: false,
++        reasonCode: 'phone-required',
++      })
++    })
++
++    await act(async () => {
++      resolveCapture(
++        createCaptureRequestResult({
++          readiness: createReadinessSnapshot(),
++          capture: createCaptureRecord({
++            renderStatus: 'previewReady',
++            preview: {
++              assetPath: 'fixtures/capture-preview.jpg',
++              enqueuedAtMs: 100,
++              readyAtMs: 180,
++            },
++          }),
++        }),
++      )
++
++      await expect(staleCaptureRequest).resolves.toMatchObject({
++        code: 'host-unavailable',
++        readiness: {
++          primaryAction: 'call-support',
++        },
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.isRequestingCapture).toBe(false)
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'call-support',
++        canCapture: false,
++        reasonCode: 'phone-required',
++      })
++    })
++  })
++
++  it('keeps an in-flight capture request valid when subscribed readiness stays capture-ready', async () => {
++    let resolveCapture!: (value: CaptureRequestResult) => void
++    let emitReadiness:
++      | ((readiness: CaptureReadinessSnapshot) => void)
++      | null = null
++    let latestState: SessionStateContextValue | null = null
++
++    const readyReadiness = createReadinessSnapshot()
++
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(
++          'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          'Kim 4821',
++        ),
++        manifest: {
++          ...createSessionStartResult(
++            'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            'Kim 4821',
++          ).manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi
++        .fn<CaptureRuntimeService['getCaptureReadiness']>()
++        .mockResolvedValue(readyReadiness),
++      requestCapture: vi
++        .fn<CaptureRuntimeService['requestCapture']>()
++        .mockImplementation(
++          () =>
++            new Promise((resolve) => {
++              resolveCapture = resolve
++            }),
++        ),
++      subscribeToCaptureReadiness: vi
++        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++        .mockImplementation(async ({ onReadiness }) => {
++          emitReadiness = onReadiness as typeof emitReadiness
++          return () => {
++            emitReadiness = null
++          }
++        }),
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    const captureRequest = latestState!.requestCapture({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    })
++
++    await waitFor(() => {
++      expect(latestState!.isRequestingCapture).toBe(true)
++    })
++
++    await act(async () => {
++      emitReadiness?.(readyReadiness)
++    })
++
++    expect(latestState!.isRequestingCapture).toBe(true)
++
++    await act(async () => {
++      resolveCapture(
++        createCaptureRequestResult({
++          readiness: readyReadiness,
++          capture: createCaptureRecord({
++            renderStatus: 'previewReady',
++            preview: {
++              assetPath: 'fixtures/capture-preview.jpg',
++              enqueuedAtMs: 100,
++              readyAtMs: 180,
++            },
++          }),
++        }),
++      )
++
++      await expect(captureRequest).resolves.toMatchObject({
++        status: 'capture-saved',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.isRequestingCapture).toBe(false)
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        primaryAction: 'capture',
++        canCapture: true,
++        reasonCode: 'ready',
++      })
++    })
++  })
++
++  it('ignores subscribed readiness updates that belong to a different session', async () => {
++    let emitReadiness:
++      | ((readiness: CaptureReadinessSnapshot) => void)
++      | null = null
++    let latestState: SessionStateContextValue | null = null
++
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(sessionId, 'Kim 4821'),
++        manifest: {
++          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi
++        .fn<CaptureRuntimeService['getCaptureReadiness']>()
++        .mockResolvedValue(createReadinessSnapshot({ sessionId })),
++      requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++      subscribeToCaptureReadiness: vi
++        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++        .mockImplementation(async ({ onReadiness }) => {
++          emitReadiness = onReadiness as typeof emitReadiness
++          return () => {
++            emitReadiness = null
++          }
++        }),
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        sessionId,
++        reasonCode: 'ready',
++      })
++    })
++
++    await act(async () => {
++      emitReadiness?.(
++        createReadinessSnapshot({
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          surfaceState: 'blocked',
++          customerState: 'Phone Required',
++          canCapture: false,
++          primaryAction: 'call-support',
++          customerMessage: '지금은 도움이 필요해요.',
++          supportMessage: '가까운 직원에게 알려 주세요.',
++          reasonCode: 'phone-required',
++        }),
++      )
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        sessionId,
++        reasonCode: 'ready',
++        canCapture: true,
++      })
++    })
++  })
++
++  it('ignores error readiness payloads that belong to a different session', async () => {
++    let latestState: SessionStateContextValue | null = null
++
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(sessionId, 'Kim 4821'),
++        manifest: {
++          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi
++        .fn<CaptureRuntimeService['getCaptureReadiness']>()
++        .mockResolvedValue(createReadinessSnapshot({ sessionId })),
++      requestCapture: vi
++        .fn<CaptureRuntimeService['requestCapture']>()
++        .mockRejectedValue({
++          code: 'capture-not-ready',
++          message: '지금은 도움이 필요해요.',
++          readiness: createReadinessSnapshot({
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++            surfaceState: 'blocked',
++            customerState: 'Phone Required',
++            canCapture: false,
++            primaryAction: 'call-support',
++            customerMessage: '지금은 도움이 필요해요.',
++            supportMessage: '가까운 직원에게 알려 주세요.',
++            reasonCode: 'phone-required',
++          }),
++        }),
++      subscribeToCaptureReadiness: vi
++        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++        .mockResolvedValue(() => undefined),
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        sessionId,
++        reasonCode: 'ready',
++      })
++    })
++
++    await act(async () => {
++      await expect(
++        latestState!.requestCapture({
++          sessionId,
++        }),
++      ).rejects.toMatchObject({
++        code: 'capture-not-ready',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
++        sessionId,
++        reasonCode: 'ready',
++        canCapture: true,
++      })
++    })
++  })
++
++  it('starts a fresh preset catalog request after capture resets back to preset selection', async () => {
++    let resolveHydrationCatalog!: (value: PresetCatalogResult) => void
++    let resolveReloadCatalog!: (value: PresetCatalogResult) => void
++    let latestState: SessionStateContextValue | null = null
++
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(sessionId, 'Kim 4821'),
++        manifest: {
++          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockImplementationOnce(
++        () =>
++          new Promise((resolve) => {
++            resolveHydrationCatalog = resolve
++          }),
++      )
++      .mockImplementationOnce(
++        () =>
++          new Promise((resolve) => {
++            resolveReloadCatalog = resolve
++          }),
++      )
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi
++        .fn<CaptureRuntimeService['getCaptureReadiness']>()
++        .mockResolvedValue(createReadinessSnapshot()),
++      requestCapture: vi
++        .fn<CaptureRuntimeService['requestCapture']>()
++        .mockRejectedValue({
++          code: 'preset-not-available',
++          message: '촬영 전에 룩을 다시 골라 주세요.',
++          readiness: {
++            sessionId,
++            customerState: 'Preparing',
++            canCapture: false,
++            primaryAction: 'choose-preset',
++            customerMessage: '촬영 전에 룩을 다시 골라 주세요.',
++            supportMessage: '선택이 끝나면 바로 찍을 수 있어요.',
++            reasonCode: 'preset-missing',
++          },
++        }),
++      subscribeToCaptureReadiness: vi
++        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++        .mockResolvedValue(() => undefined),
++    }
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        presetCatalogService={createPresetCatalogService({
++          gateway: {
++            loadPresetCatalog,
++          },
++        })}
++        captureRuntimeService={captureRuntimeService}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(loadPresetCatalog).toHaveBeenCalledTimes(1)
++      expect(latestState!.sessionDraft.flowStep).toBe('capture')
++    })
++
++    await act(async () => {
++      await expect(
++        latestState!.requestCapture({
++          sessionId,
++        }),
++      ).rejects.toMatchObject({
++        code: 'preset-not-available',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.flowStep).toBe('preset-selection')
++      expect(latestState!.sessionDraft.presetCatalogState).toBe('idle')
++    })
++
++    const reloadCatalogRequest = latestState!.loadPresetCatalog({
++      sessionId,
++    })
++
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++
++    await act(async () => {
++      resolveReloadCatalog(createPresetCatalogResult(sessionId))
++
++      await expect(reloadCatalogRequest).resolves.toMatchObject({
++        sessionId,
++        state: 'ready',
++      })
++    })
++
++    await act(async () => {
++      resolveHydrationCatalog({
++        sessionId,
++        state: 'ready',
++        presets: [
++          {
++            presetId: 'preset_vintage',
++            displayName: 'Vintage',
++            publishedVersion: '2026.03.21',
++            boothStatus: 'booth-safe',
++            preview: {
++              kind: 'preview-tile',
++              assetPath: 'fixtures/vintage.jpg',
++              altText: 'Vintage sample portrait',
++            },
++          },
++        ],
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.presetCatalogState).toBe('ready')
++      expect(latestState!.sessionDraft.presetCatalog).toMatchObject([
++        {
++          presetId: 'preset_soft-glow',
++          displayName: 'Soft Glow',
++          publishedVersion: '2026.03.20',
++        },
++      ])
++    })
++  })
++})
+diff --git a/src/booth-shell/screens/PresetSelectScreen.test.tsx b/src/booth-shell/screens/PresetSelectScreen.test.tsx
+new file mode 100644
+index 0000000..9ea1842
+--- /dev/null
++++ b/src/booth-shell/screens/PresetSelectScreen.test.tsx
+@@ -0,0 +1,597 @@
++import { StrictMode } from 'react'
++import { render, screen } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { RouterProvider, createMemoryRouter } from 'react-router-dom'
++import { describe, expect, it, vi } from 'vitest'
++
++import { createAppRoutes } from '../../app/routes'
++import { createCapabilityService } from '../../app/services/capability-service'
++import {
++  createCaptureRuntimeService,
++  type CaptureRuntimeGateway,
++  type CaptureRuntimeService,
++} from '../../capture-adapter/services/capture-runtime'
++import {
++  createPresetCatalogService,
++  type PresetCatalogGateway,
++  type PresetCatalogService,
++} from '../../preset-catalog/services/preset-catalog-service'
++import type {
++  ActivePresetBinding,
++  PresetCatalogResult,
++  PresetSelectionResult,
++  SessionStartResult,
++} from '../../shared-contracts'
++import {
++  createActivePresetService,
++  type ActivePresetGateway,
++  type ActivePresetService,
++} from '../../session-domain/services/active-preset'
++import {
++  createStartSessionService,
++  type StartSessionGateway,
++} from '../../session-domain/services/start-session'
++
++function createSessionStartResult(): SessionStartResult {
++  return {
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    manifest: {
++      schemaVersion: 'session-manifest/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      customer: {
++        name: 'Kim',
++        phoneLastFour: '4821',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:00.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'session-started',
++      },
++      activePreset: null,
++      captures: [],
++      postEnd: null,
++    },
++  }
++}
++
++function createCatalogResult(): PresetCatalogResult {
++  return {
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    state: 'ready',
++    presets: [
++      {
++        presetId: 'preset_soft-glow',
++        displayName: 'Soft Glow',
++        publishedVersion: '2026.03.20',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'preview-tile',
++          assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
++          altText: 'Soft Glow sample portrait',
++        },
++      },
++      {
++        presetId: 'preset_mono-pop',
++        displayName: 'Mono Pop',
++        publishedVersion: '2026.03.20',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'sample-cut',
++          assetPath: 'published/preset_mono-pop/2026.03.20/sample.jpg',
++          altText: 'Mono Pop sample portrait',
++        },
++      },
++    ],
++  }
++}
++
++function createSelectionResult(
++  preset: ActivePresetBinding,
++): PresetSelectionResult {
++  const session = createSessionStartResult()
++
++  return {
++    sessionId: session.sessionId,
++    activePreset: preset,
++    manifest: {
++      ...session.manifest,
++      activePreset: preset,
++      updatedAt: '2026-03-20T00:05:00.000Z',
++    },
++  }
++}
++
++function createCaptureRecord() {
++  return {
++    schemaVersion: 'session-capture/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetVersion: '2026.03.20',
++    captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    raw: {
++      assetPath: 'fixtures/capture-raw.jpg',
++      persistedAtMs: 100,
++    },
++    preview: {
++      assetPath: null,
++      enqueuedAtMs: 100,
++      readyAtMs: null,
++    },
++    final: {
++      assetPath: null,
++      readyAtMs: null,
++    },
++    renderStatus: 'previewWaiting',
++    postEndState: 'activeSession',
++    timing: {
++      captureAcknowledgedAtMs: 100,
++      previewVisibleAtMs: null,
++      captureBudgetMs: 1000,
++      previewBudgetMs: 5000,
++      previewBudgetState: 'pending',
++    },
++  }
++}
++
++function renderPresetFlow({
++  startSession = vi
++    .fn<StartSessionGateway['startSession']>()
++    .mockResolvedValue(createSessionStartResult()),
++  loadPresetCatalog = vi
++    .fn<PresetCatalogGateway['loadPresetCatalog']>()
++    .mockResolvedValue(createCatalogResult()),
++  selectActivePreset = vi
++    .fn<ActivePresetGateway['selectActivePreset']>()
++    .mockImplementation(async ({ preset }) => createSelectionResult(preset)),
++  getCaptureReadiness = vi
++    .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
++    .mockResolvedValue({
++      schemaVersion: 'capture-readiness/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      surfaceState: 'captureReady',
++      customerState: 'Ready',
++      canCapture: true,
++      primaryAction: 'capture',
++      customerMessage: '지금 촬영할 수 있어요.',
++      supportMessage: '버튼을 누르면 바로 시작돼요.',
++      reasonCode: 'ready',
++      latestCapture: null,
++    }),
++  subscribeToCaptureReadiness = vi
++    .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
++    .mockResolvedValue(() => undefined),
++  captureRuntimeService: captureRuntimeServiceProp,
++  strictMode = false,
++}: {
++  startSession?: ReturnType<typeof vi.fn<StartSessionGateway['startSession']>>
++  loadPresetCatalog?: ReturnType<typeof vi.fn<PresetCatalogGateway['loadPresetCatalog']>>
++  selectActivePreset?: ReturnType<typeof vi.fn<ActivePresetGateway['selectActivePreset']>>
++  getCaptureReadiness?: ReturnType<typeof vi.fn<CaptureRuntimeGateway['getCaptureReadiness']>>
++  subscribeToCaptureReadiness?: ReturnType<typeof vi.fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>>
++  captureRuntimeService?: CaptureRuntimeService
++  strictMode?: boolean
++} = {}) {
++  const sessionService = createStartSessionService({
++    gateway: {
++      startSession,
++    },
++  })
++  const presetCatalogService: PresetCatalogService = createPresetCatalogService({
++    gateway: {
++      loadPresetCatalog,
++    },
++  })
++  const activePresetService: ActivePresetService = createActivePresetService({
++    gateway: {
++      selectActivePreset,
++    },
++  })
++  const captureRuntimeService: CaptureRuntimeService =
++    captureRuntimeServiceProp ??
++    createCaptureRuntimeService({
++      gateway: {
++        getCaptureReadiness,
++        requestCapture: vi.fn().mockResolvedValue({
++          schemaVersion: 'capture-request-result/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          status: 'capture-saved',
++          capture: createCaptureRecord(),
++          readiness: {
++            schemaVersion: 'capture-readiness/v1',
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++            surfaceState: 'captureSaved',
++            customerState: 'Preview Waiting',
++            canCapture: false,
++            primaryAction: 'wait',
++            customerMessage: '사진이 안전하게 저장되었어요.',
++            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++            reasonCode: 'preview-waiting',
++            latestCapture: createCaptureRecord(),
++          },
++        }),
++        subscribeToCaptureReadiness,
++      },
++    })
++
++  const router = createMemoryRouter(
++    createAppRoutes({
++      capabilityService: createCapabilityService(),
++      sessionService,
++      presetCatalogService,
++      activePresetService,
++      captureRuntimeService,
++    }),
++    {
++      initialEntries: ['/booth'],
++    },
++  )
++
++  const app = <RouterProvider router={router} />
++
++  render(strictMode ? <StrictMode>{app}</StrictMode> : app)
++
++  return {
++    startSession,
++    loadPresetCatalog,
++    selectActivePreset,
++    getCaptureReadiness,
++  }
++}
++
++describe('PresetSelectScreen', () => {
++  it('keeps booth users on the session start step until an active session exists', async () => {
++    renderPresetFlow()
++
++    expect(
++      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
++    ).toBeInTheDocument()
++    expect(
++      screen.queryByRole('heading', { name: /원하는 룩을 골라 주세요/i }),
++    ).not.toBeInTheDocument()
++  })
++
++  it('loads and renders the booth-safe preset catalog after session start', async () => {
++    const user = userEvent.setup()
++    const { loadPresetCatalog } = renderPresetFlow()
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(
++      await screen.findByRole('heading', { name: /원하는 룩을 골라 주세요/i }),
++    ).toBeInTheDocument()
++    expect(loadPresetCatalog).toHaveBeenCalledWith({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    })
++    expect(screen.getByRole('button', { name: /soft glow/i })).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /mono pop/i })).toBeInTheDocument()
++  })
++
++  it('resumes directly into capture and backfills the selected preset name when an active preset already exists', async () => {
++    const user = userEvent.setup()
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(),
++        manifest: {
++          ...createSessionStartResult().manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++
++    renderPresetFlow({
++      startSession,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(
++      await screen.findByRole('heading', { name: /지금 촬영할 수 있어요/i }),
++    ).toBeInTheDocument()
++    expect(
++      await screen.findByText(/soft glow/i),
++    ).toBeInTheDocument()
++    expect(screen.queryByText(/선택 대기 중/i)).not.toBeInTheDocument()
++  })
++
++  it('retries active preset hydration after a transient catalog failure and backfills the preset name', async () => {
++    const user = userEvent.setup()
++    const startSession = vi
++      .fn<StartSessionGateway['startSession']>()
++      .mockResolvedValue({
++        ...createSessionStartResult(),
++        manifest: {
++          ...createSessionStartResult().manifest,
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        },
++      })
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockRejectedValueOnce({
++        code: 'preset-catalog-unavailable',
++        message: '지금은 프리셋을 불러올 수 없어요.',
++      })
++      .mockResolvedValueOnce(createCatalogResult())
++    const captureRuntimeService: CaptureRuntimeService = {
++      getCaptureReadiness: vi.fn().mockResolvedValue({
++        schemaVersion: 'capture-readiness/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        surfaceState: 'captureReady',
++        customerState: 'Ready',
++        canCapture: true,
++        primaryAction: 'capture',
++        customerMessage: '지금 촬영할 수 있어요.',
++        supportMessage: '버튼을 누르면 바로 시작돼요.',
++        reasonCode: 'ready',
++        latestCapture: null,
++      }),
++      requestCapture: vi.fn().mockResolvedValue({
++        schemaVersion: 'capture-request-result/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        status: 'capture-saved',
++        capture: createCaptureRecord(),
++        readiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'captureSaved',
++          customerState: 'Preview Waiting',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '사진이 안전하게 저장되었어요.',
++          supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
++          reasonCode: 'preview-waiting',
++          latestCapture: createCaptureRecord(),
++        },
++      }),
++      subscribeToCaptureReadiness: vi.fn().mockResolvedValue(() => undefined),
++    }
++
++    renderPresetFlow({
++      startSession,
++      loadPresetCatalog,
++      captureRuntimeService,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(
++      await screen.findByRole('heading', { name: /지금 촬영할 수 있어요/i }),
++    ).toBeInTheDocument()
++    expect(await screen.findByText(/선택한 룩 확인 중/i)).toBeInTheDocument()
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(1)
++
++    expect(
++      await screen.findByText(/soft glow/i, undefined, {
++        timeout: 4000,
++      }),
++    ).toBeInTheDocument()
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++    expect(screen.queryByText(/선택한 룩 확인 중/i)).not.toBeInTheDocument()
++  })
++
++  it('renders six preset cards when the catalog is at the display limit', async () => {
++    const user = userEvent.setup()
++    renderPresetFlow({
++      loadPresetCatalog: vi.fn().mockResolvedValue({
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        state: 'ready',
++        presets: Array.from({ length: 6 }, (_, index) => ({
++          presetId: `preset_limit-${index + 1}`,
++          displayName: `Limit ${index + 1}`,
++          publishedVersion: '2026.03.20',
++          boothStatus: 'booth-safe',
++          preview: {
++            kind: 'preview-tile' as const,
++            assetPath: `fixtures/limit-${index + 1}.jpg`,
++            altText: `Limit ${index + 1} sample portrait`,
++          },
++        })),
++      }),
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(await screen.findAllByRole('button')).toHaveLength(6)
++    expect(screen.getByRole('button', { name: /limit 1/i })).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /limit 6/i })).toBeInTheDocument()
++  })
++
++  it('moves to the capture screen and requests readiness after persisting the stable preset identity', async () => {
++    const user = userEvent.setup()
++    const { selectActivePreset, getCaptureReadiness } = renderPresetFlow()
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++    const softGlowCard = await screen.findByRole('button', { name: /soft glow/i })
++
++    await user.click(softGlowCard)
++
++    expect(selectActivePreset).toHaveBeenCalledWith({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      preset: {
++        presetId: 'preset_soft-glow',
++        publishedVersion: '2026.03.20',
++      },
++    })
++    expect(
++      await screen.findByRole('heading', { name: /지금 촬영할 수 있어요/i }),
++    ).toBeInTheDocument()
++    expect(getCaptureReadiness).toHaveBeenCalledWith({
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    })
++    expect(
++      screen.getByText(/soft glow/i),
++    ).toBeInTheDocument()
++  })
++
++  it('does not persist again while the same preset selection is already saving', async () => {
++    const user = userEvent.setup()
++    let resolveSelection!: () => void
++    const selectActivePreset = vi
++      .fn<ActivePresetGateway['selectActivePreset']>()
++      .mockImplementation(
++        ({ preset }) =>
++          new Promise((resolve) => {
++            resolveSelection = () => resolve(createSelectionResult(preset))
++          }),
++      )
++
++    renderPresetFlow({
++      selectActivePreset,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    const softGlowCard = await screen.findByRole('button', { name: /soft glow/i })
++    await user.click(softGlowCard)
++    await user.click(softGlowCard)
++
++    expect(selectActivePreset).toHaveBeenCalledTimes(1)
++
++    resolveSelection()
++  })
++
++  it('never exposes authoring-only terminology on the customer selection screen', async () => {
++    const user = userEvent.setup()
++    renderPresetFlow()
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++    await screen.findByRole('heading', { name: /원하는 룩을 골라 주세요/i })
++
++    expect(screen.queryByText(/darktable/i)).not.toBeInTheDocument()
++    expect(screen.queryByText(/authoring/i)).not.toBeInTheDocument()
++    expect(screen.queryByText(/xmp/i)).not.toBeInTheDocument()
++    expect(screen.queryByText(/style/i)).not.toBeInTheDocument()
++  })
++
++  it('offers a retry path after a transient preset catalog load failure', async () => {
++    const user = userEvent.setup()
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockRejectedValueOnce({
++        code: 'preset-catalog-unavailable',
++        message: '지금은 프리셋을 불러올 수 없어요.',
++      })
++      .mockResolvedValue(createCatalogResult())
++
++    renderPresetFlow({
++      loadPresetCatalog,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(
++      await screen.findByRole('button', { name: /다시 불러올게요/i }),
++    ).toBeInTheDocument()
++
++    await user.click(screen.getByRole('button', { name: /다시 불러올게요/i }))
++
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++    expect(
++      await screen.findByRole('button', { name: /soft glow/i }),
++    ).toBeInTheDocument()
++  })
++
++  it('does not surface a false load error during StrictMode double effects', async () => {
++    const user = userEvent.setup()
++    let resolveCatalog: ((result: PresetCatalogResult) => void) | undefined
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockImplementation(
++        () =>
++          new Promise((resolve) => {
++            resolveCatalog = resolve
++          }),
++      )
++
++    renderPresetFlow({
++      loadPresetCatalog,
++      strictMode: true,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(1)
++
++    resolveCatalog?.(createCatalogResult())
++
++    expect(await screen.findByRole('button', { name: /soft glow/i })).toBeInTheDocument()
++    expect(
++      screen.queryByText(/지금은 프리셋을 불러올 수 없어요/i),
++    ).not.toBeInTheDocument()
++  })
++
++  it('returns to session start when the catalog load says the session is gone', async () => {
++    const user = userEvent.setup()
++
++    renderPresetFlow({
++      loadPresetCatalog: vi.fn().mockRejectedValue({
++        code: 'session-not-found',
++        message: '세션을 다시 시작해 주세요.',
++      }),
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++
++    expect(
++      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
++    ).toBeInTheDocument()
++  })
++
++  it('reloads the catalog when the selected preset is no longer available to save', async () => {
++    const user = userEvent.setup()
++    const loadPresetCatalog = vi
++      .fn<PresetCatalogGateway['loadPresetCatalog']>()
++      .mockResolvedValue(createCatalogResult())
++    const selectActivePreset = vi
++      .fn<ActivePresetGateway['selectActivePreset']>()
++      .mockRejectedValue({
++        code: 'preset-not-available',
++        message: '다른 프리셋을 골라 주세요.',
++      })
++
++    renderPresetFlow({
++      loadPresetCatalog,
++      selectActivePreset,
++    })
++
++    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
++    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
++    await user.click(screen.getByRole('button', { name: /시작하기/i }))
++    await user.click(await screen.findByRole('button', { name: /soft glow/i }))
++
++    expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
++    expect(
++      await screen.findByRole('heading', { name: /원하는 룩을 골라 주세요/i }),
++    ).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /soft glow/i })).toBeInTheDocument()
++  })
++})
+diff --git a/src-tauri/src/contracts/dto.rs b/src-tauri/src/contracts/dto.rs
+index 79d9f7c..a7d8e8e 100644
+--- a/src-tauri/src/contracts/dto.rs
++++ b/src-tauri/src/contracts/dto.rs
+@@ -1,44 +1,490 @@
+ use serde::{Deserialize, Serialize};
+ 
++use crate::session::session_manifest::{
++    ActivePresetBinding, SessionCaptureRecord, SessionManifest,
++};
++
++const SESSION_ID_PREFIX: &str = "session_";
++const PRESET_ID_PREFIX: &str = "preset_";
++
++pub fn is_valid_session_id(session_id: &str) -> bool {
++    let suffix = match session_id.strip_prefix(SESSION_ID_PREFIX) {
++        Some(suffix) => suffix,
++        None => return false,
++    };
++
++    suffix.len() == 26 && suffix.chars().all(|char| char.is_ascii_alphanumeric())
++}
++
++pub fn is_valid_preset_id(preset_id: &str) -> bool {
++    let suffix = match preset_id.strip_prefix(PRESET_ID_PREFIX) {
++        Some(suffix) => suffix,
++        None => return false,
++    };
++
++    !suffix.is_empty()
++        && suffix
++            .chars()
++            .all(|char| char.is_ascii_alphanumeric() || char == '-')
++}
++
++pub fn is_valid_published_version(published_version: &str) -> bool {
++    if published_version.len() != 10 {
++        return false;
++    }
++
++    published_version
++        .chars()
++        .enumerate()
++        .all(|(index, char)| match index {
++            4 | 7 => char == '.',
++            _ => char.is_ascii_digit(),
++        })
++}
++
++pub fn is_non_blank(value: &str) -> bool {
++    !value.trim().is_empty()
++}
++
++pub fn validate_session_id(session_id: &str) -> Result<(), HostErrorEnvelope> {
++    if is_valid_session_id(session_id) {
++        Ok(())
++    } else {
++        Err(HostErrorEnvelope::validation_message(
++            "세션 정보를 다시 확인해 주세요.",
++        ))
++    }
++}
++
++pub fn validate_preset_selection_input(
++    preset_id: &str,
++    published_version: &str,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(preset_id) || !is_valid_published_version(published_version) {
++        return Err(HostErrorEnvelope::validation_message(
++            "프리셋 정보를 다시 확인해 주세요.",
++        ));
++    }
++
++    Ok(())
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct SessionStartInputDto {
+-  pub name: String,
+-  pub phone_last_four: String,
++    pub name: String,
++    pub phone_last_four: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct LoadPresetCatalogInputDto {
++    pub session_id: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetPreviewAssetDto {
++    pub kind: String,
++    pub asset_path: String,
++    pub alt_text: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PublishedPresetSummaryDto {
++    pub preset_id: String,
++    pub display_name: String,
++    pub published_version: String,
++    pub booth_status: String,
++    pub preview: PresetPreviewAssetDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetCatalogResultDto {
++    pub session_id: String,
++    pub state: String,
++    pub presets: Vec<PublishedPresetSummaryDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetSelectionInputDto {
++    pub session_id: String,
++    pub preset_id: String,
++    pub published_version: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetSelectionResultDto {
++    pub session_id: String,
++    pub active_preset: ActivePresetBinding,
++    pub manifest: SessionManifest,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CaptureReadinessInputDto {
++    pub session_id: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CaptureRequestInputDto {
++    pub session_id: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CaptureReadinessDto {
++    pub schema_version: String,
++    pub session_id: String,
++    pub surface_state: String,
++    pub customer_state: String,
++    pub can_capture: bool,
++    pub primary_action: String,
++    pub customer_message: String,
++    pub support_message: String,
++    pub reason_code: String,
++    pub latest_capture: Option<SessionCaptureRecord>,
++}
++
++impl CaptureReadinessDto {
++    fn build(
++        session_id: impl Into<String>,
++        surface_state: impl Into<String>,
++        customer_state: impl Into<String>,
++        can_capture: bool,
++        primary_action: impl Into<String>,
++        customer_message: impl Into<String>,
++        support_message: impl Into<String>,
++        reason_code: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        Self {
++            schema_version: "capture-readiness/v1".into(),
++            session_id: session_id.into(),
++            surface_state: surface_state.into(),
++            customer_state: customer_state.into(),
++            can_capture,
++            primary_action: primary_action.into(),
++            customer_message: customer_message.into(),
++            support_message: support_message.into(),
++            reason_code: reason_code.into(),
++            latest_capture,
++        }
++    }
++
++    pub fn preset_missing(session_id: impl Into<String>) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Preparing",
++            false,
++            "choose-preset",
++            "촬영 전에 룩을 먼저 골라 주세요.",
++            "선택이 끝나면 바로 찍을 수 있어요.",
++            "preset-missing",
++            None,
++        )
++    }
++
++    pub fn camera_preparing(session_id: impl Into<String>) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Preparing",
++            false,
++            "wait",
++            "촬영 준비 중이에요.",
++            "잠시만 기다려 주세요.",
++            "camera-preparing",
++            None,
++        )
++    }
++
++    pub fn helper_preparing(session_id: impl Into<String>) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Preparing",
++            false,
++            "wait",
++            "촬영 준비 중이에요.",
++            "잠시만 기다려 주세요.",
++            "helper-preparing",
++            None,
++        )
++    }
++
++    pub fn preview_waiting(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "previewWaiting",
++            "Preview Waiting",
++            false,
++            "wait",
++            "사진이 안전하게 저장되었어요.",
++            "확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.",
++            "preview-waiting",
++            latest_capture,
++        )
++    }
++
++    pub fn export_waiting(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "previewWaiting",
++            "Preparing",
++            false,
++            "wait",
++            "마무리 준비 중이에요.",
++            "다음 안내가 나올 때까지 기다려 주세요.",
++            "export-waiting",
++            latest_capture,
++        )
++    }
++
++    pub fn completed(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Preparing",
++            false,
++            "wait",
++            "이 촬영은 마무리되었어요.",
++            "다음 안내를 확인해 주세요.",
++            "completed",
++            latest_capture,
++        )
++    }
++
++    pub fn phone_required(session_id: impl Into<String>) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Phone Required",
++            false,
++            "call-support",
++            "지금은 도움이 필요해요.",
++            "가까운 직원에게 알려 주세요.",
++            "phone-required",
++            None,
++        )
++    }
++
++    pub fn warning(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "captureReady",
++            "Ready",
++            true,
++            "capture",
++            "지금 촬영할 수 있어요.",
++            "남은 시간 안에 계속 찍을 수 있어요.",
++            "warning",
++            latest_capture,
++        )
++    }
++
++    pub fn ready(
++        session_id: impl Into<String>,
++        surface_state: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            surface_state,
++            "Ready",
++            true,
++            "capture",
++            "지금 촬영할 수 있어요.",
++            "버튼을 누르면 바로 시작돼요.",
++            "ready",
++            latest_capture,
++        )
++    }
++
++    pub fn capture_saved(
++        session_id: impl Into<String>,
++        latest_capture: SessionCaptureRecord,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "captureSaved",
++            "Preview Waiting",
++            false,
++            "wait",
++            "사진이 안전하게 저장되었어요.",
++            "확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.",
++            "preview-waiting",
++            Some(latest_capture),
++        )
++    }
++
++    pub fn preview_ready(
++        session_id: impl Into<String>,
++        latest_capture: SessionCaptureRecord,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "previewReady",
++            "Ready",
++            true,
++            "capture",
++            "지금 촬영할 수 있어요.",
++            "방금 찍은 사진을 아래에서 바로 확인할 수 있어요.",
++            "ready",
++            Some(latest_capture),
++        )
++    }
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CaptureReadinessUpdateDto {
++    pub schema_version: String,
++    pub session_id: String,
++    pub readiness: CaptureReadinessDto,
++}
++
++impl CaptureReadinessUpdateDto {
++    pub fn new(session_id: impl Into<String>, readiness: CaptureReadinessDto) -> Self {
++        Self {
++            schema_version: "capture-readiness-update/v1".into(),
++            session_id: session_id.into(),
++            readiness,
++        }
++    }
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CaptureRequestResultDto {
++    pub schema_version: String,
++    pub session_id: String,
++    pub status: String,
++    pub capture: SessionCaptureRecord,
++    pub readiness: CaptureReadinessDto,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct HostFieldErrors {
+-  #[serde(skip_serializing_if = "Option::is_none")]
+-  pub name: Option<String>,
+-  #[serde(skip_serializing_if = "Option::is_none")]
+-  pub phone_last_four: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub name: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub phone_last_four: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct HostErrorEnvelope {
+-  pub code: String,
+-  pub message: String,
+-  #[serde(skip_serializing_if = "Option::is_none")]
+-  pub field_errors: Option<HostFieldErrors>,
++    pub code: String,
++    pub message: String,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub readiness: Option<CaptureReadinessDto>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub field_errors: Option<HostFieldErrors>,
+ }
+ 
+ impl HostErrorEnvelope {
+-  pub fn validation(field_errors: HostFieldErrors) -> Self {
+-    Self {
+-      code: "validation-error".into(),
+-      message: "입력한 내용을 다시 확인해 주세요.".into(),
+-      field_errors: Some(field_errors),
++    pub fn validation_message(message: impl Into<String>) -> Self {
++        Self {
++            code: "validation-error".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
++    pub fn validation(field_errors: HostFieldErrors) -> Self {
++        Self {
++            code: "validation-error".into(),
++            message: "입력한 내용을 다시 확인해 주세요.".into(),
++            readiness: None,
++            field_errors: Some(field_errors),
++        }
++    }
++
++    pub fn persistence(message: impl Into<String>) -> Self {
++        Self {
++            code: "session-persistence-failed".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
++    pub fn session_not_found(message: impl Into<String>) -> Self {
++        Self {
++            code: "session-not-found".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
++    pub fn preset_catalog_unavailable(message: impl Into<String>) -> Self {
++        Self {
++            code: "preset-catalog-unavailable".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
++    pub fn preset_not_available(message: impl Into<String>) -> Self {
++        Self {
++            code: "preset-not-available".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
+     }
+-  }
+ 
+-  pub fn persistence(message: impl Into<String>) -> Self {
+-    Self {
+-      code: "session-persistence-failed".into(),
+-      message: message.into(),
+-      field_errors: None,
++    pub fn capture_not_ready(message: impl Into<String>, readiness: CaptureReadinessDto) -> Self {
++        Self {
++            code: "capture-not-ready".into(),
++            message: message.into(),
++            readiness: Some(readiness),
++            field_errors: None,
++        }
+     }
+-  }
+ }
+diff --git a/src-tauri/src/capture/ingest_pipeline.rs b/src-tauri/src/capture/ingest_pipeline.rs
+new file mode 100644
+index 0000000..d151d94
+--- /dev/null
++++ b/src-tauri/src/capture/ingest_pipeline.rs
+@@ -0,0 +1,271 @@
++use std::{
++    fs,
++    path::Path,
++    sync::{
++        atomic::{AtomicU64, Ordering},
++        Mutex,
++    },
++    time::{SystemTime, UNIX_EPOCH},
++};
++
++use crate::{
++    capture::normalized_state::normalize_capture_readiness,
++    contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
++    session::{
++        session_manifest::{
++            current_timestamp, ActivePresetBinding, CaptureTimingMetrics, FinalCaptureAsset,
++            PreviewCaptureAsset, RawCaptureAsset, SessionCaptureRecord, SessionManifest,
++            CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS, SESSION_CAPTURE_SCHEMA_VERSION,
++        },
++        session_paths::SessionPaths,
++        session_repository::{read_session_manifest, write_session_manifest},
++    },
++};
++
++static CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
++static CAPTURE_PIPELINE_LOCK: Mutex<()> = Mutex::new(());
++
++pub fn persist_capture_in_dir(
++    base_dir: &Path,
++    input: &CaptureRequestInputDto,
++) -> Result<(SessionManifest, SessionCaptureRecord), HostErrorEnvelope> {
++    let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
++    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
++        HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
++    })?;
++    let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    let readiness = normalize_capture_readiness(base_dir, &manifest);
++
++    if !readiness.can_capture {
++        return Err(HostErrorEnvelope::capture_not_ready(
++            "지금은 촬영할 수 없어요.",
++            readiness,
++        ));
++    }
++
++    let active_preset = manifest.active_preset.clone().ok_or_else(|| {
++        HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
++    })?;
++    let capture_id = generate_capture_id("capture");
++    let request_id = generate_capture_id("request");
++    let raw_path = paths
++        .captures_originals_dir
++        .join(format!("{capture_id}.jpg"));
++
++    fs::create_dir_all(&paths.captures_originals_dir).map_err(map_fs_error)?;
++    fs::write(
++        &raw_path,
++        build_placeholder_asset_bytes(&manifest, &capture_id, "raw"),
++    )
++    .map_err(map_fs_error)?;
++    let acknowledged_at_ms = current_time_ms()?;
++
++    let capture = build_saved_capture_record(
++        &manifest,
++        &active_preset,
++        capture_id,
++        request_id,
++        raw_path.to_string_lossy().into_owned(),
++        acknowledged_at_ms,
++    );
++
++    manifest.captures.push(capture.clone());
++    manifest.updated_at = current_timestamp(SystemTime::now())?;
++    manifest.lifecycle.stage = "preview-waiting".into();
++
++    write_session_manifest(&paths.manifest_path, &manifest)?;
++
++    Ok((manifest, capture))
++}
++
++pub fn complete_preview_render_in_dir(
++    base_dir: &Path,
++    session_id: &str,
++    capture_id: &str,
++) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
++    let paths = SessionPaths::try_new(base_dir, session_id)?;
++    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
++        HostErrorEnvelope::persistence("프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
++    })?;
++    let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    let capture_index = manifest
++        .captures
++        .iter()
++        .position(|capture| capture.capture_id == capture_id)
++        .ok_or_else(|| {
++            HostErrorEnvelope::session_not_found("방금 저장된 촬영 기록을 찾지 못했어요.")
++        })?;
++
++    if manifest.captures[capture_index]
++        .preview
++        .asset_path
++        .is_some()
++    {
++        return Ok(manifest.captures[capture_index].clone());
++    }
++
++    fs::create_dir_all(&paths.renders_previews_dir).map_err(map_fs_error)?;
++
++    let preview_path = paths.renders_previews_dir.join(format!("{capture_id}.jpg"));
++
++    fs::write(
++        &preview_path,
++        build_placeholder_asset_bytes(&manifest, capture_id, "preview"),
++    )
++    .map_err(map_fs_error)?;
++
++    let preview_visible_at_ms = current_time_ms()?;
++    let capture = {
++        let capture = manifest
++            .captures
++            .get_mut(capture_index)
++            .expect("capture index already resolved");
++
++        capture.preview.asset_path = Some(preview_path.to_string_lossy().into_owned());
++        capture.preview.ready_at_ms = Some(preview_visible_at_ms);
++        capture.render_status = "previewReady".into();
++        capture.timing.preview_visible_at_ms = Some(preview_visible_at_ms);
++        capture.timing.preview_budget_state = if preview_visible_at_ms
++            .saturating_sub(capture.timing.capture_acknowledged_at_ms)
++            <= PREVIEW_BUDGET_MS
++        {
++            "withinBudget".into()
++        } else {
++            "exceededBudget".into()
++        };
++
++        capture.clone()
++    };
++
++    manifest.updated_at = current_timestamp(SystemTime::now())?;
++    manifest.lifecycle.stage = match manifest.captures.last() {
++        Some(latest_capture)
++            if latest_capture.render_status == "previewWaiting"
++                || latest_capture.render_status == "captureSaved" =>
++        {
++            "preview-waiting".into()
++        }
++        _ => "capture-ready".into(),
++    };
++
++    write_session_manifest(&paths.manifest_path, &manifest)?;
++
++    Ok(capture)
++}
++
++pub fn mark_preview_render_failed_in_dir(
++    base_dir: &Path,
++    session_id: &str,
++    capture_id: &str,
++) -> Result<SessionManifest, HostErrorEnvelope> {
++    let paths = SessionPaths::try_new(base_dir, session_id)?;
++    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
++        HostErrorEnvelope::persistence("프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
++    })?;
++    let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    let Some(capture_index) = manifest
++        .captures
++        .iter()
++        .position(|capture| capture.capture_id == capture_id)
++    else {
++        return Ok(manifest);
++    };
++
++    let Some(latest_capture) = manifest.captures.last() else {
++        return Ok(manifest);
++    };
++
++    if latest_capture.capture_id != capture_id
++        || manifest.captures[capture_index]
++            .preview
++            .asset_path
++            .is_some()
++    {
++        return Ok(manifest);
++    }
++
++    manifest.captures[capture_index].render_status = "renderFailed".into();
++    manifest.captures[capture_index].timing.preview_budget_state = "exceededBudget".into();
++    manifest.updated_at = current_timestamp(SystemTime::now())?;
++    manifest.lifecycle.stage = "phone-required".into();
++
++    write_session_manifest(&paths.manifest_path, &manifest)?;
++
++    Ok(manifest)
++}
++
++fn build_saved_capture_record(
++    manifest: &SessionManifest,
++    active_preset: &ActivePresetBinding,
++    capture_id: String,
++    request_id: String,
++    raw_asset_path: String,
++    acknowledged_at_ms: u64,
++) -> SessionCaptureRecord {
++    SessionCaptureRecord {
++        schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
++        session_id: manifest.session_id.clone(),
++        booth_alias: manifest.booth_alias.clone(),
++        active_preset_version: active_preset.published_version.clone(),
++        capture_id,
++        request_id,
++        raw: RawCaptureAsset {
++            asset_path: raw_asset_path,
++            persisted_at_ms: acknowledged_at_ms,
++        },
++        preview: PreviewCaptureAsset {
++            asset_path: None,
++            enqueued_at_ms: Some(acknowledged_at_ms),
++            ready_at_ms: None,
++        },
++        final_asset: FinalCaptureAsset {
++            asset_path: None,
++            ready_at_ms: None,
++        },
++        render_status: "previewWaiting".into(),
++        post_end_state: "activeSession".into(),
++        timing: CaptureTimingMetrics {
++            capture_acknowledged_at_ms: acknowledged_at_ms,
++            preview_visible_at_ms: None,
++            capture_budget_ms: CAPTURE_BUDGET_MS,
++            preview_budget_ms: PREVIEW_BUDGET_MS,
++            preview_budget_state: "pending".into(),
++        },
++    }
++}
++
++fn build_placeholder_asset_bytes(
++    manifest: &SessionManifest,
++    capture_id: &str,
++    asset_kind: &str,
++) -> Vec<u8> {
++    format!(
++        "boothy-{asset_kind}\nsession={}\nboothAlias={}\ncapture={capture_id}\n",
++        manifest.session_id, manifest.booth_alias
++    )
++    .into_bytes()
++}
++
++fn generate_capture_id(prefix: &str) -> String {
++    let unix_nanos = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_nanos();
++    let counter = CAPTURE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
++    let value = unix_nanos ^ (counter << 16);
++
++    format!("{prefix}_{value:026x}")
++}
++
++fn current_time_ms() -> Result<u64, HostErrorEnvelope> {
++    Ok(SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map_err(|_| {
++            HostErrorEnvelope::persistence("시스템 시계를 확인할 수 없어 촬영을 저장하지 못했어요.")
++        })?
++        .as_millis() as u64)
++}
++
++fn map_fs_error(error: std::io::Error) -> HostErrorEnvelope {
++    HostErrorEnvelope::persistence(format!("세션 파일을 만들지 못했어요: {error}"))
++}
+diff --git a/src-tauri/src/capture/normalized_state.rs b/src-tauri/src/capture/normalized_state.rs
+new file mode 100644
+index 0000000..fe07657
+--- /dev/null
++++ b/src-tauri/src/capture/normalized_state.rs
+@@ -0,0 +1,137 @@
++use std::{fs, path::Path};
++
++use crate::{
++    capture::ingest_pipeline::persist_capture_in_dir,
++    contracts::dto::{
++        CaptureReadinessDto, CaptureReadinessInputDto, CaptureRequestInputDto,
++        CaptureRequestResultDto, HostErrorEnvelope,
++    },
++    preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
++    session::{
++        session_manifest::{ActivePresetBinding, SessionManifest},
++        session_paths::SessionPaths,
++    },
++};
++
++pub fn get_capture_readiness_in_dir(
++    base_dir: &Path,
++    input: CaptureReadinessInputDto,
++) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
++    let manifest = read_session_manifest(base_dir, &input.session_id)?;
++
++    Ok(normalize_capture_readiness(base_dir, &manifest))
++}
++
++pub fn request_capture_in_dir(
++    base_dir: &Path,
++    input: CaptureRequestInputDto,
++) -> Result<CaptureRequestResultDto, HostErrorEnvelope> {
++    let readiness = get_capture_readiness_in_dir(
++        base_dir,
++        CaptureReadinessInputDto {
++            session_id: input.session_id.clone(),
++        },
++    )?;
++
++    if !readiness.can_capture {
++        return Err(HostErrorEnvelope::capture_not_ready(
++            "지금은 촬영할 수 없어요.",
++            readiness,
++        ));
++    }
++
++    let (manifest, capture) = persist_capture_in_dir(base_dir, &input)?;
++
++    Ok(CaptureRequestResultDto {
++        schema_version: "capture-request-result/v1".into(),
++        session_id: input.session_id,
++        status: "capture-saved".into(),
++        capture: capture.clone(),
++        readiness: CaptureReadinessDto::capture_saved(manifest.session_id.clone(), capture),
++    })
++}
++
++pub fn normalize_capture_readiness(
++    base_dir: &Path,
++    manifest: &SessionManifest,
++) -> CaptureReadinessDto {
++    if !has_valid_active_preset(base_dir, manifest.active_preset.as_ref()) {
++        return CaptureReadinessDto::preset_missing(manifest.session_id.clone());
++    }
++
++    let latest_capture = manifest.captures.last().cloned();
++
++    match manifest.lifecycle.stage.as_str() {
++        "ready" | "capture-ready" | "preset-selected" => match latest_capture {
++            Some(capture)
++                if capture.render_status == "previewWaiting"
++                    || capture.render_status == "captureSaved" =>
++            {
++                CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), Some(capture))
++            }
++            Some(capture) if capture.render_status == "renderFailed" => {
++                CaptureReadinessDto::phone_required(manifest.session_id.clone())
++            }
++            Some(capture) if capture.render_status == "previewReady" => {
++                CaptureReadinessDto::preview_ready(manifest.session_id.clone(), capture)
++            }
++            _ => CaptureReadinessDto::ready(
++                manifest.session_id.clone(),
++                "captureReady",
++                latest_capture,
++            ),
++        },
++        "phone-required" | "blocked" => {
++            CaptureReadinessDto::phone_required(manifest.session_id.clone())
++        }
++        "preview-waiting" => {
++            CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), latest_capture)
++        }
++        "export-waiting" => {
++            CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture)
++        }
++        "completed" => CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture),
++        "warning" => CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture),
++        "helper-preparing" => CaptureReadinessDto::helper_preparing(manifest.session_id.clone()),
++        "camera-preparing" | "preparing" => {
++            CaptureReadinessDto::camera_preparing(manifest.session_id.clone())
++        }
++        _ => CaptureReadinessDto::camera_preparing(manifest.session_id.clone()),
++    }
++}
++
++fn has_valid_active_preset(base_dir: &Path, active_preset: Option<&ActivePresetBinding>) -> bool {
++    let Some(active_preset) = active_preset else {
++        return false;
++    };
++
++    let catalog_root = resolve_published_preset_catalog_dir(base_dir);
++
++    find_published_preset_summary(
++        &catalog_root,
++        &active_preset.preset_id,
++        &active_preset.published_version,
++    )
++    .is_some()
++}
++
++fn read_session_manifest(
++    base_dir: &Path,
++    session_id: &str,
++) -> Result<SessionManifest, HostErrorEnvelope> {
++    let manifest_path = SessionPaths::try_new(base_dir, session_id)?.manifest_path;
++
++    if !manifest_path.is_file() {
++        return Err(HostErrorEnvelope::session_not_found(
++            "진행 중인 세션을 찾지 못했어요. 처음 화면에서 다시 시작해 주세요.",
++        ));
++    }
++
++    let manifest_bytes = fs::read_to_string(manifest_path).map_err(|error| {
++        HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
++    })?;
++
++    serde_json::from_str(&manifest_bytes).map_err(|error| {
++        HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
++    })
++}
+diff --git a/src-tauri/src/commands/capture_commands.rs b/src-tauri/src/commands/capture_commands.rs
+new file mode 100644
+index 0000000..e7e8253
+--- /dev/null
++++ b/src-tauri/src/commands/capture_commands.rs
+@@ -0,0 +1,92 @@
++use std::{thread, time::Duration};
++
++use tauri::{Emitter, Manager};
++
++use crate::{
++    capture::{
++        ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
++        normalized_state::{
++            get_capture_readiness_in_dir, normalize_capture_readiness, request_capture_in_dir,
++        },
++    },
++    contracts::dto::{
++        CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
++        CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
++    },
++    session::{
++        session_paths::SessionPaths,
++        session_repository::{read_session_manifest, resolve_app_session_base_dir},
++    },
++};
++
++const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
++
++#[tauri::command]
++pub fn get_capture_readiness(
++    app: tauri::AppHandle,
++    input: CaptureReadinessInputDto,
++) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++
++    get_capture_readiness_in_dir(&base_dir, input)
++}
++
++#[tauri::command]
++pub fn request_capture(
++    app: tauri::AppHandle,
++    input: CaptureRequestInputDto,
++) -> Result<CaptureRequestResultDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let result = request_capture_in_dir(&base_dir, input)?;
++    let preview_base_dir = base_dir.clone();
++    let preview_session_id = result.session_id.clone();
++    let preview_capture_id = result.capture.capture_id.clone();
++    let preview_app = app.clone();
++
++    thread::spawn(move || {
++        thread::sleep(Duration::from_millis(120));
++        let readiness = match complete_preview_render_in_dir(
++            &preview_base_dir,
++            &preview_session_id,
++            &preview_capture_id,
++        ) {
++            Ok(capture) => CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture),
++            Err(_) => {
++                let _ = mark_preview_render_failed_in_dir(
++                    &preview_base_dir,
++                    &preview_session_id,
++                    &preview_capture_id,
++                );
++                read_current_capture_readiness(&preview_base_dir, &preview_session_id)
++                    .unwrap_or_else(|| {
++                        CaptureReadinessDto::phone_required(preview_session_id.clone())
++                    })
++            }
++        };
++
++        let _ = preview_app.emit(
++            CAPTURE_READINESS_UPDATE_EVENT,
++            CaptureReadinessUpdateDto::new(preview_session_id, readiness),
++        );
++    });
++
++    Ok(result)
++}
++
++fn read_current_capture_readiness(
++    base_dir: &std::path::Path,
++    session_id: &str,
++) -> Option<CaptureReadinessDto> {
++    let manifest_path = SessionPaths::try_new(base_dir, session_id)
++        .ok()?
++        .manifest_path;
++    let manifest = read_session_manifest(&manifest_path).ok()?;
++
++    Some(normalize_capture_readiness(base_dir, &manifest))
++}
+diff --git a/src-tauri/tests/capture_readiness.rs b/src-tauri/tests/capture_readiness.rs
+new file mode 100644
+index 0000000..fc6e0a7
+--- /dev/null
++++ b/src-tauri/tests/capture_readiness.rs
+@@ -0,0 +1,625 @@
++use std::{
++    fs,
++    path::PathBuf,
++    time::{SystemTime, UNIX_EPOCH},
++};
++
++use boothy_lib::{
++    capture::{
++        ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
++        normalized_state::{get_capture_readiness_in_dir, request_capture_in_dir},
++    },
++    contracts::dto::{CaptureReadinessInputDto, CaptureRequestInputDto, SessionStartInputDto},
++    preset::preset_catalog::resolve_published_preset_catalog_dir,
++    session::{
++        session_manifest::SessionManifest,
++        session_paths::SessionPaths,
++        session_repository::{select_active_preset_in_dir, start_session_in_dir},
++    },
++};
++
++fn unique_test_root(test_name: &str) -> PathBuf {
++    let stamp = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_nanos();
++
++    std::env::temp_dir().join(format!("boothy-capture-{test_name}-{stamp}"))
++}
++
++#[test]
++fn readiness_requires_an_active_preset_before_capture_is_allowed() {
++    let base_dir = unique_test_root("preset-required");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect("readiness should resolve");
++
++    assert_eq!(readiness.customer_state, "Preparing");
++    assert!(!readiness.can_capture);
++    assert_eq!(readiness.primary_action, "choose-preset");
++    assert_eq!(readiness.reason_code, "preset-missing");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn readiness_returns_ready_once_session_and_preset_are_valid() {
++    let base_dir = unique_test_root("ready");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect("readiness should resolve");
++
++    assert_eq!(readiness.customer_state, "Ready");
++    assert!(readiness.can_capture);
++    assert_eq!(readiness.primary_action, "capture");
++    assert_eq!(readiness.reason_code, "ready");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn unknown_lifecycle_stages_do_not_fall_through_to_ready() {
++    let base_dir = unique_test_root("unknown-stage");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    update_stage(&base_dir, &session.session_id, "unexpected-stage");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect("readiness should resolve");
++
++    assert_eq!(readiness.customer_state, "Preparing");
++    assert!(!readiness.can_capture);
++    assert_eq!(readiness.reason_code, "camera-preparing");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance() {
++    let base_dir = unique_test_root("blocked");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    update_stage(&base_dir, &session.session_id, "helper-preparing");
++
++    let helper_readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("helper preparing readiness should resolve");
++
++    assert_eq!(helper_readiness.customer_state, "Preparing");
++    assert!(!helper_readiness.can_capture);
++    assert_eq!(helper_readiness.reason_code, "helper-preparing");
++
++    update_stage(&base_dir, &session.session_id, "phone-required");
++
++    let error = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect_err("phone required should block capture");
++
++    assert_eq!(error.code, "capture-not-ready");
++    assert_eq!(
++        error
++            .readiness
++            .expect("blocked capture should include readiness")
++            .reason_code,
++        "phone-required",
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn invalidated_active_preset_binding_returns_to_preset_missing() {
++    let base_dir = unique_test_root("stale-preset");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    fs::remove_dir_all(catalog_root.join("preset_soft-glow").join("2026.03.20"))
++        .expect("published bundle should be removable");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("readiness should still resolve");
++
++    assert_eq!(readiness.reason_code, "preset-missing");
++    assert!(!readiness.can_capture);
++
++    let error = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect_err("stale preset binding should block capture");
++
++    assert_eq!(error.code, "capture-not-ready");
++    assert_eq!(
++        error
++            .readiness
++            .expect("blocked capture should include readiness")
++            .reason_code,
++        "preset-missing",
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_after_ready() {
++    let base_dir = unique_test_root("capture-preview-flow");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture_result = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should be accepted after raw persistence");
++
++    assert_eq!(capture_result.status, "capture-saved");
++    assert_eq!(capture_result.readiness.surface_state, "captureSaved");
++    assert!(std::path::Path::new(&capture_result.capture.raw.asset_path).is_file());
++    assert!(capture_result.capture.preview.asset_path.is_none());
++    assert_eq!(capture_result.capture.render_status, "previewWaiting");
++    assert_eq!(capture_result.capture.timing.capture_budget_ms, 1_000);
++    assert_eq!(capture_result.capture.timing.preview_budget_ms, 5_000);
++
++    let waiting = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("preview waiting should resolve");
++
++    assert_eq!(waiting.customer_state, "Preview Waiting");
++    assert_eq!(waiting.reason_code, "preview-waiting");
++    assert_eq!(waiting.surface_state, "previewWaiting");
++    assert!(waiting
++        .latest_capture
++        .as_ref()
++        .expect("waiting state should retain latest capture")
++        .preview
++        .asset_path
++        .is_none());
++
++    let ready_capture = complete_preview_render_in_dir(
++        &base_dir,
++        &session.session_id,
++        &capture_result.capture.capture_id,
++    )
++    .expect("preview render should complete");
++
++    assert!(std::path::Path::new(
++        ready_capture
++            .preview
++            .asset_path
++            .as_deref()
++            .expect("preview path should exist after completion"),
++    )
++    .is_file());
++
++    let ready = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("preview ready state should resolve");
++
++    assert_eq!(ready.surface_state, "previewReady");
++    assert_eq!(ready.reason_code, "ready");
++    assert!(ready.can_capture);
++    assert_eq!(
++        ready
++            .latest_capture
++            .as_ref()
++            .and_then(|capture| capture.preview.asset_path.as_ref())
++            .map(|path| path.ends_with(".jpg")),
++        Some(true),
++    );
++    assert_eq!(
++        ready
++            .latest_capture
++            .as_ref()
++            .expect("ready capture should be returned")
++            .timing
++            .preview_budget_state,
++        "withinBudget",
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn capture_flow_blocks_a_follow_up_capture_until_the_latest_preview_is_ready() {
++    let base_dir = unique_test_root("capture-follow-up-blocked");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("first capture should save");
++
++    let follow_up_error = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect_err("follow-up capture should be blocked while preview is waiting");
++
++    assert_eq!(follow_up_error.code, "capture-not-ready");
++    assert_eq!(
++        follow_up_error
++            .readiness
++            .expect("blocked follow-up should include readiness")
++            .reason_code,
++        "preview-waiting",
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn preview_render_failure_escalates_to_a_phone_required_boundary() {
++    let base_dir = unique_test_root("preview-render-failure");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture_result = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save");
++
++    mark_preview_render_failed_in_dir(
++        &base_dir,
++        &session.session_id,
++        &capture_result.capture.capture_id,
++    )
++    .expect("preview failure boundary should persist");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id,
++        },
++    )
++    .expect("readiness should resolve after failure");
++
++    assert_eq!(readiness.reason_code, "phone-required");
++    assert!(!readiness.can_capture);
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn preview_ready_capture_remains_scoped_to_its_own_session() {
++    let base_dir = unique_test_root("capture-session-isolation");
++    let first_session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("first session should be created");
++    let second_session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Lee".into(),
++            phone_last_four: "1234".into(),
++        },
++    )
++    .expect("second session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    for session_id in [&first_session.session_id, &second_session.session_id] {
++        select_active_preset_in_dir(
++            &base_dir,
++            boothy_lib::contracts::dto::PresetSelectionInputDto {
++                session_id: session_id.to_string(),
++                preset_id: "preset_soft-glow".into(),
++                published_version: "2026.03.20".into(),
++            },
++        )
++        .expect("preset should become active");
++    }
++
++    let first_capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: first_session.session_id.clone(),
++        },
++    )
++    .expect("first capture should save");
++    let second_capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: second_session.session_id.clone(),
++        },
++    )
++    .expect("second capture should save");
++
++    complete_preview_render_in_dir(
++        &base_dir,
++        &first_session.session_id,
++        &first_capture.capture.capture_id,
++    )
++    .expect("first preview should complete");
++    complete_preview_render_in_dir(
++        &base_dir,
++        &second_session.session_id,
++        &second_capture.capture.capture_id,
++    )
++    .expect("second preview should complete");
++
++    let first_ready = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: first_session.session_id.clone(),
++        },
++    )
++    .expect("first readiness should resolve");
++    let second_ready = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: second_session.session_id.clone(),
++        },
++    )
++    .expect("second readiness should resolve");
++
++    assert_eq!(
++        first_ready
++            .latest_capture
++            .as_ref()
++            .expect("first latest capture should exist")
++            .session_id,
++        first_session.session_id,
++    );
++    assert_eq!(
++        second_ready
++            .latest_capture
++            .as_ref()
++            .expect("second latest capture should exist")
++            .session_id,
++        second_session.session_id,
++    );
++    assert_ne!(
++        first_ready
++            .latest_capture
++            .as_ref()
++            .expect("first capture should exist")
++            .capture_id,
++        second_ready
++            .latest_capture
++            .as_ref()
++            .expect("second capture should exist")
++            .capture_id,
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++fn update_stage(base_dir: &PathBuf, session_id: &str, stage: &str) {
++    let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
++    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
++    let mut manifest: SessionManifest =
++        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
++
++    manifest.lifecycle.stage = stage.into();
++
++    fs::write(
++        manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should be writable");
++}
++
++fn create_published_bundle(catalog_root: &PathBuf) {
++    let bundle_dir = catalog_root.join("preset_soft-glow").join("2026.03.20");
++    fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
++    fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should exist");
++
++    let bundle = serde_json::json!({
++      "schemaVersion": "published-preset-bundle/v1",
++      "presetId": "preset_soft-glow",
++      "displayName": "Soft Glow",
++      "publishedVersion": "2026.03.20",
++      "lifecycleStatus": "published",
++      "boothStatus": "booth-safe",
++      "preview": {
++        "kind": "preview-tile",
++        "assetPath": "preview.jpg",
++        "altText": "Soft Glow sample portrait",
++      }
++    });
++
++    fs::write(
++        bundle_dir.join("bundle.json"),
++        serde_json::to_vec_pretty(&bundle).expect("bundle should serialize"),
++    )
++    .expect("bundle should be writable");
++}

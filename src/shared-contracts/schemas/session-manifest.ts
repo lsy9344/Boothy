@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { sessionIdSchema } from './ids'
-import { activePresetBindingSchema } from './preset-core'
+import { activePresetBindingSchema, presetDisplayNameSchema } from './preset-core'
 import { sessionCaptureRecordSchema } from './session-capture'
 
 export const sessionManifestSchemaVersion = 'session-manifest/v1' as const
@@ -36,6 +36,7 @@ export const sessionManifestSchema = z.object({
   }),
   activePreset: activePresetBindingSchema.nullable(),
   activePresetId: z.string().trim().min(1).nullable().optional(),
+  activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
   captures: z.array(sessionCaptureRecordSchema),
   postEnd: z.null(),
 })

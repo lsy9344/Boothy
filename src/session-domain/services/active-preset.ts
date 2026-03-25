@@ -108,6 +108,7 @@ export function createBrowserActivePresetGateway(): ActivePresetGateway {
             stage: 'preset-selected',
           },
           activePreset: input.preset,
+          activePresetId: input.preset.presetId,
           captures: [],
           postEnd: null,
         },

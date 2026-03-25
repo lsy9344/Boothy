@@ -1,15 +1,60 @@
+import type { KeyboardEvent } from 'react'
 import { resolvePresetPreviewSrc } from './preset-preview-src'
 import type { CurrentSessionPreview } from '../../session-domain/selectors'
 
 type LatestPhotoRailProps = {
   previews: CurrentSessionPreview[]
   isPreviewWaiting: boolean
+  deletingCaptureId: string | null
+  pendingDeleteCaptureId: string | null
+  onDeleteCancel(): void
+  onDeleteConfirm(captureId: string): void
+  onDeleteIntent(captureId: string): void
+}
+
+const HORIZONTAL_SCROLL_STEP_PX = 240
+
+function buildPreviewAltText(
+  preview: CurrentSessionPreview,
+  position: number,
+) {
+  const presetLabel =
+    preview.presetDisplayName ??
+    (preview.isCurrentActivePreset ? '현재 룩' : '이전 룩')
+
+  return preview.isLatest
+    ? `현재 세션 최신 사진, ${position}번째, ${presetLabel} 룩`
+    : `현재 세션 사진, ${position}번째, ${presetLabel} 룩`
 }
 
 export function LatestPhotoRail({
   previews,
   isPreviewWaiting,
+  deletingCaptureId,
+  pendingDeleteCaptureId,
+  onDeleteCancel,
+  onDeleteConfirm,
+  onDeleteIntent,
 }: LatestPhotoRailProps) {
+  function handleRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      event.currentTarget.scrollBy({
+        left: HORIZONTAL_SCROLL_STEP_PX,
+        behavior: 'smooth',
+      })
+      return
+    }
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      event.currentTarget.scrollBy({
+        left: -HORIZONTAL_SCROLL_STEP_PX,
+        behavior: 'smooth',
+      })
+    }
+  }
+
   return (
     <article className="surface-card latest-photo-rail">
       <div className="latest-photo-rail__header">
@@ -28,17 +73,81 @@ export function LatestPhotoRail({
             : '아직 준비된 확인용 사진이 없어요.'}
         </p>
       ) : (
-        <div className="latest-photo-rail__grid">
-          {previews.map((preview) => (
+        <div
+          className="latest-photo-rail__scroller"
+          role="list"
+          aria-label="현재 세션 사진 레일"
+          tabIndex={0}
+          onKeyDown={handleRailKeyDown}
+        >
+          {previews.map((preview, index) => (
             <figure
               key={preview.captureId}
-              className="latest-photo-rail__item"
+              className={`latest-photo-rail__item${
+                preview.isLatest ? ' latest-photo-rail__item--latest' : ''
+              }`}
+              role="listitem"
             >
+              {preview.isLatest ? (
+                <span className="latest-photo-rail__badge">최신 사진</span>
+              ) : null}
               <img
                 src={resolvePresetPreviewSrc(preview.assetPath)}
-                alt={`현재 세션 사진 ${preview.captureId}`}
+                alt={buildPreviewAltText(preview, index + 1)}
               />
-              <figcaption>{preview.activePresetVersion}</figcaption>
+              <figcaption>
+                촬영 당시{' '}
+                {preview.presetDisplayName ??
+                  (preview.isCurrentActivePreset ? '현재 룩' : '이전 룩')}{' '}
+                룩
+              </figcaption>
+              <p className="latest-photo-rail__hint">
+                {preview.isCurrentActivePreset
+                  ? '현재 룩과 같은 바인딩으로 유지돼요.'
+                  : '이 사진은 이전 룩으로 찍혔고 그대로 유지돼요.'}
+              </p>
+              {preview.postEndState === 'completed' ? (
+                <p className="latest-photo-rail__hint">
+                  마무리된 사진은 여기서 정리할 수 없어요.
+                </p>
+              ) : pendingDeleteCaptureId === preview.captureId ? (
+                <div className="latest-photo-rail__confirm">
+                  <p>이 사진을 정리할까요?</p>
+                  <div className="latest-photo-rail__actions">
+                    <button
+                      type="button"
+                      className="latest-photo-rail__action latest-photo-rail__action--secondary"
+                      onClick={onDeleteCancel}
+                      disabled={deletingCaptureId === preview.captureId}
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      className="latest-photo-rail__action"
+                      onClick={() => {
+                        onDeleteConfirm(preview.captureId)
+                      }}
+                      disabled={deletingCaptureId === preview.captureId}
+                    >
+                      {deletingCaptureId === preview.captureId
+                        ? '정리 중'
+                        : '사진 정리'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="latest-photo-rail__action latest-photo-rail__action--secondary"
+                  onClick={() => {
+                    onDeleteIntent(preview.captureId)
+                  }}
+                  disabled={deletingCaptureId !== null}
+                >
+                  사진 정리
+                </button>
+              )}
             </figure>
           ))}
         </div>

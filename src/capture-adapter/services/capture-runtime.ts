@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
 import {
+  captureDeleteInputSchema,
+  captureDeleteResultSchema,
   captureReadinessUpdateEvent,
   captureReadinessInputSchema,
   captureReadinessSnapshotSchema,
@@ -9,6 +11,8 @@ import {
   captureRequestInputSchema,
   captureRequestResultSchema,
   hostErrorEnvelopeSchema,
+  type CaptureDeleteInput,
+  type CaptureDeleteResult,
   type CaptureReadinessInput,
   type CaptureReadinessSnapshot,
   type CaptureRequestInput,
@@ -21,6 +25,7 @@ const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
 
 export interface CaptureRuntimeGateway {
   getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
+  deleteCapture(input: CaptureDeleteInput): Promise<unknown>
   requestCapture(input: CaptureRequestInput): Promise<unknown>
   subscribeToCaptureReadiness(
     onEvent: (payload: unknown) => void,
@@ -31,6 +36,7 @@ export interface CaptureRuntimeService {
   getCaptureReadiness(
     input: CaptureReadinessInput,
   ): Promise<CaptureReadinessSnapshot>
+  deleteCapture(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
   subscribeToCaptureReadiness(input: {
     sessionId: string
@@ -160,6 +166,29 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
     return parsedResponse
   }
 
+  async deleteCapture(input: CaptureDeleteInput) {
+    const parsedInput = captureDeleteInputSchema.parse(input)
+    const parsedResponse = await (async () => {
+      try {
+        const response = await this.gateway.deleteCapture(parsedInput)
+
+        return captureDeleteResultSchema.parse(response)
+      } catch (error) {
+        throw normalizeHostError(error, parsedInput.sessionId)
+      }
+    })()
+
+    if (
+      parsedResponse.sessionId !== parsedInput.sessionId ||
+      parsedResponse.manifest.sessionId !== parsedInput.sessionId ||
+      parsedResponse.readiness.sessionId !== parsedInput.sessionId
+    ) {
+      throw buildSessionMismatchHostError()
+    }
+
+    return parsedResponse
+  }
+
   async requestCapture(input: CaptureRequestInput) {
     const parsedInput = captureRequestInputSchema.parse(input)
     const parsedResponse = await (async () => {
@@ -264,6 +293,11 @@ function normalizeHostError(
             buildPresetMissingCaptureReadiness(),
             requestedSessionId,
           ),
+        }
+      case 'capture-delete-blocked':
+        return {
+          ...parsed.data,
+          message: '이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.',
         }
       case 'capture-not-ready':
         return {
@@ -377,6 +411,16 @@ export function createBrowserCaptureRuntimeGateway(): CaptureRuntimeGateway {
 
       return withSessionId(buildReadyCaptureReadiness(), input.sessionId)
     },
+    async deleteCapture(input) {
+      throw {
+        code: 'host-unavailable',
+        message: '지금은 도움이 필요해요.',
+        readiness: withSessionId(
+          buildPhoneRequiredCaptureReadiness(),
+          input.sessionId,
+        ),
+      } satisfies HostErrorEnvelope
+    },
     async requestCapture(input) {
       throw {
         code: 'host-unavailable',
@@ -397,6 +441,9 @@ export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
   return {
     async getCaptureReadiness(input) {
       return invoke<unknown>('get_capture_readiness', { input })
+    },
+    async deleteCapture(input) {
+      return invoke<unknown>('delete_capture', { input })
     },
     async requestCapture(input) {
       return invoke<unknown>('request_capture', { input })

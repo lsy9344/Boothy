@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type {
+  CaptureDeleteResult,
+  CaptureRequestResult,
   HostErrorEnvelope,
   SessionManifest,
   PresetCatalogResult,
@@ -24,6 +26,7 @@ import {
   createStartSessionService,
   type StartSessionService,
 } from '../services/start-session'
+import { isSessionScopedAssetPath } from '../utils/session-scoped-asset-path'
 import { SessionStateContext } from './session-context'
 import { DEFAULT_SESSION_DRAFT, type SessionDraft } from './session-draft'
 
@@ -37,37 +40,354 @@ type SessionProviderProps = {
 
 const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
 const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
+type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
+type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
+
+function normalizeCaptureRenderStatus(
+  capture: SessionScopedCapture,
+): SessionScopedCapture['renderStatus'] {
+  const hasReadyPreview =
+    capture.preview.assetPath !== null && capture.preview.readyAtMs !== null
+  const hasReadyFinal =
+    capture.final.assetPath !== null && capture.final.readyAtMs !== null
+
+  switch (capture.renderStatus) {
+    case 'finalReady':
+      if (hasReadyFinal) {
+        return 'finalReady'
+      }
+
+      return hasReadyPreview ? 'previewReady' : 'captureSaved'
+    case 'previewReady':
+      return hasReadyPreview ? 'previewReady' : 'captureSaved'
+    default:
+      return capture.renderStatus
+  }
+}
+
+function sanitizeCaptureForManifest(
+  sessionId: string,
+  capture: SessionScopedCapture,
+): SessionScopedCapture | null {
+  if (capture.sessionId !== sessionId) {
+    return null
+  }
+
+  const isPreviewSafe =
+    capture.preview.assetPath === null ||
+    isSessionScopedAssetPath(sessionId, capture.preview.assetPath)
+  const isFinalSafe =
+    capture.final.assetPath === null ||
+    isSessionScopedAssetPath(sessionId, capture.final.assetPath)
+
+  if (isPreviewSafe && isFinalSafe) {
+    return capture
+  }
+
+  return {
+    ...capture,
+    preview:
+      isPreviewSafe
+        ? capture.preview
+        : {
+            ...capture.preview,
+            assetPath: null,
+            readyAtMs: null,
+          },
+    final:
+      isFinalSafe
+        ? capture.final
+        : {
+            ...capture.final,
+            assetPath: null,
+            readyAtMs: null,
+          },
+    renderStatus: normalizeCaptureRenderStatus({
+      ...capture,
+      preview:
+        isPreviewSafe
+          ? capture.preview
+          : {
+              ...capture.preview,
+              assetPath: null,
+              readyAtMs: null,
+            },
+      final:
+        isFinalSafe
+          ? capture.final
+          : {
+              ...capture.final,
+              assetPath: null,
+              readyAtMs: null,
+            },
+    }),
+  }
+}
 
 function mergeCaptureIntoManifest(
   manifest: SessionManifest | null,
-  capture: NonNullable<
-    NonNullable<SessionDraft['captureReadiness']>['latestCapture']
-  >,
+  capture: SessionScopedCapture,
 ): SessionManifest | null {
   if (manifest === null || capture === null || capture === undefined) {
     return null
   }
 
-  if (capture.sessionId !== manifest.sessionId) {
+  const safeCapture = sanitizeCaptureForManifest(manifest.sessionId, capture)
+
+  if (safeCapture === null) {
     return null
   }
 
   const nextCaptures = [...manifest.captures]
   const existingIndex = nextCaptures.findIndex(
     (currentCapture) =>
-      currentCapture !== undefined && currentCapture.captureId === capture.captureId,
+      currentCapture !== undefined && currentCapture.captureId === safeCapture.captureId,
   )
 
   if (existingIndex === -1) {
-    nextCaptures.push(capture)
+    nextCaptures.push(safeCapture)
   } else {
-    nextCaptures[existingIndex] = capture
+    const existingCapture = nextCaptures[existingIndex]
+    const shouldPreserveExistingPreview =
+      existingCapture !== undefined &&
+      safeCapture.renderStatus === 'finalReady' &&
+      safeCapture.preview.assetPath === null &&
+      safeCapture.preview.readyAtMs === null &&
+      existingCapture.preview.assetPath !== null &&
+      existingCapture.preview.readyAtMs !== null &&
+      isSessionScopedAssetPath(manifest.sessionId, existingCapture.preview.assetPath)
+
+    nextCaptures[existingIndex] = shouldPreserveExistingPreview
+      ? {
+          ...safeCapture,
+          preview: existingCapture.preview,
+        }
+      : safeCapture
   }
 
   return {
     ...manifest,
     captures: nextCaptures,
   }
+}
+
+function sanitizeManifestForSession(
+  sessionId: string,
+  manifest: SessionManifest | null,
+): SessionManifest | null {
+  if (manifest === null || manifest.sessionId !== sessionId) {
+    return null
+  }
+
+  return {
+    ...manifest,
+    captures: manifest.captures
+      .map((capture) => sanitizeCaptureForManifest(sessionId, capture))
+      .filter((capture): capture is SessionScopedCapture => capture !== null),
+  }
+}
+
+function inferSurfaceStateFromSanitizedCapture(
+  readiness: Pick<SessionScopedReadiness, 'canCapture' | 'reasonCode'>,
+  latestCapture: SessionScopedCapture | null,
+): SessionScopedReadiness['surfaceState'] {
+  if (latestCapture?.renderStatus === 'previewReady') {
+    return 'previewReady'
+  }
+
+  if (latestCapture?.renderStatus === 'previewWaiting') {
+    return 'previewWaiting'
+  }
+
+  if (latestCapture?.renderStatus === 'captureSaved') {
+    return readiness.reasonCode === 'preview-waiting'
+      ? 'captureSaved'
+      : readiness.canCapture
+        ? 'captureReady'
+        : 'blocked'
+  }
+
+  if (latestCapture?.renderStatus === 'finalReady') {
+    return readiness.canCapture ? 'captureReady' : 'blocked'
+  }
+
+  if (readiness.reasonCode === 'preview-waiting') {
+    return latestCapture === null ? 'captureSaved' : 'previewWaiting'
+  }
+
+  return readiness.canCapture ? 'captureReady' : 'blocked'
+}
+
+function sanitizeCaptureReadinessForSession(
+  sessionId: string | null,
+  readiness: SessionScopedReadiness,
+) {
+  const latestCapture = readiness.latestCapture ?? null
+  const sanitizedLatestCapture =
+    sessionId !== null &&
+    latestCapture !== null &&
+    latestCapture.sessionId === sessionId
+      ? sanitizeCaptureForManifest(sessionId, latestCapture)
+      : null
+  const previewWasScrubbedWithoutSafeFinal =
+    latestCapture !== null &&
+    sanitizedLatestCapture !== null &&
+    latestCapture.preview.assetPath !== null &&
+    sanitizedLatestCapture.preview.assetPath === null &&
+    sanitizedLatestCapture.final.assetPath === null
+  const shouldUseCaptureSavedFallback =
+    sessionId !== null &&
+    sanitizedLatestCapture !== null &&
+    previewWasScrubbedWithoutSafeFinal &&
+    readiness.reasonCode === 'ready' &&
+    readiness.canCapture &&
+    readiness.primaryAction === 'capture'
+
+  if (shouldUseCaptureSavedFallback) {
+    return buildCaptureSavedFallbackReadiness(sessionId, sanitizedLatestCapture)
+  }
+
+  const safeLatestCapture = sanitizedLatestCapture
+  const normalizedSurfaceState = inferSurfaceStateFromSanitizedCapture(
+    readiness,
+    safeLatestCapture,
+  )
+
+  if (
+    safeLatestCapture === readiness.latestCapture &&
+    normalizedSurfaceState === readiness.surfaceState
+  ) {
+    return readiness
+  }
+
+  return {
+    ...readiness,
+    surfaceState: normalizedSurfaceState,
+    latestCapture: safeLatestCapture,
+  }
+}
+
+function buildCaptureSavedFallbackReadiness(
+  sessionId: string,
+  capture: SessionScopedCapture,
+): SessionScopedReadiness {
+  return {
+    schemaVersion: 'capture-readiness/v1',
+    sessionId,
+    surfaceState: 'captureSaved',
+    customerState: 'Preview Waiting',
+    canCapture: false,
+    primaryAction: 'wait',
+    customerMessage: '사진이 안전하게 저장되었어요.',
+    supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+    reasonCode: 'preview-waiting',
+    latestCapture: capture,
+  }
+}
+
+function buildCaptureFallbackReadiness(
+  sessionId: string,
+  capture: SessionScopedCapture,
+): SessionScopedReadiness {
+  switch (capture.renderStatus) {
+    case 'finalReady':
+    case 'previewReady':
+      return {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId,
+        surfaceState: 'captureReady',
+        customerState: 'Ready',
+        canCapture: true,
+        primaryAction: 'capture',
+        customerMessage: '지금 촬영할 수 있어요.',
+        supportMessage: '버튼을 누르면 바로 시작돼요.',
+        reasonCode: 'ready',
+        latestCapture: capture,
+      }
+    case 'previewWaiting':
+      return {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId,
+        surfaceState: 'previewWaiting',
+        customerState: 'Preview Waiting',
+        canCapture: false,
+        primaryAction: 'wait',
+        customerMessage: '사진이 안전하게 저장되었어요.',
+        supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+        reasonCode: 'preview-waiting',
+        latestCapture: capture,
+      }
+    case 'captureSaved':
+    default:
+      return buildCaptureSavedFallbackReadiness(sessionId, capture)
+  }
+}
+
+function sanitizeCaptureRequestResultForSession(
+  sessionId: string,
+  result: CaptureRequestResult,
+) {
+  const safeCapture = sanitizeCaptureForManifest(sessionId, result.capture)
+
+  return {
+    ...result,
+    capture: safeCapture ?? result.capture,
+    readiness:
+      result.readiness.sessionId === sessionId
+        ? sanitizeCaptureReadinessForSession(sessionId, result.readiness)
+        : sanitizeCaptureReadinessForSession(
+            sessionId,
+            buildCaptureFallbackReadiness(
+              sessionId,
+              safeCapture ?? result.capture,
+            ),
+          ),
+  }
+}
+
+function sanitizeCaptureDeleteResultForSession(
+  sessionId: string,
+  result: CaptureDeleteResult,
+) {
+  const safeManifest = sanitizeManifestForSession(sessionId, result.manifest)
+
+  return {
+    ...result,
+    manifest: safeManifest ?? result.manifest,
+    readiness: sanitizeCaptureReadinessForSession(sessionId, result.readiness),
+  }
+}
+
+function sanitizeHostErrorForSession(
+  sessionId: string,
+  hostError: HostErrorEnvelope,
+): HostErrorEnvelope {
+  if (hostError.readiness === undefined || hostError.readiness === null) {
+    return hostError
+  }
+
+  if (hostError.readiness.sessionId !== sessionId) {
+    return {
+      ...hostError,
+      readiness: undefined,
+    }
+  }
+
+  return {
+    ...hostError,
+    readiness: sanitizeCaptureReadinessForSession(sessionId, hostError.readiness),
+  }
+}
+
+function hasForeignReadinessForSession(
+  sessionId: string,
+  hostError: HostErrorEnvelope,
+) {
+  return (
+    hostError.readiness !== undefined &&
+    hostError.readiness !== null &&
+    hostError.readiness.sessionId !== sessionId
+  )
 }
 
 function deriveLifecycleStage(
@@ -115,7 +435,10 @@ export function SessionProvider({
   const presetCatalogRequestRef = useRef<Promise<PresetCatalogResult> | null>(null)
   const presetCatalogRequestSessionIdRef = useRef<string | null>(null)
   const presetCatalogRequestVersionRef = useRef(0)
+  const activePresetSelectionRequestVersionRef = useRef<number | null>(null)
+  const activePresetSelectionVersionRef = useRef(0)
   const captureReadinessRequestVersionRef = useRef(0)
+  const deleteCaptureRequestVersionRef = useRef(0)
   const requestCaptureRequestVersionRef = useRef(0)
   const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
   const capturePresetCatalogRetryCountRef = useRef(0)
@@ -124,10 +447,12 @@ export function SessionProvider({
   const [isLoadingPresetCatalog, setIsLoadingPresetCatalog] = useState(false)
   const [isSelectingPreset, setIsSelectingPreset] = useState(false)
   const [isLoadingCaptureReadiness, setIsLoadingCaptureReadiness] = useState(false)
+  const [isDeletingCapture, setIsDeletingCapture] = useState(false)
   const [isRequestingCapture, setIsRequestingCapture] = useState(false)
   const isStartingRef = useRef(false)
   const isLoadingPresetCatalogRef = useRef(false)
   const isSelectingPresetRef = useRef(false)
+  const isDeletingCaptureRef = useRef(false)
   const isRequestingCaptureRef = useRef(false)
 
   useEffect(() => {
@@ -144,15 +469,20 @@ export function SessionProvider({
 
   function invalidateCaptureRequests() {
     captureReadinessRequestVersionRef.current += 1
+    deleteCaptureRequestVersionRef.current += 1
     requestCaptureRequestVersionRef.current += 1
+    isDeletingCaptureRef.current = false
     isRequestingCaptureRef.current = false
     setIsLoadingCaptureReadiness(false)
+    setIsDeletingCapture(false)
     setIsRequestingCapture(false)
   }
 
   function clearTransientSessionActivity() {
     invalidatePresetCatalogRequests()
     invalidateCaptureRequests()
+    activePresetSelectionVersionRef.current += 1
+    activePresetSelectionRequestVersionRef.current = null
     isSelectingPresetRef.current = false
     setIsSelectingPreset(false)
   }
@@ -168,26 +498,66 @@ export function SessionProvider({
     setSessionDraft((current) => ({
       ...current,
       flowStep: 'preset-selection',
+      presetSelectionMode: 'initial-selection',
       selectedPreset: null,
       presetCatalog: [],
       presetCatalogState: 'idle',
       captureReadiness: null,
       manifest:
-        current.manifest === null
-          ? null
-          : {
-              ...current.manifest,
-              activePreset: null,
-            },
+            current.manifest === null
+              ? null
+              : {
+                  ...current.manifest,
+                  activePreset: null,
+                  activePresetId: null,
+                  activePresetDisplayName: null,
+                },
     }))
+  }
+
+  function beginPresetSwitch() {
+    invalidatePresetCatalogRequests()
+
+    setSessionDraft((current) => {
+      if (
+        current.sessionId === null ||
+        current.manifest === null ||
+        current.selectedPreset === null
+      ) {
+        return current
+      }
+
+      return {
+        ...current,
+        flowStep: 'preset-selection',
+        presetSelectionMode: 'in-session-switch',
+        presetCatalog: [],
+        presetCatalogState: 'idle',
+      }
+    })
+  }
+
+  function cancelPresetSwitch() {
+    if (sessionDraftRef.current.presetSelectionMode === 'in-session-switch') {
+      activePresetSelectionVersionRef.current += 1
+    }
+
+    setSessionDraft((current) => {
+      if (current.presetSelectionMode !== 'in-session-switch') {
+        return current
+      }
+
+      return {
+        ...current,
+        flowStep: 'capture',
+      }
+    })
   }
 
   function applyReadinessState(readiness: SessionDraft['captureReadiness']) {
     if (readiness === null) {
       return
     }
-
-    const latestCapture = readiness.latestCapture ?? null
 
     if (readiness.primaryAction === 'start-session') {
       resetToSessionStart()
@@ -201,20 +571,33 @@ export function SessionProvider({
 
     setSessionDraft((current) => ({
       ...current,
-      captureReadiness: readiness,
-      manifest:
-        current.manifest === null
-          ? null
-          : {
-              ...(latestCapture === null
-                ? current.manifest
-                : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
-                  current.manifest),
-              lifecycle: {
-                ...current.manifest.lifecycle,
-                stage: deriveLifecycleStage(readiness, current.manifest.lifecycle.stage),
-              },
-            },
+      ...(() => {
+        const safeReadiness = sanitizeCaptureReadinessForSession(
+          current.manifest?.sessionId ?? current.sessionId,
+          readiness,
+        )
+        const latestCapture = safeReadiness.latestCapture ?? null
+
+        return {
+          captureReadiness: safeReadiness,
+          manifest:
+            current.manifest === null
+              ? null
+              : {
+                  ...(latestCapture === null
+                    ? current.manifest
+                    : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
+                      current.manifest),
+                  lifecycle: {
+                    ...current.manifest.lifecycle,
+                    stage: deriveLifecycleStage(
+                      safeReadiness,
+                      current.manifest.lifecycle.stage,
+                    ),
+                  },
+                },
+        }
+      })(),
     }))
   }
 
@@ -278,6 +661,7 @@ export function SessionProvider({
         sessionId: result.sessionId,
         boothAlias: result.boothAlias,
         selectedPreset: result.manifest.activePreset,
+        presetSelectionMode: 'initial-selection',
         presetCatalog: [],
         presetCatalogState: 'idle',
         captureReadiness: buildLocalCaptureReadiness({
@@ -384,15 +768,24 @@ export function SessionProvider({
       } satisfies HostErrorEnvelope
     }
 
+    const requestVersion = activePresetSelectionVersionRef.current + 1
+
+    activePresetSelectionVersionRef.current = requestVersion
+    activePresetSelectionRequestVersionRef.current = requestVersion
     isSelectingPresetRef.current = true
     setIsSelectingPreset(true)
 
     try {
+      const wasInSessionSwitch =
+        sessionDraftRef.current.presetSelectionMode === 'in-session-switch'
       const result = await activePresetServiceRef.current.selectActivePreset(input)
 
-      if (!hasActiveSession(input.sessionId)) {
+      if (
+        !hasActiveSession(input.sessionId) ||
+        activePresetSelectionVersionRef.current !== requestVersion
+      ) {
         throw createStaleSessionError(
-          '이전 세션의 프리셋 선택 응답이 늦게 도착했어요. 현재 세션에서 다시 골라 주세요.',
+          '이미 취소했거나 이전 상태의 룩 변경 응답이 늦게 도착했어요. 현재 룩을 유지할게요.',
         )
       }
 
@@ -400,32 +793,59 @@ export function SessionProvider({
         ...current,
         flowStep: 'capture',
         selectedPreset: result.activePreset,
-        captureReadiness: buildLocalCaptureReadiness({
-          sessionId: input.sessionId,
-          hasSession: true,
-          hasPreset: true,
-        }),
-        manifest: result.manifest,
+        presetSelectionMode: 'initial-selection',
+        captureReadiness:
+          wasInSessionSwitch && current.captureReadiness !== null
+            ? current.captureReadiness
+            : buildLocalCaptureReadiness({
+                sessionId: input.sessionId,
+                hasSession: true,
+                hasPreset: true,
+              }),
+        manifest:
+          wasInSessionSwitch &&
+          current.manifest !== null &&
+          current.manifest.sessionId === result.manifest.sessionId
+            ? {
+                ...result.manifest,
+                activePresetId:
+                  result.manifest.activePresetId ?? result.activePreset.presetId,
+                captures: current.manifest.captures,
+              }
+            : {
+                ...result.manifest,
+                activePresetId:
+                  result.manifest.activePresetId ?? result.activePreset.presetId,
+              },
       }))
 
       return result
     } catch (error) {
       const hostError = error as HostErrorEnvelope
 
-      if (!hasActiveSession(input.sessionId)) {
+      if (
+        !hasActiveSession(input.sessionId) ||
+        activePresetSelectionVersionRef.current !== requestVersion
+      ) {
         throw error
       }
 
       if (hostError.code === 'session-not-found') {
         resetToSessionStart()
-      } else if (hostError.code === 'preset-not-available') {
+      } else if (
+        hostError.code === 'preset-not-available' &&
+        sessionDraftRef.current.presetSelectionMode !== 'in-session-switch'
+      ) {
         resetToPresetSelection()
       }
 
       throw error
     } finally {
-      isSelectingPresetRef.current = false
-      setIsSelectingPreset(false)
+      if (activePresetSelectionRequestVersionRef.current === requestVersion) {
+        activePresetSelectionRequestVersionRef.current = null
+        isSelectingPresetRef.current = false
+        setIsSelectingPreset(false)
+      }
     }
   }
 
@@ -437,10 +857,14 @@ export function SessionProvider({
 
     try {
       const readiness = await captureRuntimeServiceRef.current.getCaptureReadiness(input)
+      const safeReadiness = sanitizeCaptureReadinessForSession(
+        input.sessionId,
+        readiness,
+      )
 
       if (
         !hasActiveSession(input.sessionId) ||
-        readiness.sessionId !== input.sessionId ||
+        safeReadiness.sessionId !== input.sessionId ||
         captureReadinessRequestVersionRef.current !== requestVersion
       ) {
         throw createStaleSessionError(
@@ -448,28 +872,42 @@ export function SessionProvider({
         )
       }
 
-      applyReadinessState(readiness)
+      applyReadinessState(safeReadiness)
 
-      return readiness
+      return safeReadiness
     } catch (error) {
-      const hostError = error as HostErrorEnvelope
+      const rawHostError = error as HostErrorEnvelope
+      const hostError = sanitizeHostErrorForSession(
+        input.sessionId,
+        rawHostError,
+      )
+      const hadForeignReadiness = hasForeignReadinessForSession(
+        input.sessionId,
+        rawHostError,
+      )
 
       if (
         !hasActiveSession(input.sessionId) ||
         captureReadinessRequestVersionRef.current !== requestVersion
       ) {
-        throw error
+        throw hostError
       }
 
       if (hostError.readiness?.sessionId === input.sessionId) {
         applyReadinessState(hostError.readiness)
-      } else if (hostError.code === 'session-not-found') {
+      } else if (
+        hostError.code === 'session-not-found' &&
+        !hadForeignReadiness
+      ) {
         resetToSessionStart()
-      } else if (hostError.code === 'preset-not-available') {
+      } else if (
+        hostError.code === 'preset-not-available' &&
+        !hadForeignReadiness
+      ) {
         resetToPresetSelection()
       }
 
-      throw error
+      throw hostError
     } finally {
       if (captureReadinessRequestVersionRef.current === requestVersion) {
         setIsLoadingCaptureReadiness(false)
@@ -498,12 +936,20 @@ export function SessionProvider({
         ? buildCurrentCaptureFallbackReadiness()
         : undefined
 
-      if (result.sessionId !== input.sessionId) {
+      if (
+        result.sessionId !== input.sessionId ||
+        result.capture.sessionId !== input.sessionId
+      ) {
         throw createStaleSessionError(
           '현재 세션 상태를 다시 확인할게요.',
           staleReadiness,
         )
       }
+
+      const safeResult = sanitizeCaptureRequestResultForSession(
+        input.sessionId,
+        result,
+      )
 
       if (
         !hasMatchingActiveSession ||
@@ -517,47 +963,197 @@ export function SessionProvider({
 
       setSessionDraft((current) => ({
         ...current,
-        captureReadiness: result.readiness,
-        manifest:
-          current.manifest === null
-            ? null
-            : {
-                ...(mergeCaptureIntoManifest(current.manifest, result.capture) ??
-                  current.manifest),
-                lifecycle: {
-                  ...current.manifest.lifecycle,
-                  stage: deriveLifecycleStage(
-                    result.readiness,
-                    current.manifest.lifecycle.stage,
-                  ),
-                },
-              },
+        ...(() => {
+          const safeReadiness = sanitizeCaptureReadinessForSession(
+            current.manifest?.sessionId ?? current.sessionId,
+            safeResult.readiness,
+          )
+          const manifestWithCapture =
+            current.manifest === null
+              ? null
+              : mergeCaptureIntoManifest(current.manifest, safeResult.capture) ??
+                current.manifest
+          const manifestWithLatestCapture =
+            manifestWithCapture === null || safeReadiness.latestCapture === null
+              ? manifestWithCapture
+              : mergeCaptureIntoManifest(
+                  manifestWithCapture,
+                  safeReadiness.latestCapture,
+                ) ?? manifestWithCapture
+
+          return {
+            captureReadiness: safeReadiness,
+            manifest:
+              manifestWithLatestCapture === null
+                ? null
+                : {
+                    ...manifestWithLatestCapture,
+                    lifecycle: {
+                      ...manifestWithLatestCapture.lifecycle,
+                      stage: deriveLifecycleStage(
+                        safeReadiness,
+                        current.manifest?.lifecycle.stage ?? null,
+                      ),
+                    },
+                  },
+          }
+        })(),
       }))
 
-      return result
+      return safeResult
     } catch (error) {
-      const hostError = error as HostErrorEnvelope
+      const rawHostError = error as HostErrorEnvelope
+      const hostError = sanitizeHostErrorForSession(
+        input.sessionId,
+        rawHostError,
+      )
+      const hadForeignReadiness = hasForeignReadinessForSession(
+        input.sessionId,
+        rawHostError,
+      )
 
       if (
         !hasActiveSession(input.sessionId) ||
         requestCaptureRequestVersionRef.current !== requestVersion
       ) {
-        throw error
+        throw hostError
       }
 
       if (hostError.readiness?.sessionId === input.sessionId) {
         applyReadinessState(hostError.readiness)
-      } else if (hostError.code === 'session-not-found') {
+      } else if (
+        hostError.code === 'session-not-found' &&
+        !hadForeignReadiness
+      ) {
         resetToSessionStart()
-      } else if (hostError.code === 'preset-not-available') {
+      } else if (
+        hostError.code === 'preset-not-available' &&
+        !hadForeignReadiness
+      ) {
         resetToPresetSelection()
       }
 
-      throw error
+      throw hostError
     } finally {
       if (requestCaptureRequestVersionRef.current === requestVersion) {
         isRequestingCaptureRef.current = false
         setIsRequestingCapture(false)
+      }
+    }
+  }
+
+  async function deleteCapture(input: { sessionId: string; captureId: string }) {
+    if (isDeletingCaptureRef.current) {
+      throw {
+        code: 'host-unavailable',
+        message: '이미 사진을 정리하는 중이에요. 잠시만 기다려 주세요.',
+      } satisfies HostErrorEnvelope
+    }
+
+    const requestVersion = deleteCaptureRequestVersionRef.current + 1
+
+    deleteCaptureRequestVersionRef.current = requestVersion
+    isDeletingCaptureRef.current = true
+    setIsDeletingCapture(true)
+
+    try {
+      const result = await captureRuntimeServiceRef.current.deleteCapture(input)
+      const hasMatchingActiveSession = hasActiveSession(input.sessionId)
+      const staleReadiness = hasMatchingActiveSession
+        ? buildCurrentCaptureFallbackReadiness()
+        : undefined
+
+      if (
+        result.sessionId !== input.sessionId ||
+        result.captureId !== input.captureId ||
+        result.manifest.sessionId !== input.sessionId
+      ) {
+        throw createStaleSessionError(
+          '현재 세션 상태를 다시 확인할게요.',
+          staleReadiness,
+        )
+      }
+
+      const safeResult = sanitizeCaptureDeleteResultForSession(
+        input.sessionId,
+        result,
+      )
+
+      if (
+        !hasMatchingActiveSession ||
+        deleteCaptureRequestVersionRef.current !== requestVersion
+      ) {
+        throw createStaleSessionError(
+          '이전 세션의 사진 정리 응답이 늦게 도착했어요. 현재 세션에서 다시 확인해 주세요.',
+          staleReadiness,
+        )
+      }
+
+      setSessionDraft((current) => {
+        const safeReadiness = sanitizeCaptureReadinessForSession(
+          current.manifest?.sessionId ?? current.sessionId,
+          safeResult.readiness,
+        )
+        const safeManifest =
+          sanitizeManifestForSession(
+            current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
+            safeResult.manifest,
+          ) ?? safeResult.manifest
+
+        return {
+          ...current,
+          captureReadiness: safeReadiness,
+          manifest: {
+            ...safeManifest,
+            lifecycle: {
+              ...safeManifest.lifecycle,
+              stage: deriveLifecycleStage(
+                safeReadiness,
+                safeManifest.lifecycle.stage,
+              ),
+            },
+          },
+        }
+      })
+
+      return safeResult
+    } catch (error) {
+      const rawHostError = error as HostErrorEnvelope
+      const hostError = sanitizeHostErrorForSession(
+        input.sessionId,
+        rawHostError,
+      )
+      const hadForeignReadiness = hasForeignReadinessForSession(
+        input.sessionId,
+        rawHostError,
+      )
+
+      if (
+        !hasActiveSession(input.sessionId) ||
+        deleteCaptureRequestVersionRef.current !== requestVersion
+      ) {
+        throw hostError
+      }
+
+      if (hostError.readiness?.sessionId === input.sessionId) {
+        applyReadinessState(hostError.readiness)
+      } else if (
+        hostError.code === 'session-not-found' &&
+        !hadForeignReadiness
+      ) {
+        resetToSessionStart()
+      } else if (
+        hostError.code === 'preset-not-available' &&
+        !hadForeignReadiness
+      ) {
+        resetToPresetSelection()
+      }
+
+      throw hostError
+    } finally {
+      if (deleteCaptureRequestVersionRef.current === requestVersion) {
+        isDeletingCaptureRef.current = false
+        setIsDeletingCapture(false)
       }
     }
   }
@@ -574,16 +1170,21 @@ export function SessionProvider({
       return
     }
 
+    const sanitizedReadiness = sanitizeCaptureReadinessForSession(
+      sessionDraftRef.current.manifest?.sessionId ?? sessionDraftRef.current.sessionId,
+      readiness,
+    )
+
     captureReadinessRequestVersionRef.current += 1
     setIsLoadingCaptureReadiness(false)
 
-    if (shouldInvalidateCaptureRequest(readiness)) {
+    if (shouldInvalidateCaptureRequest(sanitizedReadiness)) {
       requestCaptureRequestVersionRef.current += 1
       isRequestingCaptureRef.current = false
       setIsRequestingCapture(false)
     }
 
-    applyReadinessState(readiness)
+    applyReadinessState(sanitizedReadiness)
   })
 
   const hydrateCapturePresetCatalog = useEffectEvent((sessionId: string) => {
@@ -709,12 +1310,16 @@ export function SessionProvider({
         isLoadingPresetCatalog,
         isSelectingPreset,
         isLoadingCaptureReadiness,
+        isDeletingCapture,
         isRequestingCapture,
         sessionDraft,
         startSession,
+        beginPresetSwitch,
+        cancelPresetSwitch,
         loadPresetCatalog,
         selectActivePreset,
         getCaptureReadiness,
+        deleteCapture,
         requestCapture,
       }}
     >

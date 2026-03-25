@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -15,7 +15,9 @@ function createCaptureRecord(
     schemaVersion: 'session-capture/v1',
     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
     boothAlias: 'Kim 4821',
+    activePresetId: 'preset_soft-glow',
     activePresetVersion: '2026.03.20',
+    activePresetDisplayName: 'Soft Glow',
     captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
     requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
     raw: {
@@ -53,6 +55,7 @@ function renderCaptureScreen(
     isLoadingPresetCatalog: false,
     isSelectingPreset: false,
     isLoadingCaptureReadiness: false,
+    isDeletingCapture: false,
     isRequestingCapture: false,
     sessionDraft: {
       ...DEFAULT_SESSION_DRAFT,
@@ -106,6 +109,7 @@ function renderCaptureScreen(
           presetId: 'preset_soft-glow',
           publishedVersion: '2026.03.20',
         },
+        activePresetDisplayName: 'Soft Glow',
         captures: [],
         activePresetId: 'preset_soft-glow',
         postEnd: null,
@@ -113,9 +117,52 @@ function renderCaptureScreen(
       ...sessionDraftOverrides,
     },
     startSession: vi.fn(),
+    beginPresetSwitch: vi.fn(),
+    cancelPresetSwitch: vi.fn(),
     loadPresetCatalog: vi.fn(),
     selectActivePreset: vi.fn(),
     getCaptureReadiness: vi.fn(),
+    deleteCapture: vi.fn().mockResolvedValue({
+      schemaVersion: 'capture-delete-result/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      status: 'capture-deleted',
+      manifest: {
+        schemaVersion: 'session-manifest/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        boothAlias: 'Kim 4821',
+        customer: {
+          name: 'Kim',
+          phoneLastFour: '4821',
+        },
+        createdAt: '2026-03-20T00:00:00.000Z',
+        updatedAt: '2026-03-20T00:00:00.000Z',
+        lifecycle: {
+          status: 'active',
+          stage: 'capture-ready',
+        },
+        activePreset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.03.20',
+        },
+        activePresetDisplayName: 'Soft Glow',
+        activePresetId: 'preset_soft-glow',
+        captures: [],
+        postEnd: null,
+      },
+      readiness: {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        surfaceState: 'captureReady',
+        customerState: 'Ready',
+        canCapture: true,
+        primaryAction: 'capture',
+        customerMessage: '지금 촬영할 수 있어요.',
+        supportMessage: '버튼을 누르면 바로 시작돼요.',
+        reasonCode: 'ready',
+        latestCapture: null,
+      },
+    }),
     requestCapture: vi.fn().mockResolvedValue({
       schemaVersion: 'capture-request-result/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -275,6 +322,29 @@ describe('CaptureScreen', () => {
           presetId: 'preset_soft-glow',
           publishedVersion: '2026.03.19',
         },
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.19',
+          },
+          activePresetDisplayName: null,
+          activePresetId: 'preset_soft-glow',
+          captures: [],
+          postEnd: null,
+        },
         presetCatalog: [
           {
             presetId: 'preset_soft-glow',
@@ -306,6 +376,52 @@ describe('CaptureScreen', () => {
     expect(screen.queryByText(/soft glow april/i)).not.toBeInTheDocument()
   })
 
+  it('keeps the current look label customer-safe when the catalog name is unavailable', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        presetCatalog: [],
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetDisplayName: null,
+          activePresetId: 'preset_soft-glow',
+          captures: [],
+          postEnd: null,
+        },
+      },
+    )
+
+    expect(await screen.findByText(/현재 룩 확인 중/i)).toBeInTheDocument()
+    expect(screen.queryByText(/^2026\.03\.20$/i)).not.toBeInTheDocument()
+  })
+
+  it('opens the in-session preset switch flow without dropping the current capture surface', async () => {
+    const user = userEvent.setup()
+    const value = renderCaptureScreen()
+
+    await user.click(
+      await screen.findByRole('button', { name: /다음 촬영 룩 바꾸기/i }),
+    )
+
+    expect(value.beginPresetSwitch).toHaveBeenCalledTimes(1)
+  })
+
   it('does not show a fallback error banner when requestCapture rejects with customer-safe readiness', async () => {
     const user = userEvent.setup()
 
@@ -330,6 +446,36 @@ describe('CaptureScreen', () => {
 
     await user.click(await screen.findByRole('button', { name: /사진 찍기/i }))
 
+    expect(screen.queryByText(/camera helper busy/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a customer-safe fallback error banner when requestCapture rejects with readiness for a different session', async () => {
+    const user = userEvent.setup()
+
+    renderCaptureScreen({
+      requestCapture: vi.fn().mockRejectedValue({
+        code: 'capture-not-ready',
+        message: 'camera helper busy',
+        readiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+          surfaceState: 'blocked',
+          customerState: 'Phone Required',
+          canCapture: false,
+          primaryAction: 'call-support',
+          customerMessage: '다른 세션 안내예요.',
+          supportMessage: '직원을 불러 주세요.',
+          reasonCode: 'phone-required',
+          latestCapture: null,
+        },
+      }),
+    })
+
+    await user.click(await screen.findByRole('button', { name: /사진 찍기/i }))
+
+    expect(
+      screen.getByText(/현재 세션 상태를 다시 확인하고 있어요\. 잠시 후 다시 시도해 주세요\./i),
+    ).toBeInTheDocument()
     expect(screen.queryByText(/camera helper busy/i)).not.toBeInTheDocument()
   })
 
@@ -381,7 +527,9 @@ describe('CaptureScreen', () => {
     expect(screen.getByText(/사진 레일이 아직 비어 있어도 현재 세션 기준으로는 정상/i)).toBeInTheDocument()
     expect(screen.getByText(/soft glow/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
-    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(
+      screen.getByRole('button', { name: /다음 촬영 룩 바꾸기/i }),
+    ).toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByText(/darktable|helper|filesystem|sdk/i)).not.toBeInTheDocument()
   })
@@ -411,10 +559,24 @@ describe('CaptureScreen', () => {
           activePresetId: 'preset_soft-glow',
           captures: [
             createCaptureRecord({
+              captureId: 'capture_latest',
+              renderStatus: 'finalReady',
+              preview: {
+                assetPath: 'fixtures/current-session-latest.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+              final: {
+                assetPath: 'fixtures/current-session-latest-final.jpg',
+                readyAtMs: 540,
+              },
+            }),
+            createCaptureRecord({
+              captureId: 'capture_older',
               renderStatus: 'previewReady',
               preview: {
-                assetPath: 'fixtures/current-session.jpg',
-                enqueuedAtMs: 100,
+                assetPath: 'fixtures/current-session-older.jpg',
+                enqueuedAtMs: 90,
                 readyAtMs: 400,
               },
             }),
@@ -436,8 +598,233 @@ describe('CaptureScreen', () => {
     )
 
     const images = await screen.findAllByRole('img')
+    const rail = screen.getByRole('list', { name: /현재 세션 사진 레일/i })
+    const scrollBy = vi.fn()
 
-    expect(images).toHaveLength(1)
-    expect(images[0]).toHaveAttribute('src', 'fixtures/current-session.jpg')
+    Object.defineProperty(rail, 'scrollBy', {
+      value: scrollBy,
+      configurable: true,
+    })
+
+    expect(rail).toBeInTheDocument()
+    expect(rail).toHaveAttribute('tabindex', '0')
+    expect(images).toHaveLength(2)
+    expect(
+      screen.getByRole('img', {
+        name: /현재 세션 최신 사진,\s*1번째,\s*soft glow 룩/i,
+      }),
+    ).toHaveAttribute('src', 'fixtures/current-session-latest.jpg')
+    expect(
+      screen.getByRole('img', {
+        name: /현재 세션 사진,\s*2번째,\s*soft glow 룩/i,
+      }),
+    ).toHaveAttribute(
+      'src',
+      'fixtures/current-session-older.jpg',
+    )
+    expect(screen.getByText('최신 사진')).toBeInTheDocument()
+    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(2)
+    expect(
+      screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
+    ).toHaveLength(2)
+    expect(screen.queryByText(/filesystem|render|diagnostic/i)).not.toBeInTheDocument()
+
+    fireEvent.keyDown(rail, { key: 'ArrowRight' })
+
+    expect(scrollBy).toHaveBeenCalledWith({
+      left: 240,
+      behavior: 'smooth',
+    })
+  })
+
+  it('keeps earlier captures labeled with their original look after the active preset changes', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        presetCatalog: [
+          {
+            presetId: 'preset_soft-glow',
+            displayName: 'Soft Glow',
+            publishedVersion: '2026.03.20',
+            boothStatus: 'booth-safe',
+            preview: {
+              kind: 'preview-tile',
+              assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
+              altText: 'Soft Glow preview',
+            },
+          },
+          {
+            presetId: 'preset_mono-pop',
+            displayName: 'Mono Pop',
+            publishedVersion: '2026.03.19',
+            boothStatus: 'booth-safe',
+            preview: {
+              kind: 'preview-tile',
+              assetPath: 'published/preset_mono-pop/2026.03.19/preview.jpg',
+              altText: 'Mono Pop preview',
+            },
+          },
+        ],
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_previous_look',
+              activePresetId: 'preset_mono-pop',
+              activePresetVersion: '2026.03.19',
+              activePresetDisplayName: 'Mono Pop',
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/previous-look.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    expect(await screen.findByText(/촬영 당시 mono pop 룩/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/이 사진은 이전 룩으로 찍혔고 그대로 유지돼요\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('asks for confirmation before deleting a current-session photo and calls deleteCapture on confirm', async () => {
+    const user = userEvent.setup()
+    const value = renderCaptureScreen(
+      {},
+      {
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_latest',
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/current-session-latest.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    await user.click(await screen.findByRole('button', { name: '사진 정리' }))
+
+    expect(screen.getByText(/이 사진을 정리할까요\?/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^사진 정리$/i }))
+
+    expect(value.deleteCapture).toHaveBeenCalledWith({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      captureId: 'capture_latest',
+    })
+  })
+
+  it('shows plain-language blocked guidance when deleteCapture is rejected for the current session', async () => {
+    const user = userEvent.setup()
+
+    renderCaptureScreen(
+      {
+        deleteCapture: vi.fn().mockRejectedValue({
+          code: 'capture-delete-blocked',
+          message: '이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.',
+          readiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'previewReady',
+            customerState: 'Ready',
+            canCapture: true,
+            primaryAction: 'capture',
+            customerMessage: '지금 촬영할 수 있어요.',
+            supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
+            reasonCode: 'ready',
+            latestCapture: null,
+          },
+        }),
+      },
+      {
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_latest',
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/current-session-latest.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    await user.click(await screen.findByRole('button', { name: '사진 정리' }))
+    await user.click(screen.getByRole('button', { name: /^사진 정리$/i }))
+
+    expect(
+      await screen.findByText(/이 사진은 지금 정리할 수 없어요\. 잠시 후 다시 확인해 주세요\./i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/policy|filesystem|internal/i)).not.toBeInTheDocument()
   })
 })

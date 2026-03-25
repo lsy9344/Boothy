@@ -138,6 +138,13 @@ pub struct CaptureRequestInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CaptureDeleteInputDto {
+    pub session_id: String,
+    pub capture_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaptureReadinessDto {
     pub schema_version: String,
     pub session_id: String,
@@ -406,6 +413,17 @@ pub struct CaptureRequestResultDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CaptureDeleteResultDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub capture_id: String,
+    pub status: String,
+    pub manifest: SessionManifest,
+    pub readiness: CaptureReadinessDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HostFieldErrors {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -482,6 +500,18 @@ impl HostErrorEnvelope {
     pub fn capture_not_ready(message: impl Into<String>, readiness: CaptureReadinessDto) -> Self {
         Self {
             code: "capture-not-ready".into(),
+            message: message.into(),
+            readiness: Some(readiness),
+            field_errors: None,
+        }
+    }
+
+    pub fn capture_delete_blocked(
+        message: impl Into<String>,
+        readiness: CaptureReadinessDto,
+    ) -> Self {
+        Self {
+            code: "capture-delete-blocked".into(),
             message: message.into(),
             readiness: Some(readiness),
             field_errors: None,

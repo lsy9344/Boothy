@@ -1,7 +1,11 @@
 import { z } from 'zod'
 
 import { sessionIdSchema } from './ids'
-import { publishedVersionSchema } from './preset-core'
+import {
+  presetDisplayNameSchema,
+  presetIdSchema,
+  publishedVersionSchema,
+} from './preset-core'
 
 export const sessionCaptureSchemaVersion = 'session-capture/v1' as const
 export const captureReadinessSchemaVersion = 'capture-readiness/v1' as const
@@ -9,6 +13,8 @@ export const captureReadinessUpdateSchemaVersion =
   'capture-readiness-update/v1' as const
 export const captureRequestResultSchemaVersion =
   'capture-request-result/v1' as const
+export const captureDeleteResultSchemaVersion =
+  'capture-delete-result/v1' as const
 
 export const captureIdSchema = z.string().trim().min(1)
 export const captureRequestIdSchema = z.string().trim().min(1)
@@ -63,7 +69,9 @@ export const sessionCaptureRecordSchema = z.object({
   schemaVersion: z.literal(sessionCaptureSchemaVersion),
   sessionId: sessionIdSchema,
   boothAlias: z.string().trim().min(1),
+  activePresetId: presetIdSchema,
   activePresetVersion: publishedVersionSchema,
+  activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
   captureId: captureIdSchema,
   requestId: captureRequestIdSchema,
   raw: rawCaptureAssetSchema,

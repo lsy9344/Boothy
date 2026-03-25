@@ -4,6 +4,7 @@ import { captureReadinessSnapshotSchema } from '../schemas'
 
 export const hostErrorCodeSchema = z.enum([
   'capability-denied',
+  'capture-delete-blocked',
   'capture-not-ready',
   'host-unavailable',
   'preset-catalog-unavailable',

@@ -92,6 +92,7 @@ pub fn select_active_preset_in_dir(
 
     manifest.active_preset = Some(active_preset);
     manifest.active_preset_id = Some(selected_preset.preset_id.clone());
+    manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     if manifest.lifecycle.stage == "session-started" {
         manifest.lifecycle.stage = "preset-selected".into();

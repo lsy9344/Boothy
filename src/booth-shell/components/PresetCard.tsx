@@ -1,11 +1,12 @@
 import type { PublishedPresetSummary } from '../../shared-contracts'
-import { presetSelectCopy } from '../copy/presetSelectCopy'
 import { resolvePresetPreviewSrc } from './preset-preview-src'
 
 type PresetCardProps = {
   preset: PublishedPresetSummary
   isSelected: boolean
   disabled: boolean
+  saveLabel: string
+  selectedLabel: string
   onSelect(preset: PublishedPresetSummary): void
 }
 
@@ -13,6 +14,8 @@ export function PresetCard({
   preset,
   isSelected,
   disabled,
+  saveLabel,
+  selectedLabel,
   onSelect,
 }: PresetCardProps) {
   const previewSrc = resolvePresetPreviewSrc(preset.preview.assetPath)
@@ -31,7 +34,7 @@ export function PresetCard({
       <div className="preset-card__body">
         <span className="preset-card__name">{preset.displayName}</span>
         <span className="preset-card__action">
-          {isSelected ? presetSelectCopy.selectedLabel : presetSelectCopy.saveLabel}
+          {isSelected ? selectedLabel : saveLabel}
         </span>
       </div>
     </button>

@@ -7,9 +7,14 @@ use std::{
 use boothy_lib::{
     capture::{
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
-        normalized_state::{get_capture_readiness_in_dir, request_capture_in_dir},
+        normalized_state::{
+            delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
+        },
     },
-    contracts::dto::{CaptureReadinessInputDto, CaptureRequestInputDto, SessionStartInputDto},
+    contracts::dto::{
+        CaptureDeleteInputDto, CaptureReadinessInputDto, CaptureRequestInputDto,
+        SessionStartInputDto,
+    },
     preset::preset_catalog::resolve_published_preset_catalog_dir,
     session::{
         session_manifest::SessionManifest,
@@ -420,6 +425,106 @@ fn capture_flow_blocks_a_follow_up_capture_until_the_latest_preview_is_ready() {
 }
 
 #[test]
+fn switching_active_preset_only_changes_future_capture_bindings() {
+    let base_dir = unique_test_root("capture-preset-switch-forward-only");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_named_published_bundle(&catalog_root, "preset_soft-glow", "Soft Glow", "2026.03.20");
+    create_named_published_bundle(&catalog_root, "preset_mono-pop", "Mono Pop", "2026.03.21");
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("first preset should become active");
+
+    let first_capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("first capture should save");
+    let first_ready_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_mono-pop".into(),
+            published_version: "2026.03.21".into(),
+        },
+    )
+    .expect("second preset should become active");
+
+    let second_capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("second capture should save");
+
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+    let manifest: SessionManifest =
+        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
+
+    assert_eq!(
+        manifest
+            .active_preset
+            .as_ref()
+            .expect("active preset should still exist")
+            .preset_id,
+        "preset_mono-pop",
+    );
+    assert_eq!(manifest.captures.len(), 2);
+    assert_eq!(manifest.captures[0].active_preset_id, "preset_soft-glow");
+    assert_eq!(manifest.captures[0].active_preset_version, "2026.03.20");
+    assert_eq!(
+        manifest.captures[0].active_preset_display_name.as_deref(),
+        Some("Soft Glow")
+    );
+    assert_eq!(manifest.captures[1].active_preset_id, "preset_mono-pop");
+    assert_eq!(manifest.captures[1].active_preset_version, "2026.03.21");
+    assert_eq!(
+        manifest.captures[1].active_preset_display_name.as_deref(),
+        Some("Mono Pop")
+    );
+    assert_eq!(
+        manifest.captures[0].raw.asset_path,
+        first_capture.capture.raw.asset_path,
+    );
+    assert_eq!(
+        manifest.captures[0].preview.asset_path,
+        first_ready_capture.preview.asset_path,
+    );
+    assert_eq!(
+        manifest.captures[1].capture_id,
+        second_capture.capture.capture_id,
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn preview_render_failure_escalates_to_a_phone_required_boundary() {
     let base_dir = unique_test_root("preview-render-failure");
     let session = start_session_in_dir(
@@ -469,6 +574,238 @@ fn preview_render_failure_escalates_to_a_phone_required_boundary() {
 
     assert_eq!(readiness.reason_code, "phone-required");
     assert!(!readiness.can_capture);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn delete_capture_removes_only_the_selected_current_session_artifacts() {
+    let base_dir = unique_test_root("delete-current-session-capture");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("first capture should save");
+    let first_ready_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+
+    let second_capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("second capture should save");
+    let second_ready_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("second preview should complete");
+
+    let delete_result = delete_capture_in_dir(
+        &base_dir,
+        CaptureDeleteInputDto {
+            session_id: session.session_id.clone(),
+            capture_id: second_capture.capture.capture_id.clone(),
+        },
+    )
+    .expect("selected capture should be deleted");
+
+    assert_eq!(delete_result.status, "capture-deleted");
+    assert_eq!(delete_result.manifest.captures.len(), 1);
+    assert_eq!(
+        delete_result.manifest.captures[0].capture_id,
+        first_capture.capture.capture_id,
+    );
+    assert_eq!(delete_result.readiness.reason_code, "ready");
+    assert!(std::path::Path::new(&first_capture.capture.raw.asset_path).is_file());
+    assert!(std::path::Path::new(
+        &first_ready_capture
+            .preview
+            .asset_path
+            .clone()
+            .expect("first preview path should exist")
+    )
+    .is_file());
+    assert!(!std::path::Path::new(&second_capture.capture.raw.asset_path).exists());
+    assert!(!std::path::Path::new(
+        &second_ready_capture
+            .preview
+            .asset_path
+            .clone()
+            .expect("second preview path should exist")
+    )
+    .exists());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn delete_capture_blocks_preview_waiting_targets_and_preserves_files() {
+    let base_dir = unique_test_root("delete-preview-waiting-blocked");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("capture should save");
+
+    let error = delete_capture_in_dir(
+        &base_dir,
+        CaptureDeleteInputDto {
+            session_id: session.session_id.clone(),
+            capture_id: capture.capture.capture_id.clone(),
+        },
+    )
+    .expect_err("preview waiting capture should be blocked");
+
+    assert_eq!(error.code, "capture-delete-blocked");
+    assert_eq!(
+        error
+            .readiness
+            .expect("blocked delete should keep readiness")
+            .reason_code,
+        "preview-waiting",
+    );
+    assert!(std::path::Path::new(&capture.capture.raw.asset_path).is_file());
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id,
+        },
+    )
+    .expect("readiness should still resolve");
+
+    assert_eq!(readiness.reason_code, "preview-waiting");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn delete_capture_preserves_manifest_when_asset_cleanup_cannot_be_staged() {
+    let base_dir = unique_test_root("delete-stage-failure");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("capture should save");
+    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
+        .expect("preview should complete");
+
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+    let mut manifest: SessionManifest =
+        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
+
+    manifest.captures[0].raw.asset_path = SessionPaths::new(&base_dir, &session.session_id)
+        .diagnostics_dir
+        .to_string_lossy()
+        .into_owned();
+
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let error = delete_capture_in_dir(
+        &base_dir,
+        CaptureDeleteInputDto {
+            session_id: session.session_id.clone(),
+            capture_id: capture.capture.capture_id.clone(),
+        },
+    )
+    .expect_err("directory-backed asset should fail staging");
+
+    assert_eq!(error.code, "session-persistence-failed");
+
+    let persisted_manifest_bytes =
+        fs::read_to_string(&manifest_path).expect("manifest should still be readable");
+    let persisted_manifest: SessionManifest =
+        serde_json::from_str(&persisted_manifest_bytes).expect("manifest should deserialize");
+
+    assert_eq!(persisted_manifest.captures.len(), 1);
+    assert_eq!(
+        persisted_manifest.captures[0].capture_id,
+        capture.capture.capture_id,
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -599,21 +936,30 @@ fn update_stage(base_dir: &PathBuf, session_id: &str, stage: &str) {
 }
 
 fn create_published_bundle(catalog_root: &PathBuf) {
-    let bundle_dir = catalog_root.join("preset_soft-glow").join("2026.03.20");
+    create_named_published_bundle(catalog_root, "preset_soft-glow", "Soft Glow", "2026.03.20");
+}
+
+fn create_named_published_bundle(
+    catalog_root: &PathBuf,
+    preset_id: &str,
+    display_name: &str,
+    published_version: &str,
+) {
+    let bundle_dir = catalog_root.join(preset_id).join(published_version);
     fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
     fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should exist");
 
     let bundle = serde_json::json!({
       "schemaVersion": "published-preset-bundle/v1",
-      "presetId": "preset_soft-glow",
-      "displayName": "Soft Glow",
-      "publishedVersion": "2026.03.20",
+      "presetId": preset_id,
+      "displayName": display_name,
+      "publishedVersion": published_version,
       "lifecycleStatus": "published",
       "boothStatus": "booth-safe",
       "preview": {
         "kind": "preview-tile",
         "assetPath": "preview.jpg",
-        "altText": "Soft Glow sample portrait",
+        "altText": format!("{display_name} sample portrait"),
       }
     });
 

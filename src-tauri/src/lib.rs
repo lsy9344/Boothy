@@ -19,6 +19,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::capture_commands::get_capture_readiness,
+            commands::capture_commands::delete_capture,
             commands::capture_commands::request_capture,
             commands::preset_commands::load_preset_catalog,
             commands::preset_commands::select_active_preset,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  captureDeleteResultSchema,
   activePresetBindingSchema,
   boothSessionStubSchema,
   captureReadinessSnapshotSchema,
@@ -109,6 +110,7 @@ describe('shared contracts baseline', () => {
         presetId: 'preset_soft-glow',
         publishedVersion: '2026.03.20',
       },
+      activePresetDisplayName: 'Soft Glow',
       captures: [],
       postEnd: null,
     })
@@ -221,7 +223,9 @@ describe('shared contracts baseline', () => {
       schemaVersion: 'session-capture/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       boothAlias: 'Kim 4821',
+      activePresetId: 'preset_soft-glow',
       activePresetVersion: '2026.03.20',
+      activePresetDisplayName: 'Soft Glow',
       captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
       raw: {
@@ -269,8 +273,57 @@ describe('shared contracts baseline', () => {
     })
 
     expect(captureResult.readiness.latestCapture?.captureId).toBe(capture.captureId)
+    expect(captureResult.capture.activePresetDisplayName).toBe('Soft Glow')
     expect(captureResult.capture.raw.assetPath).toContain('captures/originals')
     expect(captureResult.status).toBe('capture-saved')
+  })
+
+  it('parses capture deletion results with the updated manifest and readiness', () => {
+    const manifest = sessionManifestSchema.parse({
+      schemaVersion: 'session-manifest/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      boothAlias: 'Kim 4821',
+      customer: {
+        name: 'Kim',
+        phoneLastFour: '4821',
+      },
+      createdAt: '2026-03-20T00:00:00.000Z',
+      updatedAt: '2026-03-20T00:00:00.000Z',
+      lifecycle: {
+        status: 'active',
+        stage: 'capture-ready',
+      },
+      activePreset: {
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+      activePresetId: 'preset_soft-glow',
+      captures: [],
+      postEnd: null,
+    })
+
+    const result = captureDeleteResultSchema.parse({
+      schemaVersion: 'capture-delete-result/v1',
+      sessionId: manifest.sessionId,
+      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      status: 'capture-deleted',
+      manifest,
+      readiness: {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId: manifest.sessionId,
+        surfaceState: 'captureReady',
+        customerState: 'Ready',
+        canCapture: true,
+        primaryAction: 'capture',
+        customerMessage: '지금 촬영할 수 있어요.',
+        supportMessage: '버튼을 누르면 바로 시작돼요.',
+        reasonCode: 'ready',
+        latestCapture: null,
+      },
+    })
+
+    expect(result.status).toBe('capture-deleted')
+    expect(result.manifest.captures).toEqual([])
   })
 
   it('parses blocked capture errors with embedded customer-safe readiness guidance', () => {

@@ -2,12 +2,14 @@ import { z } from 'zod'
 
 import { sessionIdSchema } from './ids'
 import {
+  captureDeleteResultSchemaVersion,
   captureReadinessSchemaVersion,
   captureReadinessUpdateSchemaVersion,
   captureRequestResultSchemaVersion,
   captureSurfaceStateSchema,
   sessionCaptureRecordSchema,
 } from './session-capture'
+import { sessionManifestSchema } from './session-manifest'
 
 const fallbackSessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m' as const
 
@@ -117,6 +119,11 @@ export const captureRequestInputSchema = z.object({
   sessionId: sessionIdSchema,
 })
 
+export const captureDeleteInputSchema = z.object({
+  sessionId: sessionIdSchema,
+  captureId: z.string().trim().min(1),
+})
+
 const captureRequestResultInputSchema = z.object({
   schemaVersion: z.literal(captureRequestResultSchemaVersion).optional(),
   sessionId: sessionIdSchema,
@@ -131,6 +138,26 @@ export const captureRequestResultSchema = captureRequestResultInputSchema.transf
     sessionId: result.sessionId,
     status: 'capture-saved' as const,
     capture: result.capture,
+    readiness: result.readiness,
+  }),
+)
+
+const captureDeleteResultInputSchema = z.object({
+  schemaVersion: z.literal(captureDeleteResultSchemaVersion).optional(),
+  sessionId: sessionIdSchema,
+  captureId: z.string().trim().min(1),
+  status: z.literal('capture-deleted'),
+  manifest: sessionManifestSchema,
+  readiness: captureReadinessSnapshotSchema,
+})
+
+export const captureDeleteResultSchema = captureDeleteResultInputSchema.transform(
+  (result) => ({
+    schemaVersion: result.schemaVersion ?? captureDeleteResultSchemaVersion,
+    sessionId: result.sessionId,
+    captureId: result.captureId,
+    status: 'capture-deleted' as const,
+    manifest: result.manifest,
     readiness: result.readiness,
   }),
 )

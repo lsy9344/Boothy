@@ -24,6 +24,8 @@ export const publishedPresetSummarySchema = z.object({
   preview: presetPreviewAssetSchema,
 })
 
+export const presetDisplayNameSchema = z.string().trim().min(1)
+
 export const loadPresetCatalogInputSchema = z.object({
   sessionId: sessionIdSchema,
 })

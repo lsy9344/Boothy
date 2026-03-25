@@ -99,6 +99,8 @@ function createSelectionResult(
     manifest: {
       ...session.manifest,
       activePreset: preset,
+      activePresetDisplayName:
+        preset.presetId === 'preset_soft-glow' ? 'Soft Glow' : 'Mono Pop',
       updatedAt: '2026-03-20T00:05:00.000Z',
     },
   }
@@ -109,7 +111,9 @@ function createCaptureRecord() {
     schemaVersion: 'session-capture/v1',
     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
     boothAlias: 'Kim 4821',
+    activePresetId: 'preset_soft-glow',
     activePresetVersion: '2026.03.20',
+    activePresetDisplayName: 'Soft Glow',
     captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
     requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
     raw: {
@@ -284,6 +288,7 @@ describe('PresetSelectScreen', () => {
             presetId: 'preset_soft-glow',
             publishedVersion: '2026.03.20',
           },
+          activePresetDisplayName: 'Soft Glow',
         },
       })
 
@@ -304,6 +309,64 @@ describe('PresetSelectScreen', () => {
     expect(screen.queryByText(/선택 대기 중/i)).not.toBeInTheDocument()
   })
 
+  it('lets the customer switch looks mid-session without rebinding earlier photos', async () => {
+    const user = userEvent.setup()
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(),
+        manifest: {
+          ...createSessionStartResult().manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetDisplayName: 'Soft Glow',
+          captures: [
+            {
+              ...createCaptureRecord(),
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/current-session-latest.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            },
+          ],
+        },
+      })
+
+    renderPresetFlow({
+      startSession,
+    })
+
+    await user.type(await screen.findByLabelText(/이름/i), 'Kim')
+    await user.type(screen.getByLabelText(/휴대전화 뒤 4자리/i), '4821')
+    await user.click(screen.getByRole('button', { name: /시작하기/i }))
+
+    await user.click(
+      await screen.findByRole('button', { name: /다음 촬영 룩 바꾸기/i }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /다음 촬영 룩을 다시 골라 주세요/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/이미 찍은 사진은 그대로 두고, 다음 촬영부터만 새 룩으로 이어져요\./i),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /mono pop/i }))
+
+    expect(
+      await screen.findByRole('heading', { name: /지금 촬영할 수 있어요/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/mono pop/i)).toBeInTheDocument()
+    expect(screen.getByText(/촬영 당시 soft glow 룩/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/이 사진은 이전 룩으로 찍혔고 그대로 유지돼요\./i),
+    ).toBeInTheDocument()
+  })
+
   it('retries active preset hydration after a transient catalog failure and backfills the preset name', async () => {
     const user = userEvent.setup()
     const startSession = vi
@@ -316,6 +379,7 @@ describe('PresetSelectScreen', () => {
             presetId: 'preset_soft-glow',
             publishedVersion: '2026.03.20',
           },
+          activePresetDisplayName: 'Soft Glow',
         },
       })
     const loadPresetCatalog = vi
@@ -372,16 +436,15 @@ describe('PresetSelectScreen', () => {
     expect(
       await screen.findByRole('heading', { name: /지금 촬영할 수 있어요/i }),
     ).toBeInTheDocument()
-    expect(await screen.findByText(/선택한 룩 확인 중/i)).toBeInTheDocument()
+    expect(await screen.findByText(/soft glow/i)).toBeInTheDocument()
     expect(loadPresetCatalog).toHaveBeenCalledTimes(1)
 
-    expect(
-      await screen.findByText(/soft glow/i, undefined, {
+    await expect
+      .poll(() => loadPresetCatalog.mock.calls.length, {
         timeout: 4000,
-      }),
-    ).toBeInTheDocument()
-    expect(loadPresetCatalog).toHaveBeenCalledTimes(2)
-    expect(screen.queryByText(/선택한 룩 확인 중/i)).not.toBeInTheDocument()
+      })
+      .toBe(2)
+    expect(screen.queryByText(/^2026\.03\.20$/i)).not.toBeInTheDocument()
   })
 
   it('renders six preset cards when the catalog is at the display limit', async () => {

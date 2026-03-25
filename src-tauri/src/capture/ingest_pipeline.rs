@@ -1,15 +1,12 @@
 use std::{
     fs,
     path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
-    capture::normalized_state::normalize_capture_readiness,
+    capture::{normalized_state::normalize_capture_readiness, CAPTURE_PIPELINE_LOCK},
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     session::{
         session_manifest::{
@@ -23,7 +20,6 @@ use crate::{
 };
 
 static CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
-static CAPTURE_PIPELINE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn persist_capture_in_dir(
     base_dir: &Path,
@@ -206,7 +202,9 @@ fn build_saved_capture_record(
         schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
         session_id: manifest.session_id.clone(),
         booth_alias: manifest.booth_alias.clone(),
+        active_preset_id: active_preset.preset_id.clone(),
         active_preset_version: active_preset.published_version.clone(),
+        active_preset_display_name: manifest.active_preset_display_name.clone(),
         capture_id,
         request_id,
         raw: RawCaptureAsset {

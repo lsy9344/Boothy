@@ -348,6 +348,10 @@ fn selecting_a_preset_persists_the_binding_in_session_manifest() {
         manifest.active_preset_id.as_deref(),
         Some("preset_soft-glow")
     );
+    assert_eq!(
+        manifest.active_preset_display_name.as_deref(),
+        Some("Soft Glow")
+    );
 
     let manifest_json: serde_json::Value =
         serde_json::from_str(&manifest_bytes).expect("manifest JSON should deserialize");
@@ -355,6 +359,10 @@ fn selecting_a_preset_persists_the_binding_in_session_manifest() {
     assert_eq!(
         manifest_json.get("activePresetId"),
         Some(&serde_json::Value::String("preset_soft-glow".into()))
+    );
+    assert_eq!(
+        manifest_json.get("activePresetDisplayName"),
+        Some(&serde_json::Value::String("Soft Glow".into()))
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -429,6 +437,7 @@ fn legacy_v1_manifest_with_only_active_preset_id_still_deserializes() {
 
     assert!(manifest.active_preset.is_none());
     assert!(manifest.active_preset_id.is_none());
+    assert!(manifest.active_preset_display_name.is_none());
 }
 
 #[test]

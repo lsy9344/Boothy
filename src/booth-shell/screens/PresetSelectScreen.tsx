@@ -4,10 +4,11 @@ import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 import type { HostErrorEnvelope, PublishedPresetSummary } from '../../shared-contracts'
 import { useSessionState } from '../../session-domain/state/use-session-state'
 import { PresetCard } from '../components/PresetCard'
-import { presetSelectCopy } from '../copy/presetSelectCopy'
+import { getPresetSelectCopy } from '../copy/presetSelectCopy'
 
 export function PresetSelectScreen() {
   const {
+    cancelPresetSwitch,
     isLoadingPresetCatalog,
     isSelectingPreset,
     loadPresetCatalog,
@@ -18,6 +19,7 @@ export function PresetSelectScreen() {
 
   const activeSessionId = sessionDraft.sessionId
   const activePreset = sessionDraft.selectedPreset
+  const copy = getPresetSelectCopy(sessionDraft.presetSelectionMode)
 
   const selectedPreset =
     sessionDraft.presetCatalog.find(
@@ -25,6 +27,8 @@ export function PresetSelectScreen() {
         preset.presetId === activePreset?.presetId &&
         preset.publishedVersion === activePreset?.publishedVersion,
     ) ?? null
+  const selectedPresetName =
+    selectedPreset?.displayName ?? sessionDraft.manifest?.activePresetDisplayName ?? null
 
   function shouldSuppressPresetError(error: unknown) {
     const hostError = error as Partial<HostErrorEnvelope>
@@ -45,7 +49,7 @@ export function PresetSelectScreen() {
       await loadPresetCatalog({ sessionId: activeSessionId })
     } catch (error) {
       if (!shouldSuppressPresetError(error)) {
-        setErrorMessage(presetSelectCopy.loadErrorDescription)
+        setErrorMessage(copy.loadErrorDescription)
       }
     }
   }
@@ -85,36 +89,44 @@ export function PresetSelectScreen() {
         },
       })
     } catch (error) {
+      const hostError = error as Partial<HostErrorEnvelope>
+
+      if (hostError.code === 'preset-not-available') {
+        await reloadCatalog()
+        setErrorMessage(copy.unavailableDescription)
+        return
+      }
+
       if (!shouldSuppressPresetError(error)) {
-        setErrorMessage(presetSelectCopy.saveErrorDescription)
+        setErrorMessage(copy.saveErrorDescription)
       }
     }
   }
 
   return (
     <SurfaceLayout
-      eyebrow={presetSelectCopy.eyebrow}
-      title={presetSelectCopy.title}
-      description={presetSelectCopy.description}
+      eyebrow={copy.eyebrow}
+      title={copy.title}
+      description={copy.description}
     >
       <article className="surface-card">
-        <h2>{presetSelectCopy.sessionLabel}</h2>
+        <h2>{copy.sessionLabel}</h2>
         <p>{sessionDraft.boothAlias}</p>
-        <p>{presetSelectCopy.sessionDescription}</p>
+        <p>{copy.sessionDescription}</p>
       </article>
 
       {isLoadingPresetCatalog ? (
         <article className="surface-card">
-          <h2>{presetSelectCopy.loadingTitle}</h2>
-          <p>{presetSelectCopy.loadingDescription}</p>
+          <h2>{copy.loadingTitle}</h2>
+          <p>{copy.loadingDescription}</p>
         </article>
       ) : null}
 
       {!isLoadingPresetCatalog &&
       sessionDraft.presetCatalogState === 'empty' ? (
         <article className="surface-card">
-          <h2>{presetSelectCopy.emptyTitle}</h2>
-          <p>{presetSelectCopy.emptyDescription}</p>
+          <h2>{copy.emptyTitle}</h2>
+          <p>{copy.emptyDescription}</p>
         </article>
       ) : null}
 
@@ -129,6 +141,8 @@ export function PresetSelectScreen() {
                 preset.publishedVersion === activePreset?.publishedVersion
               }
               disabled={isSelectingPreset}
+              saveLabel={copy.saveLabel}
+              selectedLabel={copy.selectedLabel}
               onSelect={handleSelect}
             />
           ))}
@@ -137,26 +151,37 @@ export function PresetSelectScreen() {
 
       {sessionDraft.presetCatalogState === 'error' ? (
         <article className="surface-card">
-          <h2>{presetSelectCopy.errorTitle}</h2>
-          <p>{errorMessage ?? presetSelectCopy.loadErrorDescription}</p>
+          <h2>{copy.errorTitle}</h2>
+          <p>{errorMessage ?? copy.loadErrorDescription}</p>
           <button
             type="button"
             className="surface-card__action"
             disabled={isLoadingPresetCatalog}
             onClick={() => void reloadCatalog()}
           >
-            {presetSelectCopy.retryLabel}
+            {copy.retryLabel}
           </button>
         </article>
       ) : null}
 
       <article className="surface-card">
-        <h2>{presetSelectCopy.guidanceTitle}</h2>
+        <h2>{copy.guidanceTitle}</h2>
         <p>
-          {selectedPreset === null
-            ? presetSelectCopy.guidanceDescription
-            : `${selectedPreset.displayName} ${presetSelectCopy.selectedDescription}`}
+          {selectedPresetName === null
+            ? copy.guidanceDescription
+            : `${selectedPresetName} ${copy.selectedDescription}`}
         </p>
+        {copy.cancelDescription !== null ? <p>{copy.cancelDescription}</p> : null}
+        {copy.cancelLabel !== null ? (
+          <button
+            type="button"
+            className="surface-card__action"
+            disabled={isSelectingPreset}
+            onClick={cancelPresetSwitch}
+          >
+            {copy.cancelLabel}
+          </button>
+        ) : null}
       </article>
 
       {errorMessage !== null ? (

@@ -7,12 +7,14 @@ import type {
 
 export type SessionFlowStep = 'session-start' | 'preset-selection' | 'capture'
 export type PresetCatalogState = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+export type PresetSelectionMode = 'initial-selection' | 'in-session-switch'
 
 export type SessionDraft = {
   flowStep: SessionFlowStep
   sessionId: string | null
   boothAlias: string | null
   selectedPreset: ActivePresetBinding | null
+  presetSelectionMode: PresetSelectionMode
   presetCatalog: PublishedPresetSummary[]
   presetCatalogState: PresetCatalogState
   captureReadiness: CaptureReadinessSnapshot | null
@@ -24,6 +26,7 @@ export const DEFAULT_SESSION_DRAFT: SessionDraft = {
   sessionId: null,
   boothAlias: null,
   selectedPreset: null,
+  presetSelectionMode: 'initial-selection',
   presetCatalog: [],
   presetCatalogState: 'idle',
   captureReadiness: null,

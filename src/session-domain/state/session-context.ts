@@ -1,6 +1,8 @@
 import { createContext } from 'react'
 
 import type {
+  CaptureDeleteInput,
+  CaptureDeleteResult,
   CaptureReadinessInput,
   CaptureReadinessSnapshot,
   CaptureRequestInput,
@@ -19,14 +21,18 @@ export type SessionStateContextValue = {
   isLoadingPresetCatalog: boolean
   isSelectingPreset: boolean
   isLoadingCaptureReadiness: boolean
+  isDeletingCapture: boolean
   isRequestingCapture: boolean
   sessionDraft: SessionDraft
   startSession(input: SessionStartInput): Promise<SessionStartResult>
+  beginPresetSwitch(): void
+  cancelPresetSwitch(): void
   loadPresetCatalog(input: LoadPresetCatalogInput): Promise<PresetCatalogResult>
   selectActivePreset(input: PresetSelectionInput): Promise<PresetSelectionResult>
   getCaptureReadiness(
     input: CaptureReadinessInput,
   ): Promise<CaptureReadinessSnapshot>
+  deleteCapture(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
 }
 

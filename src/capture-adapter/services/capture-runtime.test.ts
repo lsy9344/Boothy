@@ -12,6 +12,7 @@ function createCaptureRecord() {
     schemaVersion: 'session-capture/v1',
     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
     boothAlias: 'Kim 4821',
+    activePresetId: 'preset_soft-glow',
     activePresetVersion: '2026.03.20',
     captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
     requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -92,6 +93,56 @@ describe('capture runtime adapter', () => {
         }
       }
 
+      if (cmd === 'delete_capture') {
+        expect(payload).toEqual({
+          input: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          },
+        })
+
+        return {
+          schemaVersion: 'capture-delete-result/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          status: 'capture-deleted',
+          manifest: {
+            schemaVersion: 'session-manifest/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            boothAlias: 'Kim 4821',
+            customer: {
+              name: 'Kim',
+              phoneLastFour: '4821',
+            },
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+            lifecycle: {
+              status: 'active',
+              stage: 'capture-ready',
+            },
+            activePreset: {
+              presetId: 'preset_soft-glow',
+              publishedVersion: '2026.03.20',
+            },
+            activePresetId: 'preset_soft-glow',
+            captures: [],
+            postEnd: null,
+          },
+          readiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'captureReady',
+            customerState: 'Ready',
+            canCapture: true,
+            primaryAction: 'capture',
+            customerMessage: '지금 촬영할 수 있어요.',
+            supportMessage: '버튼을 누르면 바로 시작돼요.',
+            reasonCode: 'ready',
+            latestCapture: null,
+          },
+        }
+      }
+
       return undefined
     })
 
@@ -116,6 +167,18 @@ describe('capture runtime adapter', () => {
       status: 'capture-saved',
       capture: {
         renderStatus: 'previewWaiting',
+      },
+    })
+
+    await expect(
+      service.deleteCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).resolves.toMatchObject({
+      status: 'capture-deleted',
+      manifest: {
+        captures: [],
       },
     })
   })
@@ -287,6 +350,118 @@ describe('capture runtime adapter', () => {
     ).rejects.toMatchObject({
       code: 'host-unavailable',
       message: '현재 세션 상태를 다시 확인할게요.',
+    })
+  })
+
+  it('rejects delete responses whose session id does not match the request', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'delete_capture') {
+        return {
+          schemaVersion: 'capture-delete-result/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+          captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          status: 'capture-deleted',
+          manifest: {
+            schemaVersion: 'session-manifest/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+            boothAlias: 'Kim 4821',
+            customer: {
+              name: 'Kim',
+              phoneLastFour: '4821',
+            },
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+            lifecycle: {
+              status: 'active',
+              stage: 'capture-ready',
+            },
+            activePreset: {
+              presetId: 'preset_soft-glow',
+              publishedVersion: '2026.03.20',
+            },
+            activePresetId: 'preset_soft-glow',
+            captures: [],
+            postEnd: null,
+          },
+          readiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+            surfaceState: 'captureReady',
+            customerState: 'Ready',
+            canCapture: true,
+            primaryAction: 'capture',
+            customerMessage: '지금 촬영할 수 있어요.',
+            supportMessage: '버튼을 누르면 바로 시작돼요.',
+            reasonCode: 'ready',
+            latestCapture: null,
+          },
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.deleteCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).rejects.toMatchObject({
+      code: 'host-unavailable',
+      message: '현재 세션 상태를 다시 확인할게요.',
+    })
+  })
+
+  it('preserves a customer-safe delete-blocked message from the host', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'delete_capture') {
+        throw {
+          code: 'capture-delete-blocked',
+          message: '이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.',
+          readiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'previewReady',
+            customerState: 'Ready',
+            canCapture: true,
+            primaryAction: 'capture',
+            customerMessage: '지금 촬영할 수 있어요.',
+            supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
+            reasonCode: 'ready',
+            latestCapture: createCaptureRecord({
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/current-session-preview.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            }),
+          },
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.deleteCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).rejects.toMatchObject({
+      code: 'capture-delete-blocked',
+      message: '이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.',
+      readiness: {
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      },
     })
   })
 

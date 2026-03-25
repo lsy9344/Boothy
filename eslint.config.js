@@ -13,6 +13,7 @@ export default defineConfig([
     '_bmad/**',
     '_bmad-output/**',
     '.agents/**',
+    '.claude/**',
     'design-artifacts/**',
     'refactoring/**',
     'reference/**',
