@@ -72,11 +72,80 @@ describe('app routing baseline', () => {
       createCapabilityService({
         isAdminAuthenticated: true,
         allowedSurfaces: ['booth', 'operator'],
+        currentWindowLabel: 'operator-window',
       }),
     )
 
     expect(
       await screen.findByRole('heading', { name: /Operator Console/i }),
     ).toBeInTheDocument()
+  })
+
+  it('still blocks operator on the booth window even when the runtime snapshot includes operator capability', async () => {
+    const router = renderRoute(
+      ['/operator'],
+      createCapabilityService({
+        isAdminAuthenticated: true,
+        allowedSurfaces: ['booth', 'operator'],
+        currentWindowLabel: 'booth-window',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Operator Console/i })).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/booth')
+  })
+
+  it('allows the authoring surface only after admin-authenticated capability access is granted', async () => {
+    const router = renderRoute(
+      ['/authoring'],
+      createCapabilityService({
+        isAdminAuthenticated: true,
+        allowedSurfaces: ['booth', 'authoring'],
+        currentWindowLabel: 'authoring-window',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /Draft Preset Workspace/i }),
+    ).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/authoring')
+  })
+
+  it('allows the settings surface only after admin-authenticated capability access is granted', async () => {
+    const router = renderRoute(
+      ['/settings'],
+      createCapabilityService({
+        isAdminAuthenticated: true,
+        allowedSurfaces: ['booth', 'settings'],
+        currentWindowLabel: 'operator-window',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /Settings Governance/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /Branch Rollout Governance/i }),
+    ).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/settings')
+  })
+
+  it('still blocks authoring on the booth window even when the runtime snapshot includes authoring capability', async () => {
+    const router = renderRoute(
+      ['/authoring'],
+      createCapabilityService({
+        isAdminAuthenticated: true,
+        allowedSurfaces: ['booth', 'authoring'],
+        currentWindowLabel: 'booth-window',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
+    ).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/booth')
   })
 })

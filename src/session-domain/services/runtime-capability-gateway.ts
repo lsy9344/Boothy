@@ -27,3 +27,13 @@ export function createTauriRuntimeCapabilityGateway(): RuntimeCapabilityGateway 
     },
   }
 }
+
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+export function createDefaultRuntimeCapabilityGateway() {
+  return isTauriRuntime()
+    ? createTauriRuntimeCapabilityGateway()
+    : createBrowserRuntimeCapabilityGateway()
+}

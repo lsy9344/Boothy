@@ -10,6 +10,11 @@ export const publishedVersionSchema = z
   .string()
   .regex(/^\d{4}\.\d{2}\.\d{2}$/, '게시 버전 형식이 올바르지 않아요.')
 
+export const catalogRevisionSchema = z
+  .number()
+  .int()
+  .nonnegative('catalog revision은 0 이상의 정수여야 해요.')
+
 export const presetPreviewAssetSchema = z.object({
   kind: z.enum(['preview-tile', 'sample-cut']),
   assetPath: z.string().min(1),

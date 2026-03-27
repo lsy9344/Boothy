@@ -1,9 +1,26 @@
+import type {
+  CompletedPostEndRecord,
+  PhoneRequiredPostEndRecord,
+  SessionPostEndRecord,
+  SessionTimingSnapshot,
+} from '../../shared-contracts'
+import { SessionTimingPanel } from '../../timing-policy/components/SessionTimingPanel'
+import { HandoffReadyPanel } from '../components/HandoffReadyPanel'
+import { PhoneRequiredSupportCard } from '../components/PhoneRequiredSupportCard'
+
 type ReadinessScreenProps = {
   boothAlias: string | null
   selectedPresetName: string | null
+  postEndGuidance: SessionPostEndRecord | null
+  timing: SessionTimingSnapshot | null
+  stateLabel: string
+  cameraStatusLabel: string
+  cameraStatusDetail: string
+  cameraStatusTone: 'ready' | 'neutral' | 'blocked'
   actionLabel: string
   canCapture: boolean
   isBusy: boolean
+  isExplicitPostEnd: boolean
   isChangePresetDisabled: boolean
   onPrimaryAction(): void
   onChangePreset(): void
@@ -12,15 +29,38 @@ type ReadinessScreenProps = {
 export function ReadinessScreen({
   boothAlias,
   selectedPresetName,
+  postEndGuidance,
+  timing,
+  stateLabel,
+  cameraStatusLabel,
+  cameraStatusDetail,
+  cameraStatusTone,
   actionLabel,
   canCapture,
   isBusy,
+  isExplicitPostEnd,
   isChangePresetDisabled,
   onPrimaryAction,
   onChangePreset,
 }: ReadinessScreenProps) {
+  const handoffReadyGuidance =
+    postEndGuidance?.state === 'completed' &&
+    postEndGuidance.completionVariant === 'handoff-ready'
+      ? (postEndGuidance as CompletedPostEndRecord)
+      : null
+  const phoneRequiredGuidance =
+    postEndGuidance?.state === 'phone-required'
+      ? (postEndGuidance as PhoneRequiredPostEndRecord)
+      : null
+  const shouldHidePrimaryAction =
+    handoffReadyGuidance !== null || phoneRequiredGuidance !== null
+
   return (
     <>
+      {timing !== null && !(isExplicitPostEnd && timing.phase === 'ended') ? (
+        <SessionTimingPanel timing={timing} canCapture={canCapture} />
+      ) : null}
+
       <article className="surface-card readiness-screen__summary">
         <div>
           <h2>현재 세션</h2>
@@ -31,25 +71,51 @@ export function ReadinessScreen({
           <p>{selectedPresetName ?? '선택 대기 중'}</p>
           <p>지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요.</p>
         </div>
+        <div className="readiness-screen__camera-status">
+          <h2>카메라 상태</h2>
+          <p
+            className={`readiness-screen__camera-badge readiness-screen__camera-badge--${cameraStatusTone}`}
+          >
+            {cameraStatusLabel}
+          </p>
+          <p>{cameraStatusDetail}</p>
+        </div>
       </article>
 
       <article className="surface-card readiness-screen__action-card">
-        <button
-          type="button"
-          className="latest-photo-rail__action latest-photo-rail__action--secondary"
-          disabled={isChangePresetDisabled}
-          onClick={onChangePreset}
-        >
-          다음 촬영 룩 바꾸기
-        </button>
-        <button
-          type="button"
-          className="session-start-form__submit readiness-screen__action"
-          disabled={!canCapture || isBusy}
-          onClick={onPrimaryAction}
-        >
-          {actionLabel}
-        </button>
+        {handoffReadyGuidance !== null ? (
+          <HandoffReadyPanel
+            boothAlias={boothAlias}
+            guidance={handoffReadyGuidance}
+          />
+        ) : phoneRequiredGuidance !== null ? (
+          <PhoneRequiredSupportCard guidance={phoneRequiredGuidance} />
+        ) : isExplicitPostEnd ? (
+          <div
+            className="readiness-screen__post-end"
+          >
+            <p className="readiness-screen__post-end-label">{stateLabel}</p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="latest-photo-rail__action latest-photo-rail__action--secondary"
+            disabled={isChangePresetDisabled}
+            onClick={onChangePreset}
+          >
+            다음 촬영 룩 바꾸기
+          </button>
+        )}
+        {!shouldHidePrimaryAction ? (
+          <button
+            type="button"
+            className="session-start-form__submit readiness-screen__action"
+            disabled={!canCapture || isBusy}
+            onClick={onPrimaryAction}
+          >
+            {actionLabel}
+          </button>
+        ) : null}
       </article>
     </>
   )

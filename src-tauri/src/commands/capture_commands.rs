@@ -6,8 +6,7 @@ use crate::{
     capture::{
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
-            delete_capture_in_dir, get_capture_readiness_in_dir, normalize_capture_readiness,
-            request_capture_in_dir,
+            delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
         },
     },
     contracts::dto::{
@@ -15,10 +14,7 @@ use crate::{
         CaptureReadinessInputDto, CaptureReadinessUpdateDto, CaptureRequestInputDto,
         CaptureRequestResultDto, HostErrorEnvelope,
     },
-    session::{
-        session_paths::SessionPaths,
-        session_repository::{read_session_manifest, resolve_app_session_base_dir},
-    },
+    session::session_repository::resolve_app_session_base_dir,
 };
 
 const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
@@ -71,7 +67,10 @@ pub fn request_capture(
             &preview_session_id,
             &preview_capture_id,
         ) {
-            Ok(capture) => CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture),
+            Ok(capture) => read_current_capture_readiness(&preview_base_dir, &preview_session_id)
+                .unwrap_or_else(|| {
+                    CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture)
+                }),
             Err(_) => {
                 let _ = mark_preview_render_failed_in_dir(
                     &preview_base_dir,
@@ -98,10 +97,11 @@ fn read_current_capture_readiness(
     base_dir: &std::path::Path,
     session_id: &str,
 ) -> Option<CaptureReadinessDto> {
-    let manifest_path = SessionPaths::try_new(base_dir, session_id)
-        .ok()?
-        .manifest_path;
-    let manifest = read_session_manifest(&manifest_path).ok()?;
-
-    Some(normalize_capture_readiness(base_dir, &manifest))
+    get_capture_readiness_in_dir(
+        base_dir,
+        CaptureReadinessInputDto {
+            session_id: session_id.into(),
+        },
+    )
+    .ok()
 }

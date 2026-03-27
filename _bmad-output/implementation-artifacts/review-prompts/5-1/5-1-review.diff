@@ -1,0 +1,4371 @@
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index 3ce8ed7..1415059 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -35,7 +35,7 @@
+ # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+ 
+ generated: "2026-03-20 09:44:49 +09:00"
+-last_updated: "2026-03-25 19:33:12 +09:00"
++last_updated: "2026-03-26 22:04:39 +09:00"
+ project: "Boothy"
+ project_key: "NOKEY"
+ tracking_system: "file-system"
+@@ -53,27 +53,27 @@ development_status:
+   epic-2: in-progress
+   2-1-현재-세션-사진-레일과-세션-범위-검토: done
+   2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
+-  2-3-이후-촬영용-활성-프리셋-변경: review
+-  2-4-조정된-종료-시각-표시와-경고-종료-알림: ready-for-dev
++  2-3-이후-촬영용-활성-프리셋-변경: done
++  2-4-조정된-종료-시각-표시와-경고-종료-알림: done
+   epic-2-retrospective: optional
+ 
+-  epic-3: backlog
+-  3-1-종료-직후-명시적-사후-상태-진입: backlog
+-  3-2-export-waiting과-truthful-completion-안내: backlog
+-  3-3-handoff-ready와-phone-required-보호-안내: backlog
++  epic-3: in-progress
++  3-1-종료-직후-명시적-사후-상태-진입: done
++  3-2-export-waiting과-truthful-completion-안내: done
++  3-3-handoff-ready와-phone-required-보호-안내: done
+   epic-3-retrospective: optional
+ 
+-  epic-4: backlog
+-  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: backlog
+-  4-2-부스-호환성-검증과-승인-준비-상태-전환: backlog
+-  4-3-승인과-불변-게시-아티팩트-생성: backlog
+-  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: backlog
++  epic-4: in-progress
++  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: done
++  4-2-부스-호환성-검증과-승인-준비-상태-전환: done
++  4-3-승인과-불변-게시-아티팩트-생성: done
++  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: done
+   epic-4-retrospective: optional
+ 
+-  epic-5: backlog
+-  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: backlog
+-  5-2-정책-기반-복구-액션과-phone-required-라우팅: backlog
+-  5-3-라이프사이클-개입-복구-감사-로그-기록: backlog
++  epic-5: in-progress
++  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: review
++  5-2-정책-기반-복구-액션과-phone-required-라우팅: ready-for-dev
++  5-3-라이프사이클-개입-복구-감사-로그-기록: ready-for-dev
+   epic-5-retrospective: optional
+ 
+   epic-6: backlog
+diff --git a/src-tauri/src/commands/mod.rs b/src-tauri/src/commands/mod.rs
+index 2cbd5db..98e8725 100644
+--- a/src-tauri/src/commands/mod.rs
++++ b/src-tauri/src/commands/mod.rs
+@@ -1,3 +1,5 @@
+ pub mod capture_commands;
++pub mod operator_commands;
+ pub mod preset_commands;
++pub mod runtime_commands;
+ pub mod session_commands;
+diff --git a/src-tauri/src/contracts/dto.rs b/src-tauri/src/contracts/dto.rs
+index 800f438..91dc647 100644
+--- a/src-tauri/src/contracts/dto.rs
++++ b/src-tauri/src/contracts/dto.rs
+@@ -1,11 +1,15 @@
++use std::path::{Component, Path};
++
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::session::session_manifest::{
+-    ActivePresetBinding, SessionCaptureRecord, SessionManifest,
++    ActivePresetBinding, SessionCaptureRecord, SessionManifest, SessionPostEnd, SessionTiming,
+ };
+ 
+ const SESSION_ID_PREFIX: &str = "session_";
+ const PRESET_ID_PREFIX: &str = "preset_";
++const ACTOR_LABEL_MAX_CHARS: usize = 120;
++const OPTIONAL_TEXT_MAX_CHARS: usize = 2000;
+ 
+ pub fn is_valid_session_id(session_id: &str) -> bool {
+     let suffix = match session_id.strip_prefix(SESSION_ID_PREFIX) {
+@@ -46,6 +50,67 @@ pub fn is_non_blank(value: &str) -> bool {
+     !value.trim().is_empty()
+ }
+ 
++pub fn is_trimmed_length_within(value: &str, max_chars: usize) -> bool {
++    value.trim().chars().count() <= max_chars
++}
++
++pub fn is_valid_actor_id(actor_id: &str) -> bool {
++    let mut chars = actor_id.chars();
++    let Some(first) = chars.next() else {
++        return false;
++    };
++
++    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
++        return false;
++    }
++
++    chars.all(|char| char.is_ascii_lowercase() || char.is_ascii_digit() || char == '-')
++}
++
++pub fn is_valid_darktable_version(value: &str) -> bool {
++    let mut segments = value.trim().split('.');
++    let Some(major) = segments.next() else {
++        return false;
++    };
++    let Some(minor) = segments.next() else {
++        return false;
++    };
++    let Some(patch) = segments.next() else {
++        return false;
++    };
++
++    if segments.next().is_some() {
++        return false;
++    }
++
++    [major, minor, patch]
++        .into_iter()
++        .all(|segment| !segment.is_empty() && segment.chars().all(|char| char.is_ascii_digit()))
++}
++
++pub fn is_safe_workspace_reference(reference: &str) -> bool {
++    if !is_non_blank(reference) {
++        return false;
++    }
++
++    let path = Path::new(reference);
++
++    if path.is_absolute() {
++        return false;
++    }
++
++    let mut saw_normal_component = false;
++
++    for component in path.components() {
++        match component {
++            Component::Normal(_) => saw_normal_component = true,
++            _ => return false,
++        }
++    }
++
++    saw_normal_component
++}
++
+ pub fn validate_session_id(session_id: &str) -> Result<(), HostErrorEnvelope> {
+     if is_valid_session_id(session_id) {
+         Ok(())
+@@ -69,6 +134,155 @@ pub fn validate_preset_selection_input(
+     Ok(())
+ }
+ 
++pub fn validate_draft_preset_edit_input(
++    input: &DraftPresetEditPayloadDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    if !is_non_blank(&input.display_name) {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft 이름을 입력해 주세요.",
++        ));
++    }
++
++    if input.lifecycle_state != "draft" {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft 저장 요청은 항상 draft lifecycle이어야 해요.",
++        ));
++    }
++
++    if !is_valid_darktable_version(&input.darktable_version) {
++        return Err(HostErrorEnvelope::validation_message(
++            "darktableVersion 형식을 `5.4.1`처럼 맞춰 주세요.",
++        ));
++    }
++
++    if !is_safe_workspace_reference(&input.darktable_project_path)
++        || !is_safe_workspace_reference(&input.xmp_template_path)
++        || !is_non_blank(&input.preview_profile.profile_id)
++        || !is_non_blank(&input.preview_profile.display_name)
++        || !is_non_blank(&input.preview_profile.output_color_space)
++        || !is_non_blank(&input.final_profile.profile_id)
++        || !is_non_blank(&input.final_profile.display_name)
++        || !is_non_blank(&input.final_profile.output_color_space)
++        || !is_non_blank(&input.noise_policy.policy_id)
++        || !is_non_blank(&input.noise_policy.display_name)
++        || !is_non_blank(&input.noise_policy.reduction_mode)
++        || !is_safe_workspace_reference(&input.preview.asset_path)
++        || !is_non_blank(&input.preview.alt_text)
++        || !is_safe_workspace_reference(&input.sample_cut.asset_path)
++        || !is_non_blank(&input.sample_cut.alt_text)
++    {
++        return Err(HostErrorEnvelope::validation_message(
++            "작업공간 안의 안전한 draft metadata와 artifact 참조만 저장할 수 있어요.",
++        ));
++    }
++
++    Ok(())
++}
++
++pub fn validate_draft_validation_input(
++    input: &ValidateDraftPresetInputDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "검증할 draft presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    Ok(())
++}
++
++pub fn validate_publish_validated_preset_input(
++    input: &PublishValidatedPresetInputDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "게시할 draft presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    if input.draft_version == 0 || !is_non_blank(&input.validation_checked_at) {
++        return Err(HostErrorEnvelope::validation_message(
++            "승인 기준이 된 draft version과 validation 시간을 함께 보내 주세요.",
++        ));
++    }
++
++    if !is_non_blank(&input.expected_display_name) {
++        return Err(HostErrorEnvelope::validation_message(
++            "게시 전에 검토한 preset 이름을 다시 확인해 주세요.",
++        ));
++    }
++
++    if !is_valid_published_version(&input.published_version) {
++        return Err(HostErrorEnvelope::validation_message(
++            "publishedVersion 형식을 `2026.03.26`처럼 맞춰 주세요.",
++        ));
++    }
++
++    if !is_valid_actor_id(&input.actor_id)
++        || !is_non_blank(&input.actor_label)
++        || !is_trimmed_length_within(&input.actor_label, ACTOR_LABEL_MAX_CHARS)
++    {
++        return Err(HostErrorEnvelope::validation_message(
++            "게시 승인자를 다시 확인해 주세요.",
++        ));
++    }
++
++    if input
++        .review_note
++        .as_deref()
++        .map(|note| is_trimmed_length_within(note, OPTIONAL_TEXT_MAX_CHARS))
++        == Some(false)
++    {
++        return Err(HostErrorEnvelope::validation_message(
++            "검토 메모는 2000자 이하여야 해요.",
++        ));
++    }
++
++    if !matches!(
++        input.scope.as_str(),
++        "future-sessions-only" | "active-session"
++    ) {
++        return Err(HostErrorEnvelope::validation_message(
++            "게시 범위를 다시 확인해 주세요.",
++        ));
++    }
++
++    Ok(())
++}
++
++pub fn validate_rollback_preset_catalog_input(
++    input: &RollbackPresetCatalogInputDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "롤백할 presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    if !is_valid_published_version(&input.target_published_version) {
++        return Err(HostErrorEnvelope::validation_message(
++            "롤백 target version 형식을 `2026.03.26`처럼 맞춰 주세요.",
++        ));
++    }
++
++    if !is_valid_actor_id(&input.actor_id)
++        || !is_non_blank(&input.actor_label)
++        || !is_trimmed_length_within(&input.actor_label, ACTOR_LABEL_MAX_CHARS)
++    {
++        return Err(HostErrorEnvelope::validation_message(
++            "롤백 승인자를 다시 확인해 주세요.",
++        ));
++    }
++
++    Ok(())
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct SessionStartInputDto {
+@@ -100,6 +314,307 @@ pub struct PublishedPresetSummaryDto {
+     pub preview: PresetPreviewAssetDto,
+ }
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetPreviewReferenceDto {
++    pub asset_path: String,
++    pub alt_text: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftRenderProfileDto {
++    pub profile_id: String,
++    pub display_name: String,
++    pub output_color_space: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftNoisePolicyDto {
++    pub policy_id: String,
++    pub display_name: String,
++    pub reduction_mode: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationFindingDto {
++    pub rule_code: String,
++    pub severity: String,
++    pub field_path: Option<String>,
++    pub message: String,
++    pub guidance: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationReportDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub draft_version: u32,
++    pub lifecycle_state: String,
++    pub status: String,
++    pub checked_at: String,
++    pub findings: Vec<DraftValidationFindingDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationSnapshotDto {
++    pub status: String,
++    pub latest_report: Option<DraftValidationReportDto>,
++    pub history: Vec<DraftValidationReportDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetPublicationAuditRecordDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub draft_version: u32,
++    pub published_version: String,
++    pub actor_id: String,
++    pub actor_label: String,
++    pub review_note: Option<String>,
++    pub action: String,
++    pub reason_code: Option<String>,
++    pub guidance: String,
++    pub noted_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetSummaryDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub display_name: String,
++    pub draft_version: u32,
++    pub lifecycle_state: String,
++    pub darktable_version: String,
++    pub darktable_project_path: String,
++    pub xmp_template_path: String,
++    pub preview_profile: DraftRenderProfileDto,
++    pub final_profile: DraftRenderProfileDto,
++    pub noise_policy: DraftNoisePolicyDto,
++    pub preview: DraftPresetPreviewReferenceDto,
++    pub sample_cut: DraftPresetPreviewReferenceDto,
++    pub description: Option<String>,
++    pub notes: Option<String>,
++    pub validation: DraftValidationSnapshotDto,
++    #[serde(default)]
++    pub publication_history: Vec<PresetPublicationAuditRecordDto>,
++    pub updated_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetEditPayloadDto {
++    pub preset_id: String,
++    pub display_name: String,
++    pub lifecycle_state: String,
++    pub darktable_version: String,
++    pub darktable_project_path: String,
++    pub xmp_template_path: String,
++    pub preview_profile: DraftRenderProfileDto,
++    pub final_profile: DraftRenderProfileDto,
++    pub noise_policy: DraftNoisePolicyDto,
++    pub preview: DraftPresetPreviewReferenceDto,
++    pub sample_cut: DraftPresetPreviewReferenceDto,
++    pub description: Option<String>,
++    pub notes: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ValidateDraftPresetInputDto {
++    pub preset_id: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct AuthoringWorkspaceResultDto {
++    pub schema_version: String,
++    pub supported_lifecycle_states: Vec<String>,
++    pub drafts: Vec<DraftPresetSummaryDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ValidateDraftPresetResultDto {
++    pub schema_version: String,
++    pub draft: DraftPresetSummaryDto,
++    pub report: DraftValidationReportDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PublishValidatedPresetInputDto {
++    pub preset_id: String,
++    pub draft_version: u32,
++    pub validation_checked_at: String,
++    pub expected_display_name: String,
++    pub published_version: String,
++    pub actor_id: String,
++    pub actor_label: String,
++    pub scope: String,
++    pub review_note: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PublishValidatedPresetSuccessDto {
++    pub schema_version: String,
++    pub status: String,
++    pub draft: DraftPresetSummaryDto,
++    pub published_preset: PublishedPresetSummaryDto,
++    pub bundle_path: String,
++    pub audit_record: PresetPublicationAuditRecordDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PublishValidatedPresetRejectionDto {
++    pub schema_version: String,
++    pub status: String,
++    pub draft: DraftPresetSummaryDto,
++    pub reason_code: String,
++    pub message: String,
++    pub guidance: String,
++    pub audit_record: PresetPublicationAuditRecordDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(tag = "status")]
++#[serde(rename_all = "camelCase")]
++pub enum PublishValidatedPresetResultDto {
++    #[serde(rename_all = "camelCase")]
++    Published {
++        schema_version: String,
++        draft: DraftPresetSummaryDto,
++        published_preset: PublishedPresetSummaryDto,
++        bundle_path: String,
++        audit_record: PresetPublicationAuditRecordDto,
++    },
++    #[serde(rename_all = "camelCase")]
++    Rejected {
++        schema_version: String,
++        draft: DraftPresetSummaryDto,
++        reason_code: String,
++        message: String,
++        guidance: String,
++        audit_record: PresetPublicationAuditRecordDto,
++    },
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CatalogVersionHistoryItemDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub action_type: String,
++    pub from_published_version: Option<String>,
++    pub to_published_version: String,
++    pub actor_id: String,
++    pub actor_label: String,
++    pub happened_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetCatalogStateSummaryDto {
++    pub preset_id: String,
++    pub live_published_version: String,
++    pub published_presets: Vec<PublishedPresetSummaryDto>,
++    pub version_history: Vec<CatalogVersionHistoryItemDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PresetCatalogStateResultDto {
++    pub schema_version: String,
++    pub catalog_revision: u64,
++    pub presets: Vec<PresetCatalogStateSummaryDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RollbackPresetCatalogInputDto {
++    pub preset_id: String,
++    pub target_published_version: String,
++    pub expected_catalog_revision: u64,
++    pub actor_id: String,
++    pub actor_label: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(tag = "status")]
++#[serde(rename_all = "camelCase")]
++pub enum RollbackPresetCatalogResultDto {
++    #[serde(rename_all = "camelCase")]
++    RolledBack {
++        schema_version: String,
++        catalog_revision: u64,
++        summary: PresetCatalogStateSummaryDto,
++        audit_entry: CatalogVersionHistoryItemDto,
++        message: String,
++    },
++    #[serde(rename_all = "camelCase")]
++    Rejected {
++        schema_version: String,
++        reason_code: String,
++        message: String,
++        guidance: String,
++        catalog_revision: u64,
++        summary: Option<PresetCatalogStateSummaryDto>,
++    },
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CapabilitySnapshotDto {
++    pub is_admin_authenticated: bool,
++    pub allowed_surfaces: Vec<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct OperatorBoundarySummaryDto {
++    pub status: String,
++    pub title: String,
++    pub detail: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct OperatorRecentFailureSummaryDto {
++    pub title: String,
++    pub detail: String,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub observed_at: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct OperatorSessionSummaryDto {
++    pub schema_version: String,
++    pub state: String,
++    pub blocked_state_category: String,
++    pub session_id: Option<String>,
++    pub booth_alias: Option<String>,
++    pub active_preset_id: Option<String>,
++    pub active_preset_display_name: Option<String>,
++    pub active_preset_version: Option<String>,
++    pub lifecycle_stage: Option<String>,
++    pub timing_phase: Option<String>,
++    pub updated_at: Option<String>,
++    pub post_end_state: Option<String>,
++    pub recent_failure: Option<OperatorRecentFailureSummaryDto>,
++    pub capture_boundary: OperatorBoundarySummaryDto,
++    pub preview_render_boundary: OperatorBoundarySummaryDto,
++    pub completion_boundary: OperatorBoundarySummaryDto,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct PresetCatalogResultDto {
+@@ -156,6 +671,10 @@ pub struct CaptureReadinessDto {
+     pub support_message: String,
+     pub reason_code: String,
+     pub latest_capture: Option<SessionCaptureRecord>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub post_end: Option<SessionPostEnd>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub timing: Option<SessionTiming>,
+ }
+ 
+ impl CaptureReadinessDto {
+@@ -181,9 +700,21 @@ impl CaptureReadinessDto {
+             support_message: support_message.into(),
+             reason_code: reason_code.into(),
+             latest_capture,
++            post_end: None,
++            timing: None,
+         }
+     }
+ 
++    pub fn with_post_end(mut self, post_end: Option<SessionPostEnd>) -> Self {
++        self.post_end = post_end;
++        self
++    }
++
++    pub fn with_timing(mut self, timing: Option<SessionTiming>) -> Self {
++        self.timing = timing;
++        self
++    }
++
+     pub fn preset_missing(session_id: impl Into<String>) -> Self {
+         let session_id = session_id.into();
+ 
+@@ -259,12 +790,12 @@ impl CaptureReadinessDto {
+ 
+         Self::build(
+             session_id,
+-            "previewWaiting",
+-            "Preparing",
++            "blocked",
++            "Export Waiting",
+             false,
+             "wait",
+-            "마무리 준비 중이에요.",
+-            "다음 안내가 나올 때까지 기다려 주세요.",
++            "촬영은 끝났고 결과를 준비하고 있어요.",
++            "다음 안내가 나올 때까지 잠시만 기다려 주세요.",
+             "export-waiting",
+             latest_capture,
+         )
+@@ -279,10 +810,10 @@ impl CaptureReadinessDto {
+         Self::build(
+             session_id,
+             "blocked",
+-            "Preparing",
++            "Completed",
+             false,
+             "wait",
+-            "이 촬영은 마무리되었어요.",
++            "부스 준비가 끝났어요.",
+             "다음 안내를 확인해 주세요.",
+             "completed",
+             latest_capture,
+@@ -324,6 +855,25 @@ impl CaptureReadinessDto {
+         )
+     }
+ 
++    pub fn ended(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Session Ended",
++            false,
++            "wait",
++            "촬영 시간이 끝났어요.",
++            "마무리 안내가 나올 때까지 잠시만 기다려 주세요.",
++            "ended",
++            latest_capture,
++        )
++    }
++
+     pub fn ready(
+         session_id: impl Into<String>,
+         surface_state: impl Into<String>,
+@@ -443,6 +993,15 @@ pub struct HostErrorEnvelope {
+ }
+ 
+ impl HostErrorEnvelope {
++    pub fn capability_denied(message: impl Into<String>) -> Self {
++        Self {
++            code: "capability-denied".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
+     pub fn validation_message(message: impl Into<String>) -> Self {
+         Self {
+             code: "validation-error".into(),
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 39ec486..2ad6a0e 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,8 +1,13 @@
++use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
++
+ pub mod capture;
+ pub mod commands;
+ pub mod contracts;
++pub mod diagnostics;
++pub mod handoff;
+ pub mod preset;
+ pub mod session;
++pub mod timing;
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
+@@ -15,13 +20,44 @@ pub fn run() {
+                         .build(),
+                 )?;
+             }
++
++            let capability_snapshot =
++                commands::runtime_commands::resolve_runtime_capability_snapshot();
++            let should_open_authoring_window = capability_snapshot.is_admin_authenticated
++                && capability_snapshot
++                    .allowed_surfaces
++                    .iter()
++                    .any(|surface| surface == "authoring");
++
++            if should_open_authoring_window && app.get_webview_window("authoring-window").is_none()
++            {
++                WebviewWindowBuilder::new(
++                    app,
++                    "authoring-window",
++                    WebviewUrl::App("index.html".into()),
++                )
++                .title("Boothy Authoring")
++                .inner_size(1280.0, 840.0)
++                .resizable(true)
++                .build()?;
++            }
++
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
+             commands::capture_commands::get_capture_readiness,
+             commands::capture_commands::delete_capture,
+             commands::capture_commands::request_capture,
++            commands::operator_commands::load_operator_session_summary,
++            commands::runtime_commands::get_capability_snapshot,
+             commands::preset_commands::load_preset_catalog,
++            commands::preset_commands::load_authoring_workspace,
++            commands::preset_commands::create_draft_preset,
++            commands::preset_commands::save_draft_preset,
++            commands::preset_commands::validate_draft_preset,
++            commands::preset_commands::publish_validated_preset,
++            commands::preset_commands::load_preset_catalog_state,
++            commands::preset_commands::rollback_preset_catalog,
+             commands::preset_commands::select_active_preset,
+             commands::session_commands::start_session
+         ])
+diff --git a/src/app/routes.tsx b/src/app/routes.tsx
+index b805f7b..685e6aa 100644
+--- a/src/app/routes.tsx
++++ b/src/app/routes.tsx
+@@ -7,10 +7,13 @@ import {
+   type RouteObject,
+ } from 'react-router-dom'
+ 
++import { OperatorDiagnosticsProvider } from '../operator-console/providers/operator-diagnostics-provider'
+ import { PresetLibraryScreen } from '../preset-authoring/screens/PresetLibraryScreen'
++import type { PresetAuthoringService } from '../preset-authoring/services/preset-authoring-service'
+ import type { PresetCatalogService } from '../preset-catalog/services/preset-catalog-service'
+ import { SessionStartScreen } from '../booth-shell/screens/SessionStartScreen'
+ import { OperatorSummaryScreen } from '../operator-console/screens/OperatorSummaryScreen'
++import type { OperatorDiagnosticsService } from '../operator-console/services/operator-diagnostics-service'
+ import { SettingsScreen } from '../settings/screens/SettingsScreen'
+ import type { ActivePresetService } from '../session-domain/services/active-preset'
+ import type { StartSessionService } from '../session-domain/services/start-session'
+@@ -28,16 +31,20 @@ type CreateAppRoutesOptions = {
+   capabilityService?: CapabilityService
+   sessionService?: StartSessionService
+   presetCatalogService?: PresetCatalogService
++  presetAuthoringService?: PresetAuthoringService
+   activePresetService?: ActivePresetService
+   captureRuntimeService?: CaptureRuntimeService
++  operatorDiagnosticsService?: OperatorDiagnosticsService
+ }
+ 
+ export function createAppRoutes({
+   capabilityService = createCapabilityService(),
+   sessionService,
+   presetCatalogService,
++  presetAuthoringService,
+   activePresetService,
+   captureRuntimeService,
++  operatorDiagnosticsService,
+ }: CreateAppRoutesOptions = {}): RouteObject[] {
+   return [
+     {
+@@ -47,6 +54,7 @@ export function createAppRoutes({
+           capabilityService={capabilityService}
+           sessionService={sessionService}
+           presetCatalogService={presetCatalogService}
++          presetAuthoringService={presetAuthoringService}
+           activePresetService={activePresetService}
+           captureRuntimeService={captureRuntimeService}
+         >
+@@ -67,7 +75,13 @@ export function createAppRoutes({
+           children: [
+             {
+               path: 'operator',
+-              element: <OperatorSummaryScreen />,
++              element: (
++                <OperatorDiagnosticsProvider
++                  operatorDiagnosticsService={operatorDiagnosticsService}
++                >
++                  <OperatorSummaryScreen />
++                </OperatorDiagnosticsProvider>
++              ),
+             },
+           ],
+         },
+diff --git a/src/index.css b/src/index.css
+index e7b933e..076313d 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -187,6 +187,12 @@ select {
+   cursor: wait;
+ }
+ 
++.surface-card__action--secondary {
++  border: 1px solid rgba(243, 200, 142, 0.22);
++  background: rgba(255, 255, 255, 0.04);
++  color: #f4efe6;
++}
++
+ .preset-card {
+   display: grid;
+   gap: 14px;
+@@ -262,6 +268,76 @@ select {
+   gap: 16px;
+ }
+ 
++.session-timing-panel {
++  display: grid;
++  gap: 18px;
++  border-color: rgba(243, 200, 142, 0.2);
++  background:
++    radial-gradient(circle at top left, rgba(243, 200, 142, 0.12), transparent 34%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.session-timing-panel--warning {
++  border-color: rgba(255, 191, 102, 0.42);
++  box-shadow: 0 18px 42px rgba(88, 43, 0, 0.18);
++}
++
++.session-timing-panel--ended {
++  border-color: rgba(255, 144, 112, 0.4);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.12), transparent 34%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.session-timing-panel__header {
++  display: grid;
++  gap: 10px;
++}
++
++.session-timing-panel__badge {
++  width: fit-content;
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(243, 200, 142, 0.16);
++  color: #f3c88e;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.session-timing-panel--warning .session-timing-panel__badge {
++  background: rgba(255, 191, 102, 0.18);
++  color: #ffd38e;
++}
++
++.session-timing-panel--ended .session-timing-panel__badge {
++  background: rgba(255, 144, 112, 0.18);
++  color: #ffc2b2;
++}
++
++.session-timing-panel__grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++  gap: 12px;
++}
++
++.session-timing-panel__label {
++  margin: 0 0 6px;
++  color: #d2c7bf;
++  font-size: 0.88rem;
++}
++
++.session-timing-panel__value {
++  margin: 0;
++  color: #f4efe6;
++  font-size: clamp(1.4rem, 4vw, 2rem);
++  font-weight: 700;
++}
++
++.session-timing-panel__value--countdown {
++  font-variant-numeric: tabular-nums;
++}
++
+ .readiness-screen__action-card {
+   display: flex;
+   justify-content: center;
+@@ -301,6 +377,67 @@ select {
+   font-weight: 600;
+ }
+ 
++.handoff-ready-panel,
++.phone-required-support-card {
++  display: grid;
++  gap: 14px;
++}
++
++.handoff-ready-panel {
++  border-color: rgba(139, 206, 170, 0.28);
++  background:
++    radial-gradient(circle at top left, rgba(139, 206, 170, 0.14), transparent 36%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.phone-required-support-card {
++  border-color: rgba(255, 144, 112, 0.32);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.16), transparent 36%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.handoff-ready-panel__badge,
++.phone-required-support-card__badge,
++.readiness-screen__post-end-label {
++  width: fit-content;
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(255, 255, 255, 0.08);
++  color: #f4efe6;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.handoff-ready-panel__badge {
++  background: rgba(139, 206, 170, 0.18);
++  color: #dff6e9;
++}
++
++.phone-required-support-card__badge,
++.readiness-screen__post-end--phone-required .readiness-screen__post-end-label {
++  background: rgba(255, 144, 112, 0.18);
++  color: #ffd1c5;
++}
++
++.handoff-ready-panel__section,
++.phone-required-support-card__section,
++.readiness-screen__post-end {
++  display: grid;
++  gap: 6px;
++}
++
++.phone-required-support-card__support,
++.phone-required-support-card__warning {
++  margin: 0;
++}
++
++.phone-required-support-card__warning {
++  color: #ffd1c5;
++  font-weight: 600;
++}
++
+ .latest-photo-rail {
+   display: grid;
+   gap: 16px;
+@@ -409,6 +546,352 @@ select {
+   color: #f4efe6;
+ }
+ 
++.authoring-shell {
++  display: grid;
++  gap: 18px;
++}
++
++.authoring-grid {
++  display: grid;
++  gap: 18px;
++  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
++}
++
++.authoring-stack {
++  display: grid;
++  gap: 18px;
++}
++
++.authoring-card {
++  display: grid;
++  gap: 16px;
++}
++
++.authoring-card--emphasis {
++  border-color: rgba(243, 200, 142, 0.24);
++  background:
++    radial-gradient(circle at top left, rgba(243, 200, 142, 0.12), transparent 38%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.authoring-card__header {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: space-between;
++  gap: 12px;
++  align-items: flex-start;
++}
++
++.authoring-card__eyebrow {
++  margin: 0 0 6px;
++  color: #f3c88e;
++  font-size: 0.8rem;
++  font-weight: 700;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++}
++
++.authoring-card__badge {
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(255, 255, 255, 0.06);
++  color: #f4efe6;
++  font-size: 0.82rem;
++  font-weight: 700;
++}
++
++.authoring-card__support,
++.authoring-form__note,
++.authoring-draft-list__empty,
++.authoring-status {
++  margin: 0;
++  color: #d2c7bf;
++}
++
++.authoring-status--success {
++  color: #d9f0df;
++}
++
++.authoring-status--error {
++  color: #ffb3a5;
++}
++
++.authoring-draft-list {
++  display: grid;
++  gap: 10px;
++}
++
++.authoring-draft-list__item {
++  display: grid;
++  gap: 4px;
++  padding: 14px;
++  border: 1px solid rgba(255, 255, 255, 0.08);
++  border-radius: 18px;
++  background: rgba(255, 255, 255, 0.03);
++  color: inherit;
++  text-align: left;
++  cursor: pointer;
++}
++
++.authoring-draft-list__item--selected {
++  border-color: rgba(243, 200, 142, 0.52);
++  box-shadow: 0 16px 34px rgba(12, 8, 6, 0.2);
++}
++
++.authoring-draft-list__name {
++  font-weight: 700;
++}
++
++.authoring-draft-list__meta {
++  color: #d2c7bf;
++  font-size: 0.88rem;
++}
++
++.authoring-form {
++  display: grid;
++  gap: 16px;
++}
++
++.authoring-form__group {
++  display: grid;
++  gap: 16px;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++}
++
++.authoring-form__textarea {
++  min-height: 112px;
++  resize: vertical;
++}
++
++.authoring-form__footer {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: space-between;
++  gap: 12px;
++  align-items: center;
++}
++
++.authoring-form__actions {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 10px;
++}
++
++.authoring-validation {
++  display: grid;
++  gap: 14px;
++}
++
++.authoring-validation__summary,
++.authoring-validation__meta,
++.authoring-validation__message,
++.authoring-validation__guidance {
++  margin: 0;
++}
++
++.authoring-validation__list {
++  display: grid;
++  gap: 12px;
++  margin: 0;
++  padding: 0;
++  list-style: none;
++}
++
++.authoring-validation__item {
++  display: grid;
++  gap: 6px;
++  padding: 14px;
++  border-radius: 18px;
++  background: rgba(255, 255, 255, 0.03);
++  border: 1px solid rgba(255, 255, 255, 0.08);
++}
++
++.authoring-validation__item--error {
++  border-color: rgba(255, 144, 112, 0.3);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.12), transparent 36%),
++    rgba(255, 255, 255, 0.03);
++}
++
++.authoring-validation__meta {
++  color: #f3c88e;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.authoring-validation__message {
++  color: #f4efe6;
++  font-weight: 600;
++}
++
++.authoring-validation__guidance {
++  color: #d2c7bf;
++}
++
++.operator-console {
++  display: grid;
++  gap: 18px;
++}
++
++.operator-console__hero,
++.operator-console__section,
++.operator-boundary-card {
++  display: grid;
++  gap: 14px;
++}
++
++.operator-console__hero {
++  border-color: rgba(243, 200, 142, 0.24);
++  background:
++    radial-gradient(circle at top left, rgba(243, 200, 142, 0.14), transparent 40%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.operator-console__hero-header,
++.operator-console__section-header,
++.operator-boundary-card__header {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: space-between;
++  gap: 12px;
++  align-items: flex-start;
++}
++
++.operator-console__hero h2,
++.operator-console__section h2,
++.operator-boundary-card h2 {
++  margin: 0;
++}
++
++.operator-console__section-label,
++.operator-boundary-card__label {
++  margin: 0 0 6px;
++  color: #f3c88e;
++  font-size: 0.8rem;
++  font-weight: 700;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++}
++
++.operator-console__hero-status {
++  display: grid;
++  gap: 10px;
++}
++
++.operator-console__category-badge,
++.operator-boundary-card__badge {
++  width: fit-content;
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(255, 255, 255, 0.08);
++  color: #f4efe6;
++  font-size: 0.82rem;
++  font-weight: 700;
++}
++
++.operator-console__category-badge--capture-blocked,
++.operator-console__category-badge--preview-render-blocked,
++.operator-console__category-badge--timing-post-end-blocked,
++.operator-boundary-card--blocked .operator-boundary-card__badge {
++  background: rgba(255, 144, 112, 0.18);
++  color: #ffd1c5;
++}
++
++.operator-console__category-badge--not-blocked,
++.operator-boundary-card--clear .operator-boundary-card__badge {
++  background: rgba(139, 206, 170, 0.18);
++  color: #dff6e9;
++}
++
++.operator-console__category-badge--loading {
++  background: rgba(243, 200, 142, 0.18);
++  color: #f7dcc0;
++}
++
++.operator-console__support,
++.operator-console__empty,
++.operator-console__meta,
++.operator-console__callout p {
++  margin: 0;
++  color: #d2c7bf;
++}
++
++.operator-console__error {
++  margin: 0;
++  color: #ffb3a5;
++  font-weight: 600;
++}
++
++.operator-console__facts {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++  gap: 12px;
++  margin: 0;
++}
++
++.operator-console__fact {
++  display: grid;
++  gap: 4px;
++  margin: 0;
++  padding: 12px;
++  border-radius: 16px;
++  border: 1px solid rgba(255, 255, 255, 0.08);
++  background: rgba(255, 255, 255, 0.03);
++}
++
++.operator-console__fact dt {
++  color: #d2c7bf;
++  font-size: 0.82rem;
++}
++
++.operator-console__fact dd {
++  margin: 0;
++  color: #f4efe6;
++  font-weight: 600;
++  word-break: break-word;
++}
++
++.operator-console__callout {
++  display: grid;
++  gap: 8px;
++  padding: 14px;
++  border-radius: 18px;
++  border: 1px solid rgba(243, 200, 142, 0.18);
++  background: rgba(255, 255, 255, 0.03);
++}
++
++.operator-console__callout-title {
++  color: #f4efe6;
++  font-weight: 700;
++}
++
++.operator-console__boundary-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
++  gap: 16px;
++}
++
++.operator-boundary-card--blocked {
++  border-color: rgba(255, 144, 112, 0.3);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.14), transparent 38%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.operator-boundary-card--clear {
++  border-color: rgba(139, 206, 170, 0.24);
++  background:
++    radial-gradient(circle at top left, rgba(139, 206, 170, 0.12), transparent 38%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.operator-boundary-card p {
++  margin: 0;
++  color: #d2c7bf;
++}
++
+ @media (max-width: 640px) {
+   .surface-layout {
+     padding: 20px 14px 28px;
+@@ -418,4 +901,9 @@ select {
+     padding: 24px 18px;
+     border-radius: 22px;
+   }
++
++  .authoring-grid,
++  .authoring-form__group {
++    grid-template-columns: 1fr;
++  }
+ }
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.tsx b/src/operator-console/screens/OperatorSummaryScreen.tsx
+index 877c361..4b7acb3 100644
+--- a/src/operator-console/screens/OperatorSummaryScreen.tsx
++++ b/src/operator-console/screens/OperatorSummaryScreen.tsx
+@@ -1,16 +1,238 @@
++import type {
++  OperatorBlockedStateCategory,
++  OperatorBoundarySummary,
++  OperatorSessionSummary,
++} from '../../shared-contracts'
+ import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
++import { useOperatorDiagnostics } from '../providers/use-operator-diagnostics'
++
++function describeBlockedStateCategory(
++  category: OperatorBlockedStateCategory,
++) {
++  switch (category) {
++    case 'capture-blocked':
++      return '촬영 경계가 아직 열리지 않아 capture 전 단계에서 확인이 필요해요.'
++    case 'preview-render-blocked':
++      return '가장 최근 촬영본의 preview 또는 render 결과 준비가 막혀 있어요.'
++    case 'timing-post-end-blocked':
++      return '세션 종료 후 완료 판정 또는 후속 안내 정리가 아직 끝나지 않았어요.'
++    case 'not-blocked':
++    default:
++      return '현재 요약 기준으로는 막힌 운영 경계가 보고되지 않았어요.'
++  }
++}
++
++function describeSummaryHeading(summary: OperatorSessionSummary | null) {
++  if (summary === null) {
++    return '현재 세션 진단을 확인하는 중이에요'
++  }
++
++  if (summary.state === 'no-session') {
++    return '진행 중인 세션이 없어요'
++  }
++
++  if (summary.blockedStateCategory === 'not-blocked') {
++    return '현재 세션은 막힌 경계 없이 진행 중이에요'
++  }
++
++  return `현재 세션이 ${summary.blockedStateCategory} 상태예요`
++}
++
++function formatFieldValue(value: string | null | undefined) {
++  return value === null || value === undefined || value.trim() === ''
++    ? '아직 없음'
++    : value
++}
++
++function formatBoundaryStatus(boundary: OperatorBoundarySummary) {
++  return boundary.status === 'blocked' ? 'blocked' : 'clear'
++}
++
++function BoundaryCard({
++  label,
++  boundary,
++}: {
++  label: string
++  boundary: OperatorBoundarySummary
++}) {
++  return (
++    <article
++      className={`surface-card operator-boundary-card operator-boundary-card--${boundary.status}`}
++    >
++      <div className="operator-boundary-card__header">
++        <div>
++          <p className="operator-boundary-card__label">{label}</p>
++          <h2>{boundary.title}</h2>
++        </div>
++        <p className="operator-boundary-card__badge">{formatBoundaryStatus(boundary)}</p>
++      </div>
++      <p>{boundary.detail}</p>
++    </article>
++  )
++}
++
++function SessionFacts({ summary }: { summary: OperatorSessionSummary }) {
++  return (
++    <article className="surface-card operator-console__section">
++      <div className="operator-console__section-header">
++        <div>
++          <p className="operator-console__section-label">Session Context</p>
++          <h2>현재 세션 문맥</h2>
++        </div>
++      </div>
++      <dl className="operator-console__facts">
++        <div className="operator-console__fact">
++          <dt>Session ID</dt>
++          <dd>{formatFieldValue(summary.sessionId)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Booth Alias</dt>
++          <dd>{formatFieldValue(summary.boothAlias)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Preset</dt>
++          <dd>{formatFieldValue(summary.activePresetDisplayName)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Preset Version</dt>
++          <dd>{formatFieldValue(summary.activePresetVersion)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Lifecycle</dt>
++          <dd>{formatFieldValue(summary.lifecycleStage)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Timing</dt>
++          <dd>{formatFieldValue(summary.timingPhase)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Post-End</dt>
++          <dd>{formatFieldValue(summary.postEndState)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Updated At</dt>
++          <dd>{formatFieldValue(summary.updatedAt)}</dd>
++        </div>
++      </dl>
++    </article>
++  )
++}
++
++function RecentFailureCard({ summary }: { summary: OperatorSessionSummary }) {
++  return (
++    <article className="surface-card operator-console__section">
++      <div className="operator-console__section-header">
++        <div>
++          <p className="operator-console__section-label">Recent Failure</p>
++          <h2>최근 장애 문맥</h2>
++        </div>
++      </div>
++      {summary.recentFailure === null ? (
++        <p className="operator-console__empty">
++          지금은 추가로 정규화된 장애 문맥이 없어요. 아래 경계별 상태를 기준으로 확인해
++          주세요.
++        </p>
++      ) : (
++        <div className="operator-console__callout">
++          <p className="operator-console__callout-title">{summary.recentFailure.title}</p>
++          <p>{summary.recentFailure.detail}</p>
++          <p className="operator-console__meta">
++            Observed At: {formatFieldValue(summary.recentFailure.observedAt)}
++          </p>
++        </div>
++      )}
++    </article>
++  )
++}
+ 
+ export function OperatorSummaryScreen() {
++  const { summary, error, isLoading, refresh } = useOperatorDiagnostics()
++  const activeCategory = summary?.blockedStateCategory ?? 'not-blocked'
++
+   return (
+     <SurfaceLayout
+       eyebrow="Operator"
+       title="Operator Console"
+-      description="This placeholder is reachable only through the typed capability seam and will host recovery and diagnostics workflows in later stories."
++      description="현재 세션 문맥과 막힌 경계를 운영자 시야로 정리해 보여줍니다."
+     >
+-      <article className="surface-card">
+-        <h2>Console placeholder</h2>
+-        <p>Future stories will attach operator diagnostics, recovery actions, and audit-aware tooling here.</p>
+-      </article>
++      <section className="operator-console">
++        <article className="surface-card operator-console__hero">
++          <div className="operator-console__hero-header">
++            <div>
++              <p className="operator-console__section-label">Current Session</p>
++              <h2>{describeSummaryHeading(summary)}</h2>
++            </div>
++            <button
++              type="button"
++              className="surface-card__action surface-card__action--secondary"
++              onClick={refresh}
++            >
++              {isLoading ? '새로고침 중...' : '진단 새로고침'}
++            </button>
++          </div>
++
++          <div className="operator-console__hero-status">
++            <p
++              className={`operator-console__category-badge operator-console__category-badge--${activeCategory}`}
++            >
++              {summary?.blockedStateCategory ?? 'loading'}
++            </p>
++            <p className="operator-console__support">
++              {describeBlockedStateCategory(activeCategory)}
++            </p>
++          </div>
++
++          {error === null ? null : (
++            <p className="operator-console__error">{error.message}</p>
++          )}
++        </article>
++
++        {summary === null ? (
++          <article className="surface-card operator-console__section">
++            <h2>세션 요약을 준비하고 있어요</h2>
++            <p className="operator-console__empty">
++              host가 현재 세션 문맥과 boundary 진단을 정리하는 동안 잠시 기다려 주세요.
++            </p>
++          </article>
++        ) : (
++          <>
++            {summary.state === 'session-loaded' ? (
++              <>
++                <SessionFacts summary={summary} />
++                <RecentFailureCard summary={summary} />
++              </>
++            ) : (
++              <article className="surface-card operator-console__section">
++                <div className="operator-console__section-header">
++                  <div>
++                    <p className="operator-console__section-label">Empty State</p>
++                    <h2>진행 중인 세션이 아직 없어요</h2>
++                  </div>
++                </div>
++                <p className="operator-console__empty">
++                  새 세션이 시작되면 booth alias, lifecycle, blocked-state category, 최근
++                  진단 문맥을 여기에서 바로 확인할 수 있어요.
++                </p>
++              </article>
++            )}
++
++            <section className="operator-console__boundary-grid">
++              <BoundaryCard
++                label="Capture Boundary"
++                boundary={summary.captureBoundary}
++              />
++              <BoundaryCard
++                label="Preview / Render Boundary"
++                boundary={summary.previewRenderBoundary}
++              />
++              <BoundaryCard
++                label="Completion Boundary"
++                boundary={summary.completionBoundary}
++              />
++            </section>
++          </>
++        )}
++      </section>
+     </SurfaceLayout>
+   )
+ }
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 7b18a86..abeeb5b 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -1,22 +1,222 @@
+ import { describe, expect, it } from 'vitest'
+ 
+ import {
++  authoringWorkspaceResultSchema,
++  catalogStateResultSchema,
++  catalogStateSummarySchema,
++  catalogVersionHistoryItemSchema,
+   captureDeleteResultSchema,
+   activePresetBindingSchema,
+   boothSessionStubSchema,
+   captureReadinessSnapshotSchema,
+   captureRequestResultSchema,
+   capabilitySnapshotSchema,
++  draftPresetEditPayloadSchema,
++  draftPresetSummarySchema,
++  draftValidationReportSchema,
+   hostErrorEnvelopeSchema,
++  operatorBlockedStateCategorySchema,
++  operatorSessionSummarySchema,
++  publicationAuditRecordSchema,
+   presetCatalogResultSchema,
++  presetLifecycleStateSchema,
+   presetSelectionInputSchema,
++  rollbackPresetCatalogInputSchema,
++  rollbackPresetCatalogResultSchema,
++  publishValidatedPresetInputSchema,
++  publishValidatedPresetResultSchema,
+   publishedPresetSummarySchema,
+   sessionManifestSchema,
+   sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
++  sessionTimingSnapshotSchema,
++  validateDraftPresetInputSchema,
++  validateDraftPresetResultSchema,
+ } from './index'
+ 
++function createDraftValidationReport(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'draft-preset-validation/v1',
++    presetId: 'preset_soft-glow-draft',
++    draftVersion: 2,
++    lifecycleState: 'draft',
++    status: 'failed',
++    checkedAt: '2026-03-26T00:10:00.000Z',
++    findings: [
++      {
++        ruleCode: 'missing-sample-cut',
++        severity: 'error',
++        fieldPath: 'sampleCut.assetPath',
++        message: 'sample-cut 대표 자산이 없어요.',
++        guidance: 'sampleCut.assetPath에 draft 작업공간 안의 대표 샘플 이미지를 추가해 주세요.',
++      },
++    ],
++    ...overrides,
++  }
++}
++
++function createDraftPresetSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'draft-preset-artifact/v1',
++    presetId: 'preset_soft-glow-draft',
++    displayName: 'Soft Glow Draft',
++    draftVersion: 2,
++    lifecycleState: 'draft',
++    darktableVersion: '5.4.1',
++    darktableProjectPath: 'darktable/soft-glow.dtpreset',
++    xmpTemplatePath: 'xmp/soft-glow.xmp',
++    previewProfile: {
++      profileId: 'preview-standard',
++      displayName: 'Preview Standard',
++      outputColorSpace: 'sRGB',
++    },
++    finalProfile: {
++      profileId: 'final-standard',
++      displayName: 'Final Standard',
++      outputColorSpace: 'sRGB',
++    },
++    noisePolicy: {
++      policyId: 'balanced-noise',
++      displayName: 'Balanced Noise',
++      reductionMode: 'balanced',
++    },
++    preview: {
++      assetPath: 'previews/soft-glow.jpg',
++      altText: 'Soft Glow draft portrait',
++    },
++    sampleCut: {
++      assetPath: 'samples/soft-glow-cut.jpg',
++      altText: 'Soft Glow sample cut',
++    },
++    description: '부드러운 피부톤 baseline',
++    notes: '하이라이트 재검토',
++    validation: {
++      status: 'not-run',
++      latestReport: null,
++      history: [],
++    },
++    publicationHistory: [],
++    updatedAt: '2026-03-26T00:00:00.000Z',
++    ...overrides,
++  }
++}
++
++function createPublicationAuditRecord(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'preset-publication-audit/v1',
++    presetId: 'preset_soft-glow-draft',
++    draftVersion: 2,
++    publishedVersion: '2026.03.26',
++    actorId: 'manager-kim',
++    actorLabel: 'Kim Manager',
++    reviewNote: null,
++    action: 'published',
++    reasonCode: null,
++    guidance: '게시가 완료되었고 이 버전은 미래 세션 catalog에서만 선택할 수 있어요.',
++    notedAt: '2026-03-26T00:20:00.000Z',
++    ...overrides,
++  }
++}
++
++function createCatalogVersionHistoryItem(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'preset-catalog-history/v1',
++    presetId: 'preset_soft-glow-draft',
++    actionType: 'published',
++    fromPublishedVersion: null,
++    toPublishedVersion: '2026.03.26',
++    actorId: 'manager-kim',
++    actorLabel: 'Kim Manager',
++    happenedAt: '2026-03-26T00:20:01.000Z',
++    ...overrides,
++  }
++}
++
++function createCatalogStateSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    presetId: 'preset_soft-glow-draft',
++    livePublishedVersion: '2026.03.26',
++    publishedPresets: [
++      {
++        presetId: 'preset_soft-glow-draft',
++        displayName: 'Soft Glow Draft',
++        publishedVersion: '2026.03.25',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'preview-tile',
++          assetPath: 'published/preset_soft-glow-draft/2026.03.25/preview.jpg',
++          altText: 'Soft Glow draft portrait 2026.03.25',
++        },
++      },
++      {
++        presetId: 'preset_soft-glow-draft',
++        displayName: 'Soft Glow Draft',
++        publishedVersion: '2026.03.26',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'preview-tile',
++          assetPath: 'published/preset_soft-glow-draft/2026.03.26/preview.jpg',
++          altText: 'Soft Glow draft portrait 2026.03.26',
++        },
++      },
++    ],
++    versionHistory: [
++      createCatalogVersionHistoryItem({
++        actionType: 'published',
++        fromPublishedVersion: null,
++        toPublishedVersion: '2026.03.25',
++        happenedAt: '2026-03-25T00:20:01.000Z',
++      }),
++      createCatalogVersionHistoryItem({
++        actionType: 'rollback',
++        fromPublishedVersion: '2026.03.26',
++        toPublishedVersion: '2026.03.25',
++        happenedAt: '2026-03-26T00:25:01.000Z',
++      }),
++    ],
++    ...overrides,
++  }
++}
++
++function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'operator-session-summary/v1',
++    state: 'session-loaded',
++    blockedStateCategory: 'preview-render-blocked',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetId: 'preset_soft-glow',
++    activePresetDisplayName: 'Soft Glow',
++    activePresetVersion: '2026.03.26',
++    lifecycleStage: 'preview-waiting',
++    timingPhase: 'active',
++    updatedAt: '2026-03-26T00:10:00.000Z',
++    postEndState: null,
++    recentFailure: {
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
++      observedAt: '2026-03-26T00:10:01.000Z',
++    },
++    captureBoundary: {
++      status: 'clear',
++      title: '캡처 경계 정상',
++      detail: '활성 preset이 선택돼 있어 capture 경계는 열려 있어요.',
++    },
++    previewRenderBoundary: {
++      status: 'blocked',
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail: '가장 최근 촬영본은 저장되었지만 preview/render 결과가 아직 준비되지 않았어요.',
++    },
++    completionBoundary: {
++      status: 'clear',
++      title: '완료 경계 대기 전',
++      detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
++    },
++    ...overrides,
++  }
++}
++
+ describe('shared contracts baseline', () => {
+   it('normalizes booth capability access to always include the booth surface', () => {
+     const parsed = capabilitySnapshotSchema.parse({
+@@ -106,6 +306,13 @@ describe('shared contracts baseline', () => {
+         status: 'active',
+         stage: 'capture-ready',
+       },
++      catalogRevision: 3,
++      catalogSnapshot: [
++        {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++      ],
+       activePreset: {
+         presetId: 'preset_soft-glow',
+         publishedVersion: '2026.03.20',
+@@ -116,6 +323,37 @@ describe('shared contracts baseline', () => {
+     })
+ 
+     expect(parsed.lifecycle.stage).toBe('capture-ready')
++    expect(parsed.catalogRevision).toBe(3)
++    expect(parsed.catalogSnapshot).toHaveLength(1)
++  })
++
++  it('requires a completion variant before post-end completed truth can be claimed', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:00.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:15:00.000Z',
++        },
++      }),
++    ).toThrow()
+   })
+ 
+   it('parses a typed session start result and serializable host error envelope', () => {
+@@ -154,6 +392,50 @@ describe('shared contracts baseline', () => {
+     expect(error.fieldErrors?.phoneLastFour).toBe('숫자 4자리여야 해요.')
+   })
+ 
++  it('parses host-owned session timing truth with warning and end markers', () => {
++    const parsed = sessionTimingSnapshotSchema.parse({
++      schemaVersion: 'session-timing/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      adjustedEndAt: '2026-03-20T00:15:00.000Z',
++      warningAt: '2026-03-20T00:10:00.000Z',
++      phase: 'warning',
++      captureAllowed: true,
++      approvedExtensionMinutes: 0,
++      approvedExtensionAuditRef: null,
++      warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++      endedTriggeredAt: null,
++    })
++
++    expect(parsed.phase).toBe('warning')
++    expect(parsed.captureAllowed).toBe(true)
++  })
++
++  it('parses an operator session summary with normalized blocked-state diagnostics', () => {
++    const parsed = operatorSessionSummarySchema.parse(
++      createOperatorSessionSummary(),
++    )
++
++    expect(parsed.blockedStateCategory).toBe('preview-render-blocked')
++    expect(parsed.previewRenderBoundary.status).toBe('blocked')
++    expect(parsed.recentFailure?.title).toBe('프리뷰/렌더 결과 준비 지연')
++  })
++
++  it('rejects operator summaries whose blocked-state category or safe detail shape drift', () => {
++    expect(() => operatorBlockedStateCategorySchema.parse('render-stuck')).toThrow()
++
++    expect(() =>
++      operatorSessionSummarySchema.parse(
++        createOperatorSessionSummary({
++          recentFailure: {
++            title: 'render stderr',
++            detail: '',
++            observedAt: '2026-03-26T00:10:01.000Z',
++          },
++        }),
++      ),
++    ).toThrow()
++  })
++
+   it('accepts a booth-safe published preset summary with a customer preview asset', () => {
+     const parsed = publishedPresetSummarySchema.parse({
+       presetId: 'preset_soft-glow',
+@@ -218,6 +500,462 @@ describe('shared contracts baseline', () => {
+     expect(parsed.preset.publishedVersion).toBe('2026.03.20')
+   })
+ 
++  it('parses a draft artifact candidate with validation metadata and booth-safe render profiles', () => {
++    const parsed = draftPresetSummarySchema.parse(createDraftPresetSummary())
++
++    expect(parsed.lifecycleState).toBe('draft')
++    expect(parsed.xmpTemplatePath).toBe('xmp/soft-glow.xmp')
++    expect(parsed.validation.status).toBe('not-run')
++  })
++
++  it('rejects lifecycle and validation combinations that cannot both be true', () => {
++    expect(() =>
++      draftPresetSummarySchema.parse(
++        createDraftPresetSummary({
++          lifecycleState: 'draft',
++          validation: {
++            status: 'passed',
++            latestReport: createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++            history: [
++              createDraftValidationReport({
++                lifecycleState: 'validated',
++                status: 'passed',
++                findings: [],
++              }),
++            ],
++          },
++        }),
++      ),
++    ).toThrow(/draft 상태에서는 validation passed/i)
++
++    expect(() =>
++      draftPresetSummarySchema.parse(
++        createDraftPresetSummary({
++          lifecycleState: 'validated',
++          validation: {
++            status: 'failed',
++            latestReport: createDraftValidationReport(),
++            history: [createDraftValidationReport()],
++          },
++        }),
++      ),
++    ).toThrow(/approval-ready 이후 lifecycle은 validation passed/i)
++  })
++
++  it('keeps the lifecycle enum ready for validated, approved, and published follow-ups while limiting edits to draft payloads', () => {
++    expect(presetLifecycleStateSchema.parse('published')).toBe('published')
++
++    const parsedWorkspace = authoringWorkspaceResultSchema.parse({
++      schemaVersion: 'preset-authoring-workspace/v1',
++      supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
++      drafts: [],
++    })
++
++    expect(parsedWorkspace.supportedLifecycleStates).toContain('approved')
++
++    expect(() =>
++      draftPresetEditPayloadSchema.parse({
++        presetId: 'preset_soft-glow-draft',
++        displayName: 'Soft Glow Draft',
++        lifecycleState: 'approved',
++        darktableVersion: '5.4.1',
++        darktableProjectPath: 'darktable/soft-glow.dtpreset',
++        xmpTemplatePath: 'xmp/soft-glow.xmp',
++        previewProfile: {
++          profileId: 'preview-standard',
++          displayName: 'Preview Standard',
++          outputColorSpace: 'sRGB',
++        },
++        finalProfile: {
++          profileId: 'final-standard',
++          displayName: 'Final Standard',
++          outputColorSpace: 'sRGB',
++        },
++        noisePolicy: {
++          policyId: 'balanced-noise',
++          displayName: 'Balanced Noise',
++          reductionMode: 'balanced',
++        },
++        preview: {
++          assetPath: 'previews/soft-glow.jpg',
++          altText: 'Soft Glow draft portrait',
++        },
++        sampleCut: {
++          assetPath: 'samples/soft-glow-cut.jpg',
++          altText: 'Soft Glow sample cut',
++        },
++      }),
++    ).toThrow()
++  })
++
++  it('parses validation transition input and output with actionable findings', () => {
++    const parsedInput = validateDraftPresetInputSchema.parse({
++      presetId: 'preset_soft-glow-draft',
++    })
++    const parsedResult = validateDraftPresetResultSchema.parse({
++      schemaVersion: 'draft-preset-validation-result/v1',
++      draft: createDraftPresetSummary({
++        lifecycleState: 'validated',
++        validation: {
++          status: 'passed',
++          latestReport: createDraftValidationReport({
++            lifecycleState: 'validated',
++            status: 'passed',
++            findings: [],
++          }),
++          history: [
++            createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++          ],
++        },
++      }),
++      report: createDraftValidationReport({
++        lifecycleState: 'validated',
++        status: 'passed',
++        findings: [],
++      }),
++    })
++
++    expect(parsedInput.presetId).toBe('preset_soft-glow-draft')
++    expect(parsedResult.draft.lifecycleState).toBe('validated')
++    expect(parsedResult.report.status).toBe('passed')
++  })
++
++  it('rejects validation transition payloads whose draft and report truths diverge', () => {
++    expect(() =>
++      validateDraftPresetResultSchema.parse({
++        schemaVersion: 'draft-preset-validation-result/v1',
++        draft: createDraftPresetSummary({
++          lifecycleState: 'published',
++          validation: {
++            status: 'passed',
++            latestReport: createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++            history: [
++              createDraftValidationReport({
++                lifecycleState: 'validated',
++                status: 'passed',
++                findings: [],
++              }),
++            ],
++          },
++        }),
++        report: createDraftValidationReport({
++          lifecycleState: 'validated',
++          status: 'passed',
++          findings: [],
++        }),
++      }),
++    ).toThrow(/draft 또는 validated lifecycle만 반환/i)
++
++    expect(() =>
++      validateDraftPresetResultSchema.parse({
++        schemaVersion: 'draft-preset-validation-result/v1',
++        draft: createDraftPresetSummary({
++          lifecycleState: 'validated',
++          validation: {
++            status: 'passed',
++            latestReport: createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++            history: [
++              createDraftValidationReport({
++                lifecycleState: 'validated',
++                status: 'passed',
++                findings: [],
++              }),
++            ],
++          },
++        }),
++        report: createDraftValidationReport({
++          presetId: 'preset_other-draft',
++          lifecycleState: 'validated',
++          status: 'passed',
++          findings: [],
++        }),
++      }),
++    ).toThrow(/report presetId는 draft presetId와 같아야/i)
++  })
++
++  it('parses publication input, success result, and audit history for future-session-only publication', () => {
++    const parsedInput = publishValidatedPresetInputSchema.parse({
++      presetId: 'preset_soft-glow-draft',
++      draftVersion: 2,
++      validationCheckedAt: '2026-03-26T00:10:00.000Z',
++      expectedDisplayName: 'Soft Glow Draft',
++      publishedVersion: '2026.03.26',
++      actorId: 'manager-kim',
++      actorLabel: 'Kim Manager',
++      scope: 'future-sessions-only',
++      reviewNote: '현재 진행 중인 부스 세션은 유지',
++    })
++    const parsedAudit = publicationAuditRecordSchema.parse(
++      createPublicationAuditRecord(),
++    )
++    const parsedResult = publishValidatedPresetResultSchema.parse({
++      schemaVersion: 'draft-preset-publication-result/v1',
++      status: 'published',
++      draft: createDraftPresetSummary({
++        lifecycleState: 'published',
++        validation: {
++          status: 'passed',
++          latestReport: createDraftValidationReport({
++            lifecycleState: 'validated',
++            status: 'passed',
++            findings: [],
++          }),
++          history: [
++            createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++          ],
++        },
++        publicationHistory: [
++          createPublicationAuditRecord({
++            action: 'approved',
++            reviewNote: '현재 진행 중인 부스 세션은 유지',
++            guidance: '승인 검토가 완료되었고 immutable 게시 아티팩트를 확정하고 있어요.',
++          }),
++          createPublicationAuditRecord(),
++        ],
++      }),
++      publishedPreset: {
++        presetId: 'preset_soft-glow-draft',
++        displayName: 'Soft Glow Draft',
++        publishedVersion: '2026.03.26',
++        boothStatus: 'booth-safe',
++        preview: {
++          kind: 'preview-tile',
++          assetPath: 'published/preset_soft-glow-draft/2026.03.26/preview.jpg',
++          altText: 'Soft Glow draft portrait',
++        },
++      },
++      bundlePath: 'C:/boothy/preset-catalog/published/preset_soft-glow-draft/2026.03.26',
++      auditRecord: createPublicationAuditRecord(),
++    })
++
++    expect(parsedInput.scope).toBe('future-sessions-only')
++    expect(parsedInput.reviewNote).toBe('현재 진행 중인 부스 세션은 유지')
++    expect(parsedAudit.action).toBe('published')
++    expect(parsedAudit.reviewNote).toBeNull()
++    expect(parsedResult.status).toBe('published')
++    expect(parsedResult.draft.publicationHistory).toHaveLength(2)
++    expect(parsedResult.draft.publicationHistory[0].action).toBe('approved')
++    expect(parsedResult.draft.publicationHistory[0].reviewNote).toBe(
++      '현재 진행 중인 부스 세션은 유지',
++    )
++  })
++
++  it('parses catalog state summaries and version history for authoring rollback management', () => {
++    const parsedHistory = catalogVersionHistoryItemSchema.parse(
++      createCatalogVersionHistoryItem(),
++    )
++    const parsedSummary = catalogStateSummarySchema.parse(
++      createCatalogStateSummary(),
++    )
++    const parsedState = catalogStateResultSchema.parse({
++      schemaVersion: 'preset-catalog-state-result/v1',
++      catalogRevision: 4,
++      presets: [createCatalogStateSummary()],
++    })
++
++    expect(parsedHistory.actionType).toBe('published')
++    expect(parsedSummary.livePublishedVersion).toBe('2026.03.26')
++    expect(parsedSummary.versionHistory[1]?.actionType).toBe('rollback')
++    expect(parsedState.catalogRevision).toBe(4)
++  })
++
++  it('parses rollback input and completion results for future-session-safe catalog changes', () => {
++    const parsedInput = rollbackPresetCatalogInputSchema.parse({
++      presetId: 'preset_soft-glow-draft',
++      targetPublishedVersion: '2026.03.25',
++      expectedCatalogRevision: 4,
++      actorId: 'manager-kim',
++      actorLabel: 'Kim Manager',
++    })
++    const parsedSuccess = rollbackPresetCatalogResultSchema.parse({
++      schemaVersion: 'preset-catalog-rollback-result/v1',
++      status: 'rolled-back',
++      catalogRevision: 5,
++      summary: createCatalogStateSummary({
++        livePublishedVersion: '2026.03.25',
++      }),
++      auditEntry: createCatalogVersionHistoryItem({
++        actionType: 'rollback',
++        fromPublishedVersion: '2026.03.26',
++        toPublishedVersion: '2026.03.25',
++      }),
++      message:
++        '선택한 승인 버전으로 되돌렸어요. 이미 진행 중인 세션은 기존 바인딩을 계속 유지해요.',
++    })
++    const parsedRejected = rollbackPresetCatalogResultSchema.parse({
++      schemaVersion: 'preset-catalog-rollback-result/v1',
++      status: 'rejected',
++      reasonCode: 'already-live',
++      message: '이미 현재 미래 세션 catalog에 노출 중인 버전이에요.',
++      guidance: '다른 승인 버전을 선택하거나 현재 상태를 유지해 주세요.',
++      catalogRevision: 4,
++      summary: createCatalogStateSummary(),
++    })
++
++    expect(parsedInput.expectedCatalogRevision).toBe(4)
++    expect(parsedSuccess.status).toBe('rolled-back')
++    expect(parsedSuccess.summary.livePublishedVersion).toBe('2026.03.25')
++    expect(parsedRejected.status).toBe('rejected')
++  })
++
++  it('rejects catalog summaries whose live version is missing from the published version list', () => {
++    expect(() =>
++      catalogStateSummarySchema.parse(
++        createCatalogStateSummary({
++          livePublishedVersion: '2026.03.24',
++        }),
++      ),
++    ).toThrow(/livePublishedVersion/i)
++  })
++
++  it('requires publication history to record approved before published success', () => {
++    expect(() =>
++      publishValidatedPresetResultSchema.parse({
++        schemaVersion: 'draft-preset-publication-result/v1',
++        status: 'published',
++        draft: createDraftPresetSummary({
++          lifecycleState: 'published',
++          validation: {
++            status: 'passed',
++            latestReport: createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++            history: [
++              createDraftValidationReport({
++                lifecycleState: 'validated',
++                status: 'passed',
++                findings: [],
++              }),
++            ],
++          },
++          publicationHistory: [createPublicationAuditRecord()],
++        }),
++        publishedPreset: {
++          presetId: 'preset_soft-glow-draft',
++          displayName: 'Soft Glow Draft',
++          publishedVersion: '2026.03.26',
++          boothStatus: 'booth-safe',
++          preview: {
++            kind: 'preview-tile',
++            assetPath: 'published/preset_soft-glow-draft/2026.03.26/preview.jpg',
++            altText: 'Soft Glow draft portrait',
++          },
++        },
++        bundlePath: 'C:/boothy/preset-catalog/published/preset_soft-glow-draft/2026.03.26',
++        auditRecord: createPublicationAuditRecord(),
++      }),
++    ).toThrow(/approved 이력을 먼저 남겨야 해요/i)
++  })
++
++  it('parses actionable publication rejection guidance without claiming a published artifact', () => {
++    const parsed = publishValidatedPresetResultSchema.parse({
++      schemaVersion: 'draft-preset-publication-result/v1',
++      status: 'rejected',
++      draft: createDraftPresetSummary({
++        lifecycleState: 'validated',
++        validation: {
++          status: 'passed',
++          latestReport: createDraftValidationReport({
++            lifecycleState: 'validated',
++            status: 'passed',
++            findings: [],
++          }),
++          history: [
++            createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++          ],
++        },
++        publicationHistory: [
++          createPublicationAuditRecord({
++            action: 'rejected',
++            reasonCode: 'duplicate-version',
++            guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
++          }),
++        ],
++      }),
++      reasonCode: 'duplicate-version',
++      message: '같은 published version이 이미 존재해서 immutable 게시 규칙을 지킬 수 없어요.',
++      guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
++      auditRecord: createPublicationAuditRecord({
++        action: 'rejected',
++        reasonCode: 'duplicate-version',
++        guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
++      }),
++    })
++
++    expect(parsed.status).toBe('rejected')
++    if (parsed.status !== 'rejected') {
++      throw new Error('expected a rejected publication result')
++    }
++    expect(parsed.reasonCode).toBe('duplicate-version')
++    expect(parsed.auditRecord.action).toBe('rejected')
++  })
++
++  it('rejects invalid validation finding payloads and passed reports with error findings', () => {
++    expect(() =>
++      draftValidationReportSchema.parse({
++        ...createDraftValidationReport(),
++        findings: [
++          {
++            ruleCode: 'Invalid Rule',
++            severity: 'error',
++            fieldPath: 'sampleCut.assetPath',
++            message: 'sample-cut 대표 자산이 없어요.',
++            guidance: 'sampleCut.assetPath를 다시 확인해 주세요.',
++          },
++        ],
++      }),
++    ).toThrow()
++
++    expect(() =>
++      draftValidationReportSchema.parse({
++        ...createDraftValidationReport({
++          status: 'passed',
++        }),
++      }),
++    ).toThrow()
++  })
++
++  it('rejects preview or source references that try to escape the authoring workspace', () => {
++    expect(() =>
++      draftPresetEditPayloadSchema.parse({
++        ...createDraftPresetSummary({
++          validation: undefined,
++          updatedAt: undefined,
++        }),
++        preview: {
++          assetPath: '../outside/preview.jpg',
++          altText: 'Soft Glow draft portrait',
++        },
++      }),
++    ).toThrow()
++  })
++
+   it('parses customer-safe readiness snapshots and capture-saved request responses', () => {
+     const capture = sessionCaptureRecordSchema.parse({
+       schemaVersion: 'session-capture/v1',
+@@ -263,6 +1001,18 @@ describe('shared contracts baseline', () => {
+       customerMessage: '사진이 안전하게 저장되었어요.',
+       supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+       reasonCode: 'preview-waiting',
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'active',
++        captureAllowed: true,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: null,
++        endedTriggeredAt: null,
++      },
+     })
+     const captureResult = captureRequestResultSchema.parse({
+       schemaVersion: 'capture-request-result/v1',
+@@ -276,6 +1026,117 @@ describe('shared contracts baseline', () => {
+     expect(captureResult.capture.activePresetDisplayName).toBe('Soft Glow')
+     expect(captureResult.capture.raw.assetPath).toContain('captures/originals')
+     expect(captureResult.status).toBe('capture-saved')
++    expect(captureResult.readiness.timing?.adjustedEndAt).toBe(
++      '2026-03-20T00:15:00.000Z',
++    )
++  })
++
++  it('accepts a customer-safe explicit post-end readiness without leaking internal policy language', () => {
++    const readiness = captureReadinessSnapshotSchema.parse({
++      schemaVersion: 'capture-readiness/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      surfaceState: 'blocked',
++      customerState: 'Export Waiting',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '안내를 준비하고 있어요.',
++      supportMessage: '잠시만 기다리면 다음 안내를 보여드릴게요.',
++      reasonCode: 'export-waiting',
++      latestCapture: null,
++      postEnd: {
++        state: 'export-waiting',
++        evaluatedAt: '2026-03-20T00:15:00.000Z',
++      },
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'ended',
++        captureAllowed: false,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++        endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++      },
++    })
++
++    expect(readiness.reasonCode).toBe('export-waiting')
++    expect(readiness.postEnd?.state).toBe('export-waiting')
++    expect(readiness.supportMessage).not.toMatch(/policy|scheduler/i)
++  })
++
++  it('still parses legacy capture records that do not include activePresetId yet', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetVersion: '2026.03.20',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: null,
++        enqueuedAtMs: 100,
++        readyAtMs: null,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewWaiting',
++      postEndState: 'activeSession',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: null,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'pending',
++      },
++    })
++
++    expect(capture.activePresetId).toBeUndefined()
++    expect(capture.activePresetVersion).toBe('2026.03.20')
++  })
++
++  it('normalizes host kebab-case capture post-end states into the frontend contract', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetId: 'preset_soft-glow',
++      activePresetVersion: '2026.03.20',
++      activePresetDisplayName: 'Soft Glow',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture.jpg',
++        enqueuedAtMs: 100,
++        readyAtMs: 500,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewReady',
++      postEndState: 'local-deliverable-ready',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: 500,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'withinBudget',
++      },
++    })
++
++    expect(capture.postEndState).toBe('localDeliverableReady')
+   })
+ 
+   it('parses capture deletion results with the updated manifest and readiness', () => {
+@@ -343,6 +1204,105 @@ describe('shared contracts baseline', () => {
+     expect(error.readiness?.primaryAction).toBe('call-support')
+   })
+ 
++  it('parses handoff-ready post-end guidance with handoff metadata', () => {
++    const manifest = sessionManifestSchema.parse({
++      schemaVersion: 'session-manifest/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      customer: {
++        name: 'Kim',
++        phoneLastFour: '4821',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:10.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'completed',
++      },
++      activePreset: null,
++      captures: [],
++      postEnd: {
++        state: 'completed',
++        evaluatedAt: '2026-03-20T00:00:10.000Z',
++        completionVariant: 'handoff-ready',
++        approvedRecipientLabel: 'Front Desk',
++        primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++        supportActionLabel: null,
++        showBoothAlias: true,
++      },
++    })
++
++    expect(manifest.postEnd?.state).toBe('completed')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.completionVariant
++        : null,
++    ).toBe('handoff-ready')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.approvedRecipientLabel
++        : null,
++    ).toBe('Front Desk')
++  })
++
++  it('rejects completed post-end guidance without a completion variant', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++        },
++      }),
++    ).toThrow(/completionVariant/i)
++  })
++
++  it('rejects handoff-ready post-end guidance without destination details', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++          completionVariant: 'handoff-ready',
++          approvedRecipientLabel: null,
++          nextLocationLabel: null,
++          primaryActionLabel: '마지막 안내를 확인해 주세요.',
++          supportActionLabel: null,
++          showBoothAlias: false,
++        },
++      }),
++    ).toThrow(/승인된 수령 대상 또는 다음 이동 위치/i)
++  })
++
+   it('rejects capture request responses that omit the persisted capture record', () => {
+     expect(() =>
+       captureRequestResultSchema.parse({
+diff --git a/src/shared-contracts/index.ts b/src/shared-contracts/index.ts
+index f6e40c4..dc23054 100644
+--- a/src/shared-contracts/index.ts
++++ b/src/shared-contracts/index.ts
+@@ -1,7 +1,9 @@
+ export * from './dto/booth-session'
+ export * from './dto/capture'
++export * from './dto/operator'
+ export * from './dto/preset'
+ export * from './dto/session'
++export * from './dto/timing'
+ export * from './schemas'
+ export * from './events'
+ export * from './errors'
+diff --git a/src/shared-contracts/schemas/index.ts b/src/shared-contracts/schemas/index.ts
+index d222a38..3e78351 100644
+--- a/src/shared-contracts/schemas/index.ts
++++ b/src/shared-contracts/schemas/index.ts
+@@ -1,7 +1,10 @@
+ export * from './capabilities'
+ export * from './capture-readiness'
+ export * from './ids'
++export * from './operator-diagnostics'
++export * from './preset-authoring'
+ export * from './presets'
+ export * from './session-capture'
+ export * from './session-manifest'
+ export * from './session-start'
++export * from './session-timing'
+diff --git "a/_bmad-output/implementation-artifacts/5-1-\354\232\264\354\230\201\354\236\220\354\232\251-\355\230\204\354\236\254-\354\204\270\354\205\230-\353\254\270\353\247\245\352\263\274-\354\236\245\354\225\240-\354\247\204\353\213\250-\352\260\200\354\213\234\355\231\224.md" "b/_bmad-output/implementation-artifacts/5-1-\354\232\264\354\230\201\354\236\220\354\232\251-\355\230\204\354\236\254-\354\204\270\354\205\230-\353\254\270\353\247\245\352\263\274-\354\236\245\354\225\240-\354\247\204\353\213\250-\352\260\200\354\213\234\355\231\224.md"
+new file mode 100644
+index 0000000..a7b0b46
+--- /dev/null
++++ "b/_bmad-output/implementation-artifacts/5-1-\354\232\264\354\230\201\354\236\220\354\232\251-\355\230\204\354\236\254-\354\204\270\354\205\230-\353\254\270\353\247\245\352\263\274-\354\236\245\354\225\240-\354\247\204\353\213\250-\352\260\200\354\213\234\355\231\224.md"
+@@ -0,0 +1,257 @@
++# Story 5.1: 운영자용 현재 세션 문맥과 장애 진단 가시화
++
++Status: review
++
++<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
++
++## Story
++
++remote operator로서,
++현재 세션 문맥과 blocked-state 진단 정보를 보고 싶다.
++그래서 부스가 capture, preview/render, completion 중 어디에서 막혔는지 추측 없이 이해할 수 있다.
++
++## Acceptance Criteria
++
++1. booth session이 active 또는 blocked 상태일 때 운영자가 operator console을 열면, console은 현재 session identity, timing state, recent failure context, normalized blocked-state category를 보여줘야 한다. 또한 화면은 capture-side blockage와 preview/render/completion blockage를 구분해서 보여줘야 한다.
++2. operator console이 blocked session의 진단 정보를 렌더링할 때, UI는 raw helper output 대신 operator-safe diagnostic detail을 사용해야 한다. 또한 customer-facing booth copy와 기본 고객 흐름은 영향을 받지 않아야 한다.
++
++## Tasks / Subtasks
++
++- [x] 운영자 read-model 계약을 추가한다. (AC: 1, 2)
++  - [x] `src/shared-contracts/`와 `src-tauri/src/contracts/`에 operator session summary, blocked-state category, recent failure summary, safe diagnostic detail DTO/schema를 추가한다.
++  - [x] blocked-state category는 최소 `capture-blocked`, `preview-render-blocked`, `timing-post-end-blocked`, `not-blocked` 또는 동등한 명시적 집합으로 고정하고, host가 같은 의미를 Rust/TypeScript 양쪽에서 공유하게 만든다.
++  - [x] 새 계약은 `session.json`, `capture-readiness`, `session-timing`, `postEnd`를 재사용하는 projection이어야 하며, raw helper stderr/path/internal enum을 직접 실어 나르면 안 된다.
++- [x] Rust host에 operator diagnostics read seam을 구현한다. (AC: 1, 2)
++  - [x] `src-tauri/src/diagnostics/` 또는 동등한 host module을 추가해 현재 세션 manifest, timing snapshot, latest capture, post-end truth, diagnostics log를 종합한 operator summary를 계산한다.
++  - [x] 최근 실패 문맥은 render queue/helper/filesystem 원문을 그대로 노출하지 말고, "캡처 경계 준비 안 됨", "프리뷰/렌더 결과 준비 지연", "종료 후 완료 판정 대기"처럼 operator-safe 분류/요약으로 정규화한다.
++  - [x] `src-tauri/src/commands/`에 privileged read command를 추가하고, capability/auth 경계를 우회하지 않도록 기존 runtime capability model 안에 등록한다.
++  - [x] active session이 없을 때의 empty state, stale/foreign session mismatch, malformed diagnostics file, missing latest capture 같은 경우도 안전한 summary 또는 typed refusal로 처리한다.
++- [x] operator console 전용 typed adapter와 상태 관리를 추가한다. (AC: 1, 2)
++  - [x] `src/operator-console/` 아래에 host query를 감싸는 service/provider 또는 동등한 seam을 만들고, JSX에서 직접 `invoke` 하지 않도록 한다.
++  - [x] operator surface는 booth `SessionProvider`의 local flow state를 그대로 공유하지 말고, host 소유 진실을 직접 읽는 read-model로 분리한다.
++  - [x] refresh/poll 또는 subscription을 붙이더라도 same-session guard와 stale-response 방어를 유지해 늦게 도착한 booth 상태가 현재 operator summary를 오염시키지 못하게 한다.
++- [x] operator console UI를 실제 진단 화면으로 교체한다. (AC: 1, 2)
++  - [x] `OperatorSummaryScreen` placeholder를 session identity, booth alias, active preset, lifecycle/timing state, blocked-state category badge, recent failure context, boundary-specific detail 영역으로 교체한다.
++  - [x] 화면은 capture-side blockage와 preview/render/completion blockage를 시각적으로 분리해 "어디서 막혔는지"를 한눈에 읽게 해야 한다.
++  - [x] customer-safe booth copy와 operator-safe diagnostics를 섞지 말고, operator 화면 안에서도 raw helper output, raw filesystem path, internal Rust error text는 그대로 노출하지 않는다.
++  - [x] `/operator` route와 capability gate는 그대로 유지하고, booth 기본 UI에는 operator 진입점이나 새 진단 용어가 나타나지 않게 한다.
++- [x] 테스트로 진단 분류와 surface 격리를 잠근다. (AC: 1, 2)
++  - [x] contract/unit test: operator summary schema, blocked-state category parsing, safe diagnostic detail shape를 검증한다.
++  - [x] Rust test: manifest/readiness/timing/post-end 조합에 따라 capture vs preview/render vs completion blockage가 올바르게 분류되는지 검증한다.
++  - [x] UI test: operator summary 화면에 current session context와 blocked-state category가 보이고, raw helper/render text가 직접 노출되지 않는지 검증한다.
++  - [x] route/capability test: `/operator`는 계속 admin-auth + capability가 있을 때만 접근 가능하고, booth 기본 흐름에는 operator entry가 노출되지 않음을 검증한다.
++
++## Dev Notes
++
++### 스토리 범위와 목적
++
++- 이 스토리는 Epic 5 / FR-009의 첫 가치 조각이다. 핵심은 "복구를 수행하는 것"이 아니라, 운영자가 현재 세션과 막힌 경계를 빠르게 이해할 수 있는 읽기 전용 진단 시야를 여는 것이다.
++- Story 5.2가 정책 기반 복구 액션을 실행하는 단계라면, 5.1은 그 전제인 blocked-state classification과 operator-safe context projection을 고정하는 단계다.
++- Story 5.3의 본격 감사 로그/개입 이력보다 앞서, 5.1은 지금 이미 존재하는 session manifest, timing/post-end truth, diagnostics 디렉터리를 바탕으로 "현재 무엇이 막혔는가"를 안전하게 보여주는 범위에 집중해야 한다.
++
++### 스토리 기반 요구사항
++
++- 운영자는 current session context, timing state, recent failure context, allowed action set을 이해할 수 있어야 하며, blocked state는 capture / preview-render / completion 경계로 구분돼야 한다. [Source: _bmad-output/planning-artifacts/prd.md#FR-009 Operational Safety and Recovery]
++- `Operator Recovery Policy` baseline은 blocked states를 capture, preview or render, post-end recovery categories로 정규화한 뒤 operator tools에 노출하도록 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Named Policy References]
++- operator journey는 current session visibility, capture-state and render-state fault diagnosis, lifecycle/queue/intervention review를 포함해야 한다. [Source: _bmad-output/planning-artifacts/prd.md#Mode B: Operator Recovery Surface]
++- blocked state 진단은 raw helper output 대신 operator-safe detail을 사용해야 하고, customer-facing booth copy는 영향을 받지 않아야 한다. [Source: _bmad-output/planning-artifacts/epics.md#Story 5.1: 운영자용 현재 세션 문맥과 장애 진단 가시화]
++
++### 선행 의존성과 구현 순서
++
++- 직접 선행 문맥은 Story 1.5, Story 2.4, Story 3.1, Story 3.2, Story 3.3이다.
++- Story 1.5는 capture success와 preview readiness를 분리하고 latest capture / renderStatus contract를 고정했다. 5.1은 이 capture truth를 operator 분류의 입력으로 재사용해야 한다.
++- Story 2.4는 host-owned timing truth와 warning/exact-end 차단을 정리했다. 5.1의 timing/post-end blockage는 이 host timing snapshot에서 읽어야 한다.
++- Story 3.1 ~ 3.3은 explicit post-end truth(`export-waiting`, `completed`, `phone-required`)와 handoff/phone-required 보호 안내를 고정했다. 5.1은 이 post-end truth를 operator 관점의 completion blockage로 재해석해야 한다.
++- Story 5.2와 5.3은 아직 backlog다. 따라서 5.1은 action execution이나 full audit explorer를 선구현하지 말고, 읽기 전용 summary와 stable classification seam을 먼저 세워야 한다.
++
++### 현재 워크스페이스 상태
++
++- `src/operator-console/screens/OperatorSummaryScreen.tsx`는 아직 placeholder이며 실제 session context, diagnostics, recovery 분류를 보여주지 않는다.
++- `src/app/routes.tsx`에는 `/operator` route와 `SurfaceAccessGuard surface=\"operator\"`가 이미 있다. 운영자 surface 자체는 준비돼 있지만 실제 도메인 상태와 UI가 비어 있다.
++- `src/app/providers/app-providers.tsx`는 capability, preset-authoring, booth `SessionProvider`만 연결하고 있으며 operator domain provider는 아직 없다.
++- `src-tauri/src/commands/mod.rs`에는 `capture_commands`, `preset_commands`, `runtime_commands`, `session_commands`만 등록돼 있고 operator/diagnostics command module이 아직 없다.
++- `src/session-domain/state/session-provider.tsx`와 `src/capture-adapter/services/capture-runtime.ts`는 booth flow를 위한 same-session guard, event/poll merge, host error normalization을 이미 갖고 있다. 그러나 operator surface는 booth flow local state를 재사용하기보다 host read-model을 별도로 가져가는 편이 안전하다.
++- `src-tauri/src/session/session_paths.rs`, `src-tauri/src/timing/mod.rs`, `src-tauri/src/handoff/mod.rs`는 session `diagnostics/` 디렉터리와 `timing-events.log` 등 운영용 단서를 이미 만들고 있다. 5.1은 이 현재 기준선을 operator-safe summary로 읽는 첫 단계가 될 수 있다.
++
++### 이전 스토리 인텔리전스
++
++- Story 1.5는 "저장 성공"과 "프리뷰 준비 완료"를 분리하는 truthful state 기준선을 만들었다. operator diagnostics도 이 경계를 보존해야 하며, preview/render 지연을 capture failure로 뭉개면 안 된다. [Source: _bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md#구현-가드레일]
++- Story 2.4는 host-owned timing truth가 React local timer보다 우선해야 한다는 패턴을 굳혔다. operator timing blockage도 같은 원칙으로 host snapshot에서 읽어야 한다. [Source: _bmad-output/implementation-artifacts/2-4-조정된-종료-시각-표시와-경고-종료-알림.md#구현-가드레일]
++- Story 3.1은 exact-end 이후 explicit post-end truth 하나만 남도록 만들었다. operator diagnostics는 generic `ended` 같은 모호한 상태보다 `export-waiting` / `completed` / `phone-required`를 그대로 기반으로 삼아야 한다. [Source: _bmad-output/implementation-artifacts/3-1-종료-직후-명시적-사후-상태-진입.md#구현-가드레일]
++- Story 3.2는 `Completed`를 너무 일찍 주장하지 말라는 guardrail을 만들었다. operator 화면도 "완료"와 "완료 판정 대기"를 섞지 말아야 한다. [Source: _bmad-output/implementation-artifacts/3-2-export-waiting과-truthful-completion-안내.md#구현-가드레일]
++- Story 3.3은 finalized post-end 상태에서 capture/delete/preset-switch 같은 self-recovery 행동을 막았다. operator console은 이 보호 경계를 침범하는 booth-loop affordance를 고객 화면에 새로 노출하면 안 된다. [Source: _bmad-output/implementation-artifacts/3-3-handoff-ready와-phone-required-보호-안내.md#구현-가드레일]
++
++### 구현 가드레일
++
++- operator diagnostics는 booth `SessionProvider`의 화면 편의 state를 복사한 값이 아니라, host가 만든 정규화된 summary projection이어야 한다.
++- blocked-state category는 operator action policy의 입력이 되므로 UI에서 ad-hoc 분기 문자열을 만들지 말고 shared contract enum으로 고정하는 편이 안전하다.
++- raw helper stderr, filesystem path, serde parse error, darktable 내부 용어, Rust enum 이름을 그대로 화면에 노출하면 안 된다. operator-safe detail은 충분히 구체적이어야 하지만 내부 구현 원문이어서는 안 된다.
++- customer booth copy와 operator diagnostics는 같은 normalized truth에서 갈라져야 한다. operator 기능을 추가하면서 booth customer wording이나 화면 위계를 바꾸면 안 된다.
++- active session이 없을 때도 operator surface는 크래시하거나 이전 세션 정보를 붙잡으면 안 된다. empty state 또는 typed no-session summary가 필요하다.
++- 이번 스토리에서는 recovery action 실행, time extension, restart button, audit explorer를 미리 넣지 않는다. 그런 행동은 Story 5.2/5.3 범위다.
++
++### 아키텍처 준수사항
++
++- FR-009 구조 매핑은 `src/operator-console/`, `src/diagnostics-log/`, `src-tauri/src/diagnostics/`가 중심이다. 현재 repo에 없는 경계가 있더라도 이 방향으로 책임을 모아야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Requirements to Structure Mapping]
++- React component는 typed adapter/service를 통해서만 host와 통신해야 하며, operator screen에서 직접 `invoke`를 추가하면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Frontend Architecture]
++- privileged operator surface는 admin password + capability gate 뒤에서만 보이도록 유지해야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Authentication & Security]
++- customer-facing and operator-facing state projection은 같은 host-normalized truth에서 파생돼야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
++- session folder는 image/session truth를, SQLite는 lifecycle/intervention audit를 소유한다. 5.1은 session manifest + diagnostics snapshot 기반 read-model을 우선 만들고, photo/session truth를 다른 저장소로 옮기면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture]
++
++### 프로젝트 구조 요구사항
++
++- 주요 작업 후보 경로:
++  - `src/operator-console/screens/OperatorSummaryScreen.tsx`
++  - `src/operator-console/`
++  - `src/app/routes.tsx`
++  - `src/app/routes.test.tsx`
++  - `src/app/providers/app-providers.tsx`
++  - `src/shared-contracts/schemas/`
++  - `src/shared-contracts/dto/`
++  - `src/shared-contracts/index.ts`
++  - `src-tauri/src/contracts/dto.rs`
++  - `src-tauri/src/commands/mod.rs`
++  - `src-tauri/src/commands/runtime_commands.rs`
++  - `src-tauri/src/session/session_manifest.rs`
++  - `src-tauri/src/capture/normalized_state.rs`
++  - `src-tauri/src/timing/mod.rs`
++  - `src-tauri/src/handoff/mod.rs`
++  - `src-tauri/src/session/session_paths.rs`
++  - `src-tauri/tests/`
++- 새 경계가 필요하면 우선 후보:
++  - `src/operator-console/services/operator-diagnostics-service.ts`
++  - `src/operator-console/providers/`
++  - `src/operator-console/state/`
++  - `src-tauri/src/diagnostics/mod.rs`
++  - `src-tauri/src/commands/operator_commands.rs`
++  - `src/diagnostics-log/`
++
++### UX 구현 요구사항
++
++- operator surface는 customer booth UI와 달리 더 높은 정보 밀도를 가질 수 있지만, 여전히 raw helper output dump가 아니라 "행동 가능한 운영자 진단"이어야 한다.
++- 현재 세션 identity는 booth alias, sessionId, active preset, lifecycle/timing/post-end truth를 함께 보여 주되, 불필요한 교차 세션 참조나 과도한 PII는 노출하지 않는 편이 안전하다.
++- blocked-state category는 한눈에 읽히는 badge/card 위계가 필요하다. 특히 capture-side blockage와 preview/render/completion blockage를 같은 문단에 섞지 말고 구획을 분리해야 한다.
++- customer-facing booth copy는 여전히 plain-language 보호 카피를 유지해야 하며, operator diagnostics terminology가 booth 화면에 새어 나오면 안 된다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Reading Guide]
++- `/operator` surface는 768px 이상 운영자 화면 범위를 지원해야 하고, booth 기본 흐름에서는 계속 숨겨져 있어야 한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Responsive Design & Accessibility]
++
++### 최신 기술 확인 메모
++
++- 현재 로컬 기준선은 `react 19.2.4`, `react-router-dom 7.13.1`, `@tauri-apps/api 2.10.1`, `zod 4.3.6`, `tauri 2.10.3`이다. 이번 스토리는 새 프레임워크보다 existing typed boundary 위에 operator diagnostics read-model을 추가하는 편이 안전하다. [Source: package.json] [Source: src-tauri/Cargo.toml]
++- Tauri v2 문서는 privileged backend work를 `#[tauri::command]` 경계로 노출하는 방식을 전제로 한다. 5.1의 operator summary는 one-shot diagnostics query이므로 command 중심 구현이 적합하다. [Source: https://v2.tauri.app/develop/calling-rust/]
++- Tauri v2 문서는 event system이 low latency/high throughput streaming용이 아니고, ordered streaming에는 channels가 더 적합하다고 설명한다. 5.1은 우선 command + explicit refresh/poll로 시작하고, 지속 스트리밍이 필요해질 때 channel 전환을 검토하는 편이 안전하다. 이것은 공식 문서와 현재 요구사항을 바탕으로 한 구현 추론이다. [Source: https://v2.tauri.app/develop/calling-frontend/]
++- Tauri capability 문서는 capability가 window/webview에 붙는 권한 모델임을 설명한다. operator diagnostics command와 UI는 기존 operator surface capability를 재사용해야 하며 booth window를 통해 우회 노출되면 안 된다. [Source: https://v2.tauri.app/reference/acl/capability/]
++- React 공식 문서는 `useEffectEvent`가 effect/listener 안에서 최신 값을 읽는 용도라고 설명한다. operator refresh/poll 또는 event bridge를 붙일 때 stale closure를 줄이는 데 유용하지만 dependency shortcut 용도로 오용하면 안 된다. [Source: https://react.dev/reference/react/useEffectEvent]
++- Zod 공식 사이트는 Zod 4가 stable이며 TypeScript-first validation library라고 명시한다. operator summary도 ad-hoc parsing보다 shared schema family에 넣는 편이 안전하다. [Source: https://zod.dev/]
++
++### 테스트 요구사항
++
++- 최소 필수 테스트 범위:
++  - operator summary가 active session identity, timing state, blocked-state category, recent failure context를 함께 보여준다.
++  - capture-side blockage와 preview/render/completion blockage가 서로 다른 category로 분류된다.
++  - raw helper output, filesystem path, internal Rust error text가 operator UI에 직접 나타나지 않는다.
++  - active session이 없을 때 safe empty state 또는 typed no-session summary가 나온다.
++  - `/operator` route는 capability/auth 없이는 계속 접근 불가이고, booth 기본 UI에는 operator entry가 나타나지 않는다.
++  - stale/foreign response 또는 malformed diagnostics snapshot이 현재 operator 화면을 오염시키지 않는다.
++
++### 금지사항 / 안티패턴
++
++- `OperatorSummaryScreen` 안에서 직접 `invoke`를 호출하는 것 금지
++- booth `SessionProvider` state를 operator truth처럼 그대로 재사용하는 것 금지
++- raw helper stderr/path, render worker text, filesystem path를 operator-safe detail이라고 주장하며 그대로 노출하는 것 금지
++- blocked-state category를 JSX 안에서 임의 문자열 비교로만 계산하는 것 금지
++- Story 5.2 범위인 recovery action button과 Story 5.3 범위인 full audit explorer를 이번 스토리 안에서 과도하게 선구현하는 것 금지
++- operator diagnostics 추가 때문에 booth customer copy, route, capability visibility가 흔들리는 것 금지
++
++### 참고 문서
++
++- Epic 분해: `_bmad-output/planning-artifacts/epics.md`
++- PRD: `_bmad-output/planning-artifacts/prd.md`
++- 아키텍처: `_bmad-output/planning-artifacts/architecture.md`
++- UX: `_bmad-output/planning-artifacts/ux-design-specification.md`
++- 계약 문서: `docs/contracts/session-manifest.md`
++- 이전 스토리: `_bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md`
++- 이전 스토리: `_bmad-output/implementation-artifacts/2-4-조정된-종료-시각-표시와-경고-종료-알림.md`
++- 이전 스토리: `_bmad-output/implementation-artifacts/3-1-종료-직후-명시적-사후-상태-진입.md`
++- 이전 스토리: `_bmad-output/implementation-artifacts/3-2-export-waiting과-truthful-completion-안내.md`
++- 이전 스토리: `_bmad-output/implementation-artifacts/3-3-handoff-ready와-phone-required-보호-안내.md`
++- 프로젝트 컨텍스트: 없음
++
++### References
++
++- [Source: _bmad-output/planning-artifacts/epics.md#Story 5.1: 운영자용 현재 세션 문맥과 장애 진단 가시화]
++- [Source: _bmad-output/planning-artifacts/epics.md#Epic 5: 운영자 복구와 감사 로그]
++- [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
++- [Source: _bmad-output/planning-artifacts/prd.md#Mode B: Operator Recovery Surface]
++- [Source: _bmad-output/planning-artifacts/prd.md#Named Policy References]
++- [Source: _bmad-output/planning-artifacts/prd.md#Fault Diagnosis and Recovery]
++- [Source: _bmad-output/planning-artifacts/prd.md#Approved Operator Recovery Inventory]
++- [Source: _bmad-output/planning-artifacts/prd.md#FR-009 Operational Safety and Recovery]
++- [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture]
++- [Source: _bmad-output/planning-artifacts/architecture.md#Authentication & Security]
++- [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
++- [Source: _bmad-output/planning-artifacts/architecture.md#Frontend Architecture]
++- [Source: _bmad-output/planning-artifacts/architecture.md#Requirements to Structure Mapping]
++- [Source: _bmad-output/planning-artifacts/architecture.md#Closed Contract Freeze Baseline]
++- [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Reading Guide]
++- [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Responsive Design & Accessibility]
++- [Source: _bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md#구현-가드레일]
++- [Source: _bmad-output/implementation-artifacts/2-4-조정된-종료-시각-표시와-경고-종료-알림.md#구현-가드레일]
++- [Source: _bmad-output/implementation-artifacts/3-1-종료-직후-명시적-사후-상태-진입.md#구현-가드레일]
++- [Source: _bmad-output/implementation-artifacts/3-2-export-waiting과-truthful-completion-안내.md#구현-가드레일]
++- [Source: _bmad-output/implementation-artifacts/3-3-handoff-ready와-phone-required-보호-안내.md#구현-가드레일]
++- [Source: docs/contracts/session-manifest.md#필드-규칙]
++- [Source: package.json]
++- [Source: src-tauri/Cargo.toml]
++- [Source: https://v2.tauri.app/develop/calling-rust/]
++- [Source: https://v2.tauri.app/develop/calling-frontend/]
++- [Source: https://v2.tauri.app/reference/acl/capability/]
++- [Source: https://react.dev/reference/react/useEffectEvent]
++- [Source: https://zod.dev/]
++
++## Dev Agent Record
++
++### Agent Model Used
++
++GPT-5 Codex
++
++### Debug Log References
++
++- 2026-03-26 17:05:28 +09:00 - Epic 5 / FR-009 / operator console placeholder, current session/timing/post-end contracts, blocked-state policy baseline, and official Tauri/React/Zod guidance를 함께 분석해 Story 5.1 context를 작성했다.
++- 2026-03-26 21:12:44 +09:00 - operator session summary shared contract와 host diagnostics read seam, privileged command, operator route 연결 초안을 구현했다.
++- 2026-03-26 22:04:39 +09:00 - operator console read-model UI, stale-response guard, contract/UI/Rust tests를 마무리하고 `pnpm lint`, `pnpm test:run`, `cargo test --manifest-path src-tauri/Cargo.toml`를 통과했다.
++
++### Completion Notes List
++
++- `/operator`에서 현재 세션 identity, preset/version, lifecycle/timing/post-end truth, normalized blocked-state category, recent failure summary를 읽는 진단 화면을 추가했다.
++- host가 capture, preview/render, completion 경계를 operator-safe summary로 직접 계산하도록 해 booth local flow state와 분리된 read-model 기준선을 고정했다.
++- malformed diagnostics log와 no-session empty state도 안전한 요약으로 처리하고, 늦게 도착한 응답이 현재 operator summary를 덮지 못하도록 stale-response guard를 추가했다.
++- recovery action 실행과 감사 로그 브라우징은 각각 Story 5.2와 Story 5.3 범위로 남겼다.
++
++### File List
++
++- _bmad-output/implementation-artifacts/5-1-운영자용-현재-세션-문맥과-장애-진단-가시화.md
++- _bmad-output/implementation-artifacts/sprint-status.yaml
++- src/app/routes.tsx
++- src/index.css
++- src/operator-console/providers/operator-diagnostics-context.ts
++- src/operator-console/providers/operator-diagnostics-provider.tsx
++- src/operator-console/providers/use-operator-diagnostics.ts
++- src/operator-console/screens/OperatorSummaryScreen.test.tsx
++- src/operator-console/screens/OperatorSummaryScreen.tsx
++- src/operator-console/services/operator-diagnostics-service.test.ts
++- src/operator-console/services/operator-diagnostics-service.ts
++- src/shared-contracts/contracts.test.ts
++- src/shared-contracts/dto/operator.ts
++- src/shared-contracts/index.ts
++- src/shared-contracts/schemas/index.ts
++- src/shared-contracts/schemas/operator-diagnostics.ts
++- src-tauri/src/commands/mod.rs
++- src-tauri/src/commands/operator_commands.rs
++- src-tauri/src/contracts/dto.rs
++- src-tauri/src/diagnostics/mod.rs
++- src-tauri/src/lib.rs
++- src-tauri/tests/operator_diagnostics.rs
++
++### Change Log
++
++- 2026-03-26 - operator diagnostics read-model, privileged host command, operator console summary UI, stale-response guard, and regression tests를 추가했다.
+diff --git a/src/operator-console/providers/operator-diagnostics-context.ts b/src/operator-console/providers/operator-diagnostics-context.ts
+new file mode 100644
+index 0000000..cd8e503
+--- /dev/null
++++ b/src/operator-console/providers/operator-diagnostics-context.ts
+@@ -0,0 +1,13 @@
++import { createContext } from 'react'
++
++import type { HostErrorEnvelope, OperatorSessionSummary } from '../../shared-contracts'
++
++export type OperatorDiagnosticsContextValue = {
++  summary: OperatorSessionSummary | null
++  error: HostErrorEnvelope | null
++  isLoading: boolean
++  refresh: () => void
++}
++
++export const OperatorDiagnosticsContext =
++  createContext<OperatorDiagnosticsContextValue | null>(null)
+diff --git a/src/operator-console/providers/operator-diagnostics-provider.tsx b/src/operator-console/providers/operator-diagnostics-provider.tsx
+new file mode 100644
+index 0000000..219cbbf
+--- /dev/null
++++ b/src/operator-console/providers/operator-diagnostics-provider.tsx
+@@ -0,0 +1,93 @@
++import type { ReactNode } from 'react'
++import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
++
++import type { HostErrorEnvelope, OperatorSessionSummary } from '../../shared-contracts'
++import {
++  createOperatorDiagnosticsService,
++  type OperatorDiagnosticsService,
++} from '../services/operator-diagnostics-service'
++import { OperatorDiagnosticsContext } from './operator-diagnostics-context'
++
++type OperatorDiagnosticsProviderProps = {
++  children: ReactNode
++  operatorDiagnosticsService?: OperatorDiagnosticsService
++}
++
++export function OperatorDiagnosticsProvider({
++  children,
++  operatorDiagnosticsService,
++}: OperatorDiagnosticsProviderProps) {
++  const operatorDiagnosticsServiceRef = useRef(
++    operatorDiagnosticsService ?? createOperatorDiagnosticsService(),
++  )
++  const requestVersionRef = useRef(0)
++  const [summary, setSummary] = useState<OperatorSessionSummary | null>(null)
++  const [error, setError] = useState<HostErrorEnvelope | null>(null)
++  const [isLoading, setIsLoading] = useState(true)
++
++  function commitSuccess(
++    requestVersion: number,
++    nextSummary: OperatorSessionSummary,
++  ) {
++    if (requestVersion !== requestVersionRef.current) {
++      return
++    }
++
++    startTransition(() => {
++      setSummary(nextSummary)
++      setError(null)
++      setIsLoading(false)
++    })
++  }
++
++  function commitFailure(requestVersion: number, nextError: HostErrorEnvelope) {
++    if (requestVersion !== requestVersionRef.current) {
++      return
++    }
++
++    startTransition(() => {
++      setError(nextError)
++      setIsLoading(false)
++    })
++  }
++
++  async function refresh() {
++    const requestVersion = requestVersionRef.current + 1
++
++    requestVersionRef.current = requestVersion
++    startTransition(() => {
++      setError(null)
++      setIsLoading(true)
++    })
++
++    try {
++      const nextSummary =
++        await operatorDiagnosticsServiceRef.current.loadOperatorSessionSummary()
++
++      commitSuccess(requestVersion, nextSummary)
++    } catch (error) {
++      commitFailure(requestVersion, error as HostErrorEnvelope)
++    }
++  }
++
++  const refreshOnMount = useEffectEvent(() => {
++    void refresh()
++  })
++
++  useEffect(() => {
++    refreshOnMount()
++  }, [])
++
++  return (
++    <OperatorDiagnosticsContext.Provider
++      value={{
++        summary,
++        error,
++        isLoading,
++        refresh,
++      }}
++    >
++      {children}
++    </OperatorDiagnosticsContext.Provider>
++  )
++}
+diff --git a/src/operator-console/providers/use-operator-diagnostics.ts b/src/operator-console/providers/use-operator-diagnostics.ts
+new file mode 100644
+index 0000000..a997ea8
+--- /dev/null
++++ b/src/operator-console/providers/use-operator-diagnostics.ts
+@@ -0,0 +1,13 @@
++import { useContext } from 'react'
++
++import { OperatorDiagnosticsContext } from './operator-diagnostics-context'
++
++export function useOperatorDiagnostics() {
++  const value = useContext(OperatorDiagnosticsContext)
++
++  if (value === null) {
++    throw new Error('OperatorDiagnosticsProvider가 필요해요.')
++  }
++
++  return value
++}
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.test.tsx b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+new file mode 100644
+index 0000000..d44b5e2
+--- /dev/null
++++ b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+@@ -0,0 +1,192 @@
++import { render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { RouterProvider, createMemoryRouter } from 'react-router-dom'
++import { describe, expect, it, vi } from 'vitest'
++
++import { createAppRoutes } from '../../app/routes'
++import { createCapabilityService } from '../../app/services/capability-service'
++import type { OperatorDiagnosticsService } from '../services/operator-diagnostics-service'
++
++type OperatorSessionSummaryFixture = ReturnType<typeof createOperatorSessionSummary>
++
++function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'operator-session-summary/v1',
++    state: 'session-loaded',
++    blockedStateCategory: 'preview-render-blocked',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetId: 'preset_soft-glow',
++    activePresetDisplayName: 'Soft Glow',
++    activePresetVersion: '2026.03.26',
++    lifecycleStage: 'preview-waiting',
++    timingPhase: 'active',
++    updatedAt: '2026-03-26T00:10:00.000Z',
++    postEndState: null,
++    recentFailure: {
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
++      observedAt: '2026-03-26T00:10:01.000Z',
++    },
++    captureBoundary: {
++      status: 'clear',
++      title: '캡처 경계 정상',
++      detail: '활성 preset이 선택돼 있어 capture 경계는 열려 있어요.',
++    },
++    previewRenderBoundary: {
++      status: 'blocked',
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail:
++        '가장 최근 촬영본은 저장되었지만 preview/render 결과가 아직 준비되지 않았어요.',
++    },
++    completionBoundary: {
++      status: 'clear',
++      title: '완료 경계 대기 전',
++      detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
++    },
++    ...overrides,
++  }
++}
++
++function createDeferred<T>() {
++  let resolve!: (value: T) => void
++  let reject!: (reason?: unknown) => void
++  const promise = new Promise<T>((nextResolve, nextReject) => {
++    resolve = nextResolve
++    reject = nextReject
++  })
++
++  return {
++    promise,
++    resolve,
++    reject,
++  }
++}
++
++function renderOperatorScreen(
++  operatorDiagnosticsService: OperatorDiagnosticsService,
++) {
++  const router = createMemoryRouter(
++    createAppRoutes({
++      capabilityService: createCapabilityService({
++        isAdminAuthenticated: true,
++        allowedSurfaces: ['booth', 'operator'],
++        currentWindowLabel: 'operator-window',
++      }),
++      operatorDiagnosticsService,
++    }),
++    {
++      initialEntries: ['/operator'],
++    },
++  )
++
++  render(<RouterProvider router={router} />)
++}
++
++describe('OperatorSummaryScreen', () => {
++  it('shows current session context and boundary-specific diagnostics', async () => {
++    const loadOperatorSessionSummary = vi.fn().mockResolvedValue(
++      createOperatorSessionSummary({
++        rawHelperOutput: 'C:\\render-worker\\stderr.log',
++      }),
++    )
++
++    renderOperatorScreen({
++      loadOperatorSessionSummary,
++    })
++
++    expect(
++      await screen.findByRole('heading', { name: /Operator Console/i }),
++    ).toBeInTheDocument()
++    expect(
++      await screen.findByRole('heading', { name: /^현재 세션 문맥$/i }),
++    ).toBeInTheDocument()
++    expect(screen.getAllByText(/preview-render-blocked/i)).not.toHaveLength(0)
++    expect(screen.getByText('session_01hs6n1r8b8zc5v4ey2x7b9g1m')).toBeInTheDocument()
++    expect(screen.getByText('Kim 4821')).toBeInTheDocument()
++    expect(screen.getByText(/Capture Boundary/i)).toBeInTheDocument()
++    expect(screen.getByText(/Preview \/ Render Boundary/i)).toBeInTheDocument()
++    expect(screen.getByText(/Completion Boundary/i)).toBeInTheDocument()
++    expect(screen.queryByText(/C:\\render-worker\\stderr\.log/i)).not.toBeInTheDocument()
++  })
++
++  it('renders a safe empty state when no active session exists', async () => {
++    const loadOperatorSessionSummary = vi.fn().mockResolvedValue(
++      createOperatorSessionSummary({
++        state: 'no-session',
++        blockedStateCategory: 'not-blocked',
++        sessionId: null,
++        boothAlias: null,
++        activePresetId: null,
++        activePresetDisplayName: null,
++        activePresetVersion: null,
++        lifecycleStage: null,
++        timingPhase: null,
++        updatedAt: null,
++        postEndState: null,
++        recentFailure: null,
++        captureBoundary: {
++          status: 'clear',
++          title: '현재 세션 없음',
++          detail: '진행 중인 세션이 없어 capture 경계를 아직 판단하지 않았어요.',
++        },
++        previewRenderBoundary: {
++          status: 'clear',
++          title: '최근 결과 없음',
++          detail: '진행 중인 세션이 없어 preview/render 경계도 아직 비어 있어요.',
++        },
++        completionBoundary: {
++          status: 'clear',
++          title: '후처리 경계 비어 있음',
++          detail: '현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.',
++        },
++      }),
++    )
++
++    renderOperatorScreen({
++      loadOperatorSessionSummary,
++    })
++
++    expect(await screen.findByText(/진행 중인 세션이 아직 없어요/i)).toBeInTheDocument()
++    expect(screen.getByText(/현재 세션 없음/i)).toBeInTheDocument()
++    expect(screen.getByText(/후처리 경계 비어 있음/i)).toBeInTheDocument()
++  })
++
++  it('keeps the newest refresh result when an older response resolves late', async () => {
++    const first = createDeferred<OperatorSessionSummaryFixture>()
++    const second = createDeferred<OperatorSessionSummaryFixture>()
++    const loadOperatorSessionSummary = vi
++      .fn()
++      .mockReturnValueOnce(first.promise)
++      .mockReturnValueOnce(second.promise)
++
++    renderOperatorScreen({
++      loadOperatorSessionSummary,
++    })
++
++    const user = userEvent.setup()
++
++    await screen.findByRole('heading', { name: /Operator Console/i })
++    await user.click(screen.getByRole('button', { name: /새로고침/i }))
++
++    second.resolve(
++      createOperatorSessionSummary({
++        boothAlias: 'Kim 2222',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++      }),
++    )
++
++    expect(await screen.findByText('Kim 2222')).toBeInTheDocument()
++
++    first.resolve(
++      createOperatorSessionSummary({
++        boothAlias: 'Kim 1111',
++      }),
++    )
++
++    await waitFor(() => {
++      expect(screen.getByText('Kim 2222')).toBeInTheDocument()
++    })
++    expect(screen.queryByText('Kim 1111')).not.toBeInTheDocument()
++  })
++})
+diff --git a/src/operator-console/services/operator-diagnostics-service.test.ts b/src/operator-console/services/operator-diagnostics-service.test.ts
+new file mode 100644
+index 0000000..e8bb180
+--- /dev/null
++++ b/src/operator-console/services/operator-diagnostics-service.test.ts
+@@ -0,0 +1,107 @@
++import { afterEach, describe, expect, it } from 'vitest'
++
++import {
++  createBrowserOperatorDiagnosticsGateway,
++  createOperatorDiagnosticsService,
++} from './operator-diagnostics-service'
++
++type BrowserGlobals = typeof globalThis & {
++  __BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__?: unknown
++}
++
++function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'operator-session-summary/v1',
++    state: 'session-loaded',
++    blockedStateCategory: 'preview-render-blocked',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    activePresetId: 'preset_soft-glow',
++    activePresetDisplayName: 'Soft Glow',
++    activePresetVersion: '2026.03.26',
++    lifecycleStage: 'preview-waiting',
++    timingPhase: 'active',
++    updatedAt: '2026-03-26T00:10:00.000Z',
++    postEndState: null,
++    recentFailure: {
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
++      observedAt: '2026-03-26T00:10:01.000Z',
++    },
++    captureBoundary: {
++      status: 'clear',
++      title: '캡처 경계 정상',
++      detail: '활성 preset이 선택돼 있어 capture 경계는 열려 있어요.',
++    },
++    previewRenderBoundary: {
++      status: 'blocked',
++      title: '프리뷰/렌더 결과 준비 지연',
++      detail:
++        '가장 최근 촬영본은 저장되었지만 preview/render 결과가 아직 준비되지 않았어요.',
++    },
++    completionBoundary: {
++      status: 'clear',
++      title: '완료 경계 대기 전',
++      detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
++    },
++    ...overrides,
++  }
++}
++
++describe('operator diagnostics service', () => {
++  afterEach(() => {
++    delete (globalThis as BrowserGlobals).__BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__
++  })
++
++  it('uses an injected browser fixture when one is available', async () => {
++    ;(globalThis as BrowserGlobals).__BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__ =
++      createOperatorSessionSummary()
++
++    const result =
++      await createBrowserOperatorDiagnosticsGateway().loadOperatorSessionSummary()
++
++    expect(result).toMatchObject({
++      schemaVersion: 'operator-session-summary/v1',
++      blockedStateCategory: 'preview-render-blocked',
++    })
++  })
++
++  it('surfaces a clear host-unavailable error when no browser fixture exists', async () => {
++    await expect(
++      createBrowserOperatorDiagnosticsGateway().loadOperatorSessionSummary(),
++    ).rejects.toMatchObject({
++      code: 'host-unavailable',
++      message:
++        '브라우저 미리보기에서는 operator diagnostics fixture를 먼저 연결해 주세요.',
++    })
++  })
++
++  it('normalizes malformed browser fixtures into the host error envelope', async () => {
++    ;(globalThis as BrowserGlobals).__BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__ = {
++      state: 'session-loaded',
++      blockedStateCategory: 'preview-render-blocked',
++    }
++
++    await expect(
++      createBrowserOperatorDiagnosticsGateway().loadOperatorSessionSummary(),
++    ).rejects.toMatchObject({
++      code: 'host-unavailable',
++      message: '브라우저 operator diagnostics fixture 형식이 올바르지 않아요.',
++    })
++  })
++
++  it('parses the typed operator session summary through the service seam', async () => {
++    const service = createOperatorDiagnosticsService({
++      gateway: {
++        async loadOperatorSessionSummary() {
++          return createOperatorSessionSummary()
++        },
++      },
++    })
++
++    await expect(service.loadOperatorSessionSummary()).resolves.toMatchObject({
++      boothAlias: 'Kim 4821',
++      blockedStateCategory: 'preview-render-blocked',
++    })
++  })
++})
+diff --git a/src/operator-console/services/operator-diagnostics-service.ts b/src/operator-console/services/operator-diagnostics-service.ts
+new file mode 100644
+index 0000000..131fcdf
+--- /dev/null
++++ b/src/operator-console/services/operator-diagnostics-service.ts
+@@ -0,0 +1,122 @@
++import { invoke } from '@tauri-apps/api/core'
++
++import {
++  hostErrorEnvelopeSchema,
++  operatorSessionSummarySchema,
++  type HostErrorEnvelope,
++  type OperatorSessionSummary,
++} from '../../shared-contracts'
++
++export interface OperatorDiagnosticsGateway {
++  loadOperatorSessionSummary(): Promise<unknown>
++}
++
++export interface OperatorDiagnosticsService {
++  loadOperatorSessionSummary(): Promise<OperatorSessionSummary>
++}
++
++class DefaultOperatorDiagnosticsService implements OperatorDiagnosticsService {
++  private readonly gateway: OperatorDiagnosticsGateway
++
++  constructor(gateway: OperatorDiagnosticsGateway) {
++    this.gateway = gateway
++  }
++
++  async loadOperatorSessionSummary() {
++    try {
++      const response = await this.gateway.loadOperatorSessionSummary()
++
++      return operatorSessionSummarySchema.parse(response)
++    } catch (error) {
++      throw normalizeHostError(error)
++    }
++  }
++}
++
++function normalizeHostError(error: unknown): HostErrorEnvelope {
++  const parsed = hostErrorEnvelopeSchema.safeParse(error)
++
++  if (parsed.success) {
++    return parsed.data
++  }
++
++  if (error instanceof Error) {
++    return {
++      code: 'host-unavailable',
++      message: error.message,
++    }
++  }
++
++  return {
++    code: 'host-unavailable',
++    message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
++  }
++}
++
++function isTauriRuntime() {
++  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
++}
++
++function readBrowserSummaryFixture() {
++  const fixture = (
++    globalThis as typeof globalThis & {
++      __BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__?: unknown
++    }
++  ).__BOOTHY_BROWSER_OPERATOR_SESSION_SUMMARY__
++
++  if (fixture === undefined) {
++    return null
++  }
++
++  const parsed = operatorSessionSummarySchema.safeParse(fixture)
++
++  if (parsed.success) {
++    return parsed.data
++  }
++
++  throw {
++    code: 'host-unavailable',
++    message: '브라우저 operator diagnostics fixture 형식이 올바르지 않아요.',
++  } satisfies HostErrorEnvelope
++}
++
++export function createBrowserOperatorDiagnosticsGateway(): OperatorDiagnosticsGateway {
++  return {
++    async loadOperatorSessionSummary() {
++      const fixture = readBrowserSummaryFixture()
++
++      if (fixture !== null) {
++        return fixture
++      }
++
++      throw {
++        code: 'host-unavailable',
++        message: '브라우저 미리보기에서는 operator diagnostics fixture를 먼저 연결해 주세요.',
++      } satisfies HostErrorEnvelope
++    },
++  }
++}
++
++export function createTauriOperatorDiagnosticsGateway(): OperatorDiagnosticsGateway {
++  return {
++    async loadOperatorSessionSummary() {
++      return invoke<unknown>('load_operator_session_summary')
++    },
++  }
++}
++
++export function createDefaultOperatorDiagnosticsGateway() {
++  return isTauriRuntime()
++    ? createTauriOperatorDiagnosticsGateway()
++    : createBrowserOperatorDiagnosticsGateway()
++}
++
++type CreateOperatorDiagnosticsServiceOptions = {
++  gateway?: OperatorDiagnosticsGateway
++}
++
++export function createOperatorDiagnosticsService({
++  gateway = createDefaultOperatorDiagnosticsGateway(),
++}: CreateOperatorDiagnosticsServiceOptions = {}) {
++  return new DefaultOperatorDiagnosticsService(gateway)
++}
+diff --git a/src/shared-contracts/dto/operator.ts b/src/shared-contracts/dto/operator.ts
+new file mode 100644
+index 0000000..846a5a0
+--- /dev/null
++++ b/src/shared-contracts/dto/operator.ts
+@@ -0,0 +1,21 @@
++import type { z } from 'zod'
++
++import {
++  operatorBlockedStateCategorySchema,
++  operatorBoundaryStatusSchema,
++  operatorBoundarySummarySchema,
++  operatorRecentFailureSummarySchema,
++  operatorSessionSummarySchema,
++  operatorSummaryStateSchema,
++} from '../schemas'
++
++export type OperatorBlockedStateCategory = z.infer<
++  typeof operatorBlockedStateCategorySchema
++>
++export type OperatorSummaryState = z.infer<typeof operatorSummaryStateSchema>
++export type OperatorBoundaryStatus = z.infer<typeof operatorBoundaryStatusSchema>
++export type OperatorBoundarySummary = z.infer<typeof operatorBoundarySummarySchema>
++export type OperatorRecentFailureSummary = z.infer<
++  typeof operatorRecentFailureSummarySchema
++>
++export type OperatorSessionSummary = z.infer<typeof operatorSessionSummarySchema>
+diff --git a/src/shared-contracts/schemas/operator-diagnostics.ts b/src/shared-contracts/schemas/operator-diagnostics.ts
+new file mode 100644
+index 0000000..2212c88
+--- /dev/null
++++ b/src/shared-contracts/schemas/operator-diagnostics.ts
+@@ -0,0 +1,52 @@
++import { z } from 'zod'
++
++import { presetDisplayNameSchema, presetIdSchema, publishedVersionSchema } from './preset-core'
++import { sessionIdSchema } from './ids'
++import { sessionPostEndStateSchema } from './session-manifest'
++
++export const operatorBlockedStateCategorySchema = z.enum([
++  'capture-blocked',
++  'preview-render-blocked',
++  'timing-post-end-blocked',
++  'not-blocked',
++])
++
++export const operatorSummaryStateSchema = z.enum([
++  'no-session',
++  'session-loaded',
++])
++
++export const operatorBoundaryStatusSchema = z.enum(['clear', 'blocked'])
++
++const operatorSafeCopySchema = z.string().trim().min(1).max(160)
++
++export const operatorBoundarySummarySchema = z.object({
++  status: operatorBoundaryStatusSchema,
++  title: operatorSafeCopySchema,
++  detail: z.string().trim().min(1).max(240),
++})
++
++export const operatorRecentFailureSummarySchema = z.object({
++  title: operatorSafeCopySchema,
++  detail: z.string().trim().min(1).max(240),
++  observedAt: z.string().datetime().nullable().optional(),
++})
++
++export const operatorSessionSummarySchema = z.object({
++  schemaVersion: z.literal('operator-session-summary/v1'),
++  state: operatorSummaryStateSchema,
++  blockedStateCategory: operatorBlockedStateCategorySchema,
++  sessionId: sessionIdSchema.nullable(),
++  boothAlias: z.string().trim().min(1).nullable(),
++  activePresetId: presetIdSchema.nullable().optional(),
++  activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
++  activePresetVersion: publishedVersionSchema.nullable().optional(),
++  lifecycleStage: z.string().trim().min(1).nullable(),
++  timingPhase: z.enum(['active', 'warning', 'ended']).nullable(),
++  updatedAt: z.string().datetime().nullable(),
++  postEndState: sessionPostEndStateSchema.nullable().optional(),
++  recentFailure: operatorRecentFailureSummarySchema.nullable(),
++  captureBoundary: operatorBoundarySummarySchema,
++  previewRenderBoundary: operatorBoundarySummarySchema,
++  completionBoundary: operatorBoundarySummarySchema,
++})
+diff --git a/src-tauri/src/commands/operator_commands.rs b/src-tauri/src/commands/operator_commands.rs
+new file mode 100644
+index 0000000..45b0003
+--- /dev/null
++++ b/src-tauri/src/commands/operator_commands.rs
+@@ -0,0 +1,20 @@
++use crate::{
++    commands::runtime_commands::resolve_runtime_capability_snapshot,
++    contracts::dto::{HostErrorEnvelope, OperatorSessionSummaryDto},
++    diagnostics::load_operator_session_summary_in_dir,
++    session::session_repository::resolve_app_session_base_dir,
++};
++use tauri::Manager;
++
++#[tauri::command]
++pub fn load_operator_session_summary(
++    app: tauri::AppHandle,
++) -> Result<OperatorSessionSummaryDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let capability_snapshot = resolve_runtime_capability_snapshot();
++
++    load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++}
+diff --git a/src-tauri/src/diagnostics/mod.rs b/src-tauri/src/diagnostics/mod.rs
+new file mode 100644
+index 0000000..962b9e0
+--- /dev/null
++++ b/src-tauri/src/diagnostics/mod.rs
+@@ -0,0 +1,421 @@
++use std::{
++    fs,
++    path::{Path, PathBuf},
++    time::SystemTime,
++};
++
++use crate::{
++    capture::normalized_state::normalize_capture_readiness,
++    contracts::dto::{
++        CapabilitySnapshotDto, HostErrorEnvelope, OperatorBoundarySummaryDto,
++        OperatorRecentFailureSummaryDto, OperatorSessionSummaryDto,
++    },
++    handoff::sync_post_end_state_in_dir,
++    session::{
++        session_manifest::{
++            rfc3339_to_unix_seconds, SessionManifest, SESSION_POST_END_COMPLETED,
++            SESSION_POST_END_EXPORT_WAITING, SESSION_POST_END_PHONE_REQUIRED,
++        },
++        session_paths::SessionPaths,
++        session_repository::read_session_manifest,
++    },
++    timing::sync_session_timing_in_dir,
++};
++
++const OPERATOR_SESSION_SUMMARY_SCHEMA_VERSION: &str = "operator-session-summary/v1";
++
++#[derive(Debug, Default, Clone)]
++struct DiagnosticsContext {
++    observed_at: Option<String>,
++    event_name: Option<String>,
++    post_end_state: Option<String>,
++    malformed: bool,
++}
++
++pub fn load_operator_session_summary_in_dir(
++    base_dir: &Path,
++    capability_snapshot: &CapabilitySnapshotDto,
++) -> Result<OperatorSessionSummaryDto, HostErrorEnvelope> {
++    ensure_operator_access(capability_snapshot)?;
++
++    let Some((manifest_path, manifest)) = load_current_session_manifest(base_dir)? else {
++        return Ok(build_no_session_summary());
++    };
++
++    let manifest = sync_session_timing_in_dir(base_dir, &manifest_path, manifest, SystemTime::now())?;
++    let manifest =
++        sync_post_end_state_in_dir(base_dir, &manifest_path, manifest, SystemTime::now())?;
++    let diagnostics = read_diagnostics_context(base_dir, &manifest.session_id);
++    let readiness = normalize_capture_readiness(base_dir, &manifest);
++    let capture_boundary = build_capture_boundary(&manifest, readiness.reason_code.as_str());
++    let preview_render_boundary =
++        build_preview_render_boundary(readiness.latest_capture.as_ref().map(|capture| {
++            capture.render_status.as_str()
++        }));
++    let completion_boundary = build_completion_boundary(
++        manifest.post_end.as_ref().map(|post_end| post_end.state()),
++        manifest.timing.as_ref().map(|timing| timing.phase.as_str()),
++    );
++    let blocked_state_category = derive_blocked_state_category(
++        &capture_boundary,
++        &preview_render_boundary,
++        &completion_boundary,
++        manifest.post_end.as_ref().map(|post_end| post_end.state()),
++    );
++    let recent_failure = build_recent_failure_summary(
++        &capture_boundary,
++        &preview_render_boundary,
++        &completion_boundary,
++        &diagnostics,
++    );
++
++    Ok(OperatorSessionSummaryDto {
++        schema_version: OPERATOR_SESSION_SUMMARY_SCHEMA_VERSION.into(),
++        state: "session-loaded".into(),
++        blocked_state_category: blocked_state_category.into(),
++        session_id: Some(manifest.session_id.clone()),
++        booth_alias: Some(manifest.booth_alias.clone()),
++        active_preset_id: manifest.active_preset_id.clone(),
++        active_preset_display_name: manifest.active_preset_display_name.clone(),
++        active_preset_version: manifest
++            .active_preset
++            .as_ref()
++            .map(|preset| preset.published_version.clone()),
++        lifecycle_stage: Some(manifest.lifecycle.stage.clone()),
++        timing_phase: manifest.timing.as_ref().map(|timing| timing.phase.clone()),
++        updated_at: Some(manifest.updated_at.clone()),
++        post_end_state: manifest.post_end.as_ref().map(|post_end| post_end.state().into()),
++        recent_failure,
++        capture_boundary,
++        preview_render_boundary,
++        completion_boundary,
++    })
++}
++
++fn ensure_operator_access(
++    capability_snapshot: &CapabilitySnapshotDto,
++) -> Result<(), HostErrorEnvelope> {
++    if capability_snapshot.is_admin_authenticated
++        && capability_snapshot
++            .allowed_surfaces
++            .iter()
++            .any(|surface| surface == "operator")
++    {
++        return Ok(());
++    }
++
++    Err(HostErrorEnvelope::capability_denied(
++        "승인된 운영자 세션에서만 현재 세션 진단을 볼 수 있어요.",
++    ))
++}
++
++fn build_no_session_summary() -> OperatorSessionSummaryDto {
++    OperatorSessionSummaryDto {
++        schema_version: OPERATOR_SESSION_SUMMARY_SCHEMA_VERSION.into(),
++        state: "no-session".into(),
++        blocked_state_category: "not-blocked".into(),
++        session_id: None,
++        booth_alias: None,
++        active_preset_id: None,
++        active_preset_display_name: None,
++        active_preset_version: None,
++        lifecycle_stage: None,
++        timing_phase: None,
++        updated_at: None,
++        post_end_state: None,
++        recent_failure: None,
++        capture_boundary: clear_boundary(
++            "현재 세션 없음",
++            "진행 중인 세션이 없어 capture 경계를 아직 판단하지 않았어요.",
++        ),
++        preview_render_boundary: clear_boundary(
++            "최근 결과 없음",
++            "진행 중인 세션이 없어 preview/render 경계도 아직 비어 있어요.",
++        ),
++        completion_boundary: clear_boundary(
++            "후처리 경계 비어 있음",
++            "현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.",
++        ),
++    }
++}
++
++fn load_current_session_manifest(
++    base_dir: &Path,
++) -> Result<Option<(PathBuf, SessionManifest)>, HostErrorEnvelope> {
++    let sessions_root = base_dir.join("sessions");
++
++    if !sessions_root.exists() {
++        return Ok(None);
++    }
++
++    let session_dirs = fs::read_dir(&sessions_root).map_err(|error| {
++        HostErrorEnvelope::persistence(format!("현재 세션 목록을 읽지 못했어요: {error}"))
++    })?;
++    let mut latest: Option<(String, String, PathBuf, SessionManifest)> = None;
++    let mut first_error: Option<HostErrorEnvelope> = None;
++
++    for entry in session_dirs {
++        let session_root = match entry {
++            Ok(entry) => entry.path(),
++            Err(_) => continue,
++        };
++
++        if !session_root.is_dir() {
++            continue;
++        }
++
++        let Some(session_name) = session_root
++            .file_name()
++            .and_then(|value| value.to_str())
++            .map(str::to_string)
++        else {
++            continue;
++        };
++
++        if session_name.starts_with(".creating-") {
++            continue;
++        }
++
++        let manifest_path = session_root.join("session.json");
++        if !manifest_path.is_file() {
++            continue;
++        }
++
++        match read_session_manifest(&manifest_path) {
++            Ok(manifest) => {
++                let candidate_key = manifest.updated_at.clone();
++                let should_replace = latest
++                    .as_ref()
++                    .map(|(current_key, current_session_id, _, _)| {
++                        candidate_key > *current_key
++                            || (candidate_key == *current_key
++                                && manifest.session_id > *current_session_id)
++                    })
++                    .unwrap_or(true);
++
++                if should_replace {
++                    latest = Some((
++                        candidate_key,
++                        manifest.session_id.clone(),
++                        manifest_path,
++                        manifest,
++                    ));
++                }
++            }
++            Err(error) => {
++                if first_error.is_none() {
++                    first_error = Some(error);
++                }
++            }
++        }
++    }
++
++    if let Some((_, _, manifest_path, manifest)) = latest {
++        return Ok(Some((manifest_path, manifest)));
++    }
++
++    if let Some(error) = first_error {
++        return Err(error);
++    }
++
++    Ok(None)
++}
++
++fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsContext {
++    let log_path = match SessionPaths::try_new(base_dir, session_id) {
++        Ok(paths) => paths.diagnostics_dir.join("timing-events.log"),
++        Err(_) => return DiagnosticsContext::default(),
++    };
++
++    if !log_path.is_file() {
++        return DiagnosticsContext::default();
++    }
++
++    let Ok(contents) = fs::read_to_string(log_path) else {
++        return DiagnosticsContext {
++            malformed: true,
++            ..DiagnosticsContext::default()
++        };
++    };
++    let Some(last_line) = contents.lines().rev().find(|line| !line.trim().is_empty()) else {
++        return DiagnosticsContext::default();
++    };
++    let parts: Vec<_> = last_line.split('\t').collect();
++    if parts.is_empty() {
++        return DiagnosticsContext {
++            malformed: true,
++            ..DiagnosticsContext::default()
++        };
++    }
++    if rfc3339_to_unix_seconds(parts[0]).is_err() {
++        return DiagnosticsContext {
++            malformed: true,
++            ..DiagnosticsContext::default()
++        };
++    }
++
++    let mut context = DiagnosticsContext {
++        observed_at: Some(parts[0].to_string()),
++        ..DiagnosticsContext::default()
++    };
++
++    for part in parts.into_iter().skip(1) {
++        let Some((key, value)) = part.split_once('=') else {
++            context.malformed = true;
++            return context;
++        };
++
++        match key {
++            "event" => context.event_name = Some(value.to_string()),
++            "state" => context.post_end_state = Some(value.to_string()),
++            _ => {}
++        }
++    }
++
++    context
++}
++
++fn build_capture_boundary(manifest: &SessionManifest, reason_code: &str) -> OperatorBoundarySummaryDto {
++    match reason_code {
++        "preset-missing" => blocked_boundary(
++            "캡처 경계 준비 안 됨",
++            "활성 preset이 없어 아직 촬영을 받을 수 없어요.",
++        ),
++        "camera-preparing" | "helper-preparing" => blocked_boundary(
++            "캡처 준비 중",
++            "촬영 경계가 아직 열리지 않았어요. 준비 상태를 다시 확인해 주세요.",
++        ),
++        _ if manifest.active_preset.is_some() => clear_boundary(
++            "캡처 경계 정상",
++            "활성 preset이 선택돼 있어 capture 경계는 열려 있어요.",
++        ),
++        _ => clear_boundary(
++            "캡처 대기 중",
++            "아직 최근 세션 문맥만 확인 중이라 capture 경계는 막히지 않았어요.",
++        ),
++    }
++}
++
++fn build_preview_render_boundary(render_status: Option<&str>) -> OperatorBoundarySummaryDto {
++    match render_status {
++        Some("captureSaved") | Some("previewWaiting") => blocked_boundary(
++            "프리뷰/렌더 결과 준비 지연",
++            "가장 최근 촬영본은 저장되었지만 preview/render 결과가 아직 준비되지 않았어요.",
++        ),
++        Some("renderFailed") => blocked_boundary(
++            "프리뷰/렌더 결과 준비 실패",
++            "가장 최근 촬영본의 결과를 만들지 못해 직원 확인이 필요해요.",
++        ),
++        Some("previewReady") | Some("finalReady") => clear_boundary(
++            "프리뷰/렌더 경계 정상",
++            "가장 최근 촬영본의 결과 준비가 끝나 있어요.",
++        ),
++        _ => clear_boundary(
++            "최근 렌더 없음",
++            "아직 확인할 최근 촬영 기록이 없어 preview/render 경계는 비어 있어요.",
++        ),
++    }
++}
++
++fn build_completion_boundary(
++    post_end_state: Option<&str>,
++    timing_phase: Option<&str>,
++) -> OperatorBoundarySummaryDto {
++    match post_end_state {
++        Some(SESSION_POST_END_EXPORT_WAITING) => blocked_boundary(
++            "완료 판정 대기",
++            "촬영은 끝났고 결과와 다음 안내를 정리하는 중이에요.",
++        ),
++        Some(SESSION_POST_END_PHONE_REQUIRED) => blocked_boundary(
++            "종료 후 직원 확인 필요",
++            "종료 후 처리 단계에서 자동 완료로 넘어가지 못했어요.",
++        ),
++        Some(SESSION_POST_END_COMPLETED) => clear_boundary(
++            "완료 경계 정상",
++            "종료 후 안내가 확정돼 있어 completion 경계는 정리된 상태예요.",
++        ),
++        _ if timing_phase == Some("ended") => blocked_boundary(
++            "종료 후 상태 확인 필요",
++            "세션 시간은 끝났지만 종료 후 안내 상태가 아직 확정되지 않았어요.",
++        ),
++        _ => clear_boundary(
++            "완료 경계 대기 전",
++            "아직 종료 후 완료 경계로 들어가지 않았어요.",
++        ),
++    }
++}
++
++fn derive_blocked_state_category(
++    capture_boundary: &OperatorBoundarySummaryDto,
++    preview_render_boundary: &OperatorBoundarySummaryDto,
++    completion_boundary: &OperatorBoundarySummaryDto,
++    post_end_state: Option<&str>,
++) -> &'static str {
++    if completion_boundary.status == "blocked"
++        || matches!(
++            post_end_state,
++            Some(SESSION_POST_END_EXPORT_WAITING) | Some(SESSION_POST_END_PHONE_REQUIRED)
++        )
++    {
++        return "timing-post-end-blocked";
++    }
++
++    if capture_boundary.status == "blocked" {
++        return "capture-blocked";
++    }
++
++    if preview_render_boundary.status == "blocked" {
++        return "preview-render-blocked";
++    }
++
++    "not-blocked"
++}
++
++fn build_recent_failure_summary(
++    capture_boundary: &OperatorBoundarySummaryDto,
++    preview_render_boundary: &OperatorBoundarySummaryDto,
++    completion_boundary: &OperatorBoundarySummaryDto,
++    diagnostics: &DiagnosticsContext,
++) -> Option<OperatorRecentFailureSummaryDto> {
++    if diagnostics.malformed {
++        return Some(OperatorRecentFailureSummaryDto {
++            title: "최근 진단 로그를 복원하지 못했어요.".into(),
++            detail:
++                "로그 형식이 올바르지 않아 현재 세션 요약만 기준으로 운영자 진단을 보여 주고 있어요."
++                    .into(),
++            observed_at: None,
++        });
++    }
++
++    let blocked_boundary = if capture_boundary.status == "blocked" {
++        Some(capture_boundary)
++    } else if preview_render_boundary.status == "blocked" {
++        Some(preview_render_boundary)
++    } else if completion_boundary.status == "blocked" {
++        Some(completion_boundary)
++    } else {
++        None
++    }?;
++
++    Some(OperatorRecentFailureSummaryDto {
++        title: blocked_boundary.title.clone(),
++        detail: blocked_boundary.detail.clone(),
++        observed_at: diagnostics.observed_at.clone(),
++    })
++}
++
++fn clear_boundary(title: &str, detail: &str) -> OperatorBoundarySummaryDto {
++    OperatorBoundarySummaryDto {
++        status: "clear".into(),
++        title: title.into(),
++        detail: detail.into(),
++    }
++}
++
++fn blocked_boundary(title: &str, detail: &str) -> OperatorBoundarySummaryDto {
++    OperatorBoundarySummaryDto {
++        status: "blocked".into(),
++        title: title.into(),
++        detail: detail.into(),
++    }
++}
+diff --git a/src-tauri/tests/operator_diagnostics.rs b/src-tauri/tests/operator_diagnostics.rs
+new file mode 100644
+index 0000000..4d0afdf
+--- /dev/null
++++ b/src-tauri/tests/operator_diagnostics.rs
+@@ -0,0 +1,300 @@
++use std::{
++    fs,
++    path::{Path, PathBuf},
++    time::{SystemTime, UNIX_EPOCH},
++};
++
++use boothy_lib::{
++    commands::runtime_commands::capability_snapshot_for_profile,
++    diagnostics::load_operator_session_summary_in_dir,
++    session::{
++        session_manifest::{
++            ActivePresetBinding, CaptureTimingMetrics, ExportWaitingPostEnd, FinalCaptureAsset,
++            PreviewCaptureAsset, RawCaptureAsset, SessionCaptureRecord, SessionCustomer,
++            SessionLifecycle, SessionManifest, SessionPostEnd, SESSION_CAPTURE_SCHEMA_VERSION,
++            SESSION_MANIFEST_SCHEMA_VERSION, SESSION_POST_END_EXPORT_WAITING,
++        },
++        session_paths::SessionPaths,
++    },
++};
++
++fn unique_test_root(test_name: &str) -> PathBuf {
++    let stamp = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_nanos();
++
++    std::env::temp_dir().join(format!("boothy-operator-diagnostics-{test_name}-{stamp}"))
++}
++
++#[test]
++fn operator_diagnostics_returns_a_safe_no_session_summary() {
++    let base_dir = unique_test_root("no-session");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++
++    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("authorized operator should receive a no-session summary");
++
++    assert_eq!(summary.state, "no-session");
++    assert_eq!(summary.blocked_state_category, "not-blocked");
++    assert_eq!(summary.session_id, None);
++    assert_eq!(summary.capture_boundary.status, "clear");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn operator_diagnostics_classifies_capture_blocked_sessions() {
++    let base_dir = unique_test_root("capture-blocked");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1m";
++    let manifest = SessionManifest {
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "camera-preparing".into(),
++        },
++        ..base_manifest(session_id)
++    };
++
++    write_manifest(&base_dir, &manifest);
++
++    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("capture-blocked summary should load");
++
++    assert_eq!(summary.state, "session-loaded");
++    assert_eq!(summary.blocked_state_category, "capture-blocked");
++    assert_eq!(summary.capture_boundary.status, "blocked");
++    assert_eq!(
++        summary
++            .recent_failure
++            .as_ref()
++            .map(|failure| failure.title.as_str()),
++        Some("캡처 경계 준비 안 됨")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn operator_diagnostics_classifies_preview_render_blocked_sessions() {
++    let base_dir = unique_test_root("preview-render-blocked");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1n";
++    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
++    let manifest = SessionManifest {
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "preview-waiting".into(),
++        },
++        active_preset: Some(ActivePresetBinding {
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.26".into(),
++        }),
++        active_preset_id: Some("preset_soft-glow".into()),
++        active_preset_display_name: Some("Soft Glow".into()),
++        captures: vec![preview_waiting_capture(session_id)],
++        ..base_manifest(session_id)
++    };
++
++    write_manifest(&base_dir, &manifest);
++
++    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("preview/render-blocked summary should load");
++
++    assert_eq!(summary.blocked_state_category, "preview-render-blocked");
++    assert_eq!(summary.preview_render_boundary.status, "blocked");
++    assert_eq!(
++        summary.active_preset_display_name.as_deref(),
++        Some("Soft Glow")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn operator_diagnostics_classifies_post_end_blocked_sessions() {
++    let base_dir = unique_test_root("post-end-blocked");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1o";
++    let manifest = SessionManifest {
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "export-waiting".into(),
++        },
++        post_end: Some(SessionPostEnd::ExportWaiting(ExportWaitingPostEnd {
++            state: SESSION_POST_END_EXPORT_WAITING.into(),
++            evaluated_at: "2026-03-26T00:12:00Z".into(),
++        })),
++        ..base_manifest(session_id)
++    };
++
++    write_manifest(&base_dir, &manifest);
++
++    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("post-end summary should load");
++
++    assert_eq!(summary.blocked_state_category, "timing-post-end-blocked");
++    assert_eq!(summary.completion_boundary.status, "blocked");
++    assert_eq!(summary.post_end_state.as_deref(), Some("export-waiting"));
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn operator_diagnostics_redacts_malformed_diagnostics_logs() {
++    let base_dir = unique_test_root("malformed-diagnostics");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1p";
++    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
++    let manifest = SessionManifest {
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "preview-waiting".into(),
++        },
++        active_preset: Some(ActivePresetBinding {
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.26".into(),
++        }),
++        active_preset_id: Some("preset_soft-glow".into()),
++        active_preset_display_name: Some("Soft Glow".into()),
++        captures: vec![preview_waiting_capture(session_id)],
++        ..base_manifest(session_id)
++    };
++
++    write_manifest(&base_dir, &manifest);
++
++    let paths = SessionPaths::new(&base_dir, session_id);
++    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
++    fs::write(
++        paths.diagnostics_dir.join("timing-events.log"),
++        "C:\\render-worker\\stderr.log\tsession=session_01hs6n1r8b8zc5v4ey2x7b9g1p\tevent=render-failed",
++    )
++    .expect("malformed diagnostics log should write");
++
++    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("summary should still load when diagnostics log is malformed");
++    let recent_failure = summary
++        .recent_failure
++        .expect("malformed diagnostics should surface a safe recent failure summary");
++
++    assert_eq!(summary.blocked_state_category, "preview-render-blocked");
++    assert!(recent_failure.title.contains("복원하지 못했어요"));
++    assert!(recent_failure
++        .detail
++        .contains("로그 형식이 올바르지 않아"));
++    assert!(!recent_failure.detail.contains("C:\\render-worker\\stderr.log"));
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++fn base_manifest(session_id: &str) -> SessionManifest {
++    SessionManifest {
++        schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
++        session_id: session_id.into(),
++        booth_alias: "Kim 4821".into(),
++        customer: SessionCustomer {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++        created_at: "2026-03-26T00:00:00Z".into(),
++        updated_at: "2026-03-26T00:00:10Z".into(),
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "session-started".into(),
++        },
++        catalog_revision: None,
++        catalog_snapshot: None,
++        active_preset: None,
++        active_preset_id: None,
++        active_preset_display_name: None,
++        timing: None,
++        captures: Vec::new(),
++        post_end: None,
++    }
++}
++
++fn preview_waiting_capture(session_id: &str) -> SessionCaptureRecord {
++    SessionCaptureRecord {
++        schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
++        session_id: session_id.into(),
++        booth_alias: "Kim 4821".into(),
++        active_preset_id: Some("preset_soft-glow".into()),
++        active_preset_version: "2026.03.26".into(),
++        active_preset_display_name: Some("Soft Glow".into()),
++        capture_id: "capture_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
++        request_id: "request_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
++        raw: RawCaptureAsset {
++            asset_path: format!(
++                "C:/boothy/sessions/{session_id}/captures/originals/capture.jpg"
++            ),
++            persisted_at_ms: 100,
++        },
++        preview: PreviewCaptureAsset {
++            asset_path: None,
++            enqueued_at_ms: Some(100),
++            ready_at_ms: None,
++        },
++        final_asset: FinalCaptureAsset {
++            asset_path: None,
++            ready_at_ms: None,
++        },
++        render_status: "previewWaiting".into(),
++        post_end_state: "activeSession".into(),
++        timing: CaptureTimingMetrics {
++            capture_acknowledged_at_ms: 100,
++            preview_visible_at_ms: None,
++            capture_budget_ms: 1_000,
++            preview_budget_ms: 5_000,
++            preview_budget_state: "pending".into(),
++        },
++    }
++}
++
++fn write_manifest(base_dir: &Path, manifest: &SessionManifest) {
++    let paths = SessionPaths::new(base_dir, &manifest.session_id);
++
++    fs::create_dir_all(&paths.session_root).expect("session directory should exist");
++    fs::create_dir_all(&paths.captures_originals_dir).expect("capture directory should exist");
++    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
++    fs::create_dir_all(&paths.renders_finals_dir).expect("final directory should exist");
++    fs::create_dir_all(&paths.handoff_dir).expect("handoff directory should exist");
++    fs::write(
++        &paths.manifest_path,
++        serde_json::to_vec_pretty(manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should write");
++}
++
++fn create_published_bundle(
++    base_dir: &Path,
++    preset_id: &str,
++    published_version: &str,
++    display_name: &str,
++) {
++    let bundle_dir = base_dir
++        .join("preset-catalog")
++        .join("published")
++        .join(preset_id)
++        .join(published_version);
++
++    fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
++    fs::write(bundle_dir.join("preview.jpg"), "preview").expect("preview should write");
++    fs::write(
++        bundle_dir.join("bundle.json"),
++        serde_json::to_vec_pretty(&serde_json::json!({
++            "schemaVersion": "published-preset-bundle/v1",
++            "presetId": preset_id,
++            "displayName": display_name,
++            "publishedVersion": published_version,
++            "lifecycleStatus": "published",
++            "boothStatus": "booth-safe",
++            "preview": {
++                "kind": "preview-tile",
++                "assetPath": "preview.jpg",
++                "altText": format!("{display_name} preview"),
++            }
++        }))
++        .expect("bundle should serialize"),
++    )
++    .expect("bundle should write");
++}
+

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 800">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7d9c4" />
+      <stop offset="100%" stop-color="#f4f0e6" />
+    </linearGradient>
+  </defs>
+  <rect width="640" height="800" fill="url(#bg)" rx="48" />
+  <circle cx="320" cy="286" r="168" fill="#fff8f2" opacity="0.92" />
+  <circle cx="258" cy="254" r="48" fill="#f1b9a3" opacity="0.68" />
+  <circle cx="392" cy="348" r="72" fill="#e9c7b9" opacity="0.75" />
+  <rect x="92" y="562" width="456" height="128" rx="28" fill="#fffaf4" opacity="0.82" />
+  <text x="320" y="614" text-anchor="middle" font-family="Georgia, serif" font-size="44" fill="#5a3d36">
+    Soft Glow
+  </text>
+  <text x="320" y="656" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#8b6a60">
+    Warm skin tone and gentle contrast
+  </text>
+</svg>

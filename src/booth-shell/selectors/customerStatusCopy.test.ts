@@ -17,6 +17,8 @@ function createReadiness(
     supportMessage: '잠시만 기다려 주세요.',
     reasonCode: 'camera-preparing',
     latestCapture: null,
+    postEnd: null,
+    timing: undefined,
     ...overrides,
   }
 }
@@ -55,5 +57,54 @@ describe('customerStatusCopy', () => {
     expect(copy.actionLabel).toBe('도움 요청')
     expect(copy.headline).not.toMatch(/darktable|sdk|helper/i)
     expect(copy.detail).not.toMatch(/darktable|sdk|helper/i)
+  })
+
+  it('keeps handoff-ready completion on a generic confirmation action in story 3.2', () => {
+    const copy = selectCustomerStatusCopy(
+      createReadiness({
+        customerState: 'Completed',
+        primaryAction: 'wait',
+        customerMessage: '부스 준비가 끝났어요.',
+        supportMessage: '마지막 안내를 확인해 주세요.',
+        reasonCode: 'completed',
+        postEnd: {
+          state: 'completed',
+          evaluatedAt: '2026-03-20T00:00:10.000Z',
+          completionVariant: 'handoff-ready',
+          approvedRecipientLabel: 'Front Desk',
+          primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
+          supportActionLabel: null,
+          showBoothAlias: true,
+        },
+      }),
+    )
+
+    expect(copy.actionLabel).toBe('안내 확인')
+    expect(copy.isPostEndFinalized).toBe(true)
+  })
+
+  it('falls back to manifest post-end guidance when readiness only carries the explicit reason', () => {
+    const copy = selectCustomerStatusCopy(
+      createReadiness({
+        customerState: 'Completed',
+        primaryAction: 'wait',
+        customerMessage: '부스 준비가 끝났어요.',
+        supportMessage: '마지막 안내를 확인해 주세요.',
+        reasonCode: 'completed',
+        postEnd: null,
+      }),
+      {
+        state: 'completed',
+        evaluatedAt: '2026-03-20T00:00:10.000Z',
+        completionVariant: 'handoff-ready',
+        approvedRecipientLabel: 'Front Desk',
+        primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
+        supportActionLabel: null,
+        showBoothAlias: true,
+      },
+    )
+
+    expect(copy.actionLabel).toBe('안내 확인')
+    expect(copy.postEnd?.state).toBe('completed')
   })
 })

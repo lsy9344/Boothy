@@ -23,9 +23,11 @@ import {
 const CAPTURE_READINESS_POLL_MS = 1500
 const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
 
+export type CaptureRuntimeMode = 'browser' | 'tauri'
+
 export interface CaptureRuntimeGateway {
   getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
-  deleteCapture(input: CaptureDeleteInput): Promise<unknown>
+  deleteCapture?(input: CaptureDeleteInput): Promise<unknown>
   requestCapture(input: CaptureRequestInput): Promise<unknown>
   subscribeToCaptureReadiness(
     onEvent: (payload: unknown) => void,
@@ -36,7 +38,7 @@ export interface CaptureRuntimeService {
   getCaptureReadiness(
     input: CaptureReadinessInput,
   ): Promise<CaptureReadinessSnapshot>
-  deleteCapture(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
+  deleteCapture?(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
   subscribeToCaptureReadiness(input: {
     sessionId: string
@@ -56,6 +58,8 @@ function buildPreparingCaptureReadiness(): CaptureReadinessSnapshot {
     supportMessage: '잠시만 기다려 주세요.',
     reasonCode: 'camera-preparing',
     latestCapture: null,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -71,6 +75,25 @@ function buildReadyCaptureReadiness(): CaptureReadinessSnapshot {
     supportMessage: '버튼을 누르면 바로 시작돼요.',
     reasonCode: 'ready',
     latestCapture: null,
+    postEnd: null,
+    timing: null,
+  }
+}
+
+function buildBrowserPreviewCaptureReadiness(): CaptureReadinessSnapshot {
+  return {
+    schemaVersion: 'capture-readiness/v1',
+    sessionId: BROWSER_SESSION_FIXTURE_ID,
+    surfaceState: 'blocked',
+    customerState: 'Preparing',
+    canCapture: false,
+    primaryAction: 'wait',
+    customerMessage: '카메라 연결 상태를 확인하는 중이에요.',
+    supportMessage: '브라우저 미리보기에서는 실제 카메라 연결을 확인할 수 없어요.',
+    reasonCode: 'camera-preparing',
+    latestCapture: null,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -86,6 +109,8 @@ function buildPresetMissingCaptureReadiness(): CaptureReadinessSnapshot {
     supportMessage: '선택이 끝나면 바로 찍을 수 있어요.',
     reasonCode: 'preset-missing',
     latestCapture: null,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -101,6 +126,8 @@ function buildSessionMissingCaptureReadiness(): CaptureReadinessSnapshot {
     supportMessage: '이름과 휴대전화 뒤 4자리를 다시 확인할게요.',
     reasonCode: 'session-missing',
     latestCapture: null,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -116,6 +143,8 @@ function buildPhoneRequiredCaptureReadiness(): CaptureReadinessSnapshot {
     supportMessage: '가까운 직원에게 알려 주세요.',
     reasonCode: 'phone-required',
     latestCapture: null,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -170,7 +199,13 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
     const parsedInput = captureDeleteInputSchema.parse(input)
     const parsedResponse = await (async () => {
       try {
-        const response = await this.gateway.deleteCapture(parsedInput)
+        const deleteCapture = this.gateway.deleteCapture
+
+        if (deleteCapture === undefined) {
+          throw buildSessionMismatchHostError()
+        }
+
+        const response = await deleteCapture(parsedInput)
 
         return captureDeleteResultSchema.parse(response)
       } catch (error) {
@@ -350,6 +385,10 @@ function isTauriRuntime() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
+export function getCaptureRuntimeMode(): CaptureRuntimeMode {
+  return isTauriRuntime() ? 'tauri' : 'browser'
+}
+
 export function buildLocalCaptureReadiness(input: {
   sessionId?: string | null
   hasSession: boolean
@@ -409,26 +448,20 @@ export function createBrowserCaptureRuntimeGateway(): CaptureRuntimeGateway {
         return withSessionId(fixture, input.sessionId)
       }
 
-      return withSessionId(buildReadyCaptureReadiness(), input.sessionId)
+      return withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId)
     },
     async deleteCapture(input) {
       throw {
         code: 'host-unavailable',
-        message: '지금은 도움이 필요해요.',
-        readiness: withSessionId(
-          buildPhoneRequiredCaptureReadiness(),
-          input.sessionId,
-        ),
+        message: '브라우저 미리보기에서는 실제 촬영 상태를 바꾸지 않아요.',
+        readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
       } satisfies HostErrorEnvelope
     },
     async requestCapture(input) {
       throw {
         code: 'host-unavailable',
-        message: '지금은 도움이 필요해요.',
-        readiness: withSessionId(
-          buildPhoneRequiredCaptureReadiness(),
-          input.sessionId,
-        ),
+        message: '브라우저 미리보기에서는 실제 촬영을 실행할 수 없어요.',
+        readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
       } satisfies HostErrorEnvelope
     },
     async subscribeToCaptureReadiness() {

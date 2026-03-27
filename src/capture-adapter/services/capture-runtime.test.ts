@@ -1,13 +1,16 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { SessionCaptureRecord } from '../../shared-contracts'
 import {
   createBrowserCaptureRuntimeGateway,
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
 } from './capture-runtime'
 
-function createCaptureRecord() {
+function createCaptureRecord(
+  overrides: Partial<SessionCaptureRecord> = {},
+): SessionCaptureRecord {
   return {
     schemaVersion: 'session-capture/v1',
     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -38,6 +41,7 @@ function createCaptureRecord() {
       previewBudgetMs: 5000,
       previewBudgetState: 'pending',
     },
+    ...overrides,
   }
 }
 
@@ -476,8 +480,9 @@ describe('capture runtime adapter', () => {
       }),
     ).resolves.toMatchObject({
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
-      customerState: 'Ready',
-      canCapture: true,
+      customerState: 'Preparing',
+      canCapture: false,
+      supportMessage: '브라우저 미리보기에서는 실제 카메라 연결을 확인할 수 없어요.',
     })
 
     await expect(
@@ -488,7 +493,9 @@ describe('capture runtime adapter', () => {
       code: 'host-unavailable',
       readiness: {
         sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
-        primaryAction: 'call-support',
+        primaryAction: 'wait',
+        customerState: 'Preparing',
+        canCapture: false,
       },
     })
   })

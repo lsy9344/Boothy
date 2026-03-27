@@ -15,6 +15,10 @@ import {
   type CaptureRuntimeService,
 } from '../../capture-adapter/services/capture-runtime'
 import {
+  getPostEndStrength,
+  isHostOwnedPostEndReason,
+} from '../../completion-handoff/post-end'
+import {
   createPresetCatalogService,
   type PresetCatalogService,
 } from '../../preset-catalog/services/preset-catalog-service'
@@ -42,6 +46,40 @@ const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
 const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
 type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
 type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
+
+function mergePreservedPostEndReadiness(
+  current: SessionScopedReadiness | null,
+  next: SessionScopedReadiness,
+): SessionScopedReadiness {
+  if (current === null) {
+    return next
+  }
+
+  const currentStrength = getPostEndStrength(current.reasonCode)
+  const nextStrength = getPostEndStrength(next.reasonCode)
+
+  if (currentStrength === 2 && next.reasonCode !== current.reasonCode) {
+    return current
+  }
+
+  if (currentStrength >= 1 && nextStrength === 0) {
+    return current
+  }
+
+  if (
+    isHostOwnedPostEndReason(current.reasonCode) &&
+    current.reasonCode === next.reasonCode &&
+    current.postEnd !== null &&
+    next.postEnd === null
+  ) {
+    return {
+      ...next,
+      postEnd: current.postEnd,
+    }
+  }
+
+  return next
+}
 
 function normalizeCaptureRenderStatus(
   capture: SessionScopedCapture,
@@ -191,6 +229,10 @@ function inferSurfaceStateFromSanitizedCapture(
   readiness: Pick<SessionScopedReadiness, 'canCapture' | 'reasonCode'>,
   latestCapture: SessionScopedCapture | null,
 ): SessionScopedReadiness['surfaceState'] {
+  if (isHostOwnedPostEndReason(readiness.reasonCode) || readiness.reasonCode === 'ended') {
+    return 'blocked'
+  }
+
   if (latestCapture?.renderStatus === 'previewReady') {
     return 'previewReady'
   }
@@ -282,6 +324,8 @@ function buildCaptureSavedFallbackReadiness(
     supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
     reasonCode: 'preview-waiting',
     latestCapture: capture,
+    postEnd: null,
+    timing: null,
   }
 }
 
@@ -289,6 +333,26 @@ function buildCaptureFallbackReadiness(
   sessionId: string,
   capture: SessionScopedCapture,
 ): SessionScopedReadiness {
+  if (
+    capture.postEndState === 'handoffReady' ||
+    capture.postEndState === 'completed'
+  ) {
+    return {
+      schemaVersion: 'capture-readiness/v1',
+      sessionId,
+      surfaceState: 'blocked',
+      customerState: 'Completed',
+      canCapture: false,
+      primaryAction: 'wait',
+      customerMessage: '부스 준비가 끝났어요.',
+      supportMessage: '마지막 안내를 확인해 주세요.',
+      reasonCode: 'completed',
+      latestCapture: capture,
+      postEnd: null,
+      timing: null,
+    }
+  }
+
   switch (capture.renderStatus) {
     case 'finalReady':
     case 'previewReady':
@@ -303,6 +367,8 @@ function buildCaptureFallbackReadiness(
         supportMessage: '버튼을 누르면 바로 시작돼요.',
         reasonCode: 'ready',
         latestCapture: capture,
+        postEnd: null,
+        timing: null,
       }
     case 'previewWaiting':
       return {
@@ -316,6 +382,8 @@ function buildCaptureFallbackReadiness(
         supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
         reasonCode: 'preview-waiting',
         latestCapture: capture,
+        postEnd: null,
+        timing: null,
       }
     case 'captureSaved':
     default:
@@ -390,10 +458,91 @@ function hasForeignReadinessForSession(
   )
 }
 
+function isExplicitPostEndReadiness(
+  readiness: NonNullable<SessionDraft['captureReadiness']>,
+) {
+  return (
+    isHostOwnedPostEndReason(readiness.reasonCode) ||
+    (readiness.postEnd !== undefined &&
+      readiness.postEnd !== null &&
+      (readiness.postEnd.state === 'export-waiting' ||
+        readiness.postEnd.state === 'completed' ||
+        readiness.postEnd.state === 'phone-required'))
+  )
+}
+
+function resolveExplicitPostEndState(
+  readiness: NonNullable<SessionDraft['captureReadiness']>,
+) {
+  if (readiness.postEnd !== undefined && readiness.postEnd !== null) {
+    return readiness.postEnd.state
+  }
+
+  switch (readiness.reasonCode) {
+    case 'completed':
+      return 'completed'
+    case 'phone-required':
+      return 'phone-required'
+    case 'export-waiting':
+      return 'export-waiting'
+    default:
+      return null
+  }
+}
+
+function lockStablePostEndReadiness(
+  currentReadiness: SessionDraft['captureReadiness'],
+  nextReadiness: NonNullable<SessionDraft['captureReadiness']>,
+) {
+  if (
+    currentReadiness === null ||
+    currentReadiness.sessionId !== nextReadiness.sessionId
+  ) {
+    return nextReadiness
+  }
+
+  return mergePreservedPostEndReadiness(currentReadiness, {
+    ...nextReadiness,
+    latestCapture: nextReadiness.latestCapture ?? currentReadiness.latestCapture ?? null,
+    timing: nextReadiness.timing ?? currentReadiness.timing ?? null,
+  })
+}
+
 function deriveLifecycleStage(
   readiness: NonNullable<SessionDraft['captureReadiness']>,
   currentStage: string | null,
 ) {
+  const explicitPostEndState = isExplicitPostEndReadiness(readiness)
+    ? resolveExplicitPostEndState(readiness)
+    : null
+
+  if (explicitPostEndState !== null) {
+    return explicitPostEndState
+  }
+
+  if (readiness.timing?.phase === 'ended') {
+    switch (currentStage) {
+      case 'phone-required':
+      case 'completed':
+        return currentStage
+      default:
+        return 'export-waiting'
+    }
+  }
+
+  if (readiness.reasonCode === 'warning' || readiness.timing?.phase === 'warning') {
+    switch (currentStage) {
+      case 'preview-waiting':
+      case 'export-waiting':
+      case 'completed':
+      case 'phone-required':
+      case 'ended':
+        return currentStage
+      default:
+        return 'warning'
+    }
+  }
+
   switch (readiness.surfaceState) {
     case 'captureSaved':
     case 'previewWaiting':
@@ -409,6 +558,63 @@ function deriveLifecycleStage(
       return currentStage ?? 'preparing'
     default:
       return currentStage ?? 'preparing'
+  }
+}
+
+function mergeTimingIntoManifest(
+  manifest: SessionManifest | null,
+  readiness: SessionDraft['captureReadiness'],
+) {
+  if (manifest === null || readiness?.timing === null || readiness?.timing === undefined) {
+    return manifest
+  }
+
+  if (readiness.timing.sessionId !== manifest.sessionId) {
+    return manifest
+  }
+
+  return {
+    ...manifest,
+    timing: readiness.timing,
+  }
+}
+
+function mergePostEndIntoManifest(
+  manifest: SessionManifest | null,
+  readiness: SessionDraft['captureReadiness'],
+) {
+  if (manifest === null) {
+    return manifest
+  }
+
+  if (readiness?.postEnd !== undefined) {
+    if (
+      readiness.postEnd === null &&
+      readiness !== null &&
+      isHostOwnedPostEndReason(readiness.reasonCode)
+    ) {
+      return {
+        ...manifest,
+        postEnd: manifest.postEnd,
+      }
+    }
+
+    return {
+      ...manifest,
+      postEnd: readiness.postEnd,
+    }
+  }
+
+  if (readiness?.reasonCode === 'ended' || readiness?.timing?.phase === 'ended') {
+    return {
+      ...manifest,
+      postEnd: null,
+    }
+  }
+
+  return {
+    ...manifest,
+    postEnd: manifest.postEnd,
   }
 }
 
@@ -440,6 +646,7 @@ export function SessionProvider({
   const captureReadinessRequestVersionRef = useRef(0)
   const deleteCaptureRequestVersionRef = useRef(0)
   const requestCaptureRequestVersionRef = useRef(0)
+  const deletedCaptureIdsRef = useRef<Set<string>>(new Set())
   const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
   const capturePresetCatalogRetryCountRef = useRef(0)
   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(DEFAULT_SESSION_DRAFT)
@@ -481,6 +688,7 @@ export function SessionProvider({
   function clearTransientSessionActivity() {
     invalidatePresetCatalogRequests()
     invalidateCaptureRequests()
+    deletedCaptureIdsRef.current.clear()
     activePresetSelectionVersionRef.current += 1
     activePresetSelectionRequestVersionRef.current = null
     isSelectingPresetRef.current = false
@@ -522,7 +730,10 @@ export function SessionProvider({
       if (
         current.sessionId === null ||
         current.manifest === null ||
-        current.selectedPreset === null
+        current.selectedPreset === null ||
+        current.captureReadiness === null ||
+        !current.captureReadiness.canCapture ||
+        isExplicitPostEndReadiness(current.captureReadiness)
       ) {
         return current
       }
@@ -554,6 +765,25 @@ export function SessionProvider({
     })
   }
 
+  function suppressDeletedLatestCapture(
+    readiness: SessionScopedReadiness,
+  ): SessionScopedReadiness {
+    const latestCapture = readiness.latestCapture ?? null
+
+    if (
+      latestCapture === null ||
+      !deletedCaptureIdsRef.current.has(latestCapture.captureId)
+    ) {
+      return readiness
+    }
+
+    return {
+      ...readiness,
+      surfaceState: inferSurfaceStateFromSanitizedCapture(readiness, null),
+      latestCapture: null,
+    }
+  }
+
   function applyReadinessState(readiness: SessionDraft['captureReadiness']) {
     if (readiness === null) {
       return
@@ -572,9 +802,14 @@ export function SessionProvider({
     setSessionDraft((current) => ({
       ...current,
       ...(() => {
-        const safeReadiness = sanitizeCaptureReadinessForSession(
-          current.manifest?.sessionId ?? current.sessionId,
-          readiness,
+        const safeReadiness = suppressDeletedLatestCapture(
+          lockStablePostEndReadiness(
+            current.captureReadiness,
+            sanitizeCaptureReadinessForSession(
+              current.manifest?.sessionId ?? current.sessionId,
+              readiness,
+            ),
+          ),
         )
         const latestCapture = safeReadiness.latestCapture ?? null
 
@@ -584,10 +819,16 @@ export function SessionProvider({
             current.manifest === null
               ? null
               : {
-                  ...(latestCapture === null
-                    ? current.manifest
-                    : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
-                      current.manifest),
+                  ...(mergePostEndIntoManifest(
+                    mergeTimingIntoManifest(
+                      latestCapture === null
+                        ? current.manifest
+                        : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
+                          current.manifest,
+                      safeReadiness,
+                    ),
+                    safeReadiness,
+                  ) ?? current.manifest),
                   lifecycle: {
                     ...current.manifest.lifecycle,
                     stage: deriveLifecycleStage(
@@ -837,6 +1078,12 @@ export function SessionProvider({
         sessionDraftRef.current.presetSelectionMode !== 'in-session-switch'
       ) {
         resetToPresetSelection()
+      } else if (
+        hostError.readiness !== undefined &&
+        hostError.readiness !== null &&
+        hostError.readiness.sessionId === input.sessionId
+      ) {
+        applyReadinessState(hostError.readiness)
       }
 
       throw error
@@ -964,9 +1211,12 @@ export function SessionProvider({
       setSessionDraft((current) => ({
         ...current,
         ...(() => {
-          const safeReadiness = sanitizeCaptureReadinessForSession(
-            current.manifest?.sessionId ?? current.sessionId,
-            safeResult.readiness,
+          const safeReadiness = lockStablePostEndReadiness(
+            current.captureReadiness,
+            sanitizeCaptureReadinessForSession(
+              current.manifest?.sessionId ?? current.sessionId,
+              safeResult.readiness,
+            ),
           )
           const manifestWithCapture =
             current.manifest === null
@@ -980,16 +1230,24 @@ export function SessionProvider({
                   manifestWithCapture,
                   safeReadiness.latestCapture,
                 ) ?? manifestWithCapture
+          const manifestWithTiming = mergeTimingIntoManifest(
+            manifestWithLatestCapture,
+            safeReadiness,
+          )
+          const manifestWithPostEnd = mergePostEndIntoManifest(
+            manifestWithTiming,
+            safeReadiness,
+          )
 
           return {
             captureReadiness: safeReadiness,
             manifest:
-              manifestWithLatestCapture === null
+              manifestWithPostEnd === null
                 ? null
                 : {
-                    ...manifestWithLatestCapture,
+                    ...manifestWithPostEnd,
                     lifecycle: {
-                      ...manifestWithLatestCapture.lifecycle,
+                      ...manifestWithPostEnd.lifecycle,
                       stage: deriveLifecycleStage(
                         safeReadiness,
                         current.manifest?.lifecycle.stage ?? null,
@@ -1057,7 +1315,16 @@ export function SessionProvider({
     setIsDeletingCapture(true)
 
     try {
-      const result = await captureRuntimeServiceRef.current.deleteCapture(input)
+      const deleteCapture = captureRuntimeServiceRef.current.deleteCapture
+
+      if (deleteCapture === undefined) {
+        throw {
+          code: 'host-unavailable',
+          message: '지금은 도움이 필요해요.',
+        } satisfies HostErrorEnvelope
+      }
+
+      const result = await deleteCapture(input)
       const hasMatchingActiveSession = hasActiveSession(input.sessionId)
       const staleReadiness = hasMatchingActiveSession
         ? buildCurrentCaptureFallbackReadiness()
@@ -1066,7 +1333,8 @@ export function SessionProvider({
       if (
         result.sessionId !== input.sessionId ||
         result.captureId !== input.captureId ||
-        result.manifest.sessionId !== input.sessionId
+        result.manifest.sessionId !== input.sessionId ||
+        result.readiness.sessionId !== input.sessionId
       ) {
         throw createStaleSessionError(
           '현재 세션 상태를 다시 확인할게요.',
@@ -1089,27 +1357,40 @@ export function SessionProvider({
         )
       }
 
+      deletedCaptureIdsRef.current.add(input.captureId)
+
       setSessionDraft((current) => {
-        const safeReadiness = sanitizeCaptureReadinessForSession(
-          current.manifest?.sessionId ?? current.sessionId,
-          safeResult.readiness,
+        const safeReadiness = lockStablePostEndReadiness(
+          current.captureReadiness,
+          sanitizeCaptureReadinessForSession(
+            current.manifest?.sessionId ?? current.sessionId,
+            safeResult.readiness,
+          ),
         )
         const safeManifest =
           sanitizeManifestForSession(
             current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
             safeResult.manifest,
           ) ?? safeResult.manifest
+        const manifestWithTiming = mergeTimingIntoManifest(
+          safeManifest,
+          safeReadiness,
+        )
+        const manifestWithPostEnd = mergePostEndIntoManifest(
+          manifestWithTiming,
+          safeReadiness,
+        )
 
         return {
           ...current,
           captureReadiness: safeReadiness,
           manifest: {
-            ...safeManifest,
+            ...(manifestWithPostEnd ?? safeManifest),
             lifecycle: {
-              ...safeManifest.lifecycle,
+              ...(manifestWithPostEnd ?? safeManifest).lifecycle,
               stage: deriveLifecycleStage(
                 safeReadiness,
-                safeManifest.lifecycle.stage,
+                (manifestWithPostEnd ?? safeManifest).lifecycle.stage,
               ),
             },
           },

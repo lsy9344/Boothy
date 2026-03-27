@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 800">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ccecff" />
+      <stop offset="100%" stop-color="#fff0c2" />
+    </linearGradient>
+  </defs>
+  <rect width="640" height="800" fill="url(#bg)" rx="48" />
+  <circle cx="454" cy="180" r="72" fill="#fff7d6" />
+  <circle cx="300" cy="320" r="176" fill="#ffffff" opacity="0.78" />
+  <path d="M134 420c54-86 116-132 186-132 72 0 140 46 206 136" fill="#f5d49b" opacity="0.52" />
+  <rect x="92" y="562" width="456" height="128" rx="28" fill="#ffffff" opacity="0.76" />
+  <text x="320" y="614" text-anchor="middle" font-family="Georgia, serif" font-size="44" fill="#3c5568">
+    Daylight
+  </text>
+  <text x="320" y="656" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#5f7483">
+    Bright natural tone for everyday portraits
+  </text>
+</svg>

@@ -9,7 +9,8 @@ import {
   captureSurfaceStateSchema,
   sessionCaptureRecordSchema,
 } from './session-capture'
-import { sessionManifestSchema } from './session-manifest'
+import { sessionManifestSchema, sessionPostEndSchema } from './session-manifest'
+import { sessionTimingSnapshotSchema } from './session-timing'
 
 const fallbackSessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m' as const
 
@@ -17,11 +18,15 @@ export const customerReadinessStateSchema = z.enum([
   'Preparing',
   'Ready',
   'Preview Waiting',
+  'Export Waiting',
+  'Completed',
   'Phone Required',
+  'Session Ended',
 ])
 
 export const capturePrimaryActionSchema = z.enum([
   'wait',
+  'finish',
   'capture',
   'choose-preset',
   'start-session',
@@ -38,6 +43,7 @@ export const captureReasonCodeSchema = z.enum([
   'completed',
   'phone-required',
   'warning',
+  'ended',
   'ready',
   'blocked',
 ])
@@ -75,6 +81,8 @@ const captureReadinessSnapshotInputSchema = z.object({
   supportMessage: customerGuidanceSchema,
   reasonCode: captureReasonCodeSchema,
   latestCapture: sessionCaptureRecordSchema.nullable().optional(),
+  postEnd: sessionPostEndSchema.nullable().optional(),
+  timing: sessionTimingSnapshotSchema.nullable().optional(),
 })
 
 export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchema.transform(
@@ -82,7 +90,20 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
     const sessionId = snapshot.sessionId ?? fallbackSessionId
     const latestCapture = snapshot.latestCapture ?? null
 
-    return {
+    const normalized: {
+      schemaVersion: typeof captureReadinessSchemaVersion
+      sessionId: string
+      surfaceState: z.infer<typeof captureSurfaceStateSchema>
+      customerState: z.infer<typeof customerReadinessStateSchema>
+      canCapture: boolean
+      primaryAction: z.infer<typeof capturePrimaryActionSchema>
+      customerMessage: string
+      supportMessage: string
+      reasonCode: z.infer<typeof captureReasonCodeSchema>
+      latestCapture: z.infer<typeof sessionCaptureRecordSchema> | null
+      postEnd?: z.infer<typeof sessionPostEndSchema> | null
+      timing?: z.infer<typeof sessionTimingSnapshotSchema> | null
+    } = {
       schemaVersion: snapshot.schemaVersion ?? captureReadinessSchemaVersion,
       sessionId,
       surfaceState:
@@ -100,6 +121,16 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
       reasonCode: snapshot.reasonCode,
       latestCapture,
     }
+
+    if (snapshot.postEnd !== undefined) {
+      normalized.postEnd = snapshot.postEnd
+    }
+
+    if (snapshot.timing !== undefined) {
+      normalized.timing = snapshot.timing
+    }
+
+    return normalized
   },
 )
 

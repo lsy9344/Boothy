@@ -17,6 +17,7 @@ use crate::{
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
     },
+    timing::sync_session_timing_in_dir,
 };
 
 static CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -30,6 +31,8 @@ pub fn persist_capture_in_dir(
         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
     })?;
     let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    manifest =
+        sync_session_timing_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
     let readiness = normalize_capture_readiness(base_dir, &manifest);
 
     if !readiness.can_capture {
@@ -202,7 +205,7 @@ fn build_saved_capture_record(
         schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
         session_id: manifest.session_id.clone(),
         booth_alias: manifest.booth_alias.clone(),
-        active_preset_id: active_preset.preset_id.clone(),
+        active_preset_id: Some(active_preset.preset_id.clone()),
         active_preset_version: active_preset.published_version.clone(),
         active_preset_display_name: manifest.active_preset_display_name.clone(),
         capture_id,

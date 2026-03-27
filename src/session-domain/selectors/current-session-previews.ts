@@ -4,7 +4,7 @@ import { isSessionScopedAssetPath } from '../utils/session-scoped-asset-path'
 export type CurrentSessionPreview = {
   captureId: string
   assetPath: string
-  activePresetId: string
+  activePresetId: string | null
   activePresetVersion: string
   presetDisplayName: string | null
   isCurrentActivePreset: boolean
@@ -62,17 +62,21 @@ export function selectCurrentSessionPreviews(
     .map((capture, index) => ({
       captureId: capture.captureId,
       assetPath: capture.preview.assetPath!,
-      activePresetId: capture.activePresetId,
+      activePresetId: capture.activePresetId ?? null,
       activePresetVersion: capture.activePresetVersion,
       presetDisplayName:
         capture.activePresetDisplayName ??
-        presetCatalog.find(
-          (preset) =>
-            preset.presetId === capture.activePresetId &&
-            preset.publishedVersion === capture.activePresetVersion,
-        )?.displayName ??
+        (capture.activePresetId === undefined || capture.activePresetId === null
+          ? null
+          : presetCatalog.find(
+              (preset) =>
+                preset.presetId === capture.activePresetId &&
+                preset.publishedVersion === capture.activePresetVersion,
+            )?.displayName) ??
         null,
       isCurrentActivePreset:
+        capture.activePresetId !== undefined &&
+        capture.activePresetId !== null &&
         manifest.activePreset?.presetId === capture.activePresetId &&
         manifest.activePreset.publishedVersion === capture.activePresetVersion,
       postEndState: capture.postEndState,

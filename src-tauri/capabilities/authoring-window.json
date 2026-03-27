@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "authoring-window",
-  "description": "Reserved permissions for a future preset authoring window surface.",
+  "description": "Capability boundary for the internal preset authoring surface.",
   "windows": ["authoring-window"],
   "permissions": ["core:default"]
 }

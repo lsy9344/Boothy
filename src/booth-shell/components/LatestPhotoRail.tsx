@@ -1,10 +1,12 @@
 import type { KeyboardEvent } from 'react'
 import { resolvePresetPreviewSrc } from './preset-preview-src'
+import { isFinalizedCapturePostEndState } from '../../completion-handoff/post-end'
 import type { CurrentSessionPreview } from '../../session-domain/selectors'
 
 type LatestPhotoRailProps = {
   previews: CurrentSessionPreview[]
   isPreviewWaiting: boolean
+  isExplicitPostEnd: boolean
   deletingCaptureId: string | null
   pendingDeleteCaptureId: string | null
   onDeleteCancel(): void
@@ -30,12 +32,25 @@ function buildPreviewAltText(
 export function LatestPhotoRail({
   previews,
   isPreviewWaiting,
+  isExplicitPostEnd,
   deletingCaptureId,
   pendingDeleteCaptureId,
   onDeleteCancel,
   onDeleteConfirm,
   onDeleteIntent,
 }: LatestPhotoRailProps) {
+  function isPostEndLocked(preview: CurrentSessionPreview) {
+    return isExplicitPostEnd || preview.postEndState !== 'activeSession'
+  }
+
+  function buildPostEndHint(preview: CurrentSessionPreview) {
+    return preview.postEndState === 'postEndPending' || isExplicitPostEnd
+      ? '지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요.'
+      : isFinalizedCapturePostEndState(preview.postEndState)
+        ? '마무리된 사진은 여기서 정리할 수 없어요.'
+        : '지금은 사진 정리를 잠시 멈춰 주세요.'
+  }
+
   function handleRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'ArrowRight') {
       event.preventDefault()
@@ -106,9 +121,9 @@ export function LatestPhotoRail({
                   ? '현재 룩과 같은 바인딩으로 유지돼요.'
                   : '이 사진은 이전 룩으로 찍혔고 그대로 유지돼요.'}
               </p>
-              {preview.postEndState === 'completed' ? (
+              {isPostEndLocked(preview) ? (
                 <p className="latest-photo-rail__hint">
-                  마무리된 사진은 여기서 정리할 수 없어요.
+                  {buildPostEndHint(preview)}
                 </p>
               ) : pendingDeleteCaptureId === preview.captureId ? (
                 <div className="latest-photo-rail__confirm">

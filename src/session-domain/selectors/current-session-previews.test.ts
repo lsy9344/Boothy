@@ -494,4 +494,35 @@ describe('selectCurrentSessionPreviews', () => {
       },
     ])
   })
+
+  it('keeps legacy captures visible even when activePresetId is missing', () => {
+    const previews = selectCurrentSessionPreviews(
+      createManifest([
+        createCapture({
+          captureId: 'capture_legacy',
+          activePresetId: undefined,
+          activePresetDisplayName: null,
+          preview: {
+            assetPath: 'fixtures/legacy.jpg',
+            enqueuedAtMs: 110,
+            readyAtMs: 410,
+          },
+        }),
+      ]),
+    )
+
+    expect(previews).toEqual([
+      {
+        captureId: 'capture_legacy',
+        assetPath: 'fixtures/legacy.jpg',
+        activePresetId: null,
+        activePresetVersion: '2026.03.20',
+        presetDisplayName: null,
+        isCurrentActivePreset: false,
+        postEndState: 'activeSession',
+        readyAtMs: 410,
+        isLatest: true,
+      },
+    ])
+  })
 })

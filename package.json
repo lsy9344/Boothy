@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:desktop": "pnpm build && pnpm tauri build --debug",
     "lint": "eslint .",
     "preview": "vite preview",
+    "release:desktop": "pnpm build && pnpm tauri build",
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run"

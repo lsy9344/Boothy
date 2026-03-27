@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-03-20 11:15:32 +09:00
+# last_updated: 2026-03-27 11:59:44 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-03-25 19:33:12 +09:00"
+last_updated: "2026-03-27 11:59:44 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -53,29 +53,29 @@ development_status:
   epic-2: in-progress
   2-1-현재-세션-사진-레일과-세션-범위-검토: done
   2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
-  2-3-이후-촬영용-활성-프리셋-변경: review
-  2-4-조정된-종료-시각-표시와-경고-종료-알림: ready-for-dev
+  2-3-이후-촬영용-활성-프리셋-변경: done
+  2-4-조정된-종료-시각-표시와-경고-종료-알림: done
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-종료-직후-명시적-사후-상태-진입: backlog
-  3-2-export-waiting과-truthful-completion-안내: backlog
-  3-3-handoff-ready와-phone-required-보호-안내: backlog
+  epic-3: in-progress
+  3-1-종료-직후-명시적-사후-상태-진입: done
+  3-2-export-waiting과-truthful-completion-안내: done
+  3-3-handoff-ready와-phone-required-보호-안내: done
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: backlog
-  4-2-부스-호환성-검증과-승인-준비-상태-전환: backlog
-  4-3-승인과-불변-게시-아티팩트-생성: backlog
-  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: backlog
+  epic-4: in-progress
+  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: done
+  4-2-부스-호환성-검증과-승인-준비-상태-전환: done
+  4-3-승인과-불변-게시-아티팩트-생성: done
+  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: done
   epic-4-retrospective: optional
 
-  epic-5: backlog
-  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: backlog
-  5-2-정책-기반-복구-액션과-phone-required-라우팅: backlog
-  5-3-라이프사이클-개입-복구-감사-로그-기록: backlog
+  epic-5: in-progress
+  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: done
+  5-2-정책-기반-복구-액션과-phone-required-라우팅: done
+  5-3-라이프사이클-개입-복구-감사-로그-기록: done
   epic-5-retrospective: optional
 
-  epic-6: backlog
-  6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: backlog
+  epic-6: in-progress
+  6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
   epic-6-retrospective: optional

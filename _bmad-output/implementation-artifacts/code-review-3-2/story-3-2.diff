@@ -1,0 +1,4703 @@
+diff --git a/src-tauri/src/capture/normalized_state.rs b/src-tauri/src/capture/normalized_state.rs
+index 9a971c2..61d0443 100644
+--- a/src-tauri/src/capture/normalized_state.rs
++++ b/src-tauri/src/capture/normalized_state.rs
+@@ -7,19 +7,24 @@ use crate::{
+         CaptureReadinessInputDto, CaptureRequestInputDto, CaptureRequestResultDto,
+         HostErrorEnvelope,
+     },
++    handoff::sync_post_end_state_in_dir,
+     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
+     session::{
+-        session_manifest::{ActivePresetBinding, SessionManifest},
++        session_manifest::{
++            normalize_legacy_manifest, ActivePresetBinding, SessionManifest,
++            SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
++        },
+         session_paths::SessionPaths,
+         session_repository::write_session_manifest,
+     },
++    timing::{sync_session_timing_in_dir, TimingPhase},
+ };
+ 
+ pub fn get_capture_readiness_in_dir(
+     base_dir: &Path,
+     input: CaptureReadinessInputDto,
+ ) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
+-    let manifest = read_session_manifest(base_dir, &input.session_id)?;
++    let manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+ 
+     Ok(normalize_capture_readiness(base_dir, &manifest))
+ }
+@@ -49,7 +54,8 @@ pub fn request_capture_in_dir(
+         session_id: input.session_id,
+         status: "capture-saved".into(),
+         capture: capture.clone(),
+-        readiness: CaptureReadinessDto::capture_saved(manifest.session_id.clone(), capture),
++        readiness: CaptureReadinessDto::capture_saved(manifest.session_id.clone(), capture)
++            .with_timing(manifest.timing.clone()),
+     })
+ }
+ 
+@@ -61,7 +67,7 @@ pub fn delete_capture_in_dir(
+     let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+     })?;
+-    let mut manifest = read_session_manifest(base_dir, &input.session_id)?;
++    let mut manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+     let capture_index = manifest
+         .captures
+         .iter()
+@@ -73,13 +79,18 @@ pub fn delete_capture_in_dir(
+             )
+         })?;
+     let capture = manifest.captures[capture_index].clone();
++    let is_finalized_post_end = matches!(
++        manifest.lifecycle.stage.as_str(),
++        "completed" | "phone-required"
++    );
+ 
+     if capture.session_id != input.session_id
+         || !matches!(
+             capture.render_status.as_str(),
+             "previewReady" | "finalReady"
+         )
+-        || capture.post_end_state == "completed"
++        || capture.post_end_state != "activeSession"
++        || is_finalized_post_end
+     {
+         return Err(HostErrorEnvelope::capture_delete_blocked(
+             "이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.",
+@@ -113,11 +124,49 @@ pub fn normalize_capture_readiness(
+     base_dir: &Path,
+     manifest: &SessionManifest,
+ ) -> CaptureReadinessDto {
+-    if !has_valid_active_preset(base_dir, manifest.active_preset.as_ref()) {
+-        return CaptureReadinessDto::preset_missing(manifest.session_id.clone());
++    let timing = manifest.timing.clone();
++    let latest_capture = manifest.captures.last().cloned();
++    let timing_phase = timing_phase(timing.as_ref());
++    let post_end = if timing_phase == TimingPhase::Ended
++        && matches!(
++            manifest.lifecycle.stage.as_str(),
++            "export-waiting" | "completed" | "phone-required"
++        ) {
++        manifest.post_end.clone()
++    } else {
++        None
++    };
++
++    if let Some(post_end_state) = post_end.clone() {
++        let readiness = match post_end_state.state() {
++            SESSION_POST_END_COMPLETED => {
++                CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture)
++            }
++            SESSION_POST_END_PHONE_REQUIRED => {
++                CaptureReadinessDto::phone_required(manifest.session_id.clone())
++            }
++            _ => CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture),
++        };
++
++        return readiness
++            .with_post_end(Some(post_end_state))
++            .with_timing(timing);
+     }
+ 
+-    let latest_capture = manifest.captures.last().cloned();
++    if timing_phase == TimingPhase::Ended {
++        return match manifest.lifecycle.stage.as_str() {
++            "phone-required" | "blocked" => {
++                CaptureReadinessDto::phone_required(manifest.session_id.clone()).with_timing(timing)
++            }
++            _ => CaptureReadinessDto::ended(manifest.session_id.clone(), latest_capture)
++                .with_timing(timing),
++        };
++    }
++
++    if !has_valid_active_preset(base_dir, manifest.active_preset.as_ref()) {
++        return CaptureReadinessDto::preset_missing(manifest.session_id.clone())
++            .with_timing(timing);
++    }
+ 
+     match manifest.lifecycle.stage.as_str() {
+         "ready" | "capture-ready" | "preset-selected" => match latest_capture {
+@@ -126,35 +175,51 @@ pub fn normalize_capture_readiness(
+                     || capture.render_status == "captureSaved" =>
+             {
+                 CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), Some(capture))
++                    .with_timing(timing)
+             }
+             Some(capture) if capture.render_status == "renderFailed" => {
+-                CaptureReadinessDto::phone_required(manifest.session_id.clone())
++                CaptureReadinessDto::phone_required(manifest.session_id.clone()).with_timing(timing)
+             }
+             Some(capture) if capture.render_status == "previewReady" => {
+                 CaptureReadinessDto::preview_ready(manifest.session_id.clone(), capture)
++                    .with_timing(timing)
++            }
++            _ if timing_phase == TimingPhase::Warning => {
++                CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture)
++                    .with_timing(timing)
+             }
+             _ => CaptureReadinessDto::ready(
+                 manifest.session_id.clone(),
+                 "captureReady",
+                 latest_capture,
+-            ),
++            )
++            .with_timing(timing),
+         },
+         "phone-required" | "blocked" => {
+             CaptureReadinessDto::phone_required(manifest.session_id.clone())
++                .with_post_end(post_end)
++                .with_timing(timing)
+         }
+         "preview-waiting" => {
+             CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), latest_capture)
++                .with_timing(timing)
+         }
+         "export-waiting" => {
+             CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture)
++                .with_timing(timing)
++        }
++        "completed" => CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture)
++            .with_post_end(post_end)
++            .with_timing(timing),
++        "warning" => CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture)
++            .with_timing(timing),
++        "helper-preparing" => {
++            CaptureReadinessDto::helper_preparing(manifest.session_id.clone()).with_timing(timing)
+         }
+-        "completed" => CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture),
+-        "warning" => CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture),
+-        "helper-preparing" => CaptureReadinessDto::helper_preparing(manifest.session_id.clone()),
+         "camera-preparing" | "preparing" => {
+-            CaptureReadinessDto::camera_preparing(manifest.session_id.clone())
++            CaptureReadinessDto::camera_preparing(manifest.session_id.clone()).with_timing(timing)
+         }
+-        _ => CaptureReadinessDto::camera_preparing(manifest.session_id.clone()),
++        _ => CaptureReadinessDto::camera_preparing(manifest.session_id.clone()).with_timing(timing),
+     }
+ }
+ 
+@@ -305,6 +370,28 @@ fn is_session_scoped_asset_path(paths: &SessionPaths, asset_path: &str) -> bool
+             .to_lowercase()
+     );
+ 
++    if normalized_asset_path.starts_with("//") {
++        return false;
++    }
++
++    if normalized_asset_path
++        .split('/')
++        .any(|segment| segment == "..")
++    {
++        return false;
++    }
++
++    let is_absolute_path = normalized_asset_path.starts_with('/')
++        || normalized_asset_path
++            .chars()
++            .nth(1)
++            .map(|character| character == ':')
++            .unwrap_or(false);
++
++    if !is_absolute_path {
++        return false;
++    }
++
+     normalized_asset_path.starts_with(&normalized_session_root)
+ }
+ 
+@@ -324,7 +411,42 @@ fn read_session_manifest(
+         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
+     })?;
+ 
+-    serde_json::from_str(&manifest_bytes).map_err(|error| {
++    let mut manifest: SessionManifest = serde_json::from_str(&manifest_bytes).map_err(|error| {
+         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
++    })?;
++
++    normalize_legacy_manifest(&mut manifest);
++
++    Ok(manifest)
++}
++
++fn read_session_manifest_with_timing(
++    base_dir: &Path,
++    session_id: &str,
++) -> Result<SessionManifest, HostErrorEnvelope> {
++    let paths = SessionPaths::try_new(base_dir, session_id)?;
++    let manifest = read_session_manifest(base_dir, session_id)?;
++
++    sync_session_timing_in_dir(
++        base_dir,
++        &paths.manifest_path,
++        manifest,
++        std::time::SystemTime::now(),
++    )
++    .and_then(|manifest| {
++        sync_post_end_state_in_dir(
++            base_dir,
++            &paths.manifest_path,
++            manifest,
++            std::time::SystemTime::now(),
++        )
+     })
+ }
++
++fn timing_phase(timing: Option<&crate::session::session_manifest::SessionTiming>) -> TimingPhase {
++    match timing.map(|value| value.phase.as_str()) {
++        Some("warning") => TimingPhase::Warning,
++        Some("ended") => TimingPhase::Ended,
++        _ => TimingPhase::Active,
++    }
++}
+diff --git a/src-tauri/src/contracts/dto.rs b/src-tauri/src/contracts/dto.rs
+index 800f438..1558b01 100644
+--- a/src-tauri/src/contracts/dto.rs
++++ b/src-tauri/src/contracts/dto.rs
+@@ -1,7 +1,7 @@
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::session::session_manifest::{
+-    ActivePresetBinding, SessionCaptureRecord, SessionManifest,
++    ActivePresetBinding, SessionCaptureRecord, SessionManifest, SessionPostEnd, SessionTiming,
+ };
+ 
+ const SESSION_ID_PREFIX: &str = "session_";
+@@ -156,6 +156,10 @@ pub struct CaptureReadinessDto {
+     pub support_message: String,
+     pub reason_code: String,
+     pub latest_capture: Option<SessionCaptureRecord>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub post_end: Option<SessionPostEnd>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub timing: Option<SessionTiming>,
+ }
+ 
+ impl CaptureReadinessDto {
+@@ -181,9 +185,21 @@ impl CaptureReadinessDto {
+             support_message: support_message.into(),
+             reason_code: reason_code.into(),
+             latest_capture,
++            post_end: None,
++            timing: None,
+         }
+     }
+ 
++    pub fn with_post_end(mut self, post_end: Option<SessionPostEnd>) -> Self {
++        self.post_end = post_end;
++        self
++    }
++
++    pub fn with_timing(mut self, timing: Option<SessionTiming>) -> Self {
++        self.timing = timing;
++        self
++    }
++
+     pub fn preset_missing(session_id: impl Into<String>) -> Self {
+         let session_id = session_id.into();
+ 
+@@ -259,12 +275,12 @@ impl CaptureReadinessDto {
+ 
+         Self::build(
+             session_id,
+-            "previewWaiting",
+-            "Preparing",
++            "blocked",
++            "Export Waiting",
+             false,
+             "wait",
+-            "마무리 준비 중이에요.",
+-            "다음 안내가 나올 때까지 기다려 주세요.",
++            "촬영은 끝났고 결과를 준비하고 있어요.",
++            "다음 안내가 나올 때까지 잠시만 기다려 주세요.",
+             "export-waiting",
+             latest_capture,
+         )
+@@ -279,10 +295,10 @@ impl CaptureReadinessDto {
+         Self::build(
+             session_id,
+             "blocked",
+-            "Preparing",
++            "Completed",
+             false,
+             "wait",
+-            "이 촬영은 마무리되었어요.",
++            "부스 준비가 끝났어요.",
+             "다음 안내를 확인해 주세요.",
+             "completed",
+             latest_capture,
+@@ -324,6 +340,25 @@ impl CaptureReadinessDto {
+         )
+     }
+ 
++    pub fn ended(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Session Ended",
++            false,
++            "wait",
++            "촬영 시간이 끝났어요.",
++            "마무리 안내가 나올 때까지 잠시만 기다려 주세요.",
++            "ended",
++            latest_capture,
++        )
++    }
++
+     pub fn ready(
+         session_id: impl Into<String>,
+         surface_state: impl Into<String>,
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 39ec486..a71ab9f 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,8 +1,10 @@
+ pub mod capture;
+ pub mod commands;
+ pub mod contracts;
++pub mod handoff;
+ pub mod preset;
+ pub mod session;
++pub mod timing;
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
+diff --git a/src-tauri/src/session/session_repository.rs b/src-tauri/src/session/session_repository.rs
+index 2187292..04915b4 100644
+--- a/src-tauri/src/session/session_repository.rs
++++ b/src-tauri/src/session/session_repository.rs
+@@ -8,20 +8,23 @@ use std::{
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::{
++    capture::normalized_state::normalize_capture_readiness,
+     contracts::dto::{
+         validate_session_id, HostErrorEnvelope, PresetSelectionInputDto, PresetSelectionResultDto,
+         SessionStartInputDto,
+     },
++    handoff::sync_post_end_state_in_dir,
+     preset::preset_catalog::{
+         find_selectable_published_preset_summary, resolve_published_preset_catalog_dir,
+     },
+     session::{
+         session_manifest::{
+-            build_session_manifest, current_timestamp, validate_session_start_input,
+-            ActivePresetBinding, SessionManifest,
++            build_session_manifest, current_timestamp, normalize_legacy_manifest,
++            validate_session_start_input, ActivePresetBinding, SessionManifest,
+         },
+         session_paths::SessionPaths,
+     },
++    timing::sync_session_timing_in_dir,
+ };
+ 
+ static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
+@@ -59,6 +62,20 @@ pub fn select_active_preset_in_dir(
+     validate_session_id(&input.session_id)?;
+     let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
+     let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    manifest =
++        sync_session_timing_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
++    manifest =
++        sync_post_end_state_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
++
++    if manifest.post_end.is_some()
++        || manifest.timing.as_ref().map(|timing| timing.phase.as_str()) == Some("ended")
++    {
++        return Err(HostErrorEnvelope::capture_not_ready(
++            "지금은 룩을 바꿀 수 없어요.",
++            normalize_capture_readiness(base_dir, &manifest),
++        ));
++    }
++
+     let catalog_root = resolve_published_preset_catalog_dir(base_dir);
+     let selected_preset = find_selectable_published_preset_summary(
+         &catalog_root,
+@@ -83,6 +100,24 @@ pub fn select_active_preset_in_dir(
+     };
+ 
+     if manifest.active_preset.as_ref() == Some(&active_preset) {
++        let mut changed = false;
++
++        if manifest.active_preset_id.as_deref() != Some(selected_preset.preset_id.as_str()) {
++            manifest.active_preset_id = Some(selected_preset.preset_id.clone());
++            changed = true;
++        }
++
++        if manifest.active_preset_display_name.as_deref()
++            != Some(selected_preset.display_name.as_str())
++        {
++            manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
++            changed = true;
++        }
++
++        if changed {
++            write_session_manifest(&paths.manifest_path, &manifest)?;
++        }
++
+         return Ok(PresetSelectionResultDto {
+             session_id: manifest.session_id.clone(),
+             active_preset,
+@@ -172,10 +207,13 @@ pub(crate) fn read_session_manifest(
+     }
+ 
+     let manifest_bytes = fs::read_to_string(manifest_path).map_err(map_fs_error)?;
+-
+-    serde_json::from_str(&manifest_bytes).map_err(|error| {
++    let mut manifest: SessionManifest = serde_json::from_str(&manifest_bytes).map_err(|error| {
+         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
+-    })
++    })?;
++
++    normalize_legacy_manifest(&mut manifest);
++
++    Ok(manifest)
+ }
+ 
+ pub(crate) fn write_session_manifest(
+diff --git a/src-tauri/tests/capture_readiness.rs b/src-tauri/tests/capture_readiness.rs
+index 5c1374a..c85e4ca 100644
+--- a/src-tauri/tests/capture_readiness.rs
++++ b/src-tauri/tests/capture_readiness.rs
+@@ -17,7 +17,7 @@ use boothy_lib::{
+     },
+     preset::preset_catalog::resolve_published_preset_catalog_dir,
+     session::{
+-        session_manifest::SessionManifest,
++        session_manifest::{current_timestamp, SessionManifest},
+         session_paths::SessionPaths,
+         session_repository::{select_active_preset_in_dir, start_session_in_dir},
+     },
+@@ -496,13 +496,19 @@ fn switching_active_preset_only_changes_future_capture_bindings() {
+         "preset_mono-pop",
+     );
+     assert_eq!(manifest.captures.len(), 2);
+-    assert_eq!(manifest.captures[0].active_preset_id, "preset_soft-glow");
++    assert_eq!(
++        manifest.captures[0].active_preset_id.as_deref(),
++        Some("preset_soft-glow")
++    );
+     assert_eq!(manifest.captures[0].active_preset_version, "2026.03.20");
+     assert_eq!(
+         manifest.captures[0].active_preset_display_name.as_deref(),
+         Some("Soft Glow")
+     );
+-    assert_eq!(manifest.captures[1].active_preset_id, "preset_mono-pop");
++    assert_eq!(
++        manifest.captures[1].active_preset_id.as_deref(),
++        Some("preset_mono-pop")
++    );
+     assert_eq!(manifest.captures[1].active_preset_version, "2026.03.21");
+     assert_eq!(
+         manifest.captures[1].active_preset_display_name.as_deref(),
+@@ -578,6 +584,147 @@ fn preview_render_failure_escalates_to_a_phone_required_boundary() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn completed_post_end_uses_handoff_guidance_when_final_handoff_metadata_is_present() {
++    let base_dir = unique_test_root("handoff-ready-guidance");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save");
++    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
++        .expect("preview should complete");
++    mark_capture_final_ready(&base_dir, &session.session_id, &capture.capture.capture_id);
++    write_handoff_guidance(
++        &base_dir,
++        &session.session_id,
++        serde_json::json!({
++            "approvedRecipientLabel": "Front Desk",
++            "primaryActionLabel": "안내된 직원에게 이름을 말씀해 주세요.",
++            "showBoothAlias": true
++        }),
++    );
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++    update_stage(&base_dir, &session.session_id, "completed");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("handoff-ready guidance should resolve");
++
++    assert_eq!(readiness.reason_code, "completed");
++    let post_end = readiness.post_end.expect("completed guidance should exist");
++    assert_eq!(post_end.state(), "completed");
++    assert_eq!(post_end.completion_variant(), Some("handoff-ready"));
++
++    let manifest = read_manifest(&base_dir, &session.session_id);
++    assert_eq!(manifest.lifecycle.stage, "completed");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn invalid_handoff_metadata_falls_back_to_local_deliverable_ready_guidance() {
++    let base_dir = unique_test_root("handoff-ready-fallback");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save");
++    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
++        .expect("preview should complete");
++    mark_capture_final_ready(&base_dir, &session.session_id, &capture.capture.capture_id);
++    write_handoff_guidance(
++        &base_dir,
++        &session.session_id,
++        serde_json::json!({
++            "primaryActionLabel": "안내를 확인해 주세요."
++        }),
++    );
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++    update_stage(&base_dir, &session.session_id, "completed");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("fallback guidance should resolve");
++
++    let post_end = readiness.post_end.expect("completed guidance should exist");
++    assert_eq!(post_end.state(), "completed");
++    assert_eq!(
++        post_end.completion_variant(),
++        Some("local-deliverable-ready")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn delete_capture_removes_only_the_selected_current_session_artifacts() {
+     let base_dir = unique_test_root("delete-current-session-capture");
+@@ -810,6 +957,396 @@ fn delete_capture_preserves_manifest_when_asset_cleanup_cannot_be_staged() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn warning_window_projects_warning_readiness_and_persists_a_warning_audit_log() {
++    let base_dir = unique_test_root("timing-warning");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-10),
++        &timestamp_offset(60),
++        "active",
++    );
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("warning readiness should resolve");
++
++    assert_eq!(readiness.reason_code, "warning");
++    assert!(readiness.can_capture);
++
++    let manifest = read_manifest(&base_dir, &session.session_id);
++    assert_eq!(manifest.lifecycle.stage, "warning");
++    assert_eq!(
++        manifest
++            .timing
++            .as_ref()
++            .and_then(|timing| timing.warning_triggered_at.as_ref())
++            .map(|value| !value.is_empty()),
++        Some(true)
++    );
++
++    let log_path = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("timing-events.log");
++    let log = fs::read_to_string(log_path).expect("warning timing log should exist");
++
++    assert!(log.contains("event=warning"));
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn exact_end_blocks_capture_and_reserves_the_extension_audit_hook_in_logs() {
++    let base_dir = unique_test_root("timing-ended");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++    let capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save before exact end");
++
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++    update_stage(&base_dir, &session.session_id, "completed");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("exact-end readiness should project explicit export-waiting");
++
++    assert_eq!(readiness.reason_code, "ended");
++    assert!(!readiness.can_capture);
++    assert_eq!(
++        readiness.post_end.as_ref().map(|post_end| post_end.state()),
++        Some("export-waiting")
++    );
++    assert_eq!(
++        readiness
++            .timing
++            .as_ref()
++            .map(|timing| timing.phase.as_str()),
++        Some("ended")
++    );
++    assert_eq!(
++        readiness
++            .latest_capture
++            .as_ref()
++            .map(|latest_capture| latest_capture.capture_id.as_str()),
++        Some(capture.capture.capture_id.as_str())
++    );
++
++    let error = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect_err("exact end should block capture");
++
++    assert_eq!(error.code, "capture-not-ready");
++    assert_eq!(
++        error
++            .readiness
++            .as_ref()
++            .map(|readiness| readiness.reason_code.as_str()),
++        Some("export-waiting")
++    );
++
++    let manifest = read_manifest(&base_dir, &session.session_id);
++    assert_eq!(manifest.lifecycle.stage, "export-waiting");
++    assert_eq!(
++        manifest.post_end.as_ref().map(|post_end| post_end.state()),
++        Some("export-waiting")
++    );
++    assert_eq!(
++        manifest
++            .timing
++            .as_ref()
++            .map(|timing| timing.capture_allowed),
++        Some(false)
++    );
++
++    let log_path = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("timing-events.log");
++    let log = fs::read_to_string(log_path).expect("ended timing log should exist");
++
++    assert!(log.contains("event=ended"));
++    assert!(log.contains("event=extension-hook-reserved"));
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn ended_readiness_does_not_fall_back_to_preset_missing_after_end() {
++    let base_dir = unique_test_root("timing-ended-with-missing-preset");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++    request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save before exact end");
++
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++    fs::remove_dir_all(&catalog_root).expect("preset catalog should be removable");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("ended readiness should still resolve");
++
++    assert_eq!(readiness.reason_code, "export-waiting");
++    assert_ne!(readiness.reason_code, "preset-missing");
++    assert_eq!(
++        readiness
++            .timing
++            .as_ref()
++            .map(|timing| timing.phase.as_str()),
++        Some("ended")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn preview_ready_capture_promotes_to_completed_local_deliverable_ready_after_explicit_post_end() {
++    let base_dir = unique_test_root("timing-completed-local");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save");
++
++    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
++        .expect("preview should complete");
++
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("completed post-end readiness should resolve");
++
++    assert_eq!(readiness.reason_code, "completed");
++    assert_eq!(
++        readiness
++            .post_end
++            .as_ref()
++            .and_then(|post_end| post_end.completion_variant()),
++        Some("local-deliverable-ready")
++    );
++
++    let manifest = read_manifest(&base_dir, &session.session_id);
++    assert_eq!(manifest.lifecycle.stage, "completed");
++    assert_eq!(
++        manifest
++            .captures
++            .last()
++            .map(|latest_capture| latest_capture.post_end_state.as_str()),
++        Some("local-deliverable-ready")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn post_end_render_failure_preserves_saved_capture_assets() {
++    let base_dir = unique_test_root("timing-phone-required-preserves-assets");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    let capture = request_capture_in_dir(
++        &base_dir,
++        CaptureRequestInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("capture should save");
++    let raw_asset_path = capture.capture.raw.asset_path.clone();
++
++    update_timing(
++        &base_dir,
++        &session.session_id,
++        &timestamp_offset(-60),
++        &timestamp_offset(-10),
++        "active",
++    );
++
++    mark_preview_render_failed_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
++        .expect("post-end render failure should be recorded");
++    update_stage(&base_dir, &session.session_id, "phone-required");
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("phone-required post-end readiness should resolve");
++
++    assert_eq!(readiness.reason_code, "phone-required");
++    assert!(std::path::Path::new(&raw_asset_path).is_file());
++
++    let manifest = read_manifest(&base_dir, &session.session_id);
++    assert_eq!(manifest.lifecycle.stage, "phone-required");
++    assert_eq!(
++        manifest
++            .captures
++            .last()
++            .map(|latest_capture| latest_capture.capture_id.as_str()),
++        Some(capture.capture.capture_id.as_str())
++    );
++    assert_eq!(
++        manifest
++            .captures
++            .last()
++            .map(|latest_capture| latest_capture.post_end_state.as_str()),
++        Some("postEndPending")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn preview_ready_capture_remains_scoped_to_its_own_session() {
+     let base_dir = unique_test_root("capture-session-isolation");
+@@ -920,6 +1457,52 @@ fn preview_ready_capture_remains_scoped_to_its_own_session() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++fn mark_capture_final_ready(base_dir: &PathBuf, session_id: &str, capture_id: &str) {
++    let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
++    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
++    let mut manifest: SessionManifest =
++        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
++    let capture = manifest
++        .captures
++        .iter_mut()
++        .find(|value| value.capture_id == capture_id)
++        .expect("capture should exist");
++
++    capture.render_status = "finalReady".into();
++    capture.post_end_state = "handoffReady".into();
++    capture.final_asset.asset_path = Some(
++        SessionPaths::new(base_dir, session_id)
++            .renders_finals_dir
++            .join(format!("{capture_id}.jpg"))
++            .to_string_lossy()
++            .into_owned(),
++    );
++    capture.final_asset.ready_at_ms = Some(capture.raw.persisted_at_ms + 100);
++
++    fs::write(
++        manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should be writable");
++}
++
++fn write_handoff_guidance(base_dir: &PathBuf, session_id: &str, payload: serde_json::Value) {
++    let guidance_path = SessionPaths::new(base_dir, session_id)
++        .handoff_dir
++        .join("customer-guidance.json");
++    fs::create_dir_all(
++        guidance_path
++            .parent()
++            .expect("handoff guidance should have a parent directory"),
++    )
++    .expect("handoff dir should exist");
++    fs::write(
++        guidance_path,
++        serde_json::to_vec_pretty(&payload).expect("handoff payload should serialize"),
++    )
++    .expect("handoff guidance should be writable");
++}
++
+ fn update_stage(base_dir: &PathBuf, session_id: &str, stage: &str) {
+     let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
+     let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+@@ -935,6 +1518,58 @@ fn update_stage(base_dir: &PathBuf, session_id: &str, stage: &str) {
+     .expect("manifest should be writable");
+ }
+ 
++fn update_timing(
++    base_dir: &PathBuf,
++    session_id: &str,
++    warning_at: &str,
++    adjusted_end_at: &str,
++    phase: &str,
++) {
++    let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
++    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
++    let mut manifest: SessionManifest =
++        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
++
++    let timing = manifest
++        .timing
++        .as_mut()
++        .expect("session timing should exist");
++    timing.warning_at = warning_at.into();
++    timing.adjusted_end_at = adjusted_end_at.into();
++    timing.phase = phase.into();
++    timing.capture_allowed = phase != "ended";
++    timing.warning_triggered_at = None;
++    timing.ended_triggered_at = None;
++
++    fs::write(
++        manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should be writable");
++}
++
++fn read_manifest(base_dir: &PathBuf, session_id: &str) -> SessionManifest {
++    let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
++    let manifest_bytes = fs::read_to_string(manifest_path).expect("manifest should be readable");
++
++    serde_json::from_str(&manifest_bytes).expect("manifest should deserialize")
++}
++
++fn timestamp_offset(offset_seconds: i64) -> String {
++    let now = SystemTime::now();
++    let shifted = if offset_seconds >= 0 {
++        now.checked_add(std::time::Duration::from_secs(offset_seconds as u64))
++            .expect("future timestamp should be valid")
++    } else {
++        now.checked_sub(std::time::Duration::from_secs(
++            offset_seconds.unsigned_abs(),
++        ))
++        .expect("past timestamp should be valid")
++    };
++
++    current_timestamp(shifted).expect("shifted timestamp should serialize")
++}
++
+ fn create_published_bundle(catalog_root: &PathBuf) {
+     create_named_published_bundle(catalog_root, "preset_soft-glow", "Soft Glow", "2026.03.20");
+ }
+diff --git a/src-tauri/tests/session_manifest.rs b/src-tauri/tests/session_manifest.rs
+index 01a6d5d..d92ea52 100644
+--- a/src-tauri/tests/session_manifest.rs
++++ b/src-tauri/tests/session_manifest.rs
+@@ -9,7 +9,8 @@ use boothy_lib::{
+     preset::preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
+     session::{
+         session_manifest::{
+-            build_session_manifest_at, SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
++            build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
++            SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
+         },
+         session_paths::SessionPaths,
+         session_repository::{select_active_preset_in_dir, start_session_in_dir},
+@@ -440,6 +441,74 @@ fn legacy_v1_manifest_with_only_active_preset_id_still_deserializes() {
+     assert!(manifest.active_preset_display_name.is_none());
+ }
+ 
++#[test]
++fn legacy_v1_manifest_with_existing_captures_backfills_capture_preset_identity() {
++    let mut manifest: SessionManifest = serde_json::from_value(serde_json::json!({
++      "schemaVersion": "session-manifest/v1",
++      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++      "boothAlias": "Kim 4821",
++      "customer": {
++        "name": "Kim",
++        "phoneLastFour": "4821"
++      },
++      "createdAt": "2026-03-20T00:00:00Z",
++      "updatedAt": "2026-03-20T00:00:00Z",
++      "lifecycle": {
++        "status": "active",
++        "stage": "capture-ready"
++      },
++      "activePreset": {
++        "presetId": "preset_soft-glow",
++        "publishedVersion": "2026.03.20"
++      },
++      "activePresetId": "preset_soft-glow",
++      "activePresetDisplayName": "Soft Glow",
++      "captures": [{
++        "schemaVersion": "session-capture/v1",
++        "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++        "boothAlias": "Kim 4821",
++        "activePresetVersion": "2026.03.20",
++        "captureId": "capture_01hs6n1r8b8zc5v4ey2x7b9g1m",
++        "requestId": "request_01hs6n1r8b8zc5v4ey2x7b9g1m",
++        "raw": {
++          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg",
++          "persistedAtMs": 100
++        },
++        "preview": {
++          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg",
++          "enqueuedAtMs": 120,
++          "readyAtMs": 200
++        },
++        "final": {
++          "assetPath": null,
++          "readyAtMs": null
++        },
++        "renderStatus": "previewReady",
++        "postEndState": "activeSession",
++        "timing": {
++          "captureAcknowledgedAtMs": 100,
++          "previewVisibleAtMs": 200,
++          "captureBudgetMs": 1000,
++          "previewBudgetMs": 5000,
++          "previewBudgetState": "withinBudget"
++        }
++      }],
++      "postEnd": null
++    }))
++    .expect("legacy manifest with captures should deserialize");
++
++    normalize_legacy_manifest(&mut manifest);
++
++    assert_eq!(
++        manifest.captures[0].active_preset_id.as_deref(),
++        Some("preset_soft-glow")
++    );
++    assert_eq!(
++        manifest.captures[0].active_preset_display_name.as_deref(),
++        Some("Soft Glow")
++    );
++}
++
+ #[test]
+ fn selecting_a_preset_preserves_a_later_lifecycle_stage() {
+     let base_dir = unique_test_root("preset-selection-stage");
+@@ -498,6 +567,113 @@ fn selecting_a_preset_preserves_a_later_lifecycle_stage() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn selecting_a_preset_is_blocked_once_exact_end_has_projected_post_end_truth() {
++    let base_dir = unique_test_root("preset-selection-post-end-block");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should exist before selecting a preset");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++
++    create_published_bundle(
++        &catalog_root,
++        "preset_soft-glow",
++        "2026.03.20",
++        "Soft Glow",
++        "published",
++        true,
++        None,
++        None,
++    );
++    create_published_bundle(
++        &catalog_root,
++        "preset_afterglow",
++        "2026.03.20",
++        "Afterglow",
++        "published",
++        true,
++        None,
++        None,
++    );
++
++    select_active_preset_in_dir(
++        &base_dir,
++        PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("initial preset selection should persist");
++
++    let mut manifest: SessionManifest = serde_json::from_str(
++        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
++    )
++    .expect("manifest should deserialize");
++    let ended_at = current_timestamp(
++        SystemTime::now()
++            .checked_sub(Duration::from_secs(10))
++            .expect("past timestamp should be valid"),
++    )
++    .expect("ended timestamp should serialize");
++    let warning_at = current_timestamp(
++        SystemTime::now()
++            .checked_sub(Duration::from_secs(70))
++            .expect("past timestamp should be valid"),
++    )
++    .expect("warning timestamp should serialize");
++    let timing = manifest
++        .timing
++        .as_mut()
++        .expect("session timing should exist");
++    timing.warning_at = warning_at;
++    timing.adjusted_end_at = ended_at;
++    timing.phase = "active".into();
++    timing.capture_allowed = true;
++    timing.warning_triggered_at = None;
++    timing.ended_triggered_at = None;
++    fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should be writable");
++
++    let error = select_active_preset_in_dir(
++        &base_dir,
++        PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_afterglow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect_err("post-end sessions should block preset switching");
++
++    assert_eq!(error.code, "capture-not-ready");
++    assert_eq!(
++        error
++            .readiness
++            .as_ref()
++            .map(|readiness| readiness.can_capture),
++        Some(false)
++    );
++    assert_eq!(
++        error
++            .readiness
++            .as_ref()
++            .and_then(|readiness| readiness.timing.as_ref())
++            .map(|timing| timing.phase.as_str()),
++        Some("ended")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn selecting_the_same_preset_twice_keeps_the_existing_manifest_timestamp() {
+     let base_dir = unique_test_root("preset-selection-idempotent");
+@@ -565,6 +741,78 @@ fn selecting_the_same_preset_twice_keeps_the_existing_manifest_timestamp() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn selecting_the_same_preset_backfills_missing_display_name_without_bumping_timestamp() {
++    let base_dir = unique_test_root("preset-selection-backfill-display-name");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should exist before selecting a preset");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++
++    create_published_bundle(
++        &catalog_root,
++        "preset_soft-glow",
++        "2026.03.20",
++        "Soft Glow",
++        "published",
++        true,
++        None,
++        None,
++    );
++
++    select_active_preset_in_dir(
++        &base_dir,
++        PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("first selection should persist");
++
++    let mut manifest: SessionManifest = serde_json::from_str(
++        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
++    )
++    .expect("manifest should deserialize");
++    manifest.updated_at = "2026-03-20T00:05:00Z".into();
++    manifest.active_preset_display_name = None;
++    fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should be writable");
++
++    let result = select_active_preset_in_dir(
++        &base_dir,
++        PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.20".into(),
++        },
++    )
++    .expect("re-selecting the same preset should backfill display metadata");
++
++    let persisted_manifest: SessionManifest = serde_json::from_str(
++        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
++    )
++    .expect("manifest should deserialize");
++
++    assert_eq!(result.manifest.updated_at, "2026-03-20T00:05:00Z");
++    assert_eq!(persisted_manifest.updated_at, "2026-03-20T00:05:00Z");
++    assert_eq!(
++        persisted_manifest.active_preset_display_name.as_deref(),
++        Some("Soft Glow")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn selecting_a_preset_for_a_missing_session_reports_session_not_found_first() {
+     let base_dir = unique_test_root("preset-selection-missing-session");
+diff --git a/src/booth-shell/components/LatestPhotoRail.tsx b/src/booth-shell/components/LatestPhotoRail.tsx
+index 8cc96ce..83bae1f 100644
+--- a/src/booth-shell/components/LatestPhotoRail.tsx
++++ b/src/booth-shell/components/LatestPhotoRail.tsx
+@@ -1,10 +1,12 @@
+ import type { KeyboardEvent } from 'react'
+ import { resolvePresetPreviewSrc } from './preset-preview-src'
++import { isFinalizedCapturePostEndState } from '../../completion-handoff/post-end'
+ import type { CurrentSessionPreview } from '../../session-domain/selectors'
+ 
+ type LatestPhotoRailProps = {
+   previews: CurrentSessionPreview[]
+   isPreviewWaiting: boolean
++  isExplicitPostEnd: boolean
+   deletingCaptureId: string | null
+   pendingDeleteCaptureId: string | null
+   onDeleteCancel(): void
+@@ -30,12 +32,25 @@ function buildPreviewAltText(
+ export function LatestPhotoRail({
+   previews,
+   isPreviewWaiting,
++  isExplicitPostEnd,
+   deletingCaptureId,
+   pendingDeleteCaptureId,
+   onDeleteCancel,
+   onDeleteConfirm,
+   onDeleteIntent,
+ }: LatestPhotoRailProps) {
++  function isPostEndLocked(preview: CurrentSessionPreview) {
++    return isExplicitPostEnd || preview.postEndState !== 'activeSession'
++  }
++
++  function buildPostEndHint(preview: CurrentSessionPreview) {
++    return preview.postEndState === 'postEndPending' || isExplicitPostEnd
++      ? '지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요.'
++      : isFinalizedCapturePostEndState(preview.postEndState)
++        ? '마무리된 사진은 여기서 정리할 수 없어요.'
++        : '지금은 사진 정리를 잠시 멈춰 주세요.'
++  }
++
+   function handleRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+     if (event.key === 'ArrowRight') {
+       event.preventDefault()
+@@ -106,9 +121,9 @@ export function LatestPhotoRail({
+                   ? '현재 룩과 같은 바인딩으로 유지돼요.'
+                   : '이 사진은 이전 룩으로 찍혔고 그대로 유지돼요.'}
+               </p>
+-              {preview.postEndState === 'completed' ? (
++              {isPostEndLocked(preview) ? (
+                 <p className="latest-photo-rail__hint">
+-                  마무리된 사진은 여기서 정리할 수 없어요.
++                  {buildPostEndHint(preview)}
+                 </p>
+               ) : pendingDeleteCaptureId === preview.captureId ? (
+                 <div className="latest-photo-rail__confirm">
+diff --git a/src/booth-shell/screens/CaptureScreen.test.tsx b/src/booth-shell/screens/CaptureScreen.test.tsx
+index 9573c19..8db8ceb 100644
+--- a/src/booth-shell/screens/CaptureScreen.test.tsx
++++ b/src/booth-shell/screens/CaptureScreen.test.tsx
+@@ -1,13 +1,30 @@
+ import { fireEvent, render, screen } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+-import { describe, expect, it, vi } from 'vitest'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
+ 
+-import type { SessionCaptureRecord } from '../../shared-contracts'
++import type {
++  CaptureReadinessSnapshot,
++  SessionCaptureRecord,
++  SessionManifest,
++  SessionTimingSnapshot,
++} from '../../shared-contracts'
+ import type { SessionStateContextValue } from '../../session-domain/state/session-context'
+ import { SessionStateContext } from '../../session-domain/state/session-context'
+ import { DEFAULT_SESSION_DRAFT } from '../../session-domain/state/session-draft'
+ import { CaptureScreen } from './CaptureScreen'
+ 
++const { playTimingCueMock } = vi.hoisted(() => ({
++  playTimingCueMock: vi.fn().mockResolvedValue(undefined),
++}))
++
++vi.mock('../../timing-policy/audio', () => ({
++  playTimingCue: playTimingCueMock,
++}))
++
++beforeEach(() => {
++  playTimingCueMock.mockClear()
++})
++
+ function createCaptureRecord(
+   overrides: Partial<SessionCaptureRecord> = {},
+ ): SessionCaptureRecord {
+@@ -46,10 +63,80 @@ function createCaptureRecord(
+   }
+ }
+ 
++function createTimingSnapshot(
++  overrides: Partial<SessionTimingSnapshot> = {},
++): SessionTimingSnapshot {
++  return {
++    schemaVersion: 'session-timing/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    adjustedEndAt: '2026-03-20T00:15:00.000Z',
++    warningAt: '2026-03-20T00:10:00.000Z',
++    phase: 'active',
++    captureAllowed: true,
++    approvedExtensionMinutes: 0,
++    approvedExtensionAuditRef: null,
++    warningTriggeredAt: null,
++    endedTriggeredAt: null,
++    ...overrides,
++  }
++}
++
++type CaptureScreenSessionDraftOverrides = Omit<
++  Partial<SessionStateContextValue['sessionDraft']>,
++  'captureReadiness' | 'manifest'
++> & {
++  captureReadiness?: Partial<CaptureReadinessSnapshot> | null
++  manifest?: Partial<SessionManifest> | null
++}
++
+ function renderCaptureScreen(
+   overrides: Partial<SessionStateContextValue> = {},
+-  sessionDraftOverrides: Partial<SessionStateContextValue['sessionDraft']> = {},
++  sessionDraftOverrides: CaptureScreenSessionDraftOverrides = {},
+ ) {
++  const {
++    captureReadiness: captureReadinessOverrides,
++    manifest: manifestOverrides,
++    ...restSessionDraftOverrides
++  } = sessionDraftOverrides
++  const defaultCaptureReadiness: CaptureReadinessSnapshot = {
++    schemaVersion: 'capture-readiness/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    surfaceState: 'captureReady',
++    customerState: 'Ready',
++    canCapture: true,
++    primaryAction: 'capture',
++    customerMessage: '지금 촬영할 수 있어요.',
++    supportMessage: '버튼을 누르면 바로 시작돼요.',
++    reasonCode: 'ready',
++    latestCapture: null,
++    postEnd: null,
++    timing: createTimingSnapshot(),
++  }
++  const defaultManifest: SessionManifest = {
++    schemaVersion: 'session-manifest/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    boothAlias: 'Kim 4821',
++    customer: {
++      name: 'Kim',
++      phoneLastFour: '4821',
++    },
++    createdAt: '2026-03-20T00:00:00.000Z',
++    updatedAt: '2026-03-20T00:00:00.000Z',
++    lifecycle: {
++      status: 'active',
++      stage: 'preset-selected',
++    },
++    activePreset: {
++      presetId: 'preset_soft-glow',
++      publishedVersion: '2026.03.20',
++    },
++    activePresetDisplayName: 'Soft Glow',
++    captures: [],
++    activePresetId: 'preset_soft-glow',
++    timing: createTimingSnapshot(),
++    postEnd: null,
++  }
++
+   const value: SessionStateContextValue = {
+     isStarting: false,
+     isLoadingPresetCatalog: false,
+@@ -79,42 +166,25 @@ function renderCaptureScreen(
+           },
+         },
+       ],
+-      captureReadiness: {
+-        schemaVersion: 'capture-readiness/v1',
+-        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+-        surfaceState: 'captureReady',
+-        customerState: 'Ready',
+-        canCapture: true,
+-        primaryAction: 'capture',
+-        customerMessage: '지금 촬영할 수 있어요.',
+-        supportMessage: '버튼을 누르면 바로 시작돼요.',
+-        reasonCode: 'ready',
+-        latestCapture: null,
+-      },
+-      manifest: {
+-        schemaVersion: 'session-manifest/v1',
+-        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+-        boothAlias: 'Kim 4821',
+-        customer: {
+-          name: 'Kim',
+-          phoneLastFour: '4821',
+-        },
+-        createdAt: '2026-03-20T00:00:00.000Z',
+-        updatedAt: '2026-03-20T00:00:00.000Z',
+-        lifecycle: {
+-          status: 'active',
+-          stage: 'preset-selected',
+-        },
+-        activePreset: {
+-          presetId: 'preset_soft-glow',
+-          publishedVersion: '2026.03.20',
+-        },
+-        activePresetDisplayName: 'Soft Glow',
+-        captures: [],
+-        activePresetId: 'preset_soft-glow',
+-        postEnd: null,
+-      },
+-      ...sessionDraftOverrides,
++      captureReadiness:
++        captureReadinessOverrides === undefined
++          ? defaultCaptureReadiness
++          : captureReadinessOverrides === null
++            ? null
++            : {
++                ...defaultCaptureReadiness,
++                ...captureReadinessOverrides,
++              },
++      manifest:
++        manifestOverrides === undefined
++          ? defaultManifest
++          : manifestOverrides === null
++            ? null
++            : {
++                ...defaultManifest,
++                ...manifestOverrides,
++              },
++      ...restSessionDraftOverrides,
+     },
+     startSession: vi.fn(),
+     beginPresetSwitch: vi.fn(),
+@@ -161,6 +231,7 @@ function renderCaptureScreen(
+         supportMessage: '버튼을 누르면 바로 시작돼요.',
+         reasonCode: 'ready',
+         latestCapture: null,
++        timing: createTimingSnapshot(),
+       },
+     }),
+     requestCapture: vi.fn().mockResolvedValue({
+@@ -179,6 +250,7 @@ function renderCaptureScreen(
+         supportMessage: '버튼을 누르면 바로 시작돼요.',
+         reasonCode: 'ready',
+         latestCapture: null,
++        timing: createTimingSnapshot(),
+       },
+     }),
+     ...overrides,
+@@ -194,6 +266,13 @@ function renderCaptureScreen(
+ }
+ 
+ describe('CaptureScreen', () => {
++  it('shows the adjusted end time as soon as the capture flow opens', async () => {
++    renderCaptureScreen()
++
++    expect(await screen.findByText(/^종료 시각$/)).toBeInTheDocument()
++    expect(screen.getByText(/^남은 시간$/)).toBeInTheDocument()
++  })
++
+   it('enables capture only when the normalized readiness says capture is allowed', async () => {
+     const user = userEvent.setup()
+     const value = renderCaptureScreen()
+@@ -260,6 +339,166 @@ describe('CaptureScreen', () => {
+     expect(screen.queryByText(/darktable|sdk|helper/i)).not.toBeInTheDocument()
+   })
+ 
++  it('shows the handoff-ready panel with the approved recipient, next action, and booth alias only when requested', async () => {
++    renderCaptureScreen(
++      {},
++      {
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'blocked',
++          customerState: 'Completed',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '부스 준비가 끝났어요.',
++          supportMessage: '마지막 안내를 확인해 주세요.',
++          reasonCode: 'completed',
++          latestCapture: null,
++          postEnd: {
++            state: 'completed',
++            evaluatedAt: '2026-03-20T00:00:10.000Z',
++            completionVariant: 'handoff-ready',
++            approvedRecipientLabel: 'Front Desk',
++            primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++            supportActionLabel: null,
++            showBoothAlias: true,
++          },
++        },
++        manifest: {
++          schemaVersion: 'session-manifest/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          boothAlias: 'Kim 4821',
++          customer: {
++            name: 'Kim',
++            phoneLastFour: '4821',
++          },
++          createdAt: '2026-03-20T00:00:00.000Z',
++          updatedAt: '2026-03-20T00:00:10.000Z',
++          lifecycle: {
++            status: 'active',
++            stage: 'completed',
++          },
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++          activePresetId: 'preset_soft-glow',
++          activePresetDisplayName: 'Soft Glow',
++          captures: [],
++          postEnd: {
++            state: 'completed',
++            evaluatedAt: '2026-03-20T00:00:10.000Z',
++            completionVariant: 'handoff-ready',
++            approvedRecipientLabel: 'Front Desk',
++            primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++            supportActionLabel: null,
++            showBoothAlias: true,
++          },
++        },
++      },
++    )
++
++    expect(await screen.findByText(/handoff ready/i)).toBeInTheDocument()
++    expect(screen.getByText(/front desk/i)).toBeInTheDocument()
++    expect(screen.getAllByText(/안내된 직원에게 이름을 말씀해 주세요\./i)).toHaveLength(2)
++    expect(screen.getAllByText(/kim 4821/i)).toHaveLength(2)
++    expect(screen.getByRole('button', { name: /안내된 직원에게 이름을 말씀해 주세요\./i })).toBeDisabled()
++  })
++
++  it('shows the phone-required support card and keeps booth-loop actions blocked', async () => {
++    renderCaptureScreen(
++      {},
++      {
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'blocked',
++          customerState: 'Phone Required',
++          canCapture: false,
++          primaryAction: 'call-support',
++          customerMessage: '지금은 도움이 필요해요.',
++          supportMessage: '가까운 직원에게 알려 주세요.',
++          reasonCode: 'phone-required',
++          latestCapture: createCaptureRecord({
++            captureId: 'capture_locked',
++            renderStatus: 'finalReady',
++            postEndState: 'handoffReady',
++            preview: {
++              assetPath: 'fixtures/current-session-latest.jpg',
++              enqueuedAtMs: 100,
++              readyAtMs: 500,
++            },
++            final: {
++              assetPath: 'fixtures/current-session-latest-final.jpg',
++              readyAtMs: 540,
++            },
++          }),
++          postEnd: {
++            state: 'phone-required',
++            evaluatedAt: '2026-03-20T00:00:10.000Z',
++            primaryActionLabel: '가까운 직원에게 알려 주세요.',
++            supportActionLabel: '직원에게 도움을 요청해 주세요.',
++            unsafeActionWarning: '다시 찍기나 기기 조작은 잠시 멈춰 주세요.',
++            showBoothAlias: false,
++          },
++        },
++        manifest: {
++          schemaVersion: 'session-manifest/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          boothAlias: 'Kim 4821',
++          customer: {
++            name: 'Kim',
++            phoneLastFour: '4821',
++          },
++          createdAt: '2026-03-20T00:00:00.000Z',
++          updatedAt: '2026-03-20T00:00:10.000Z',
++          lifecycle: {
++            status: 'active',
++            stage: 'phone-required',
++          },
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++          activePresetId: 'preset_soft-glow',
++          activePresetDisplayName: 'Soft Glow',
++          captures: [
++            createCaptureRecord({
++              captureId: 'capture_locked',
++              renderStatus: 'finalReady',
++              postEndState: 'handoffReady',
++              preview: {
++                assetPath: 'fixtures/current-session-latest.jpg',
++                enqueuedAtMs: 100,
++                readyAtMs: 500,
++              },
++              final: {
++                assetPath: 'fixtures/current-session-latest-final.jpg',
++                readyAtMs: 540,
++              },
++            }),
++          ],
++          postEnd: {
++            state: 'phone-required',
++            evaluatedAt: '2026-03-20T00:00:10.000Z',
++            primaryActionLabel: '가까운 직원에게 알려 주세요.',
++            supportActionLabel: '직원에게 도움을 요청해 주세요.',
++            unsafeActionWarning: '다시 찍기나 기기 조작은 잠시 멈춰 주세요.',
++            showBoothAlias: false,
++          },
++        },
++      },
++    )
++
++    expect(await screen.findByText(/보호 안내/i)).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /가까운 직원에게 알려 주세요\./i })).toBeDisabled()
++    expect(screen.getByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i)).toBeInTheDocument()
++    expect(screen.queryByRole('button', { name: /^사진 정리$/i })).not.toBeInTheDocument()
++    expect(
++      screen.getByText(/지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요\./i),
++    ).toBeInTheDocument()
++  })
++
+   it('blocks capture safely when the normalized state says the session is missing', async () => {
+     renderCaptureScreen(
+       {},
+@@ -494,6 +733,10 @@ describe('CaptureScreen', () => {
+           supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+           reasonCode: 'preview-waiting',
+           latestCapture: createCaptureRecord(),
++          timing: createTimingSnapshot({
++            phase: 'warning',
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++          }),
+         },
+         manifest: {
+           schemaVersion: 'session-manifest/v1',
+@@ -514,6 +757,10 @@ describe('CaptureScreen', () => {
+             publishedVersion: '2026.03.20',
+           },
+           activePresetId: 'preset_soft-glow',
++          timing: createTimingSnapshot({
++            phase: 'warning',
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++          }),
+           captures: [createCaptureRecord()],
+           postEnd: null,
+         },
+@@ -534,6 +781,275 @@ describe('CaptureScreen', () => {
+     expect(screen.queryByText(/darktable|helper|filesystem|sdk/i)).not.toBeInTheDocument()
+   })
+ 
++  it('shows export waiting guidance without offering another preset change', async () => {
++    renderCaptureScreen(
++      {},
++      {
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'blocked',
++          customerState: 'Export Waiting',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '촬영은 끝났고 결과를 준비하고 있어요.',
++          supportMessage: '다음 안내가 나올 때까지 잠시만 기다려 주세요.',
++          reasonCode: 'export-waiting',
++          latestCapture: createCaptureRecord(),
++          postEnd: {
++            state: 'export-waiting',
++            evaluatedAt: '2026-03-20T00:15:00.000Z',
++          },
++          timing: createTimingSnapshot({
++            phase: 'ended',
++            captureAllowed: false,
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++          }),
++        },
++      },
++    )
++
++    expect(
++      await screen.findByRole('heading', {
++        name: /촬영은 끝났고 결과를 준비하고 있어요/i,
++      }),
++    ).toBeInTheDocument()
++    expect(screen.queryByRole('button', { name: /다음 촬영 룩 바꾸기/i })).not.toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
++  })
++
++  it('shows completed guidance only after host post-end truth confirms completion', async () => {
++    renderCaptureScreen(
++      {},
++      {
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'blocked',
++          customerState: 'Completed',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '부스 준비가 끝났어요.',
++          supportMessage: '다음 안내를 확인해 주세요.',
++          reasonCode: 'completed',
++          latestCapture: createCaptureRecord({
++            renderStatus: 'previewReady',
++            postEndState: 'completed',
++            preview: {
++              assetPath: 'fixtures/current-session-latest.jpg',
++              enqueuedAtMs: 100,
++              readyAtMs: 500,
++            },
++          }),
++          postEnd: {
++            state: 'completed',
++            evaluatedAt: '2026-03-20T00:15:05.000Z',
++            completionVariant: 'local-deliverable-ready',
++            primaryActionLabel: '안내를 확인해 주세요.',
++            supportActionLabel: null,
++            showBoothAlias: false,
++          },
++          timing: createTimingSnapshot({
++            phase: 'ended',
++            captureAllowed: false,
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++          }),
++        },
++        manifest: {
++          schemaVersion: 'session-manifest/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          boothAlias: 'Kim 4821',
++          customer: {
++            name: 'Kim',
++            phoneLastFour: '4821',
++          },
++          createdAt: '2026-03-20T00:00:00.000Z',
++          updatedAt: '2026-03-20T00:15:05.000Z',
++          lifecycle: {
++            status: 'active',
++            stage: 'completed',
++          },
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++          activePresetDisplayName: 'Soft Glow',
++          activePresetId: 'preset_soft-glow',
++          timing: createTimingSnapshot({
++            phase: 'ended',
++            captureAllowed: false,
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++          }),
++          captures: [
++            createCaptureRecord({
++              renderStatus: 'previewReady',
++              postEndState: 'completed',
++              preview: {
++                assetPath: 'fixtures/current-session-latest.jpg',
++                enqueuedAtMs: 100,
++                readyAtMs: 500,
++              },
++            }),
++          ],
++          postEnd: {
++            state: 'completed',
++            evaluatedAt: '2026-03-20T00:15:05.000Z',
++            completionVariant: 'local-deliverable-ready',
++            primaryActionLabel: '안내를 확인해 주세요.',
++            supportActionLabel: null,
++            showBoothAlias: false,
++          },
++        },
++      },
++    )
++
++    expect(
++      await screen.findByRole('heading', { name: /부스 준비가 끝났어요/i }),
++    ).toBeInTheDocument()
++    expect(screen.queryByRole('button', { name: /다음 촬영 룩 바꾸기/i })).not.toBeInTheDocument()
++    expect(
++      screen.getByText(/지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요\./i),
++    ).toBeInTheDocument()
++  })
++
++  it('shows a warning state and does not replay the warning cue on a matching rerender', async () => {
++    playTimingCueMock.mockClear()
++
++    const warningValue = {
++      isStarting: false,
++      isLoadingPresetCatalog: false,
++      isSelectingPreset: false,
++      isLoadingCaptureReadiness: false,
++      isDeletingCapture: false,
++      isRequestingCapture: false,
++      sessionDraft: {
++        ...DEFAULT_SESSION_DRAFT,
++        flowStep: 'capture' as const,
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        selectedPreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        presetCatalog: [],
++        presetCatalogState: 'idle' as const,
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'captureReady',
++          customerState: 'Ready',
++          canCapture: true,
++          primaryAction: 'capture',
++          customerMessage: '지금 촬영할 수 있어요.',
++          supportMessage: '남은 시간 안에 계속 찍을 수 있어요.',
++          reasonCode: 'warning',
++          latestCapture: null,
++          postEnd: null,
++          timing: createTimingSnapshot({
++            phase: 'warning',
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++          }),
++        },
++        manifest: {
++          schemaVersion: 'session-manifest/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          boothAlias: 'Kim 4821',
++          customer: {
++            name: 'Kim',
++            phoneLastFour: '4821',
++          },
++          createdAt: '2026-03-20T00:00:00.000Z',
++          updatedAt: '2026-03-20T00:00:00.000Z',
++          lifecycle: {
++            status: 'active',
++            stage: 'warning',
++          },
++          activePreset: {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++          activePresetId: 'preset_soft-glow',
++          activePresetDisplayName: 'Soft Glow',
++          timing: createTimingSnapshot({
++            phase: 'warning',
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++          }),
++          captures: [],
++          postEnd: null,
++        },
++      },
++      startSession: vi.fn(),
++      beginPresetSwitch: vi.fn(),
++      cancelPresetSwitch: vi.fn(),
++      loadPresetCatalog: vi.fn(),
++      selectActivePreset: vi.fn(),
++      getCaptureReadiness: vi.fn(),
++      deleteCapture: vi.fn(),
++      requestCapture: vi.fn(),
++    } satisfies SessionStateContextValue
++
++    const { rerender } = render(
++      <SessionStateContext.Provider value={warningValue}>
++        <CaptureScreen />
++      </SessionStateContext.Provider>,
++    )
++
++    expect(await screen.findByText(/곧 종료돼요/i)).toBeInTheDocument()
++    expect(screen.getByText(/종료 5분 전이에요\./i)).toBeInTheDocument()
++    expect(playTimingCueMock).toHaveBeenCalledTimes(1)
++    expect(playTimingCueMock).toHaveBeenCalledWith('warning')
++
++    rerender(
++      <SessionStateContext.Provider value={warningValue}>
++        <CaptureScreen />
++      </SessionStateContext.Provider>,
++    )
++
++    expect(playTimingCueMock).toHaveBeenCalledTimes(1)
++  })
++
++  it('shows ended guidance and blocks fresh capture after the adjusted end time', async () => {
++    playTimingCueMock.mockClear()
++
++    renderCaptureScreen(
++      {},
++      {
++        captureReadiness: {
++          schemaVersion: 'capture-readiness/v1',
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++          surfaceState: 'blocked',
++          customerState: 'Session Ended',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '촬영 시간이 끝났어요.',
++          supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
++          reasonCode: 'ended',
++          latestCapture: null,
++          postEnd: null,
++          timing: createTimingSnapshot({
++            phase: 'ended',
++            captureAllowed: false,
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++          }),
++        },
++      },
++    )
++
++    expect(
++      await screen.findByRole('heading', {
++        level: 1,
++        name: /촬영 시간이 끝났어요/i,
++      }),
++    ).toBeInTheDocument()
++    expect(screen.getByText(/이제는 새 촬영이 멈춰요/i)).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
++    expect(playTimingCueMock).toHaveBeenCalledWith('ended')
++  })
++
+   it('shows only preview-ready captures from the active session in the latest photo rail', async () => {
+     renderCaptureScreen(
+       {},
+diff --git a/src/booth-shell/screens/CaptureScreen.tsx b/src/booth-shell/screens/CaptureScreen.tsx
+index e052e9e..b03f336 100644
+--- a/src/booth-shell/screens/CaptureScreen.tsx
++++ b/src/booth-shell/screens/CaptureScreen.tsx
+@@ -1,11 +1,15 @@
+-import { useState } from 'react'
++import { useEffect, useEffectEvent, useRef, useState } from 'react'
+ 
+ import type { HostErrorEnvelope } from '../../shared-contracts'
+ import { buildLocalCaptureReadiness } from '../../capture-adapter/services/capture-runtime'
++import { resolvePostEndGuidance } from '../../completion-handoff/post-end'
+ import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
+ import { selectCurrentSessionPreviews } from '../../session-domain/selectors'
+ import { useSessionState } from '../../session-domain/state/use-session-state'
++import { playTimingCue } from '../../timing-policy/audio'
++import { HandoffReadyPanel } from '../components/HandoffReadyPanel'
+ import { LatestPhotoRail } from '../components/LatestPhotoRail'
++import { PhoneRequiredSupportCard } from '../components/PhoneRequiredSupportCard'
+ import { PreviewWaitingPanel } from '../components/PreviewWaitingPanel'
+ import { selectCustomerStatusCopy } from '../selectors/customerStatusCopy'
+ import { ReadinessScreen } from './ReadinessScreen'
+@@ -31,6 +35,7 @@ export function CaptureScreen() {
+   const [pendingDeleteCaptureId, setPendingDeleteCaptureId] = useState<string | null>(
+     null,
+   )
++  const playedTimingCueKeyRef = useRef<string | null>(null)
+ 
+   const readiness =
+     sessionDraft.captureReadiness ??
+@@ -40,7 +45,12 @@ export function CaptureScreen() {
+       hasPreset: sessionDraft.selectedPreset !== null,
+     })
+ 
+-  const copy = selectCustomerStatusCopy(readiness)
++  const copy = selectCustomerStatusCopy(readiness, sessionDraft.manifest?.postEnd ?? null)
++  const timing = readiness.timing ?? sessionDraft.manifest?.timing ?? null
++  const postEnd = resolvePostEndGuidance(readiness, sessionDraft.manifest?.postEnd)
++  const isHandoffReady =
++    postEnd?.state === 'completed' && postEnd.completionVariant === 'handoff-ready'
++  const isPhoneRequired = postEnd?.state === 'phone-required'
+   const currentSessionPreviews = selectCurrentSessionPreviews(
+     sessionDraft.manifest,
+     sessionDraft.presetCatalog,
+@@ -62,6 +72,31 @@ export function CaptureScreen() {
+     )?.displayName ??
+     (sessionDraft.selectedPreset === null ? null : '현재 룩 확인 중')
+ 
++  const playCue = useEffectEvent((phase: 'warning' | 'ended') => {
++    void playTimingCue(phase)
++  })
++
++  useEffect(() => {
++    if (timing === null) {
++      playedTimingCueKeyRef.current = null
++      return
++    }
++
++    if (timing.phase !== 'warning' && timing.phase !== 'ended') {
++      playedTimingCueKeyRef.current = `${timing.sessionId}:${timing.phase}`
++      return
++    }
++
++    const cueKey = `${timing.sessionId}:${timing.phase}`
++
++    if (playedTimingCueKeyRef.current === cueKey) {
++      return
++    }
++
++    playedTimingCueKeyRef.current = cueKey
++    playCue(timing.phase)
++  }, [timing])
++
+   async function handlePrimaryAction() {
+     if (!copy.canCapture || sessionDraft.sessionId === null) {
+       return
+@@ -125,15 +160,32 @@ export function CaptureScreen() {
+         />
+       ) : null}
+ 
++      {isHandoffReady && postEnd !== null ? (
++        <HandoffReadyPanel
++          boothAlias={sessionDraft.boothAlias}
++          guidance={postEnd}
++        />
++      ) : null}
++
++      {isPhoneRequired && postEnd !== null ? (
++        <PhoneRequiredSupportCard guidance={postEnd} />
++      ) : null}
++
+       <ReadinessScreen
+         boothAlias={sessionDraft.boothAlias}
+         selectedPresetName={selectedPresetName}
++        timing={timing}
++        stateLabel={copy.stateLabel}
+         actionLabel={copy.actionLabel}
+         canCapture={copy.canCapture}
+         isBusy={
+           isLoadingCaptureReadiness || isRequestingCapture || isDeletingCapture
+         }
++        isExplicitPostEnd={copy.isExportWaiting || copy.isPostEndFinalized}
++        isPhoneRequiredPostEnd={isPhoneRequired}
+         isChangePresetDisabled={
++          copy.isExportWaiting ||
++          copy.isPostEndFinalized ||
+           sessionDraft.sessionId === null ||
+           sessionDraft.selectedPreset === null ||
+           isLoadingPresetCatalog ||
+@@ -151,6 +203,7 @@ export function CaptureScreen() {
+       <LatestPhotoRail
+         previews={currentSessionPreviews}
+         isPreviewWaiting={copy.isPreviewWaiting}
++        isExplicitPostEnd={copy.isExportWaiting || copy.isPostEndFinalized}
+         deletingCaptureId={isDeletingCapture ? activePendingDeleteCaptureId : null}
+         pendingDeleteCaptureId={activePendingDeleteCaptureId}
+         onDeleteCancel={() => {
+diff --git a/src/booth-shell/selectors/customerStatusCopy.test.ts b/src/booth-shell/selectors/customerStatusCopy.test.ts
+index a406de8..40ce727 100644
+--- a/src/booth-shell/selectors/customerStatusCopy.test.ts
++++ b/src/booth-shell/selectors/customerStatusCopy.test.ts
+@@ -17,6 +17,8 @@ function createReadiness(
+     supportMessage: '잠시만 기다려 주세요.',
+     reasonCode: 'camera-preparing',
+     latestCapture: null,
++    postEnd: null,
++    timing: undefined,
+     ...overrides,
+   }
+ }
+@@ -56,4 +58,53 @@ describe('customerStatusCopy', () => {
+     expect(copy.headline).not.toMatch(/darktable|sdk|helper/i)
+     expect(copy.detail).not.toMatch(/darktable|sdk|helper/i)
+   })
++
++  it('uses host-owned handoff guidance labels when completion is ready for handoff', () => {
++    const copy = selectCustomerStatusCopy(
++      createReadiness({
++        customerState: 'Completed',
++        primaryAction: 'wait',
++        customerMessage: '부스 준비가 끝났어요.',
++        supportMessage: '마지막 안내를 확인해 주세요.',
++        reasonCode: 'completed',
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++          completionVariant: 'handoff-ready',
++          approvedRecipientLabel: 'Front Desk',
++          primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++          supportActionLabel: null,
++          showBoothAlias: true,
++        },
++      }),
++    )
++
++    expect(copy.actionLabel).toBe('안내된 직원에게 이름을 말씀해 주세요.')
++    expect(copy.isPostEndFinalized).toBe(true)
++  })
++
++  it('falls back to manifest post-end guidance when readiness only carries the explicit reason', () => {
++    const copy = selectCustomerStatusCopy(
++      createReadiness({
++        customerState: 'Completed',
++        primaryAction: 'wait',
++        customerMessage: '부스 준비가 끝났어요.',
++        supportMessage: '마지막 안내를 확인해 주세요.',
++        reasonCode: 'completed',
++        postEnd: null,
++      }),
++      {
++        state: 'completed',
++        evaluatedAt: '2026-03-20T00:00:10.000Z',
++        completionVariant: 'handoff-ready',
++        approvedRecipientLabel: 'Front Desk',
++        primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++        supportActionLabel: null,
++        showBoothAlias: true,
++      },
++    )
++
++    expect(copy.actionLabel).toBe('안내된 직원에게 이름을 말씀해 주세요.')
++    expect(copy.postEnd?.state).toBe('completed')
++  })
+ })
+diff --git a/src/booth-shell/selectors/customerStatusCopy.ts b/src/booth-shell/selectors/customerStatusCopy.ts
+index d0ee7bc..372b615 100644
+--- a/src/booth-shell/selectors/customerStatusCopy.ts
++++ b/src/booth-shell/selectors/customerStatusCopy.ts
+@@ -1,4 +1,8 @@
+-import type { CaptureReadinessSnapshot } from '../../shared-contracts'
++import type {
++  CaptureReadinessSnapshot,
++  SessionPostEndRecord,
++} from '../../shared-contracts'
++import { resolvePostEndGuidance } from '../../completion-handoff/post-end'
+ 
+ export type CustomerStatusCopy = {
+   stateLabel: string
+@@ -7,12 +11,16 @@ export type CustomerStatusCopy = {
+   actionLabel: string
+   canCapture: boolean
+   isPreviewWaiting: boolean
++  isExportWaiting: boolean
++  isPostEndFinalized: boolean
++  postEnd: CaptureReadinessSnapshot['postEnd']
+   helperText: string | null
+   nextActionText: string | null
+ }
+ 
+ const primaryActionLabels: Record<CaptureReadinessSnapshot['primaryAction'], string> = {
+   wait: '잠시 기다리기',
++  finish: '안내 확인',
+   capture: '사진 찍기',
+   'choose-preset': '룩 고르기',
+   'start-session': '처음으로',
+@@ -21,16 +29,27 @@ const primaryActionLabels: Record<CaptureReadinessSnapshot['primaryAction'], str
+ 
+ export function selectCustomerStatusCopy(
+   readiness: CaptureReadinessSnapshot,
++  manifestPostEnd: SessionPostEndRecord | null = null,
+ ): CustomerStatusCopy {
+   const isPreviewWaiting = readiness.reasonCode === 'preview-waiting'
++  const isExportWaiting = readiness.reasonCode === 'export-waiting'
++  const isPostEndFinalized =
++    readiness.reasonCode === 'completed' || readiness.reasonCode === 'phone-required'
++  const postEnd = resolvePostEndGuidance(readiness, manifestPostEnd)
+ 
+   return {
+     stateLabel: readiness.customerState,
+     headline: readiness.customerMessage,
+     detail: readiness.supportMessage,
+-    actionLabel: primaryActionLabels[readiness.primaryAction],
++    actionLabel:
++      postEnd?.state === 'completed' || postEnd?.state === 'phone-required'
++        ? (postEnd.primaryActionLabel ?? primaryActionLabels[readiness.primaryAction])
++        : primaryActionLabels[readiness.primaryAction],
+     canCapture: readiness.canCapture,
+     isPreviewWaiting,
++    isExportWaiting,
++    isPostEndFinalized,
++    postEnd,
+     helperText: isPreviewWaiting
+       ? '사진 레일이 아직 비어 있어도 현재 세션 기준으로는 정상이에요.'
+       : null,
+diff --git a/src/capture-adapter/services/capture-runtime.test.ts b/src/capture-adapter/services/capture-runtime.test.ts
+index 17c3ea8..040680c 100644
+--- a/src/capture-adapter/services/capture-runtime.test.ts
++++ b/src/capture-adapter/services/capture-runtime.test.ts
+@@ -1,13 +1,16 @@
+ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ 
++import type { SessionCaptureRecord } from '../../shared-contracts'
+ import {
+   createBrowserCaptureRuntimeGateway,
+   createCaptureRuntimeService,
+   createTauriCaptureRuntimeGateway,
+ } from './capture-runtime'
+ 
+-function createCaptureRecord() {
++function createCaptureRecord(
++  overrides: Partial<SessionCaptureRecord> = {},
++): SessionCaptureRecord {
+   return {
+     schemaVersion: 'session-capture/v1',
+     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+@@ -38,6 +41,7 @@ function createCaptureRecord() {
+       previewBudgetMs: 5000,
+       previewBudgetState: 'pending',
+     },
++    ...overrides,
+   }
+ }
+ 
+diff --git a/src/capture-adapter/services/capture-runtime.ts b/src/capture-adapter/services/capture-runtime.ts
+index b9ed362..18752fd 100644
+--- a/src/capture-adapter/services/capture-runtime.ts
++++ b/src/capture-adapter/services/capture-runtime.ts
+@@ -25,7 +25,7 @@ const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+ 
+ export interface CaptureRuntimeGateway {
+   getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
+-  deleteCapture(input: CaptureDeleteInput): Promise<unknown>
++  deleteCapture?(input: CaptureDeleteInput): Promise<unknown>
+   requestCapture(input: CaptureRequestInput): Promise<unknown>
+   subscribeToCaptureReadiness(
+     onEvent: (payload: unknown) => void,
+@@ -36,7 +36,7 @@ export interface CaptureRuntimeService {
+   getCaptureReadiness(
+     input: CaptureReadinessInput,
+   ): Promise<CaptureReadinessSnapshot>
+-  deleteCapture(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
++  deleteCapture?(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
+   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
+   subscribeToCaptureReadiness(input: {
+     sessionId: string
+@@ -56,6 +56,8 @@ function buildPreparingCaptureReadiness(): CaptureReadinessSnapshot {
+     supportMessage: '잠시만 기다려 주세요.',
+     reasonCode: 'camera-preparing',
+     latestCapture: null,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -71,6 +73,8 @@ function buildReadyCaptureReadiness(): CaptureReadinessSnapshot {
+     supportMessage: '버튼을 누르면 바로 시작돼요.',
+     reasonCode: 'ready',
+     latestCapture: null,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -86,6 +90,8 @@ function buildPresetMissingCaptureReadiness(): CaptureReadinessSnapshot {
+     supportMessage: '선택이 끝나면 바로 찍을 수 있어요.',
+     reasonCode: 'preset-missing',
+     latestCapture: null,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -101,6 +107,8 @@ function buildSessionMissingCaptureReadiness(): CaptureReadinessSnapshot {
+     supportMessage: '이름과 휴대전화 뒤 4자리를 다시 확인할게요.',
+     reasonCode: 'session-missing',
+     latestCapture: null,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -116,6 +124,8 @@ function buildPhoneRequiredCaptureReadiness(): CaptureReadinessSnapshot {
+     supportMessage: '가까운 직원에게 알려 주세요.',
+     reasonCode: 'phone-required',
+     latestCapture: null,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -170,7 +180,13 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
+     const parsedInput = captureDeleteInputSchema.parse(input)
+     const parsedResponse = await (async () => {
+       try {
+-        const response = await this.gateway.deleteCapture(parsedInput)
++        const deleteCapture = this.gateway.deleteCapture
++
++        if (deleteCapture === undefined) {
++          throw buildSessionMismatchHostError()
++        }
++
++        const response = await deleteCapture(parsedInput)
+ 
+         return captureDeleteResultSchema.parse(response)
+       } catch (error) {
+diff --git a/src/session-domain/state/session-provider.test.tsx b/src/session-domain/state/session-provider.test.tsx
+index 16e38ab..2e73d50 100644
+--- a/src/session-domain/state/session-provider.test.tsx
++++ b/src/session-domain/state/session-provider.test.tsx
+@@ -18,6 +18,7 @@ import type {
+   PresetCatalogResult,
+   SessionCaptureRecord,
+   SessionStartResult,
++  SessionTimingSnapshot,
+ } from '../../shared-contracts'
+ import {
+   createActivePresetService,
+@@ -117,6 +118,24 @@ function createCaptureRecord(
+   }
+ }
+ 
++function createTimingSnapshot(
++  overrides: Partial<SessionTimingSnapshot> = {},
++): SessionTimingSnapshot {
++  return {
++    schemaVersion: 'session-timing/v1',
++    sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++    adjustedEndAt: '2026-03-20T00:15:00.000Z',
++    warningAt: '2026-03-20T00:10:00.000Z',
++    phase: 'active',
++    captureAllowed: true,
++    approvedExtensionMinutes: 0,
++    approvedExtensionAuditRef: null,
++    warningTriggeredAt: null,
++    endedTriggeredAt: null,
++    ...overrides,
++  }
++}
++
+ function createReadinessSnapshot(
+   overrides: Partial<CaptureReadinessSnapshot> = {},
+ ): CaptureReadinessSnapshot {
+@@ -131,6 +150,8 @@ function createReadinessSnapshot(
+     supportMessage: '버튼을 누르면 바로 시작돼요.',
+     reasonCode: 'ready',
+     latestCapture: null,
++    postEnd: null,
++    timing: undefined,
+     ...overrides,
+   }
+ }
+@@ -3789,7 +3810,9 @@ describe('SessionProvider', () => {
+             .fn<CaptureRuntimeService['getCaptureReadiness']>()
+             .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+           requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+-          deleteCapture: vi.fn<CaptureRuntimeService['deleteCapture']>(),
++          deleteCapture: vi.fn<
++            NonNullable<CaptureRuntimeService['deleteCapture']>
++          >(),
+           subscribeToCaptureReadiness: vi
+             .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+             .mockResolvedValue(() => undefined),
+@@ -3910,7 +3933,9 @@ describe('SessionProvider', () => {
+             .fn<CaptureRuntimeService['getCaptureReadiness']>()
+             .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+           requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+-          deleteCapture: vi.fn<CaptureRuntimeService['deleteCapture']>(),
++          deleteCapture: vi.fn<
++            NonNullable<CaptureRuntimeService['deleteCapture']>
++          >(),
+           subscribeToCaptureReadiness: vi
+             .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+             .mockResolvedValue(() => undefined),
+@@ -4051,7 +4076,7 @@ describe('SessionProvider', () => {
+       },
+     })
+     const deleteCapture = vi
+-      .fn<CaptureRuntimeService['deleteCapture']>()
++      .fn<NonNullable<CaptureRuntimeService['deleteCapture']>>()
+       .mockResolvedValue(
+         createCaptureDeleteResult({
+           sessionId,
+@@ -4202,7 +4227,7 @@ describe('SessionProvider', () => {
+       })
+       .mockResolvedValueOnce(createSessionStartResult(secondSessionId, 'Lee 1234'))
+     const deleteCapture = vi
+-      .fn<CaptureRuntimeService['deleteCapture']>()
++      .fn<NonNullable<CaptureRuntimeService['deleteCapture']>>()
+       .mockImplementation(
+         () =>
+           new Promise((resolve) => {
+@@ -4275,4 +4300,548 @@ describe('SessionProvider', () => {
+     expect(latestState!.sessionDraft.sessionId).toBe(secondSessionId)
+     expect(latestState!.sessionDraft.boothAlias).toBe('Lee 1234')
+   })
++
++  it('does not resurrect a deleted capture when a late same-session readiness event arrives', async () => {
++    let latestState: SessionStateContextValue | null = null
++    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++    const captureId = 'capture_latest'
++    const previewAssetPath = `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${captureId}.jpg`
++    const startSession = vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
++      sessionId,
++      boothAlias: 'Kim 4821',
++      manifest: {
++        schemaVersion: 'session-manifest/v1',
++        sessionId,
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:00.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'capture-ready',
++        },
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        activePresetId: 'preset_soft-glow',
++        captures: [
++          createCaptureRecord({
++            sessionId,
++            captureId,
++            renderStatus: 'previewReady',
++            preview: {
++              assetPath: previewAssetPath,
++              enqueuedAtMs: 100,
++              readyAtMs: 500,
++            },
++          }),
++        ],
++        postEnd: null,
++      },
++    })
++    const deleteCapture = vi
++      .fn<NonNullable<CaptureRuntimeService['deleteCapture']>>()
++      .mockResolvedValue(
++        createCaptureDeleteResult({
++          sessionId,
++          captureId,
++          manifest: {
++            schemaVersion: 'session-manifest/v1',
++            sessionId,
++            boothAlias: 'Kim 4821',
++            customer: {
++              name: 'Kim',
++              phoneLastFour: '4821',
++            },
++            createdAt: '2026-03-20T00:00:00.000Z',
++            updatedAt: '2026-03-20T00:00:00.000Z',
++            lifecycle: {
++              status: 'active',
++              stage: 'capture-ready',
++            },
++            activePreset: {
++              presetId: 'preset_soft-glow',
++              publishedVersion: '2026.03.20',
++            },
++            activePresetId: 'preset_soft-glow',
++            captures: [],
++            postEnd: null,
++          },
++          readiness: createReadinessSnapshot({
++            sessionId,
++            latestCapture: null,
++          }),
++        }),
++      )
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession,
++          },
++        })}
++        captureRuntimeService={{
++          getCaptureReadiness: vi
++            .fn<CaptureRuntimeService['getCaptureReadiness']>()
++            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
++          deleteCapture,
++          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++          subscribeToCaptureReadiness: vi
++            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++            .mockImplementation(async ({ onReadiness }) => {
++              emitReadiness = onReadiness
++              return () => {
++                emitReadiness = null
++              }
++            }),
++        }}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.deleteCapture({
++        sessionId,
++        captureId,
++      })
++    })
++
++    act(() => {
++      emitReadiness?.(
++        createReadinessSnapshot({
++          sessionId,
++          surfaceState: 'previewReady',
++          customerState: 'Ready',
++          canCapture: true,
++          primaryAction: 'capture',
++          customerMessage: '지금 촬영할 수 있어요.',
++          supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
++          reasonCode: 'ready',
++          latestCapture: createCaptureRecord({
++            sessionId,
++            captureId,
++            renderStatus: 'previewReady',
++            preview: {
++              assetPath: previewAssetPath,
++              enqueuedAtMs: 100,
++              readyAtMs: 500,
++            },
++          }),
++        }),
++      )
++    })
++
++    expect(latestState!.sessionDraft.manifest?.captures).toEqual([])
++    expect(latestState!.sessionDraft.captureReadiness?.latestCapture).toBeNull()
++  })
++
++  it('ignores foreign timing updates so another session cannot flip the active warning state', async () => {
++    let latestState: SessionStateContextValue | null = null
++    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
++              ...createSessionStartResult(sessionId, 'Kim 4821'),
++              manifest: {
++                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++                activePreset: {
++                  presetId: 'preset_soft-glow',
++                  publishedVersion: '2026.03.20',
++                },
++                timing: createTimingSnapshot(),
++              },
++            }),
++          },
++        })}
++        captureRuntimeService={{
++          getCaptureReadiness: vi
++            .fn<CaptureRuntimeService['getCaptureReadiness']>()
++            .mockResolvedValue(
++              createReadinessSnapshot({
++                sessionId,
++                timing: createTimingSnapshot(),
++              }),
++            ),
++          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++          deleteCapture: vi.fn<
++            NonNullable<CaptureRuntimeService['deleteCapture']>
++          >(),
++          subscribeToCaptureReadiness: vi
++            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++            .mockImplementation(async ({ onReadiness }) => {
++              emitReadiness = onReadiness
++              return () => undefined
++            }),
++        }}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++      expect(latestState!.sessionDraft.captureReadiness?.timing?.phase).toBe('active')
++    })
++
++    act(() => {
++      emitReadiness?.(
++        createReadinessSnapshot({
++          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++          reasonCode: 'warning',
++          supportMessage: '남은 시간 안에 계속 찍을 수 있어요.',
++          timing: createTimingSnapshot({
++            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
++            phase: 'warning',
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++          }),
++        }),
++      )
++    })
++
++    expect(latestState!.sessionDraft.captureReadiness?.sessionId).toBe(sessionId)
++    expect(latestState!.sessionDraft.captureReadiness?.timing?.phase).toBe('active')
++    expect(latestState!.sessionDraft.manifest?.lifecycle.stage).not.toBe('warning')
++  })
++
++  it('merges an exact-end timing update into the active session and projects the ended lifecycle stage', async () => {
++    let latestState: SessionStateContextValue | null = null
++    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
++              ...createSessionStartResult(sessionId, 'Kim 4821'),
++              manifest: {
++                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++                activePreset: {
++                  presetId: 'preset_soft-glow',
++                  publishedVersion: '2026.03.20',
++                },
++                timing: createTimingSnapshot(),
++              },
++            }),
++          },
++        })}
++        captureRuntimeService={{
++          getCaptureReadiness: vi
++            .fn<CaptureRuntimeService['getCaptureReadiness']>()
++            .mockResolvedValue(
++              createReadinessSnapshot({
++                sessionId,
++                timing: createTimingSnapshot(),
++              }),
++            ),
++          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++          deleteCapture: vi.fn<
++            NonNullable<CaptureRuntimeService['deleteCapture']>
++          >(),
++          subscribeToCaptureReadiness: vi
++            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++            .mockImplementation(async ({ onReadiness }) => {
++              emitReadiness = onReadiness
++              return () => undefined
++            }),
++        }}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    act(() => {
++      emitReadiness?.(
++        createReadinessSnapshot({
++          sessionId,
++          surfaceState: 'blocked',
++          customerState: 'Session Ended',
++          canCapture: false,
++          primaryAction: 'wait',
++          customerMessage: '촬영 시간이 끝났어요.',
++          supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
++          reasonCode: 'ended',
++          timing: createTimingSnapshot({
++            sessionId,
++            phase: 'ended',
++            captureAllowed: false,
++            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++          }),
++        }),
++      )
++    })
++
++    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ended')
++    expect(latestState!.sessionDraft.captureReadiness?.postEnd ?? null).toBeNull()
++    expect(latestState!.sessionDraft.captureReadiness?.timing?.phase).toBe('ended')
++    expect(latestState!.sessionDraft.manifest?.timing?.phase).toBe('ended')
++    expect(latestState!.sessionDraft.manifest?.postEnd ?? null).toBeNull()
++    expect(latestState!.sessionDraft.manifest?.lifecycle.stage).toBe('ended')
++  })
++
++  it('preserves manifest post-end guidance when readiness confirms completion without repeating the payload', async () => {
++    let latestState: SessionStateContextValue | null = null
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
++              ...createSessionStartResult(sessionId, 'Kim 4821'),
++              manifest: {
++                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++                activePreset: {
++                  presetId: 'preset_soft-glow',
++                  publishedVersion: '2026.03.20',
++                },
++                timing: createTimingSnapshot({
++                  phase: 'ended',
++                  captureAllowed: false,
++                }),
++                lifecycle: {
++                  status: 'active',
++                  stage: 'completed',
++                },
++                postEnd: {
++                  state: 'completed',
++                  evaluatedAt: '2026-03-20T00:15:05.000Z',
++                  completionVariant: 'handoff-ready',
++                  approvedRecipientLabel: 'Front Desk',
++                  primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++                  supportActionLabel: null,
++                  showBoothAlias: true,
++                },
++              },
++            }),
++          },
++        })}
++        captureRuntimeService={{
++          getCaptureReadiness: vi
++            .fn<CaptureRuntimeService['getCaptureReadiness']>()
++            .mockResolvedValue(
++              createReadinessSnapshot({
++                sessionId,
++                surfaceState: 'blocked',
++                customerState: 'Completed',
++                canCapture: false,
++                primaryAction: 'wait',
++                customerMessage: '부스 준비가 끝났어요.',
++                supportMessage: '마지막 안내를 확인해 주세요.',
++                reasonCode: 'completed',
++                postEnd: null,
++                timing: createTimingSnapshot({
++                  sessionId,
++                  phase: 'ended',
++                  captureAllowed: false,
++                }),
++              }),
++            ),
++          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++          deleteCapture: vi.fn<NonNullable<CaptureRuntimeService['deleteCapture']>>(),
++          subscribeToCaptureReadiness: vi
++            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++            .mockResolvedValue(() => undefined),
++        }}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
++      expect(latestState!.sessionDraft.manifest?.postEnd).toMatchObject({
++        state: 'completed',
++        completionVariant: 'handoff-ready',
++        approvedRecipientLabel: 'Front Desk',
++      })
++      expect(latestState!.sessionDraft.manifest?.lifecycle.stage).toBe('completed')
++    })
++  })
++
++  it('does not let a late same-session ready update overwrite completed handoff guidance', async () => {
++    let latestState: SessionStateContextValue | null = null
++    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
++    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++
++    render(
++      <SessionProvider
++        sessionService={createStartSessionService({
++          gateway: {
++            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
++              ...createSessionStartResult(sessionId, 'Kim 4821'),
++              manifest: {
++                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
++                activePreset: {
++                  presetId: 'preset_soft-glow',
++                  publishedVersion: '2026.03.20',
++                },
++              },
++            }),
++          },
++        })}
++        captureRuntimeService={{
++          getCaptureReadiness: vi
++            .fn<CaptureRuntimeService['getCaptureReadiness']>()
++            .mockResolvedValue(
++              createReadinessSnapshot({
++                sessionId,
++                surfaceState: 'blocked',
++                customerState: 'Completed',
++                canCapture: false,
++                primaryAction: 'wait',
++                customerMessage: '부스 준비가 끝났어요.',
++                supportMessage: '마지막 안내를 확인해 주세요.',
++                reasonCode: 'completed',
++                postEnd: {
++                  state: 'completed',
++                  evaluatedAt: '2026-03-20T00:00:10.000Z',
++                  completionVariant: 'handoff-ready',
++                  approvedRecipientLabel: 'Front Desk',
++                  primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++                  supportActionLabel: null,
++                  showBoothAlias: true,
++                },
++              }),
++            ),
++          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
++          deleteCapture: vi.fn<
++            NonNullable<CaptureRuntimeService['deleteCapture']>
++          >(),
++          subscribeToCaptureReadiness: vi
++            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
++            .mockImplementation(async ({ onReadiness }) => {
++              emitReadiness = onReadiness
++              return () => undefined
++            }),
++        }}
++      >
++        <SessionStateProbe
++          onChange={(state) => {
++            latestState = state
++          }}
++        />
++      </SessionProvider>,
++    )
++
++    await waitFor(() => {
++      expect(latestState).not.toBeNull()
++    })
++
++    await act(async () => {
++      await latestState!.startSession({
++        name: 'Kim',
++        phoneLastFour: '4821',
++      })
++    })
++
++    await waitFor(() => {
++      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
++      expect(latestState!.sessionDraft.captureReadiness?.postEnd).not.toBeNull()
++      expect(emitReadiness).not.toBeNull()
++    })
++
++    act(() => {
++      emitReadiness?.(
++        createReadinessSnapshot({
++          sessionId,
++          surfaceState: 'captureReady',
++          customerState: 'Ready',
++          canCapture: true,
++          primaryAction: 'capture',
++          customerMessage: '지금 촬영할 수 있어요.',
++          supportMessage: '버튼을 누르면 바로 시작돼요.',
++          reasonCode: 'ready',
++          postEnd: null,
++        }),
++      )
++    })
++
++    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
++    expect(latestState!.sessionDraft.captureReadiness?.postEnd).toMatchObject({
++      state: 'completed',
++      completionVariant: 'handoff-ready',
++      approvedRecipientLabel: 'Front Desk',
++    })
++  })
+ })
+diff --git a/src/session-domain/state/session-provider.tsx b/src/session-domain/state/session-provider.tsx
+index f1b13ec..c57088b 100644
+--- a/src/session-domain/state/session-provider.tsx
++++ b/src/session-domain/state/session-provider.tsx
+@@ -14,6 +14,10 @@ import {
+   createCaptureRuntimeService,
+   type CaptureRuntimeService,
+ } from '../../capture-adapter/services/capture-runtime'
++import {
++  getPostEndStrength,
++  isHostOwnedPostEndReason,
++} from '../../completion-handoff/post-end'
+ import {
+   createPresetCatalogService,
+   type PresetCatalogService,
+@@ -43,6 +47,40 @@ const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
+ type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
+ type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
+ 
++function mergePreservedPostEndReadiness(
++  current: SessionScopedReadiness | null,
++  next: SessionScopedReadiness,
++): SessionScopedReadiness {
++  if (current === null) {
++    return next
++  }
++
++  const currentStrength = getPostEndStrength(current.reasonCode)
++  const nextStrength = getPostEndStrength(next.reasonCode)
++
++  if (currentStrength === 2 && next.reasonCode !== current.reasonCode) {
++    return current
++  }
++
++  if (currentStrength >= 1 && nextStrength === 0) {
++    return current
++  }
++
++  if (
++    isHostOwnedPostEndReason(current.reasonCode) &&
++    current.reasonCode === next.reasonCode &&
++    current.postEnd !== null &&
++    next.postEnd === null
++  ) {
++    return {
++      ...next,
++      postEnd: current.postEnd,
++    }
++  }
++
++  return next
++}
++
+ function normalizeCaptureRenderStatus(
+   capture: SessionScopedCapture,
+ ): SessionScopedCapture['renderStatus'] {
+@@ -191,6 +229,10 @@ function inferSurfaceStateFromSanitizedCapture(
+   readiness: Pick<SessionScopedReadiness, 'canCapture' | 'reasonCode'>,
+   latestCapture: SessionScopedCapture | null,
+ ): SessionScopedReadiness['surfaceState'] {
++  if (isHostOwnedPostEndReason(readiness.reasonCode) || readiness.reasonCode === 'ended') {
++    return 'blocked'
++  }
++
+   if (latestCapture?.renderStatus === 'previewReady') {
+     return 'previewReady'
+   }
+@@ -282,6 +324,8 @@ function buildCaptureSavedFallbackReadiness(
+     supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+     reasonCode: 'preview-waiting',
+     latestCapture: capture,
++    postEnd: null,
++    timing: null,
+   }
+ }
+ 
+@@ -289,6 +333,26 @@ function buildCaptureFallbackReadiness(
+   sessionId: string,
+   capture: SessionScopedCapture,
+ ): SessionScopedReadiness {
++  if (
++    capture.postEndState === 'handoffReady' ||
++    capture.postEndState === 'completed'
++  ) {
++    return {
++      schemaVersion: 'capture-readiness/v1',
++      sessionId,
++      surfaceState: 'blocked',
++      customerState: 'Completed',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '부스 준비가 끝났어요.',
++      supportMessage: '마지막 안내를 확인해 주세요.',
++      reasonCode: 'completed',
++      latestCapture: capture,
++      postEnd: null,
++      timing: null,
++    }
++  }
++
+   switch (capture.renderStatus) {
+     case 'finalReady':
+     case 'previewReady':
+@@ -303,6 +367,8 @@ function buildCaptureFallbackReadiness(
+         supportMessage: '버튼을 누르면 바로 시작돼요.',
+         reasonCode: 'ready',
+         latestCapture: capture,
++        postEnd: null,
++        timing: null,
+       }
+     case 'previewWaiting':
+       return {
+@@ -316,6 +382,8 @@ function buildCaptureFallbackReadiness(
+         supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+         reasonCode: 'preview-waiting',
+         latestCapture: capture,
++        postEnd: null,
++        timing: null,
+       }
+     case 'captureSaved':
+     default:
+@@ -390,10 +458,91 @@ function hasForeignReadinessForSession(
+   )
+ }
+ 
++function isExplicitPostEndReadiness(
++  readiness: NonNullable<SessionDraft['captureReadiness']>,
++) {
++  return (
++    isHostOwnedPostEndReason(readiness.reasonCode) ||
++    (readiness.postEnd !== undefined &&
++      readiness.postEnd !== null &&
++      (readiness.postEnd.state === 'export-waiting' ||
++        readiness.postEnd.state === 'completed' ||
++        readiness.postEnd.state === 'phone-required'))
++  )
++}
++
++function resolveExplicitPostEndState(
++  readiness: NonNullable<SessionDraft['captureReadiness']>,
++) {
++  if (readiness.postEnd !== undefined && readiness.postEnd !== null) {
++    return readiness.postEnd.state
++  }
++
++  switch (readiness.reasonCode) {
++    case 'completed':
++      return 'completed'
++    case 'phone-required':
++      return 'phone-required'
++    case 'export-waiting':
++      return 'export-waiting'
++    default:
++      return null
++  }
++}
++
++function lockStablePostEndReadiness(
++  currentReadiness: SessionDraft['captureReadiness'],
++  nextReadiness: NonNullable<SessionDraft['captureReadiness']>,
++) {
++  if (
++    currentReadiness === null ||
++    currentReadiness.sessionId !== nextReadiness.sessionId
++  ) {
++    return nextReadiness
++  }
++
++  return mergePreservedPostEndReadiness(currentReadiness, {
++    ...nextReadiness,
++    latestCapture: nextReadiness.latestCapture ?? currentReadiness.latestCapture ?? null,
++    timing: nextReadiness.timing ?? currentReadiness.timing ?? null,
++  })
++}
++
+ function deriveLifecycleStage(
+   readiness: NonNullable<SessionDraft['captureReadiness']>,
+   currentStage: string | null,
+ ) {
++  const explicitPostEndState = isExplicitPostEndReadiness(readiness)
++    ? resolveExplicitPostEndState(readiness)
++    : null
++
++  if (explicitPostEndState !== null) {
++    return explicitPostEndState
++  }
++
++  if (readiness.timing?.phase === 'ended') {
++    switch (currentStage) {
++      case 'phone-required':
++      case 'completed':
++        return currentStage
++      default:
++        return 'ended'
++    }
++  }
++
++  if (readiness.reasonCode === 'warning' || readiness.timing?.phase === 'warning') {
++    switch (currentStage) {
++      case 'preview-waiting':
++      case 'export-waiting':
++      case 'completed':
++      case 'phone-required':
++      case 'ended':
++        return currentStage
++      default:
++        return 'warning'
++    }
++  }
++
+   switch (readiness.surfaceState) {
+     case 'captureSaved':
+     case 'previewWaiting':
+@@ -412,6 +561,59 @@ function deriveLifecycleStage(
+   }
+ }
+ 
++function mergeTimingIntoManifest(
++  manifest: SessionManifest | null,
++  readiness: SessionDraft['captureReadiness'],
++) {
++  if (manifest === null || readiness?.timing === null || readiness?.timing === undefined) {
++    return manifest
++  }
++
++  if (readiness.timing.sessionId !== manifest.sessionId) {
++    return manifest
++  }
++
++  return {
++    ...manifest,
++    timing: readiness.timing,
++  }
++}
++
++function mergePostEndIntoManifest(
++  manifest: SessionManifest | null,
++  readiness: SessionDraft['captureReadiness'],
++) {
++  if (manifest === null) {
++    return manifest
++  }
++
++  if (readiness?.postEnd !== undefined) {
++    return {
++      ...manifest,
++      postEnd: readiness.postEnd,
++    }
++  }
++
++  if (readiness !== null && isHostOwnedPostEndReason(readiness.reasonCode)) {
++    return {
++      ...manifest,
++      postEnd: manifest.postEnd,
++    }
++  }
++
++  if (readiness?.reasonCode === 'ended' || readiness?.timing?.phase === 'ended') {
++    return {
++      ...manifest,
++      postEnd: null,
++    }
++  }
++
++  return {
++    ...manifest,
++    postEnd: manifest.postEnd,
++  }
++}
++
+ export function SessionProvider({
+   children,
+   sessionService: sessionServiceProp,
+@@ -440,6 +642,7 @@ export function SessionProvider({
+   const captureReadinessRequestVersionRef = useRef(0)
+   const deleteCaptureRequestVersionRef = useRef(0)
+   const requestCaptureRequestVersionRef = useRef(0)
++  const deletedCaptureIdsRef = useRef<Set<string>>(new Set())
+   const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
+   const capturePresetCatalogRetryCountRef = useRef(0)
+   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(DEFAULT_SESSION_DRAFT)
+@@ -481,6 +684,7 @@ export function SessionProvider({
+   function clearTransientSessionActivity() {
+     invalidatePresetCatalogRequests()
+     invalidateCaptureRequests()
++    deletedCaptureIdsRef.current.clear()
+     activePresetSelectionVersionRef.current += 1
+     activePresetSelectionRequestVersionRef.current = null
+     isSelectingPresetRef.current = false
+@@ -522,7 +726,10 @@ export function SessionProvider({
+       if (
+         current.sessionId === null ||
+         current.manifest === null ||
+-        current.selectedPreset === null
++        current.selectedPreset === null ||
++        current.captureReadiness === null ||
++        !current.captureReadiness.canCapture ||
++        isExplicitPostEndReadiness(current.captureReadiness)
+       ) {
+         return current
+       }
+@@ -554,6 +761,25 @@ export function SessionProvider({
+     })
+   }
+ 
++  function suppressDeletedLatestCapture(
++    readiness: SessionScopedReadiness,
++  ): SessionScopedReadiness {
++    const latestCapture = readiness.latestCapture ?? null
++
++    if (
++      latestCapture === null ||
++      !deletedCaptureIdsRef.current.has(latestCapture.captureId)
++    ) {
++      return readiness
++    }
++
++    return {
++      ...readiness,
++      surfaceState: inferSurfaceStateFromSanitizedCapture(readiness, null),
++      latestCapture: null,
++    }
++  }
++
+   function applyReadinessState(readiness: SessionDraft['captureReadiness']) {
+     if (readiness === null) {
+       return
+@@ -572,9 +798,14 @@ export function SessionProvider({
+     setSessionDraft((current) => ({
+       ...current,
+       ...(() => {
+-        const safeReadiness = sanitizeCaptureReadinessForSession(
+-          current.manifest?.sessionId ?? current.sessionId,
+-          readiness,
++        const safeReadiness = suppressDeletedLatestCapture(
++          lockStablePostEndReadiness(
++            current.captureReadiness,
++            sanitizeCaptureReadinessForSession(
++              current.manifest?.sessionId ?? current.sessionId,
++              readiness,
++            ),
++          ),
+         )
+         const latestCapture = safeReadiness.latestCapture ?? null
+ 
+@@ -584,10 +815,16 @@ export function SessionProvider({
+             current.manifest === null
+               ? null
+               : {
+-                  ...(latestCapture === null
+-                    ? current.manifest
+-                    : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
+-                      current.manifest),
++                  ...(mergePostEndIntoManifest(
++                    mergeTimingIntoManifest(
++                      latestCapture === null
++                        ? current.manifest
++                        : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
++                          current.manifest,
++                      safeReadiness,
++                    ),
++                    safeReadiness,
++                  ) ?? current.manifest),
+                   lifecycle: {
+                     ...current.manifest.lifecycle,
+                     stage: deriveLifecycleStage(
+@@ -837,6 +1074,12 @@ export function SessionProvider({
+         sessionDraftRef.current.presetSelectionMode !== 'in-session-switch'
+       ) {
+         resetToPresetSelection()
++      } else if (
++        hostError.readiness !== undefined &&
++        hostError.readiness !== null &&
++        hostError.readiness.sessionId === input.sessionId
++      ) {
++        applyReadinessState(hostError.readiness)
+       }
+ 
+       throw error
+@@ -964,9 +1207,12 @@ export function SessionProvider({
+       setSessionDraft((current) => ({
+         ...current,
+         ...(() => {
+-          const safeReadiness = sanitizeCaptureReadinessForSession(
+-            current.manifest?.sessionId ?? current.sessionId,
+-            safeResult.readiness,
++          const safeReadiness = lockStablePostEndReadiness(
++            current.captureReadiness,
++            sanitizeCaptureReadinessForSession(
++              current.manifest?.sessionId ?? current.sessionId,
++              safeResult.readiness,
++            ),
+           )
+           const manifestWithCapture =
+             current.manifest === null
+@@ -980,16 +1226,24 @@ export function SessionProvider({
+                   manifestWithCapture,
+                   safeReadiness.latestCapture,
+                 ) ?? manifestWithCapture
++          const manifestWithTiming = mergeTimingIntoManifest(
++            manifestWithLatestCapture,
++            safeReadiness,
++          )
++          const manifestWithPostEnd = mergePostEndIntoManifest(
++            manifestWithTiming,
++            safeReadiness,
++          )
+ 
+           return {
+             captureReadiness: safeReadiness,
+             manifest:
+-              manifestWithLatestCapture === null
++              manifestWithPostEnd === null
+                 ? null
+                 : {
+-                    ...manifestWithLatestCapture,
++                    ...manifestWithPostEnd,
+                     lifecycle: {
+-                      ...manifestWithLatestCapture.lifecycle,
++                      ...manifestWithPostEnd.lifecycle,
+                       stage: deriveLifecycleStage(
+                         safeReadiness,
+                         current.manifest?.lifecycle.stage ?? null,
+@@ -1057,7 +1311,16 @@ export function SessionProvider({
+     setIsDeletingCapture(true)
+ 
+     try {
+-      const result = await captureRuntimeServiceRef.current.deleteCapture(input)
++      const deleteCapture = captureRuntimeServiceRef.current.deleteCapture
++
++      if (deleteCapture === undefined) {
++        throw {
++          code: 'host-unavailable',
++          message: '지금은 도움이 필요해요.',
++        } satisfies HostErrorEnvelope
++      }
++
++      const result = await deleteCapture(input)
+       const hasMatchingActiveSession = hasActiveSession(input.sessionId)
+       const staleReadiness = hasMatchingActiveSession
+         ? buildCurrentCaptureFallbackReadiness()
+@@ -1066,7 +1329,8 @@ export function SessionProvider({
+       if (
+         result.sessionId !== input.sessionId ||
+         result.captureId !== input.captureId ||
+-        result.manifest.sessionId !== input.sessionId
++        result.manifest.sessionId !== input.sessionId ||
++        result.readiness.sessionId !== input.sessionId
+       ) {
+         throw createStaleSessionError(
+           '현재 세션 상태를 다시 확인할게요.',
+@@ -1089,27 +1353,40 @@ export function SessionProvider({
+         )
+       }
+ 
++      deletedCaptureIdsRef.current.add(input.captureId)
++
+       setSessionDraft((current) => {
+-        const safeReadiness = sanitizeCaptureReadinessForSession(
+-          current.manifest?.sessionId ?? current.sessionId,
+-          safeResult.readiness,
++        const safeReadiness = lockStablePostEndReadiness(
++          current.captureReadiness,
++          sanitizeCaptureReadinessForSession(
++            current.manifest?.sessionId ?? current.sessionId,
++            safeResult.readiness,
++          ),
+         )
+         const safeManifest =
+           sanitizeManifestForSession(
+             current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
+             safeResult.manifest,
+           ) ?? safeResult.manifest
++        const manifestWithTiming = mergeTimingIntoManifest(
++          safeManifest,
++          safeReadiness,
++        )
++        const manifestWithPostEnd = mergePostEndIntoManifest(
++          manifestWithTiming,
++          safeReadiness,
++        )
+ 
+         return {
+           ...current,
+           captureReadiness: safeReadiness,
+           manifest: {
+-            ...safeManifest,
++            ...(manifestWithPostEnd ?? safeManifest),
+             lifecycle: {
+-              ...safeManifest.lifecycle,
++              ...(manifestWithPostEnd ?? safeManifest).lifecycle,
+               stage: deriveLifecycleStage(
+                 safeReadiness,
+-                safeManifest.lifecycle.stage,
++                (manifestWithPostEnd ?? safeManifest).lifecycle.stage,
+               ),
+             },
+           },
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 7b18a86..fb4dae1 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -15,6 +15,7 @@ import {
+   sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
++  sessionTimingSnapshotSchema,
+ } from './index'
+ 
+ describe('shared contracts baseline', () => {
+@@ -118,6 +119,35 @@ describe('shared contracts baseline', () => {
+     expect(parsed.lifecycle.stage).toBe('capture-ready')
+   })
+ 
++  it('requires a completion variant before post-end completed truth can be claimed', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:00.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:15:00.000Z',
++        },
++      }),
++    ).toThrow()
++  })
++
+   it('parses a typed session start result and serializable host error envelope', () => {
+     const result = sessionStartResultSchema.parse({
+       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+@@ -154,6 +184,24 @@ describe('shared contracts baseline', () => {
+     expect(error.fieldErrors?.phoneLastFour).toBe('숫자 4자리여야 해요.')
+   })
+ 
++  it('parses host-owned session timing truth with warning and end markers', () => {
++    const parsed = sessionTimingSnapshotSchema.parse({
++      schemaVersion: 'session-timing/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      adjustedEndAt: '2026-03-20T00:15:00.000Z',
++      warningAt: '2026-03-20T00:10:00.000Z',
++      phase: 'warning',
++      captureAllowed: true,
++      approvedExtensionMinutes: 0,
++      approvedExtensionAuditRef: null,
++      warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++      endedTriggeredAt: null,
++    })
++
++    expect(parsed.phase).toBe('warning')
++    expect(parsed.captureAllowed).toBe(true)
++  })
++
+   it('accepts a booth-safe published preset summary with a customer preview asset', () => {
+     const parsed = publishedPresetSummarySchema.parse({
+       presetId: 'preset_soft-glow',
+@@ -263,6 +311,18 @@ describe('shared contracts baseline', () => {
+       customerMessage: '사진이 안전하게 저장되었어요.',
+       supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+       reasonCode: 'preview-waiting',
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'active',
++        captureAllowed: true,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: null,
++        endedTriggeredAt: null,
++      },
+     })
+     const captureResult = captureRequestResultSchema.parse({
+       schemaVersion: 'capture-request-result/v1',
+@@ -276,6 +336,117 @@ describe('shared contracts baseline', () => {
+     expect(captureResult.capture.activePresetDisplayName).toBe('Soft Glow')
+     expect(captureResult.capture.raw.assetPath).toContain('captures/originals')
+     expect(captureResult.status).toBe('capture-saved')
++    expect(captureResult.readiness.timing?.adjustedEndAt).toBe(
++      '2026-03-20T00:15:00.000Z',
++    )
++  })
++
++  it('accepts a customer-safe explicit post-end readiness without leaking internal policy language', () => {
++    const readiness = captureReadinessSnapshotSchema.parse({
++      schemaVersion: 'capture-readiness/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      surfaceState: 'blocked',
++      customerState: 'Export Waiting',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '안내를 준비하고 있어요.',
++      supportMessage: '잠시만 기다리면 다음 안내를 보여드릴게요.',
++      reasonCode: 'export-waiting',
++      latestCapture: null,
++      postEnd: {
++        state: 'export-waiting',
++        evaluatedAt: '2026-03-20T00:15:00.000Z',
++      },
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'ended',
++        captureAllowed: false,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++        endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++      },
++    })
++
++    expect(readiness.reasonCode).toBe('export-waiting')
++    expect(readiness.postEnd?.state).toBe('export-waiting')
++    expect(readiness.supportMessage).not.toMatch(/policy|scheduler/i)
++  })
++
++  it('still parses legacy capture records that do not include activePresetId yet', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetVersion: '2026.03.20',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: null,
++        enqueuedAtMs: 100,
++        readyAtMs: null,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewWaiting',
++      postEndState: 'activeSession',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: null,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'pending',
++      },
++    })
++
++    expect(capture.activePresetId).toBeUndefined()
++    expect(capture.activePresetVersion).toBe('2026.03.20')
++  })
++
++  it('normalizes host kebab-case capture post-end states into the frontend contract', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetId: 'preset_soft-glow',
++      activePresetVersion: '2026.03.20',
++      activePresetDisplayName: 'Soft Glow',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture.jpg',
++        enqueuedAtMs: 100,
++        readyAtMs: 500,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewReady',
++      postEndState: 'local-deliverable-ready',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: 500,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'withinBudget',
++      },
++    })
++
++    expect(capture.postEndState).toBe('localDeliverableReady')
+   })
+ 
+   it('parses capture deletion results with the updated manifest and readiness', () => {
+@@ -343,6 +514,105 @@ describe('shared contracts baseline', () => {
+     expect(error.readiness?.primaryAction).toBe('call-support')
+   })
+ 
++  it('parses handoff-ready post-end guidance with handoff metadata', () => {
++    const manifest = sessionManifestSchema.parse({
++      schemaVersion: 'session-manifest/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      customer: {
++        name: 'Kim',
++        phoneLastFour: '4821',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:10.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'completed',
++      },
++      activePreset: null,
++      captures: [],
++      postEnd: {
++        state: 'completed',
++        evaluatedAt: '2026-03-20T00:00:10.000Z',
++        completionVariant: 'handoff-ready',
++        approvedRecipientLabel: 'Front Desk',
++        primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++        supportActionLabel: null,
++        showBoothAlias: true,
++      },
++    })
++
++    expect(manifest.postEnd?.state).toBe('completed')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.completionVariant
++        : null,
++    ).toBe('handoff-ready')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.approvedRecipientLabel
++        : null,
++    ).toBe('Front Desk')
++  })
++
++  it('rejects completed post-end guidance without a completion variant', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++        },
++      }),
++    ).toThrow(/completionVariant/i)
++  })
++
++  it('rejects handoff-ready post-end guidance when both destination fields are null', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++          completionVariant: 'handoff-ready',
++          approvedRecipientLabel: null,
++          nextLocationLabel: null,
++          primaryActionLabel: '안내된 곳으로 이동해 주세요.',
++          supportActionLabel: null,
++          showBoothAlias: false,
++        },
++      }),
++    ).toThrow(/completionVariant/i)
++  })
++
+   it('rejects capture request responses that omit the persisted capture record', () => {
+     expect(() =>
+       captureRequestResultSchema.parse({
+diff --git a/src/shared-contracts/dto/session.ts b/src/shared-contracts/dto/session.ts
+index 1d74114..f59f4d1 100644
+--- a/src/shared-contracts/dto/session.ts
++++ b/src/shared-contracts/dto/session.ts
+@@ -1,12 +1,31 @@
+ import type { z } from 'zod'
+ 
+ import {
++  sessionPostEndCompletionVariantSchema,
+   sessionManifestSchema,
++  sessionPostEndSchema,
++  sessionPostEndStateSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
+ } from '../schemas'
+ 
+ export type SessionManifest = z.infer<typeof sessionManifestSchema>
++export type SessionPostEndRecord = z.infer<typeof sessionPostEndSchema>
++export type SessionPostEndState = z.infer<typeof sessionPostEndStateSchema>
++export type SessionPostEndCompletionVariant = z.infer<
++  typeof sessionPostEndCompletionVariantSchema
++>
++export type ExportWaitingPostEndRecord = Extract<
++  SessionPostEndRecord,
++  { state: 'export-waiting' }
++>
++export type CompletedPostEndRecord = Extract<
++  SessionPostEndRecord,
++  { state: 'completed' }
++>
++export type PhoneRequiredPostEndRecord = Extract<
++  SessionPostEndRecord,
++  { state: 'phone-required' }
++>
+ export type SessionStartInput = z.infer<typeof sessionStartInputSchema>
+ export type SessionStartResult = z.infer<typeof sessionStartResultSchema>
+-
+diff --git a/src/shared-contracts/schemas/capture-readiness.ts b/src/shared-contracts/schemas/capture-readiness.ts
+index 0d69ebd..35cf5d5 100644
+--- a/src/shared-contracts/schemas/capture-readiness.ts
++++ b/src/shared-contracts/schemas/capture-readiness.ts
+@@ -9,7 +9,8 @@ import {
+   captureSurfaceStateSchema,
+   sessionCaptureRecordSchema,
+ } from './session-capture'
+-import { sessionManifestSchema } from './session-manifest'
++import { sessionManifestSchema, sessionPostEndSchema } from './session-manifest'
++import { sessionTimingSnapshotSchema } from './session-timing'
+ 
+ const fallbackSessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m' as const
+ 
+@@ -17,11 +18,15 @@ export const customerReadinessStateSchema = z.enum([
+   'Preparing',
+   'Ready',
+   'Preview Waiting',
++  'Export Waiting',
++  'Completed',
+   'Phone Required',
++  'Session Ended',
+ ])
+ 
+ export const capturePrimaryActionSchema = z.enum([
+   'wait',
++  'finish',
+   'capture',
+   'choose-preset',
+   'start-session',
+@@ -38,6 +43,7 @@ export const captureReasonCodeSchema = z.enum([
+   'completed',
+   'phone-required',
+   'warning',
++  'ended',
+   'ready',
+   'blocked',
+ ])
+@@ -75,6 +81,8 @@ const captureReadinessSnapshotInputSchema = z.object({
+   supportMessage: customerGuidanceSchema,
+   reasonCode: captureReasonCodeSchema,
+   latestCapture: sessionCaptureRecordSchema.nullable().optional(),
++  postEnd: sessionPostEndSchema.nullable().optional(),
++  timing: sessionTimingSnapshotSchema.nullable().optional(),
+ })
+ 
+ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchema.transform(
+@@ -82,7 +90,20 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
+     const sessionId = snapshot.sessionId ?? fallbackSessionId
+     const latestCapture = snapshot.latestCapture ?? null
+ 
+-    return {
++    const normalized: {
++      schemaVersion: typeof captureReadinessSchemaVersion
++      sessionId: string
++      surfaceState: z.infer<typeof captureSurfaceStateSchema>
++      customerState: z.infer<typeof customerReadinessStateSchema>
++      canCapture: boolean
++      primaryAction: z.infer<typeof capturePrimaryActionSchema>
++      customerMessage: string
++      supportMessage: string
++      reasonCode: z.infer<typeof captureReasonCodeSchema>
++      latestCapture: z.infer<typeof sessionCaptureRecordSchema> | null
++      postEnd?: z.infer<typeof sessionPostEndSchema> | null
++      timing?: z.infer<typeof sessionTimingSnapshotSchema> | null
++    } = {
+       schemaVersion: snapshot.schemaVersion ?? captureReadinessSchemaVersion,
+       sessionId,
+       surfaceState:
+@@ -100,6 +121,16 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
+       reasonCode: snapshot.reasonCode,
+       latestCapture,
+     }
++
++    if (snapshot.postEnd !== undefined) {
++      normalized.postEnd = snapshot.postEnd
++    }
++
++    if (snapshot.timing !== undefined) {
++      normalized.timing = snapshot.timing
++    }
++
++    return normalized
+   },
+ )
+ 
+diff --git a/src/shared-contracts/schemas/session-capture.ts b/src/shared-contracts/schemas/session-capture.ts
+index 3e58412..1f2f541 100644
+--- a/src/shared-contracts/schemas/session-capture.ts
++++ b/src/shared-contracts/schemas/session-capture.ts
+@@ -28,13 +28,29 @@ export const captureRenderStatusSchema = z.enum([
+   'renderFailed',
+ ])
+ 
+-export const capturePostEndStateSchema = z.enum([
++const capturePostEndStateInputSchema = z.enum([
+   'activeSession',
+   'postEndPending',
+-  'handoffReady',
+   'completed',
++  'localDeliverableReady',
++  'handoffReady',
++  'local-deliverable-ready',
++  'handoff-ready',
+ ])
+ 
++export const capturePostEndStateSchema = capturePostEndStateInputSchema.transform(
++  (value) => {
++    switch (value) {
++      case 'local-deliverable-ready':
++        return 'localDeliverableReady' as const
++      case 'handoff-ready':
++        return 'handoffReady' as const
++      default:
++        return value
++    }
++  },
++)
++
+ export const previewBudgetStateSchema = z.enum([
+   'pending',
+   'withinBudget',
+@@ -69,7 +85,7 @@ export const sessionCaptureRecordSchema = z.object({
+   schemaVersion: z.literal(sessionCaptureSchemaVersion),
+   sessionId: sessionIdSchema,
+   boothAlias: z.string().trim().min(1),
+-  activePresetId: presetIdSchema,
++  activePresetId: presetIdSchema.nullable().optional(),
+   activePresetVersion: publishedVersionSchema,
+   activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
+   captureId: captureIdSchema,
+diff --git a/src/shared-contracts/schemas/session-manifest.ts b/src/shared-contracts/schemas/session-manifest.ts
+index 990d1d4..772cef8 100644
+--- a/src/shared-contracts/schemas/session-manifest.ts
++++ b/src/shared-contracts/schemas/session-manifest.ts
+@@ -3,8 +3,69 @@ import { z } from 'zod'
+ import { sessionIdSchema } from './ids'
+ import { activePresetBindingSchema, presetDisplayNameSchema } from './preset-core'
+ import { sessionCaptureRecordSchema } from './session-capture'
++import { sessionTimingSnapshotSchema } from './session-timing'
+ 
+ export const sessionManifestSchemaVersion = 'session-manifest/v1' as const
++const postEndTimestampSchema = z.string().datetime()
++const postEndLabelSchema = z.string().trim().min(1).max(80)
++const postEndCopySchema = z.string().trim().min(1).max(120)
++
++export const sessionPostEndStateSchema = z.enum([
++  'export-waiting',
++  'completed',
++  'phone-required',
++])
++export const sessionPostEndCompletionVariantSchema = z.enum([
++  'local-deliverable-ready',
++  'handoff-ready',
++])
++
++export const exportWaitingPostEndSchema = z.object({
++  state: z.literal('export-waiting'),
++  evaluatedAt: postEndTimestampSchema,
++})
++
++export const completedPostEndSchema = z
++  .object({
++    state: z.literal('completed'),
++    evaluatedAt: postEndTimestampSchema,
++    completionVariant: sessionPostEndCompletionVariantSchema,
++    approvedRecipientLabel: postEndLabelSchema.nullable().optional(),
++    nextLocationLabel: postEndLabelSchema.nullable().optional(),
++    primaryActionLabel: postEndLabelSchema,
++    supportActionLabel: postEndLabelSchema.nullable().optional(),
++    showBoothAlias: z.boolean(),
++    handoff: z.unknown().nullable().optional(),
++  })
++  .superRefine((record, context) => {
++    if (
++      record.completionVariant === 'handoff-ready' &&
++      record.approvedRecipientLabel == null &&
++      record.nextLocationLabel == null
++    ) {
++      context.addIssue({
++        code: z.ZodIssueCode.custom,
++        message:
++          'handoff-ready completion에는 승인된 수령 대상 또는 다음 이동 위치가 필요해요.',
++        path: ['completionVariant'],
++      })
++    }
++  })
++
++export const phoneRequiredPostEndSchema = z.object({
++  state: z.literal('phone-required'),
++  evaluatedAt: postEndTimestampSchema,
++  primaryActionLabel: postEndLabelSchema,
++  supportActionLabel: postEndLabelSchema.nullable().optional(),
++  unsafeActionWarning: postEndCopySchema,
++  showBoothAlias: z.boolean().default(false),
++})
++
++export const sessionPostEndSchema = z.union([
++  exportWaitingPostEndSchema,
++  completedPostEndSchema,
++  phoneRequiredPostEndSchema,
++])
+ 
+ export const boothAliasSchema = z
+   .string()
+@@ -37,8 +98,9 @@ export const sessionManifestSchema = z.object({
+   activePreset: activePresetBindingSchema.nullable(),
+   activePresetId: z.string().trim().min(1).nullable().optional(),
+   activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
++  timing: sessionTimingSnapshotSchema.nullable().optional(),
+   captures: z.array(sessionCaptureRecordSchema),
+-  postEnd: z.null(),
++  postEnd: sessionPostEndSchema.nullable(),
+ })
+ 
+ export const sessionStartResultSchema = z.object({
+
+diff --git a/src/completion-handoff/post-end.ts b/src/completion-handoff/post-end.ts
+new file mode 100644
+--- /dev/null
++++ b/src/completion-handoff/post-end.ts
++import type {
++  CaptureReadinessSnapshot,
++  SessionCaptureRecord,
++  SessionPostEndRecord,
++} from '../shared-contracts'
++
++const POST_END_WAITING_REASON = 'export-waiting'
++const POST_END_COMPLETED_REASON = 'completed'
++const POST_END_PHONE_REQUIRED_REASON = 'phone-required'
++
++export function isHostOwnedPostEndReason(
++  reasonCode: CaptureReadinessSnapshot['reasonCode'],
++) {
++  return (
++    reasonCode === POST_END_WAITING_REASON ||
++    reasonCode === POST_END_COMPLETED_REASON ||
++    reasonCode === POST_END_PHONE_REQUIRED_REASON
++  )
++}
++
++export function isFinalizedPostEndReason(
++  reasonCode: CaptureReadinessSnapshot['reasonCode'],
++) {
++  return (
++    reasonCode === POST_END_COMPLETED_REASON ||
++    reasonCode === POST_END_PHONE_REQUIRED_REASON
++  )
++}
++
++export function isFinalizedCapturePostEndState(
++  postEndState: SessionCaptureRecord['postEndState'],
++) {
++  return (
++    postEndState === 'completed' ||
++    postEndState === 'localDeliverableReady' ||
++    postEndState === 'handoffReady'
++  )
++}
++
++export function resolvePostEndGuidance(
++  readiness: Pick<CaptureReadinessSnapshot, 'postEnd'>,
++  manifestPostEnd: SessionPostEndRecord | null | undefined,
++) {
++  return readiness.postEnd ?? manifestPostEnd ?? null
++}
++
++export function getPostEndStrength(
++  reasonCode: CaptureReadinessSnapshot['reasonCode'],
++) {
++  switch (reasonCode) {
++    case POST_END_COMPLETED_REASON:
++    case POST_END_PHONE_REQUIRED_REASON:
++      return 2
++    case POST_END_WAITING_REASON:
++      return 1
++    default:
++      return 0
++  }
++}
+
+diff --git a/src/booth-shell/components/HandoffReadyPanel.tsx b/src/booth-shell/components/HandoffReadyPanel.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/booth-shell/components/HandoffReadyPanel.tsx
++import type { CompletedPostEndRecord } from '../../shared-contracts'
++
++type HandoffReadyPanelProps = {
++  boothAlias: string | null
++  guidance: CompletedPostEndRecord
++}
++
++export function HandoffReadyPanel({
++  boothAlias,
++  guidance,
++}: HandoffReadyPanelProps) {
++  const destinationLabel =
++    guidance.approvedRecipientLabel ?? guidance.nextLocationLabel ?? null
++  const destinationTitle =
++    guidance.approvedRecipientLabel !== undefined
++      ? '승인된 수령 대상'
++      : '다음 이동 위치'
++
++  return (
++    <article className="surface-card handoff-ready-panel">
++      <p className="handoff-ready-panel__badge">Handoff Ready</p>
++      {destinationLabel !== null ? (
++        <div className="handoff-ready-panel__section">
++          <h2>{destinationTitle}</h2>
++          <p>{destinationLabel}</p>
++        </div>
++      ) : null}
++      <div className="handoff-ready-panel__section">
++        <h2>다음 행동</h2>
++        <p>{guidance.primaryActionLabel}</p>
++      </div>
++      {guidance.showBoothAlias && boothAlias !== null ? (
++        <div className="handoff-ready-panel__section">
++          <h2>확인할 이름</h2>
++          <p>{boothAlias}</p>
++        </div>
++      ) : null}
++    </article>
++  )
++}
+
+diff --git a/src/booth-shell/components/PhoneRequiredSupportCard.tsx b/src/booth-shell/components/PhoneRequiredSupportCard.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/booth-shell/components/PhoneRequiredSupportCard.tsx
++import type { PhoneRequiredPostEndRecord } from '../../shared-contracts'
++
++type PhoneRequiredSupportCardProps = {
++  guidance: PhoneRequiredPostEndRecord
++}
++
++export function PhoneRequiredSupportCard({
++  guidance,
++}: PhoneRequiredSupportCardProps) {
++  return (
++    <article className="surface-card phone-required-support-card">
++      <p className="phone-required-support-card__badge">보호 안내</p>
++      <div className="phone-required-support-card__section">
++        <h2>지금 해야 할 일</h2>
++        <p>{guidance.primaryActionLabel}</p>
++      </div>
++      {guidance.supportActionLabel !== undefined &&
++      guidance.supportActionLabel !== null ? (
++        <p className="phone-required-support-card__support">
++          {guidance.supportActionLabel}
++        </p>
++      ) : null}
++      <p className="phone-required-support-card__warning">
++        {guidance.unsafeActionWarning}
++      </p>
++    </article>
++  )
++}
+
+diff --git a/src-tauri/src/handoff/mod.rs b/src-tauri/src/handoff/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/src-tauri/src/handoff/mod.rs
++use std::{
++    fs::{self, OpenOptions},
++    io::Write,
++    path::Path,
++    time::SystemTime,
++};
++
++use serde::Deserialize;
++
++use crate::{
++    contracts::dto::HostErrorEnvelope,
++    session::{
++        session_manifest::{
++            current_timestamp, CompletedPostEnd, ExportWaitingPostEnd, PhoneRequiredPostEnd,
++            SessionManifest, SessionPostEnd, SESSION_POST_END_COMPLETED,
++            SESSION_POST_END_EXPORT_WAITING, SESSION_POST_END_HANDOFF_READY,
++            SESSION_POST_END_LOCAL_DELIVERABLE_READY, SESSION_POST_END_PHONE_REQUIRED,
++        },
++        session_paths::SessionPaths,
++        session_repository::write_session_manifest,
++    },
++};
++
++const POST_END_PENDING_CAPTURE_STATE: &str = "postEndPending";
++const HANDOFF_GUIDANCE_FILE: &str = "customer-guidance.json";
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++struct PostEndEvaluation {
++    state: String,
++    completion_variant: Option<String>,
++}
++
++#[derive(Debug, Clone, Deserialize)]
++#[serde(rename_all = "camelCase")]
++struct HandoffGuidanceFile {
++    #[serde(default)]
++    approved_recipient_label: Option<String>,
++    #[serde(default)]
++    next_location_label: Option<String>,
++    #[serde(default)]
++    primary_action_label: Option<String>,
++    #[serde(default)]
++    support_action_label: Option<String>,
++    #[serde(default)]
++    show_booth_alias: Option<bool>,
++}
++
++pub fn sync_post_end_state_in_dir(
++    base_dir: &Path,
++    manifest_path: &Path,
++    mut manifest: SessionManifest,
++    now: SystemTime,
++) -> Result<SessionManifest, HostErrorEnvelope> {
++    let timing_phase = manifest
++        .timing
++        .as_ref()
++        .map(|timing| timing.phase.as_str())
++        .unwrap_or("active");
++
++    if timing_phase != "ended" {
++        return Ok(manifest);
++    }
++
++    let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
++        return Ok(manifest);
++    };
++    let current = manifest.post_end.as_ref().map(|record| PostEndEvaluation {
++        state: record.state().to_string(),
++        completion_variant: record.completion_variant().map(str::to_string),
++    });
++    let next_capture_state = capture_post_end_state_for(&evaluation);
++    let captures_need_update = manifest
++        .captures
++        .iter()
++        .any(|capture| capture.post_end_state != next_capture_state);
++    let lifecycle_needs_update = manifest.lifecycle.stage != evaluation.state;
++    let state_changed = current.as_ref() != Some(&evaluation);
++
++    if !captures_need_update && !lifecycle_needs_update && !state_changed {
++        return Ok(manifest);
++    }
++
++    let evaluated_at = current_timestamp(now)?;
++    let existing_completed = manifest.post_end.as_ref().and_then(|record| match record {
++        SessionPostEnd::Completed(value) => Some(value.clone()),
++        _ => None,
++    });
++    let existing_phone_required = manifest.post_end.as_ref().and_then(|record| match record {
++        SessionPostEnd::PhoneRequired(value) => Some(value.clone()),
++        _ => None,
++    });
++
++    manifest.post_end = Some(build_post_end_record(
++        base_dir,
++        &manifest.session_id,
++        &evaluation,
++        &evaluated_at,
++        existing_completed,
++        existing_phone_required,
++    )?);
++    manifest.lifecycle.stage = evaluation.state.clone();
++
++    for capture in &mut manifest.captures {
++        capture.post_end_state = next_capture_state.to_string();
++    }
++
++    manifest.updated_at = evaluated_at.clone();
++    write_session_manifest(manifest_path, &manifest)?;
++    append_post_end_log(base_dir, &manifest.session_id, &evaluation, &evaluated_at)?;
++
++    Ok(manifest)
++}
++
++fn resolve_explicit_post_end(manifest: &SessionManifest) -> Option<PostEndEvaluation> {
++    let mut evaluation = evaluate_post_end(manifest);
++    let explicit_state = manifest
++        .post_end
++        .as_ref()
++        .map(|record| record.state())
++        .or(match manifest.lifecycle.stage.as_str() {
++            SESSION_POST_END_EXPORT_WAITING => Some(SESSION_POST_END_EXPORT_WAITING),
++            SESSION_POST_END_COMPLETED => Some(SESSION_POST_END_COMPLETED),
++            SESSION_POST_END_PHONE_REQUIRED => Some(SESSION_POST_END_PHONE_REQUIRED),
++            _ => None,
++        })?;
++
++    evaluation.state = explicit_state.into();
++
++    if explicit_state != SESSION_POST_END_COMPLETED {
++        evaluation.completion_variant = None;
++    } else if evaluation.completion_variant.is_none() {
++        evaluation.completion_variant = manifest
++            .post_end
++            .as_ref()
++            .and_then(|record| record.completion_variant().map(str::to_string))
++            .or(Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY.into()));
++    }
++
++    Some(evaluation)
++}
++
++fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
++    let Some(latest_capture) = manifest.captures.last() else {
++        return PostEndEvaluation {
++            state: SESSION_POST_END_EXPORT_WAITING.into(),
++            completion_variant: None,
++        };
++    };
++
++    match latest_capture.render_status.as_str() {
++        "previewWaiting" | "captureSaved" => PostEndEvaluation {
++            state: SESSION_POST_END_EXPORT_WAITING.into(),
++            completion_variant: None,
++        },
++        "previewReady" => PostEndEvaluation {
++            state: SESSION_POST_END_COMPLETED.into(),
++            completion_variant: Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY.into()),
++        },
++        "finalReady" => PostEndEvaluation {
++            state: SESSION_POST_END_COMPLETED.into(),
++            completion_variant: Some(SESSION_POST_END_HANDOFF_READY.into()),
++        },
++        "renderFailed" => PostEndEvaluation {
++            state: SESSION_POST_END_PHONE_REQUIRED.into(),
++            completion_variant: None,
++        },
++        _ => PostEndEvaluation {
++            state: SESSION_POST_END_EXPORT_WAITING.into(),
++            completion_variant: None,
++        },
++    }
++}
++
++fn capture_post_end_state_for(evaluation: &PostEndEvaluation) -> &'static str {
++    match evaluation.completion_variant.as_deref() {
++        Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY) => SESSION_POST_END_LOCAL_DELIVERABLE_READY,
++        Some(SESSION_POST_END_HANDOFF_READY) => SESSION_POST_END_HANDOFF_READY,
++        _ => POST_END_PENDING_CAPTURE_STATE,
++    }
++}
++
++fn build_post_end_record(
++    base_dir: &Path,
++    session_id: &str,
++    evaluation: &PostEndEvaluation,
++    evaluated_at: &str,
++    existing_completed: Option<CompletedPostEnd>,
++    existing_phone_required: Option<PhoneRequiredPostEnd>,
++) -> Result<SessionPostEnd, HostErrorEnvelope> {
++    match evaluation.state.as_str() {
++        SESSION_POST_END_EXPORT_WAITING => {
++            Ok(SessionPostEnd::ExportWaiting(ExportWaitingPostEnd {
++                state: SESSION_POST_END_EXPORT_WAITING.into(),
++                evaluated_at: evaluated_at.into(),
++            }))
++        }
++        SESSION_POST_END_COMPLETED => build_completed_post_end(
++            base_dir,
++            session_id,
++            evaluation.completion_variant.as_deref(),
++            evaluated_at,
++            existing_completed,
++        )
++        .map(SessionPostEnd::Completed),
++        SESSION_POST_END_PHONE_REQUIRED => Ok(SessionPostEnd::PhoneRequired(
++            existing_phone_required.unwrap_or_else(|| PhoneRequiredPostEnd {
++                state: SESSION_POST_END_PHONE_REQUIRED.into(),
++                evaluated_at: evaluated_at.into(),
++                primary_action_label: "가까운 직원에게 알려 주세요.".into(),
++                support_action_label: Some("직원에게 도움을 요청해 주세요.".into()),
++                unsafe_action_warning: "다시 찍기나 기기 조작은 잠시 멈춰 주세요.".into(),
++                show_booth_alias: false,
++            }),
++        )),
++        _ => Ok(SessionPostEnd::ExportWaiting(ExportWaitingPostEnd {
++            state: SESSION_POST_END_EXPORT_WAITING.into(),
++            evaluated_at: evaluated_at.into(),
++        })),
++    }
++}
++
++fn build_completed_post_end(
++    base_dir: &Path,
++    session_id: &str,
++    completion_variant: Option<&str>,
++    evaluated_at: &str,
++    existing_completed: Option<CompletedPostEnd>,
++) -> Result<CompletedPostEnd, HostErrorEnvelope> {
++    let variant = completion_variant.unwrap_or(SESSION_POST_END_LOCAL_DELIVERABLE_READY);
++
++    if variant == SESSION_POST_END_HANDOFF_READY {
++        if let Some(file_guidance) = read_handoff_guidance_file(base_dir, session_id)? {
++            return Ok(CompletedPostEnd {
++                state: SESSION_POST_END_COMPLETED.into(),
++                evaluated_at: evaluated_at.into(),
++                completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
++                approved_recipient_label: file_guidance.approved_recipient_label,
++                next_location_label: file_guidance.next_location_label,
++                primary_action_label: file_guidance
++                    .primary_action_label
++                    .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into()),
++                support_action_label: file_guidance.support_action_label,
++                show_booth_alias: file_guidance.show_booth_alias.unwrap_or(false),
++                handoff: None,
++            });
++        }
++    }
++
++    if let Some(existing) = existing_completed {
++        if existing.completion_variant == variant {
++            return Ok(CompletedPostEnd {
++                evaluated_at: evaluated_at.into(),
++                ..existing
++            });
++        }
++    }
++
++    Ok(CompletedPostEnd {
++        state: SESSION_POST_END_COMPLETED.into(),
++        evaluated_at: evaluated_at.into(),
++        completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
++        approved_recipient_label: None,
++        next_location_label: None,
++        primary_action_label: "안내가 끝났어요. 천천히 이동해 주세요.".into(),
++        support_action_label: None,
++        show_booth_alias: false,
++        handoff: None,
++    })
++}
++
++fn read_handoff_guidance_file(
++    base_dir: &Path,
++    session_id: &str,
++) -> Result<Option<HandoffGuidanceFile>, HostErrorEnvelope> {
++    let guidance_path = SessionPaths::try_new(base_dir, session_id)?
++        .handoff_dir
++        .join(HANDOFF_GUIDANCE_FILE);
++
++    if !guidance_path.is_file() {
++        return Ok(None);
++    }
++
++    let guidance_bytes = fs::read_to_string(&guidance_path).map_err(|error| {
++        HostErrorEnvelope::persistence(format!("handoff 안내를 읽지 못했어요: {error}"))
++    })?;
++    let guidance: HandoffGuidanceFile = match serde_json::from_str(&guidance_bytes) {
++        Ok(value) => value,
++        Err(_) => return Ok(None),
++    };
++
++    if guidance.approved_recipient_label.is_none() && guidance.next_location_label.is_none() {
++        return Ok(None);
++    }
++
++    Ok(Some(guidance))
++}
++
++fn append_post_end_log(
++    base_dir: &Path,
++    session_id: &str,
++    evaluation: &PostEndEvaluation,
++    occurred_at: &str,
++) -> Result<(), HostErrorEnvelope> {
++    let diagnostics_dir = SessionPaths::try_new(base_dir, session_id)?.diagnostics_dir;
++    std::fs::create_dir_all(&diagnostics_dir).map_err(|error| {
++        HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
++    })?;
++    let log_path = diagnostics_dir.join("timing-events.log");
++    let mut file = OpenOptions::new()
++        .create(true)
++        .append(true)
++        .open(log_path)
++        .map_err(|error| {
++            HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
++        })?;
++
++    let variant = evaluation.completion_variant.as_deref().unwrap_or("none");
++
++    writeln!(
++        file,
++        "{occurred_at}\tsession={session_id}\tevent=post-end-evaluated\tstate={}\tvariant={variant}",
++        evaluation.state
++    )
++    .map_err(|error| {
++        HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
++    })?;
++
++    Ok(())
++}

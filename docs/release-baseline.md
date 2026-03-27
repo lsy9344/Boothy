@@ -15,12 +15,14 @@ Boothy keeps an explicit Windows release baseline even before production signing
 - `pnpm build:desktop`
 - `pnpm release:desktop`
 
+Both commands now exist in `package.json` and wrap the current Vite + Tauri desktop build path.
+
 ## Release Workflow
 
 The draft workflow lives at `.github/workflows/release-windows.yml`.
 
-- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path.
-- `workflow_dispatch` and `boothy-v*` tags run the signing-ready draft release path.
+- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path through `pnpm build:desktop`.
+- `workflow_dispatch` and `boothy-v*` tags run the signing-ready draft release path through `pnpm release:desktop`.
 
 ## Signing Inputs
 
@@ -30,20 +32,23 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 
 ## Artifact Path
 
-The NSIS installer is expected under `target/release/bundle/nsis` or `src-tauri/target/release/bundle/nsis`, depending on how the build is invoked.
+The exact NSIS output path depends on how `tauri build` is invoked (`debug` vs release) and the current Tauri workspace layout, so this document treats the bundle location as build-output-dependent rather than hard-coding a single canonical path.
 
 ## Expected Outputs
 
-- Local unsigned baseline proof: `src-tauri/target/release/bundle/nsis/Boothy_0.1.0_x64-setup.exe`
-- CI signing-ready proof: draft release created by `.github/workflows/release-windows.yml`
-- CI identity check: the workflow verifies that the produced installer matches `Boothy_${version}_x64-setup.exe`
+- Local unsigned baseline proof: `pnpm build:desktop` completes successfully on Windows and emits a Tauri desktop bundle.
+- CI signing-ready proof: `.github/workflows/release-windows.yml` runs the draft release build path for manual verification.
+- Installer naming and signing verification are still manual follow-up checks; the current workflow does not yet enforce an automated identity assertion.
 
 ## Release Behavior Guardrails
 
 - The Tauri baseline keeps `createUpdaterArtifacts: false`
 - No updater auto-install path is enabled in this story
 - Release promotion remains outside the active booth session path
+- Branch rollout governance applies build and preset-stack baselines only at safe transition points and never force-updates an active customer session
 
 ## Current State
 
 Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The local and CI signing-ready paths now accept either a materialized certificate path or a base64-encoded PFX supplied through environment variables.
+
+The repo now also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.

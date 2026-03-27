@@ -1,16 +1,24 @@
+import { BranchRolloutPanel } from '../../branch-config/components/BranchRolloutPanel'
+import {
+  createBranchRolloutService,
+  type BranchRolloutService,
+} from '../../branch-config/services/branch-rollout-service'
 import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 
-export function SettingsScreen() {
+type SettingsScreenProps = {
+  branchRolloutService?: BranchRolloutService
+}
+
+export function SettingsScreen({
+  branchRolloutService = createBranchRolloutService(),
+}: SettingsScreenProps) {
   return (
     <SurfaceLayout
       eyebrow="Settings"
-      title="Settings Surface"
-      description="Settings are present as a top-level surface but remain hidden behind the same restricted capability boundary as other internal tools."
+      title="Settings Governance"
+      description="지점별 rollout과 rollback을 settings surface 안에서만 승인하고, 진행 중인 세션은 안전한 전환 시점까지 보호합니다."
     >
-      <article className="surface-card">
-        <h2>Restricted placeholder</h2>
-        <p>Branch-local configuration and runtime flags can be connected here once the admin flow exists.</p>
-      </article>
+      <BranchRolloutPanel branchRolloutService={branchRolloutService} />
     </SurfaceLayout>
   )
 }

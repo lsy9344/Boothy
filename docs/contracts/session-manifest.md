@@ -40,6 +40,8 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
     "status": "active",
     "stage": "session-started"
   },
+  "catalogRevision": null,
+  "catalogSnapshot": null,
   "activePreset": null,
   "activePresetId": null,
   "captures": [],
@@ -57,10 +59,16 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - `createdAt`, `updatedAt`: UTC RFC3339 문자열
 - `lifecycle.status`: 초기값은 `active`
 - `lifecycle.stage`: 초기값은 `session-started`
+- `catalogRevision`, `catalogSnapshot`: 현재 세션이 처음 booth catalog를 읽거나 preset을 고를 때 고정되는
+  future-session-safe catalog baseline. 새 live catalog change가 있더라도 이미 진행 중인 세션은 이
+  snapshot 안의 버전만 본다.
 - `activePreset`: Story 1.3부터 `{ presetId, publishedVersion }` binding 또는 `null`
 - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror. Story 1.2에서는 `null`
 - `captures`: Story 1.2에서는 빈 배열
-- `postEnd`: Story 1.2에서는 `null`
+- `postEnd`: post-end truth가 아직 확정되지 않았으면 `null`, 확정되면 아래 셋 중 하나
+  - `export-waiting`: `{ state, evaluatedAt }`
+  - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel? , nextLocationLabel?, supportActionLabel? }`
+  - `phone-required`: `{ state, evaluatedAt, primaryActionLabel, unsafeActionWarning, showBoothAlias, supportActionLabel? }`
 - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 app-local-data 절대경로 아래의 현재 세션 루트(`.../booth-runtime/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `booth-runtime/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
 
 ## 변경 규칙
@@ -69,3 +77,5 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - React는 host가 반환한 DTO만 소비하고 durable truth를 직접 만들지 않는다.
 - 후속 스토리는 기존 필드를 유지한 채 확장한다.
 - 새 구현은 `activePreset`을 canonical field로 사용하고, `activePresetId`는 구버전 호환을 위해 함께 유지한다.
+- `catalogSnapshot`은 customer-visible top 6 preset만 고정하고, rollback이나 publish 이후에도 기존
+  active session manifest를 다시 쓰지 않는다.

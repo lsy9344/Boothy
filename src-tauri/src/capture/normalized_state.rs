@@ -7,19 +7,24 @@ use crate::{
         CaptureReadinessInputDto, CaptureRequestInputDto, CaptureRequestResultDto,
         HostErrorEnvelope,
     },
+    handoff::sync_post_end_state_in_dir,
     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
     session::{
-        session_manifest::{ActivePresetBinding, SessionManifest},
+        session_manifest::{
+            normalize_legacy_manifest, ActivePresetBinding, SessionManifest,
+            SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
+        },
         session_paths::SessionPaths,
         session_repository::write_session_manifest,
     },
+    timing::{sync_session_timing_in_dir, TimingPhase},
 };
 
 pub fn get_capture_readiness_in_dir(
     base_dir: &Path,
     input: CaptureReadinessInputDto,
 ) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
-    let manifest = read_session_manifest(base_dir, &input.session_id)?;
+    let manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
 
     Ok(normalize_capture_readiness(base_dir, &manifest))
 }
@@ -49,7 +54,8 @@ pub fn request_capture_in_dir(
         session_id: input.session_id,
         status: "capture-saved".into(),
         capture: capture.clone(),
-        readiness: CaptureReadinessDto::capture_saved(manifest.session_id.clone(), capture),
+        readiness: CaptureReadinessDto::capture_saved(manifest.session_id.clone(), capture)
+            .with_timing(manifest.timing.clone()),
     })
 }
 
@@ -61,7 +67,7 @@ pub fn delete_capture_in_dir(
     let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
     })?;
-    let mut manifest = read_session_manifest(base_dir, &input.session_id)?;
+    let mut manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
     let capture_index = manifest
         .captures
         .iter()
@@ -73,13 +79,18 @@ pub fn delete_capture_in_dir(
             )
         })?;
     let capture = manifest.captures[capture_index].clone();
+    let is_finalized_post_end = matches!(
+        manifest.lifecycle.stage.as_str(),
+        "completed" | "phone-required"
+    );
 
     if capture.session_id != input.session_id
         || !matches!(
             capture.render_status.as_str(),
             "previewReady" | "finalReady"
         )
-        || capture.post_end_state == "completed"
+        || capture.post_end_state != "activeSession"
+        || is_finalized_post_end
     {
         return Err(HostErrorEnvelope::capture_delete_blocked(
             "이 사진은 지금 정리할 수 없어요. 잠시 후 다시 확인해 주세요.",
@@ -113,11 +124,49 @@ pub fn normalize_capture_readiness(
     base_dir: &Path,
     manifest: &SessionManifest,
 ) -> CaptureReadinessDto {
-    if !has_valid_active_preset(base_dir, manifest.active_preset.as_ref()) {
-        return CaptureReadinessDto::preset_missing(manifest.session_id.clone());
+    let timing = manifest.timing.clone();
+    let latest_capture = manifest.captures.last().cloned();
+    let timing_phase = timing_phase(timing.as_ref());
+    let post_end = if timing_phase == TimingPhase::Ended
+        && matches!(
+            manifest.lifecycle.stage.as_str(),
+            "export-waiting" | "completed" | "phone-required"
+        ) {
+        manifest.post_end.clone()
+    } else {
+        None
+    };
+
+    if let Some(post_end_state) = post_end.clone() {
+        let readiness = match post_end_state.state() {
+            SESSION_POST_END_COMPLETED => {
+                CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture)
+            }
+            SESSION_POST_END_PHONE_REQUIRED => {
+                CaptureReadinessDto::phone_required(manifest.session_id.clone())
+            }
+            _ => CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture),
+        };
+
+        return readiness
+            .with_post_end(Some(post_end_state))
+            .with_timing(timing);
     }
 
-    let latest_capture = manifest.captures.last().cloned();
+    if timing_phase == TimingPhase::Ended {
+        return match manifest.lifecycle.stage.as_str() {
+            "phone-required" | "blocked" => {
+                CaptureReadinessDto::phone_required(manifest.session_id.clone()).with_timing(timing)
+            }
+            _ => CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture)
+                .with_timing(timing),
+        };
+    }
+
+    if !has_valid_active_preset(base_dir, manifest.active_preset.as_ref()) {
+        return CaptureReadinessDto::preset_missing(manifest.session_id.clone())
+            .with_timing(timing);
+    }
 
     match manifest.lifecycle.stage.as_str() {
         "ready" | "capture-ready" | "preset-selected" => match latest_capture {
@@ -126,35 +175,51 @@ pub fn normalize_capture_readiness(
                     || capture.render_status == "captureSaved" =>
             {
                 CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), Some(capture))
+                    .with_timing(timing)
             }
             Some(capture) if capture.render_status == "renderFailed" => {
-                CaptureReadinessDto::phone_required(manifest.session_id.clone())
+                CaptureReadinessDto::phone_required(manifest.session_id.clone()).with_timing(timing)
             }
             Some(capture) if capture.render_status == "previewReady" => {
                 CaptureReadinessDto::preview_ready(manifest.session_id.clone(), capture)
+                    .with_timing(timing)
+            }
+            _ if timing_phase == TimingPhase::Warning => {
+                CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture)
+                    .with_timing(timing)
             }
             _ => CaptureReadinessDto::ready(
                 manifest.session_id.clone(),
                 "captureReady",
                 latest_capture,
-            ),
+            )
+            .with_timing(timing),
         },
         "phone-required" | "blocked" => {
             CaptureReadinessDto::phone_required(manifest.session_id.clone())
+                .with_post_end(post_end)
+                .with_timing(timing)
         }
         "preview-waiting" => {
             CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), latest_capture)
+                .with_timing(timing)
         }
         "export-waiting" => {
             CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture)
+                .with_timing(timing)
         }
-        "completed" => CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture),
-        "warning" => CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture),
-        "helper-preparing" => CaptureReadinessDto::helper_preparing(manifest.session_id.clone()),
+        "completed" => CaptureReadinessDto::completed(manifest.session_id.clone(), latest_capture)
+            .with_post_end(post_end)
+            .with_timing(timing),
+        "warning" => CaptureReadinessDto::warning(manifest.session_id.clone(), latest_capture)
+            .with_timing(timing),
+        "helper-preparing" => {
+            CaptureReadinessDto::helper_preparing(manifest.session_id.clone()).with_timing(timing)
+        }
         "camera-preparing" | "preparing" => {
-            CaptureReadinessDto::camera_preparing(manifest.session_id.clone())
+            CaptureReadinessDto::camera_preparing(manifest.session_id.clone()).with_timing(timing)
         }
-        _ => CaptureReadinessDto::camera_preparing(manifest.session_id.clone()),
+        _ => CaptureReadinessDto::camera_preparing(manifest.session_id.clone()).with_timing(timing),
     }
 }
 
@@ -305,6 +370,28 @@ fn is_session_scoped_asset_path(paths: &SessionPaths, asset_path: &str) -> bool 
             .to_lowercase()
     );
 
+    if normalized_asset_path.starts_with("//") {
+        return false;
+    }
+
+    if normalized_asset_path
+        .split('/')
+        .any(|segment| segment == "..")
+    {
+        return false;
+    }
+
+    let is_absolute_path = normalized_asset_path.starts_with('/')
+        || normalized_asset_path
+            .chars()
+            .nth(1)
+            .map(|character| character == ':')
+            .unwrap_or(false);
+
+    if !is_absolute_path {
+        return false;
+    }
+
     normalized_asset_path.starts_with(&normalized_session_root)
 }
 
@@ -324,7 +411,42 @@ fn read_session_manifest(
         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
     })?;
 
-    serde_json::from_str(&manifest_bytes).map_err(|error| {
+    let mut manifest: SessionManifest = serde_json::from_str(&manifest_bytes).map_err(|error| {
         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
+    })?;
+
+    normalize_legacy_manifest(&mut manifest);
+
+    Ok(manifest)
+}
+
+fn read_session_manifest_with_timing(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<SessionManifest, HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let manifest = read_session_manifest(base_dir, session_id)?;
+
+    sync_session_timing_in_dir(
+        base_dir,
+        &paths.manifest_path,
+        manifest,
+        std::time::SystemTime::now(),
+    )
+    .and_then(|manifest| {
+        sync_post_end_state_in_dir(
+            base_dir,
+            &paths.manifest_path,
+            manifest,
+            std::time::SystemTime::now(),
+        )
     })
+}
+
+fn timing_phase(timing: Option<&crate::session::session_manifest::SessionTiming>) -> TimingPhase {
+    match timing.map(|value| value.phase.as_str()) {
+        Some("warning") => TimingPhase::Warning,
+        Some("ended") => TimingPhase::Ended,
+        _ => TimingPhase::Active,
+    }
 }

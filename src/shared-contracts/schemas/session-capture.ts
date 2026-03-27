@@ -28,12 +28,28 @@ export const captureRenderStatusSchema = z.enum([
   'renderFailed',
 ])
 
-export const capturePostEndStateSchema = z.enum([
+const capturePostEndStateInputSchema = z.enum([
   'activeSession',
   'postEndPending',
-  'handoffReady',
   'completed',
+  'localDeliverableReady',
+  'handoffReady',
+  'local-deliverable-ready',
+  'handoff-ready',
 ])
+
+export const capturePostEndStateSchema = capturePostEndStateInputSchema.transform(
+  (value) => {
+    switch (value) {
+      case 'local-deliverable-ready':
+        return 'localDeliverableReady' as const
+      case 'handoff-ready':
+        return 'handoffReady' as const
+      default:
+        return value
+    }
+  },
+)
 
 export const previewBudgetStateSchema = z.enum([
   'pending',
@@ -69,7 +85,7 @@ export const sessionCaptureRecordSchema = z.object({
   schemaVersion: z.literal(sessionCaptureSchemaVersion),
   sessionId: sessionIdSchema,
   boothAlias: z.string().trim().min(1),
-  activePresetId: presetIdSchema,
+  activePresetId: presetIdSchema.nullable().optional(),
   activePresetVersion: publishedVersionSchema,
   activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
   captureId: captureIdSchema,

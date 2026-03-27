@@ -9,7 +9,8 @@ use boothy_lib::{
     preset::preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
     session::{
         session_manifest::{
-            build_session_manifest_at, SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
+            build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
+            SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
         session_repository::{select_active_preset_in_dir, start_session_in_dir},
@@ -298,6 +299,89 @@ fn published_preset_catalog_only_returns_booth_safe_published_entries_and_limits
 }
 
 #[test]
+fn loading_the_preset_catalog_pins_the_current_catalog_revision_and_snapshot() {
+    let base_dir = unique_test_root("catalog-snapshot-pin");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.21",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+    create_published_bundle(
+        &catalog_root,
+        "preset_mono-pop",
+        "2026.03.20",
+        "Mono Pop",
+        "published",
+        true,
+        None,
+        None,
+    );
+
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should start before the first catalog load");
+    let pinned_catalog = load_preset_catalog_in_dir(
+        &base_dir,
+        LoadPresetCatalogInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("first catalog load should pin the current live snapshot");
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+    let manifest: SessionManifest =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest should exist"))
+            .expect("manifest should deserialize");
+
+    assert_eq!(pinned_catalog.presets.len(), 2);
+    assert_eq!(manifest.catalog_revision, Some(1));
+    assert_eq!(
+        manifest
+            .catalog_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.len()),
+        Some(2)
+    );
+    assert!(manifest
+        .catalog_snapshot
+        .as_ref()
+        .expect("snapshot should be persisted")
+        .iter()
+        .any(|preset| preset.preset_id == "preset_soft-glow"
+            && preset.published_version == "2026.03.21"));
+    assert!(manifest
+        .catalog_snapshot
+        .as_ref()
+        .expect("snapshot should be persisted")
+        .iter()
+        .any(|preset| preset.preset_id == "preset_mono-pop"
+            && preset.published_version == "2026.03.20"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn selecting_a_preset_persists_the_binding_in_session_manifest() {
     let base_dir = unique_test_root("preset-selection");
     let session = start_session_in_dir(
@@ -441,6 +525,108 @@ fn legacy_v1_manifest_with_only_active_preset_id_still_deserializes() {
 }
 
 #[test]
+fn legacy_v1_manifest_with_existing_captures_backfills_capture_preset_identity() {
+    let mut manifest: SessionManifest = serde_json::from_value(serde_json::json!({
+      "schemaVersion": "session-manifest/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "customer": {
+        "name": "Kim",
+        "phoneLastFour": "4821"
+      },
+      "createdAt": "2026-03-20T00:00:00Z",
+      "updatedAt": "2026-03-20T00:00:00Z",
+      "lifecycle": {
+        "status": "active",
+        "stage": "capture-ready"
+      },
+      "activePreset": {
+        "presetId": "preset_soft-glow",
+        "publishedVersion": "2026.03.20"
+      },
+      "activePresetId": "preset_soft-glow",
+      "activePresetDisplayName": "Soft Glow",
+      "captures": [{
+        "schemaVersion": "session-capture/v1",
+        "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "boothAlias": "Kim 4821",
+        "activePresetVersion": "2026.03.20",
+        "captureId": "capture_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "requestId": "request_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "raw": {
+          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg",
+          "persistedAtMs": 100
+        },
+        "preview": {
+          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg",
+          "enqueuedAtMs": 120,
+          "readyAtMs": 200
+        },
+        "final": {
+          "assetPath": null,
+          "readyAtMs": null
+        },
+        "renderStatus": "previewReady",
+        "postEndState": "activeSession",
+        "timing": {
+          "captureAcknowledgedAtMs": 100,
+          "previewVisibleAtMs": 200,
+          "captureBudgetMs": 1000,
+          "previewBudgetMs": 5000,
+          "previewBudgetState": "withinBudget"
+        }
+      }],
+      "postEnd": null
+    }))
+    .expect("legacy manifest with captures should deserialize");
+
+    normalize_legacy_manifest(&mut manifest);
+
+    assert_eq!(
+        manifest.captures[0].active_preset_id.as_deref(),
+        Some("preset_soft-glow")
+    );
+    assert_eq!(
+        manifest.captures[0].active_preset_display_name.as_deref(),
+        Some("Soft Glow")
+    );
+}
+
+#[test]
+fn legacy_phone_required_post_end_without_evaluated_at_still_deserializes() {
+    let manifest: SessionManifest = serde_json::from_value(serde_json::json!({
+      "schemaVersion": "session-manifest/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "customer": {
+        "name": "Kim",
+        "phoneLastFour": "4821"
+      },
+      "createdAt": "2026-03-20T00:00:00Z",
+      "updatedAt": "2026-03-20T00:00:00Z",
+      "lifecycle": {
+        "status": "active",
+        "stage": "phone-required"
+      },
+      "activePresetId": null,
+      "captures": [],
+      "postEnd": {
+        "state": "phone-required",
+        "primaryActionLabel": "가까운 직원에게 알려 주세요.",
+        "supportActionLabel": "직원에게 도움을 요청해 주세요.",
+        "unsafeActionWarning": "다시 찍기나 기기 조작은 잠시 멈춰 주세요.",
+        "showBoothAlias": false
+      }
+    }))
+    .expect("legacy phone-required post-end should deserialize");
+
+    let post_end = manifest.post_end.expect("legacy post-end should exist");
+
+    assert_eq!(post_end.state(), "phone-required");
+    assert_eq!(post_end.evaluated_at(), "1970-01-01T00:00:00Z");
+}
+
+#[test]
 fn selecting_a_preset_preserves_a_later_lifecycle_stage() {
     let base_dir = unique_test_root("preset-selection-stage");
     let session = start_session_in_dir(
@@ -494,6 +680,113 @@ fn selecting_a_preset_preserves_a_later_lifecycle_stage() {
     .expect("manifest should deserialize");
 
     assert_eq!(persisted_manifest.lifecycle.stage, "capture-ready");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn selecting_a_preset_is_blocked_once_exact_end_has_projected_post_end_truth() {
+    let base_dir = unique_test_root("preset-selection-post-end-block");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should exist before selecting a preset");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+    create_published_bundle(
+        &catalog_root,
+        "preset_afterglow",
+        "2026.03.20",
+        "Afterglow",
+        "published",
+        true,
+        None,
+        None,
+    );
+
+    select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("initial preset selection should persist");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    let ended_at = current_timestamp(
+        SystemTime::now()
+            .checked_sub(Duration::from_secs(10))
+            .expect("past timestamp should be valid"),
+    )
+    .expect("ended timestamp should serialize");
+    let warning_at = current_timestamp(
+        SystemTime::now()
+            .checked_sub(Duration::from_secs(70))
+            .expect("past timestamp should be valid"),
+    )
+    .expect("warning timestamp should serialize");
+    let timing = manifest
+        .timing
+        .as_mut()
+        .expect("session timing should exist");
+    timing.warning_at = warning_at;
+    timing.adjusted_end_at = ended_at;
+    timing.phase = "active".into();
+    timing.capture_allowed = true;
+    timing.warning_triggered_at = None;
+    timing.ended_triggered_at = None;
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let error = select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_afterglow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect_err("post-end sessions should block preset switching");
+
+    assert_eq!(error.code, "capture-not-ready");
+    assert_eq!(
+        error
+            .readiness
+            .as_ref()
+            .map(|readiness| readiness.can_capture),
+        Some(false)
+    );
+    assert_eq!(
+        error
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.timing.as_ref())
+            .map(|timing| timing.phase.as_str()),
+        Some("ended")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -561,6 +854,78 @@ fn selecting_the_same_preset_twice_keeps_the_existing_manifest_timestamp() {
 
     assert_eq!(result.manifest.updated_at, "2026-03-20T00:05:00Z");
     assert_eq!(persisted_manifest.updated_at, "2026-03-20T00:05:00Z");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn selecting_the_same_preset_backfills_missing_display_name_without_bumping_timestamp() {
+    let base_dir = unique_test_root("preset-selection-backfill-display-name");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should exist before selecting a preset");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+
+    select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("first selection should persist");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.updated_at = "2026-03-20T00:05:00Z".into();
+    manifest.active_preset_display_name = None;
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let result = select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("re-selecting the same preset should backfill display metadata");
+
+    let persisted_manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+
+    assert_eq!(result.manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(persisted_manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(
+        persisted_manifest.active_preset_display_name.as_deref(),
+        Some("Soft Glow")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }

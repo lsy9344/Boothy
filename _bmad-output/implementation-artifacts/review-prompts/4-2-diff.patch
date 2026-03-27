@@ -1,0 +1,2399 @@
+diff --git a/docs/contracts/authoring-publication-payload.md b/docs/contracts/authoring-publication-payload.md
+new file mode 100644
+index 0000000..93f344a
+--- /dev/null
++++ b/docs/contracts/authoring-publication-payload.md
+@@ -0,0 +1,73 @@
++# Authoring Validation 계약
++
++## 목적
++
++이 문서는 Story 4.2에서 사용하는 internal authoring payload와 validation result 기준을 정리한다.
++
++## Draft Preset Artifact v1
++
++- schemaVersion: `draft-preset-artifact/v1`
++- presetId
++- displayName
++- draftVersion
++- lifecycleState: `draft` 또는 `validated`
++- darktableVersion
++- darktableProjectPath
++- xmpTemplatePath
++- previewProfile
++  - profileId
++  - displayName
++  - outputColorSpace
++- finalProfile
++  - profileId
++  - displayName
++  - outputColorSpace
++- noisePolicy
++  - policyId
++  - displayName
++  - reductionMode
++- preview
++  - assetPath
++  - altText
++- sampleCut
++  - assetPath
++  - altText
++- validation
++  - status: `not-run` | `passed` | `failed`
++  - latestReport
++  - history
++- updatedAt
++
++## Validation Report v1
++
++- schemaVersion: `draft-preset-validation/v1`
++- presetId
++- draftVersion
++- lifecycleState: `draft` 또는 `validated`
++- status: `passed` | `failed`
++- checkedAt
++- findings[]
++  - ruleCode
++  - severity: `error` | `warning`
++  - fieldPath: nullable
++  - message
++  - guidance
++
++## Host Validation 책임
++
++- React는 host가 반환한 validation result를 표시만 한다.
++- Rust host는 최소 아래 규칙을 평가한다.
++  - 필수 artifact 존재 여부
++  - draft root 내부의 안전한 경로 여부
++  - pinned darktable version 일치 여부
++  - preview/final profile completeness
++  - preview/sample-cut asset completeness
++  - XMP template의 render compatibility 힌트 존재 여부
++
++## 상태 전이 규칙
++
++- save/create는 항상 `draft` 상태를 쓴다.
++- validation 통과 시에만 `draft -> validated`
++- validation 실패 시 lifecycle은 `draft` 유지
++- 검증 결과는 validation history에 누적한다.
++- `validated`는 내부 approval 준비 상태이며, published catalog나 active session을 직접 바꾸지 않는다.
+diff --git a/docs/contracts/preset-bundle.md b/docs/contracts/preset-bundle.md
+new file mode 100644
+index 0000000..daea6f7
+--- /dev/null
++++ b/docs/contracts/preset-bundle.md
+@@ -0,0 +1,32 @@
++# 프리셋 번들 계약
++
++## 목적
++
++이 문서는 현재 booth runtime이 읽는 `published-preset-bundle/v1`의 닫힌 기준을 기록한다.
++Story 4.2의 draft/validated authoring artifact는 이 published bundle을 직접 바꾸지 않는다.
++
++## Published Preset Bundle v1
++
++- schemaVersion: `published-preset-bundle/v1`
++- presetId: `preset_*` 형식의 stable identifier
++- displayName: booth 고객에게 보이는 이름
++- publishedVersion: `YYYY.MM.DD`
++- lifecycleStatus: `published`
++- boothStatus: `booth-safe`
++- preview:
++  - kind: `preview-tile` 또는 `sample-cut`
++  - assetPath: bundle root 내부 파일
++  - altText: 고객에게 보여 줄 설명
++
++## 런타임 로더 규칙
++
++- booth catalog loader는 `preset-catalog/published/**/bundle.json`만 읽는다.
++- `lifecycleStatus != published` 또는 `boothStatus != booth-safe`면 무시한다.
++- preview 자산이 bundle root 밖으로 벗어나면 무시한다.
++- draft 또는 validated artifact는 이 로더 경계에 들어오면 안 된다.
++
++## Story 4.2와의 관계
++
++- Story 4.2는 draft artifact를 host에서 검증해 `validated` 내부 상태를 만든다.
++- `validated`는 approval 준비 상태일 뿐, published와 같은 의미가 아니다.
++- active session manifest, active preset binding, published catalog는 Story 4.2에서 직접 바뀌지 않는다.
+diff --git a/src-tauri/src/commands/preset_commands.rs b/src-tauri/src/commands/preset_commands.rs
+index d1cf49b..a4ce8c3 100644
+--- a/src-tauri/src/commands/preset_commands.rs
++++ b/src-tauri/src/commands/preset_commands.rs
+@@ -1,11 +1,20 @@
+ use tauri::Manager;
+ 
+ use crate::{
++    commands::runtime_commands::resolve_runtime_capability_snapshot,
+     contracts::dto::{
++        AuthoringWorkspaceResultDto, DraftPresetEditPayloadDto, DraftPresetSummaryDto,
+         HostErrorEnvelope, LoadPresetCatalogInputDto, PresetCatalogResultDto,
+-        PresetSelectionInputDto, PresetSelectionResultDto,
++        PresetSelectionInputDto, PresetSelectionResultDto, ValidateDraftPresetInputDto,
++        ValidateDraftPresetResultDto,
++    },
++    preset::{
++        authoring_pipeline::{
++            create_draft_preset_in_dir, load_authoring_workspace_in_dir,
++            save_draft_preset_in_dir, validate_draft_preset_in_dir,
++        },
++        preset_catalog::load_preset_catalog_in_dir,
+     },
+-    preset::preset_catalog::load_preset_catalog_in_dir,
+     session::session_repository::{resolve_app_session_base_dir, select_active_preset_in_dir},
+ };
+ 
+@@ -34,3 +43,66 @@ pub fn select_active_preset(
+ 
+     select_active_preset_in_dir(&base_dir, input)
+ }
++
++#[tauri::command]
++pub fn load_authoring_workspace(
++    app: tauri::AppHandle,
++    window: tauri::Window,
++) -> Result<AuthoringWorkspaceResultDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let capability_snapshot = resolve_runtime_capability_snapshot();
++    crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
++
++    load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
++}
++
++#[tauri::command]
++pub fn create_draft_preset(
++    app: tauri::AppHandle,
++    window: tauri::Window,
++    input: DraftPresetEditPayloadDto,
++) -> Result<DraftPresetSummaryDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let capability_snapshot = resolve_runtime_capability_snapshot();
++    crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
++
++    create_draft_preset_in_dir(&base_dir, &capability_snapshot, input)
++}
++
++#[tauri::command]
++pub fn save_draft_preset(
++    app: tauri::AppHandle,
++    window: tauri::Window,
++    input: DraftPresetEditPayloadDto,
++) -> Result<DraftPresetSummaryDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let capability_snapshot = resolve_runtime_capability_snapshot();
++    crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
++
++    save_draft_preset_in_dir(&base_dir, &capability_snapshot, input)
++}
++
++#[tauri::command]
++pub fn validate_draft_preset(
++    app: tauri::AppHandle,
++    window: tauri::Window,
++    input: ValidateDraftPresetInputDto,
++) -> Result<ValidateDraftPresetResultDto, HostErrorEnvelope> {
++    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
++        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
++    })?;
++    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
++    let capability_snapshot = resolve_runtime_capability_snapshot();
++    crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
++
++    validate_draft_preset_in_dir(&base_dir, &capability_snapshot, input)
++}
+diff --git a/src-tauri/src/contracts/dto.rs b/src-tauri/src/contracts/dto.rs
+index 800f438..4c13cf4 100644
+--- a/src-tauri/src/contracts/dto.rs
++++ b/src-tauri/src/contracts/dto.rs
+@@ -1,7 +1,9 @@
++use std::path::{Component, Path};
++
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::session::session_manifest::{
+-    ActivePresetBinding, SessionCaptureRecord, SessionManifest,
++    ActivePresetBinding, SessionCaptureRecord, SessionManifest, SessionPostEnd, SessionTiming,
+ };
+ 
+ const SESSION_ID_PREFIX: &str = "session_";
+@@ -46,6 +48,29 @@ pub fn is_non_blank(value: &str) -> bool {
+     !value.trim().is_empty()
+ }
+ 
++pub fn is_safe_workspace_reference(reference: &str) -> bool {
++    if !is_non_blank(reference) {
++        return false;
++    }
++
++    let path = Path::new(reference);
++
++    if path.is_absolute() {
++        return false;
++    }
++
++    let mut saw_normal_component = false;
++
++    for component in path.components() {
++        match component {
++            Component::Normal(_) => saw_normal_component = true,
++            _ => return false,
++        }
++    }
++
++    saw_normal_component
++}
++
+ pub fn validate_session_id(session_id: &str) -> Result<(), HostErrorEnvelope> {
+     if is_valid_session_id(session_id) {
+         Ok(())
+@@ -69,6 +94,64 @@ pub fn validate_preset_selection_input(
+     Ok(())
+ }
+ 
++pub fn validate_draft_preset_edit_input(
++    input: &DraftPresetEditPayloadDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    if !is_non_blank(&input.display_name) {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft 이름을 입력해 주세요.",
++        ));
++    }
++
++    if input.lifecycle_state != "draft" {
++        return Err(HostErrorEnvelope::validation_message(
++            "draft 저장 요청은 항상 draft lifecycle이어야 해요.",
++        ));
++    }
++
++    if !is_non_blank(&input.darktable_version)
++        || !is_safe_workspace_reference(&input.darktable_project_path)
++        || !is_safe_workspace_reference(&input.xmp_template_path)
++        || !is_non_blank(&input.preview_profile.profile_id)
++        || !is_non_blank(&input.preview_profile.display_name)
++        || !is_non_blank(&input.preview_profile.output_color_space)
++        || !is_non_blank(&input.final_profile.profile_id)
++        || !is_non_blank(&input.final_profile.display_name)
++        || !is_non_blank(&input.final_profile.output_color_space)
++        || !is_non_blank(&input.noise_policy.policy_id)
++        || !is_non_blank(&input.noise_policy.display_name)
++        || !is_non_blank(&input.noise_policy.reduction_mode)
++        || !is_safe_workspace_reference(&input.preview.asset_path)
++        || !is_non_blank(&input.preview.alt_text)
++        || !is_safe_workspace_reference(&input.sample_cut.asset_path)
++        || !is_non_blank(&input.sample_cut.alt_text)
++    {
++        return Err(HostErrorEnvelope::validation_message(
++            "작업공간 안의 안전한 draft metadata와 artifact 참조만 저장할 수 있어요.",
++        ));
++    }
++
++    Ok(())
++}
++
++pub fn validate_draft_validation_input(
++    input: &ValidateDraftPresetInputDto,
++) -> Result<(), HostErrorEnvelope> {
++    if !is_valid_preset_id(&input.preset_id) {
++        return Err(HostErrorEnvelope::validation_message(
++            "검증할 draft presetId 형식을 다시 확인해 주세요.",
++        ));
++    }
++
++    Ok(())
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct SessionStartInputDto {
+@@ -100,6 +183,128 @@ pub struct PublishedPresetSummaryDto {
+     pub preview: PresetPreviewAssetDto,
+ }
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetPreviewReferenceDto {
++    pub asset_path: String,
++    pub alt_text: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftRenderProfileDto {
++    pub profile_id: String,
++    pub display_name: String,
++    pub output_color_space: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftNoisePolicyDto {
++    pub policy_id: String,
++    pub display_name: String,
++    pub reduction_mode: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationFindingDto {
++    pub rule_code: String,
++    pub severity: String,
++    pub field_path: Option<String>,
++    pub message: String,
++    pub guidance: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationReportDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub draft_version: u32,
++    pub lifecycle_state: String,
++    pub status: String,
++    pub checked_at: String,
++    pub findings: Vec<DraftValidationFindingDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftValidationSnapshotDto {
++    pub status: String,
++    pub latest_report: Option<DraftValidationReportDto>,
++    pub history: Vec<DraftValidationReportDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetSummaryDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub display_name: String,
++    pub draft_version: u32,
++    pub lifecycle_state: String,
++    pub darktable_version: String,
++    pub darktable_project_path: String,
++    pub xmp_template_path: String,
++    pub preview_profile: DraftRenderProfileDto,
++    pub final_profile: DraftRenderProfileDto,
++    pub noise_policy: DraftNoisePolicyDto,
++    pub preview: DraftPresetPreviewReferenceDto,
++    pub sample_cut: DraftPresetPreviewReferenceDto,
++    pub description: Option<String>,
++    pub notes: Option<String>,
++    pub validation: DraftValidationSnapshotDto,
++    pub updated_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct DraftPresetEditPayloadDto {
++    pub preset_id: String,
++    pub display_name: String,
++    pub lifecycle_state: String,
++    pub darktable_version: String,
++    pub darktable_project_path: String,
++    pub xmp_template_path: String,
++    pub preview_profile: DraftRenderProfileDto,
++    pub final_profile: DraftRenderProfileDto,
++    pub noise_policy: DraftNoisePolicyDto,
++    pub preview: DraftPresetPreviewReferenceDto,
++    pub sample_cut: DraftPresetPreviewReferenceDto,
++    pub description: Option<String>,
++    pub notes: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ValidateDraftPresetInputDto {
++    pub preset_id: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct AuthoringWorkspaceResultDto {
++    pub schema_version: String,
++    pub supported_lifecycle_states: Vec<String>,
++    pub drafts: Vec<DraftPresetSummaryDto>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ValidateDraftPresetResultDto {
++    pub schema_version: String,
++    pub draft: DraftPresetSummaryDto,
++    pub report: DraftValidationReportDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CapabilitySnapshotDto {
++    pub is_admin_authenticated: bool,
++    pub allowed_surfaces: Vec<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct PresetCatalogResultDto {
+@@ -156,6 +361,10 @@ pub struct CaptureReadinessDto {
+     pub support_message: String,
+     pub reason_code: String,
+     pub latest_capture: Option<SessionCaptureRecord>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub post_end: Option<SessionPostEnd>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub timing: Option<SessionTiming>,
+ }
+ 
+ impl CaptureReadinessDto {
+@@ -181,9 +390,21 @@ impl CaptureReadinessDto {
+             support_message: support_message.into(),
+             reason_code: reason_code.into(),
+             latest_capture,
++            post_end: None,
++            timing: None,
+         }
+     }
+ 
++    pub fn with_post_end(mut self, post_end: Option<SessionPostEnd>) -> Self {
++        self.post_end = post_end;
++        self
++    }
++
++    pub fn with_timing(mut self, timing: Option<SessionTiming>) -> Self {
++        self.timing = timing;
++        self
++    }
++
+     pub fn preset_missing(session_id: impl Into<String>) -> Self {
+         let session_id = session_id.into();
+ 
+@@ -259,12 +480,12 @@ impl CaptureReadinessDto {
+ 
+         Self::build(
+             session_id,
+-            "previewWaiting",
+-            "Preparing",
++            "blocked",
++            "Export Waiting",
+             false,
+             "wait",
+-            "마무리 준비 중이에요.",
+-            "다음 안내가 나올 때까지 기다려 주세요.",
++            "촬영은 끝났고 결과를 준비하고 있어요.",
++            "다음 안내가 나올 때까지 잠시만 기다려 주세요.",
+             "export-waiting",
+             latest_capture,
+         )
+@@ -279,10 +500,10 @@ impl CaptureReadinessDto {
+         Self::build(
+             session_id,
+             "blocked",
+-            "Preparing",
++            "Completed",
+             false,
+             "wait",
+-            "이 촬영은 마무리되었어요.",
++            "부스 준비가 끝났어요.",
+             "다음 안내를 확인해 주세요.",
+             "completed",
+             latest_capture,
+@@ -324,6 +545,25 @@ impl CaptureReadinessDto {
+         )
+     }
+ 
++    pub fn ended(
++        session_id: impl Into<String>,
++        latest_capture: Option<SessionCaptureRecord>,
++    ) -> Self {
++        let session_id = session_id.into();
++
++        Self::build(
++            session_id,
++            "blocked",
++            "Session Ended",
++            false,
++            "wait",
++            "촬영 시간이 끝났어요.",
++            "마무리 안내가 나올 때까지 잠시만 기다려 주세요.",
++            "ended",
++            latest_capture,
++        )
++    }
++
+     pub fn ready(
+         session_id: impl Into<String>,
+         surface_state: impl Into<String>,
+@@ -443,6 +683,15 @@ pub struct HostErrorEnvelope {
+ }
+ 
+ impl HostErrorEnvelope {
++    pub fn capability_denied(message: impl Into<String>) -> Self {
++        Self {
++            code: "capability-denied".into(),
++            message: message.into(),
++            readiness: None,
++            field_errors: None,
++        }
++    }
++
+     pub fn validation_message(message: impl Into<String>) -> Self {
+         Self {
+             code: "validation-error".into(),
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 39ec486..211998b 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,8 +1,12 @@
++use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
++
+ pub mod capture;
+ pub mod commands;
+ pub mod contracts;
++pub mod handoff;
+ pub mod preset;
+ pub mod session;
++pub mod timing;
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
+@@ -15,13 +19,38 @@ pub fn run() {
+                         .build(),
+                 )?;
+             }
++
++            let capability_snapshot = commands::runtime_commands::resolve_runtime_capability_snapshot();
++            let should_open_authoring_window = capability_snapshot.is_admin_authenticated
++                && capability_snapshot
++                    .allowed_surfaces
++                    .iter()
++                    .any(|surface| surface == "authoring");
++
++            if should_open_authoring_window && app.get_webview_window("authoring-window").is_none() {
++                WebviewWindowBuilder::new(
++                    app,
++                    "authoring-window",
++                    WebviewUrl::App("index.html".into()),
++                )
++                .title("Boothy Authoring")
++                .inner_size(1280.0, 840.0)
++                .resizable(true)
++                .build()?;
++            }
++
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
+             commands::capture_commands::get_capture_readiness,
+             commands::capture_commands::delete_capture,
+             commands::capture_commands::request_capture,
++            commands::runtime_commands::get_capability_snapshot,
+             commands::preset_commands::load_preset_catalog,
++            commands::preset_commands::load_authoring_workspace,
++            commands::preset_commands::create_draft_preset,
++            commands::preset_commands::save_draft_preset,
++            commands::preset_commands::validate_draft_preset,
+             commands::preset_commands::select_active_preset,
+             commands::session_commands::start_session
+         ])
+diff --git a/src/index.css b/src/index.css
+index e7b933e..2b35395 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -187,6 +187,12 @@ select {
+   cursor: wait;
+ }
+ 
++.surface-card__action--secondary {
++  border: 1px solid rgba(243, 200, 142, 0.22);
++  background: rgba(255, 255, 255, 0.04);
++  color: #f4efe6;
++}
++
+ .preset-card {
+   display: grid;
+   gap: 14px;
+@@ -262,6 +268,76 @@ select {
+   gap: 16px;
+ }
+ 
++.session-timing-panel {
++  display: grid;
++  gap: 18px;
++  border-color: rgba(243, 200, 142, 0.2);
++  background:
++    radial-gradient(circle at top left, rgba(243, 200, 142, 0.12), transparent 34%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.session-timing-panel--warning {
++  border-color: rgba(255, 191, 102, 0.42);
++  box-shadow: 0 18px 42px rgba(88, 43, 0, 0.18);
++}
++
++.session-timing-panel--ended {
++  border-color: rgba(255, 144, 112, 0.4);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.12), transparent 34%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.session-timing-panel__header {
++  display: grid;
++  gap: 10px;
++}
++
++.session-timing-panel__badge {
++  width: fit-content;
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(243, 200, 142, 0.16);
++  color: #f3c88e;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.session-timing-panel--warning .session-timing-panel__badge {
++  background: rgba(255, 191, 102, 0.18);
++  color: #ffd38e;
++}
++
++.session-timing-panel--ended .session-timing-panel__badge {
++  background: rgba(255, 144, 112, 0.18);
++  color: #ffc2b2;
++}
++
++.session-timing-panel__grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++  gap: 12px;
++}
++
++.session-timing-panel__label {
++  margin: 0 0 6px;
++  color: #d2c7bf;
++  font-size: 0.88rem;
++}
++
++.session-timing-panel__value {
++  margin: 0;
++  color: #f4efe6;
++  font-size: clamp(1.4rem, 4vw, 2rem);
++  font-weight: 700;
++}
++
++.session-timing-panel__value--countdown {
++  font-variant-numeric: tabular-nums;
++}
++
+ .readiness-screen__action-card {
+   display: flex;
+   justify-content: center;
+@@ -301,6 +377,67 @@ select {
+   font-weight: 600;
+ }
+ 
++.handoff-ready-panel,
++.phone-required-support-card {
++  display: grid;
++  gap: 14px;
++}
++
++.handoff-ready-panel {
++  border-color: rgba(139, 206, 170, 0.28);
++  background:
++    radial-gradient(circle at top left, rgba(139, 206, 170, 0.14), transparent 36%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.phone-required-support-card {
++  border-color: rgba(255, 144, 112, 0.32);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.16), transparent 36%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.handoff-ready-panel__badge,
++.phone-required-support-card__badge,
++.readiness-screen__post-end-label {
++  width: fit-content;
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(255, 255, 255, 0.08);
++  color: #f4efe6;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.handoff-ready-panel__badge {
++  background: rgba(139, 206, 170, 0.18);
++  color: #dff6e9;
++}
++
++.phone-required-support-card__badge,
++.readiness-screen__post-end--phone-required .readiness-screen__post-end-label {
++  background: rgba(255, 144, 112, 0.18);
++  color: #ffd1c5;
++}
++
++.handoff-ready-panel__section,
++.phone-required-support-card__section,
++.readiness-screen__post-end {
++  display: grid;
++  gap: 6px;
++}
++
++.phone-required-support-card__support,
++.phone-required-support-card__warning {
++  margin: 0;
++}
++
++.phone-required-support-card__warning {
++  color: #ffd1c5;
++  font-weight: 600;
++}
++
+ .latest-photo-rail {
+   display: grid;
+   gap: 16px;
+@@ -409,6 +546,189 @@ select {
+   color: #f4efe6;
+ }
+ 
++.authoring-shell {
++  display: grid;
++  gap: 18px;
++}
++
++.authoring-grid {
++  display: grid;
++  gap: 18px;
++  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
++}
++
++.authoring-stack {
++  display: grid;
++  gap: 18px;
++}
++
++.authoring-card {
++  display: grid;
++  gap: 16px;
++}
++
++.authoring-card--emphasis {
++  border-color: rgba(243, 200, 142, 0.24);
++  background:
++    radial-gradient(circle at top left, rgba(243, 200, 142, 0.12), transparent 38%),
++    rgba(255, 255, 255, 0.04);
++}
++
++.authoring-card__header {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: space-between;
++  gap: 12px;
++  align-items: flex-start;
++}
++
++.authoring-card__eyebrow {
++  margin: 0 0 6px;
++  color: #f3c88e;
++  font-size: 0.8rem;
++  font-weight: 700;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++}
++
++.authoring-card__badge {
++  margin: 0;
++  padding: 6px 10px;
++  border-radius: 999px;
++  background: rgba(255, 255, 255, 0.06);
++  color: #f4efe6;
++  font-size: 0.82rem;
++  font-weight: 700;
++}
++
++.authoring-card__support,
++.authoring-form__note,
++.authoring-draft-list__empty,
++.authoring-status {
++  margin: 0;
++  color: #d2c7bf;
++}
++
++.authoring-status--success {
++  color: #d9f0df;
++}
++
++.authoring-status--error {
++  color: #ffb3a5;
++}
++
++.authoring-draft-list {
++  display: grid;
++  gap: 10px;
++}
++
++.authoring-draft-list__item {
++  display: grid;
++  gap: 4px;
++  padding: 14px;
++  border: 1px solid rgba(255, 255, 255, 0.08);
++  border-radius: 18px;
++  background: rgba(255, 255, 255, 0.03);
++  color: inherit;
++  text-align: left;
++  cursor: pointer;
++}
++
++.authoring-draft-list__item--selected {
++  border-color: rgba(243, 200, 142, 0.52);
++  box-shadow: 0 16px 34px rgba(12, 8, 6, 0.2);
++}
++
++.authoring-draft-list__name {
++  font-weight: 700;
++}
++
++.authoring-draft-list__meta {
++  color: #d2c7bf;
++  font-size: 0.88rem;
++}
++
++.authoring-form {
++  display: grid;
++  gap: 16px;
++}
++
++.authoring-form__group {
++  display: grid;
++  gap: 16px;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++}
++
++.authoring-form__textarea {
++  min-height: 112px;
++  resize: vertical;
++}
++
++.authoring-form__footer {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: space-between;
++  gap: 12px;
++  align-items: center;
++}
++
++.authoring-form__actions {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 10px;
++}
++
++.authoring-validation {
++  display: grid;
++  gap: 14px;
++}
++
++.authoring-validation__summary,
++.authoring-validation__meta,
++.authoring-validation__message,
++.authoring-validation__guidance {
++  margin: 0;
++}
++
++.authoring-validation__list {
++  display: grid;
++  gap: 12px;
++  margin: 0;
++  padding: 0;
++  list-style: none;
++}
++
++.authoring-validation__item {
++  display: grid;
++  gap: 6px;
++  padding: 14px;
++  border-radius: 18px;
++  background: rgba(255, 255, 255, 0.03);
++  border: 1px solid rgba(255, 255, 255, 0.08);
++}
++
++.authoring-validation__item--error {
++  border-color: rgba(255, 144, 112, 0.3);
++  background:
++    radial-gradient(circle at top left, rgba(255, 144, 112, 0.12), transparent 36%),
++    rgba(255, 255, 255, 0.03);
++}
++
++.authoring-validation__meta {
++  color: #f3c88e;
++  font-size: 0.84rem;
++  font-weight: 700;
++}
++
++.authoring-validation__message {
++  color: #f4efe6;
++  font-weight: 600;
++}
++
++.authoring-validation__guidance {
++  color: #d2c7bf;
++}
++
+ @media (max-width: 640px) {
+   .surface-layout {
+     padding: 20px 14px 28px;
+@@ -418,4 +738,9 @@ select {
+     padding: 24px 18px;
+     border-radius: 22px;
+   }
++
++  .authoring-grid,
++  .authoring-form__group {
++    grid-template-columns: 1fr;
++  }
+ }
+diff --git a/src/preset-authoring/screens/PresetLibraryScreen.tsx b/src/preset-authoring/screens/PresetLibraryScreen.tsx
+index f754b6a..5362b1f 100644
+--- a/src/preset-authoring/screens/PresetLibraryScreen.tsx
++++ b/src/preset-authoring/screens/PresetLibraryScreen.tsx
+@@ -1,16 +1,836 @@
++import { startTransition, useEffect, useMemo, useState } from 'react'
++
++import type {
++  AuthoringWorkspaceResult,
++  DraftPresetEditPayload,
++  DraftPresetSummary,
++  DraftValidationFinding,
++  DraftValidationReport,
++  HostErrorEnvelope,
++} from '../../shared-contracts'
+ import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
++import { usePresetAuthoringService } from '../providers/use-preset-authoring-service'
++
++type ScreenState =
++  | {
++      tone: 'idle'
++      message: string
++    }
++  | {
++      tone: 'loading' | 'saving' | 'validating' | 'success' | 'error'
++      message: string
++    }
++
++type EditorMode = 'create' | 'edit'
++
++const EMPTY_DRAFT_FORM: DraftPresetEditPayload = {
++  presetId: 'preset_new-draft',
++  displayName: '',
++  lifecycleState: 'draft',
++  darktableVersion: '5.4.1',
++  darktableProjectPath: 'darktable/project.dtpreset',
++  xmpTemplatePath: 'xmp/template.xmp',
++  previewProfile: {
++    profileId: 'preview-standard',
++    displayName: 'Preview Standard',
++    outputColorSpace: 'sRGB',
++  },
++  finalProfile: {
++    profileId: 'final-standard',
++    displayName: 'Final Standard',
++    outputColorSpace: 'sRGB',
++  },
++  noisePolicy: {
++    policyId: 'balanced-noise',
++    displayName: 'Balanced Noise',
++    reductionMode: 'balanced',
++  },
++  preview: {
++    assetPath: 'previews/cover.jpg',
++    altText: '',
++  },
++  sampleCut: {
++    assetPath: 'samples/sample-cut.jpg',
++    altText: '',
++  },
++  description: '',
++  notes: '',
++}
++
++function mapDraftToForm(draft: DraftPresetSummary): DraftPresetEditPayload {
++  return {
++    presetId: draft.presetId,
++    displayName: draft.displayName,
++    lifecycleState: 'draft',
++    darktableVersion: draft.darktableVersion,
++    darktableProjectPath: draft.darktableProjectPath,
++    xmpTemplatePath: draft.xmpTemplatePath,
++    previewProfile: draft.previewProfile,
++    finalProfile: draft.finalProfile,
++    noisePolicy: draft.noisePolicy,
++    preview: draft.preview,
++    sampleCut: draft.sampleCut,
++    description: draft.description ?? '',
++    notes: draft.notes ?? '',
++  }
++}
++
++function findDraftById(
++  workspace: AuthoringWorkspaceResult | null,
++  presetId: string | null,
++) {
++  if (!workspace || !presetId) {
++    return null
++  }
++
++  return workspace.drafts.find((draft) => draft.presetId === presetId) ?? null
++}
++
++function normalizeHostMessage(error: unknown) {
++  const hostError = error as HostErrorEnvelope | undefined
++
++  return (
++    hostError?.message ??
++    '지금은 draft 작업을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.'
++  )
++}
++
++function isCapabilityDenied(error: unknown) {
++  const hostError = error as HostErrorEnvelope | undefined
++
++  return hostError?.code === 'capability-denied'
++}
++
++function formatLifecycleLabel(draft: DraftPresetSummary) {
++  return draft.lifecycleState === 'validated' ? 'approval 준비 완료' : 'draft'
++}
++
++function formatValidationStatus(report: DraftValidationReport | null) {
++  if (!report) {
++    return '검증 전'
++  }
++
++  return report.status === 'passed' ? '통과' : '수정 필요'
++}
++
++function formatFindingTone(finding: DraftValidationFinding) {
++  return finding.severity === 'error' ? '조치 필요' : '참고'
++}
+ 
+ export function PresetLibraryScreen() {
++  const presetAuthoringService = usePresetAuthoringService()
++  const [workspace, setWorkspace] = useState<AuthoringWorkspaceResult | null>(null)
++  const [mode, setMode] = useState<EditorMode>('create')
++  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null)
++  const [draftForm, setDraftForm] = useState<DraftPresetEditPayload>(EMPTY_DRAFT_FORM)
++  const [hostAccessDenied, setHostAccessDenied] = useState(false)
++  const [screenState, setScreenState] = useState<ScreenState>({
++    tone: 'loading',
++    message: 'draft 작업공간을 준비하고 있어요.',
++  })
++
++  useEffect(() => {
++    let active = true
++
++    async function loadWorkspace() {
++      setScreenState({
++        tone: 'loading',
++        message: 'draft 작업공간을 불러오고 있어요.',
++      })
++
++      try {
++        const result = await presetAuthoringService.loadAuthoringWorkspace()
++
++        if (!active) {
++          return
++        }
++
++        setHostAccessDenied(false)
++        setWorkspace(result)
++
++        const firstDraft = result.drafts[0] ?? null
++
++        if (firstDraft) {
++          setMode('edit')
++          setSelectedDraftId(firstDraft.presetId)
++          setDraftForm(mapDraftToForm(firstDraft))
++          setScreenState({
++            tone: 'idle',
++            message: '저장된 draft를 이어서 검증하거나 수정할 수 있어요.',
++          })
++          return
++        }
++
++        setMode('create')
++        setSelectedDraftId(null)
++        setDraftForm(EMPTY_DRAFT_FORM)
++        setScreenState({
++          tone: 'idle',
++          message: '새 draft를 만들면 booth catalog와 현재 세션은 바뀌지 않아요.',
++        })
++      } catch (error) {
++        if (!active) {
++          return
++        }
++
++        const denied = isCapabilityDenied(error)
++        setHostAccessDenied(denied)
++        if (denied) {
++          setWorkspace(null)
++          setSelectedDraftId(null)
++        }
++        setScreenState({
++          tone: 'error',
++          message: normalizeHostMessage(error),
++        })
++      }
++    }
++
++    void loadWorkspace()
++
++    return () => {
++      active = false
++    }
++  }, [presetAuthoringService])
++
++  const selectedDraft = useMemo(
++    () => findDraftById(workspace, selectedDraftId),
++    [selectedDraftId, workspace],
++  )
++  const latestValidation = selectedDraft?.validation.latestReport ?? null
++  const isBusy =
++    screenState.tone === 'loading' ||
++    screenState.tone === 'saving' ||
++    screenState.tone === 'validating'
++
++  function updateForm<K extends keyof DraftPresetEditPayload>(
++    key: K,
++    value: DraftPresetEditPayload[K],
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      [key]: value,
++    }))
++  }
++
++  function updatePreview(
++    key: keyof DraftPresetEditPayload['preview'],
++    value: string,
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      preview: {
++        ...current.preview,
++        [key]: value,
++      },
++    }))
++  }
++
++  function updateSampleCut(
++    key: keyof DraftPresetEditPayload['sampleCut'],
++    value: string,
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      sampleCut: {
++        ...current.sampleCut,
++        [key]: value,
++      },
++    }))
++  }
++
++  function updatePreviewProfile(
++    key: keyof DraftPresetEditPayload['previewProfile'],
++    value: string,
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      previewProfile: {
++        ...current.previewProfile,
++        [key]: value,
++      },
++    }))
++  }
++
++  function updateFinalProfile(
++    key: keyof DraftPresetEditPayload['finalProfile'],
++    value: string,
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      finalProfile: {
++        ...current.finalProfile,
++        [key]: value,
++      },
++    }))
++  }
++
++  function updateNoisePolicy(
++    key: keyof DraftPresetEditPayload['noisePolicy'],
++    value: string,
++  ) {
++    setDraftForm((current) => ({
++      ...current,
++      noisePolicy: {
++        ...current.noisePolicy,
++        [key]: value,
++      },
++    }))
++  }
++
++  function handleCreateDraft() {
++    if (isBusy) {
++      return
++    }
++
++    startTransition(() => {
++      setHostAccessDenied(false)
++      setMode('create')
++      setSelectedDraftId(null)
++      setDraftForm(EMPTY_DRAFT_FORM)
++      setScreenState({
++        tone: 'idle',
++        message: '새 draft baseline을 작성 중이에요. 저장 전까지 booth catalog는 그대로 유지돼요.',
++      })
++    })
++  }
++
++  function handleSelectDraft(draft: DraftPresetSummary) {
++    if (isBusy) {
++      return
++    }
++
++    startTransition(() => {
++      setMode('edit')
++      setSelectedDraftId(draft.presetId)
++      setDraftForm(mapDraftToForm(draft))
++      setScreenState({
++        tone: 'idle',
++        message: `${draft.displayName} draft를 검토 중이에요.`,
++      })
++    })
++  }
++
++  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
++    event.preventDefault()
++
++    if (isBusy) {
++      return
++    }
++
++    setScreenState({
++      tone: 'saving',
++      message: 'draft artifact candidate를 저장하고 있어요.',
++    })
++
++    try {
++      const savedDraft =
++        mode === 'create'
++          ? await presetAuthoringService.createDraftPreset(draftForm)
++          : await presetAuthoringService.saveDraftPreset(draftForm)
++      const refreshedWorkspace = await presetAuthoringService.loadAuthoringWorkspace()
++
++      setHostAccessDenied(false)
++      setWorkspace(refreshedWorkspace)
++      setMode('edit')
++      setSelectedDraftId(savedDraft.presetId)
++      setDraftForm(mapDraftToForm(savedDraft))
++      setScreenState({
++        tone: 'success',
++        message: `${savedDraft.displayName} draft가 저장되었어요. booth catalog는 계속 unchanged 상태예요.`,
++      })
++    } catch (error) {
++      const denied = isCapabilityDenied(error)
++      setHostAccessDenied(denied)
++      if (denied) {
++        setWorkspace(null)
++        setSelectedDraftId(null)
++      }
++      setScreenState({
++        tone: 'error',
++        message: normalizeHostMessage(error),
++      })
++    }
++  }
++
++  async function handleValidateDraft() {
++    if (isBusy || !selectedDraftId) {
++      return
++    }
++
++    setScreenState({
++      tone: 'validating',
++      message: 'host 기준 booth compatibility 검증을 실행하고 있어요.',
++    })
++
++    try {
++      const result = await presetAuthoringService.validateDraftPreset({
++        presetId: selectedDraftId,
++      })
++      const refreshedWorkspace = await presetAuthoringService.loadAuthoringWorkspace()
++
++      setHostAccessDenied(false)
++      setWorkspace(refreshedWorkspace)
++      setSelectedDraftId(result.draft.presetId)
++      setDraftForm(mapDraftToForm(result.draft))
++      setMode('edit')
++      setScreenState({
++        tone: result.report.status === 'passed' ? 'success' : 'error',
++        message:
++          result.report.status === 'passed'
++            ? `${result.draft.displayName} draft가 approval 준비 완료 상태로 전환되었어요. published booth catalog와 active session은 그대로 유지돼요.`
++            : `${result.draft.displayName} draft는 아직 draft 상태예요. 아래 수정 가이드를 확인해 주세요.`,
++      })
++    } catch (error) {
++      const denied = isCapabilityDenied(error)
++      setHostAccessDenied(denied)
++      if (denied) {
++        setWorkspace(null)
++        setSelectedDraftId(null)
++      }
++      setScreenState({
++        tone: 'error',
++        message: normalizeHostMessage(error),
++      })
++    }
++  }
++
+   return (
+     <SurfaceLayout
+       eyebrow="Authoring"
+-      title="Preset Authoring"
+-      description="This placeholder reserves the internal preset workspace without leaking editing controls into the customer booth experience."
++      title="Draft Preset Workspace"
++      description="내부 프리셋 저작 작업공간에서 draft를 준비하고 host 검증으로 approval 준비 상태까지 올릴 수 있어요. 여기서 어떤 작업을 해도 booth 고객에게 보이는 published catalog와 현재 세션 preset binding은 바뀌지 않아요."
+     >
+-      <article className="surface-card">
+-        <h2>Authoring placeholder</h2>
+-        <p>Approved preset creation, preview, and publication workflows will land here in later stories.</p>
+-      </article>
++      <section className="authoring-shell">
++        <article className="surface-card authoring-card authoring-card--emphasis">
++          <p className="authoring-card__eyebrow">Internal Only</p>
++          <h2>Draft to validated boundary</h2>
++          <p>
++            이 화면은 <strong>draft</strong> 작성과 <strong>booth compatibility 검증</strong>
++            까지만 담당해요. 검증을 통과해도 published catalog로 나가지는 않고, Story 4.3의
++            승인 단계 전까지는 내부 상태로만 유지돼요.
++          </p>
++          <p className={`authoring-status authoring-status--${screenState.tone}`}>
++            {screenState.message}
++          </p>
++        </article>
++
++        {hostAccessDenied ? (
++          <article className="surface-card authoring-card">
++            <p className="authoring-card__eyebrow">Access Restricted</p>
++            <h2>authoring 제어를 표시하지 않았어요</h2>
++            <p className="authoring-card__support">
++              host 권한 확인이 실패해서 draft 목록과 검증 제어를 숨겼어요. 승인된
++              authoring 전용 창과 내부 인증 상태를 다시 확인해 주세요.
++            </p>
++          </article>
++        ) : (
++          <div className="authoring-grid">
++            <article className="surface-card authoring-card">
++              <div className="authoring-card__header">
++                <div>
++                  <p className="authoring-card__eyebrow">Draft Library</p>
++                  <h2>저장된 draft</h2>
++                </div>
++                <button
++                  className="surface-card__action"
++                  type="button"
++                  onClick={handleCreateDraft}
++                  disabled={isBusy}
++                >
++                  새 draft 만들기
++                </button>
++              </div>
++
++              <p className="authoring-card__support">
++                authoring workspace에 저장된 draft와 validated만 표시돼요.
++              </p>
++
++              <div className="authoring-draft-list" role="list" aria-label="draft preset 목록">
++                {workspace?.drafts.length ? (
++                  workspace.drafts.map((draft) => (
++                    <button
++                      key={draft.presetId}
++                      className={`authoring-draft-list__item${
++                        selectedDraftId === draft.presetId
++                          ? ' authoring-draft-list__item--selected'
++                          : ''
++                      }`}
++                      type="button"
++                      onClick={() => handleSelectDraft(draft)}
++                      disabled={isBusy}
++                    >
++                      <span className="authoring-draft-list__name">{draft.displayName}</span>
++                      <span className="authoring-draft-list__meta">
++                        {draft.presetId} · v{draft.draftVersion}
++                      </span>
++                      <span className="authoring-draft-list__meta">
++                        {formatLifecycleLabel(draft)} ·{' '}
++                        {formatValidationStatus(draft.validation.latestReport)}
++                      </span>
++                      <span className="authoring-draft-list__meta">{draft.updatedAt}</span>
++                    </button>
++                  ))
++                ) : (
++                  <p className="authoring-draft-list__empty">
++                    아직 저장된 draft가 없어요. 새 draft를 만들어 baseline을 시작하세요.
++                  </p>
++                )}
++              </div>
++            </article>
++
++            <div className="authoring-stack">
++              <article className="surface-card authoring-card">
++                <div className="authoring-card__header">
++                  <div>
++                    <p className="authoring-card__eyebrow">
++                      {mode === 'create' ? 'Create Draft' : 'Edit Draft'}
++                    </p>
++                    <h2>{mode === 'create' ? '새 draft 작성' : 'draft 상세'}</h2>
++                  </div>
++                  {selectedDraft ? (
++                    <p className="authoring-card__badge">
++                      {formatLifecycleLabel(selectedDraft)} · version {selectedDraft.draftVersion}
++                    </p>
++                  ) : null}
++                </div>
++
++                <form className="authoring-form" onSubmit={handleSubmit}>
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">Preset ID</span>
++                      <input
++                        className="session-start-form__input"
++                        name="presetId"
++                        value={draftForm.presetId}
++                        onChange={(event) => updateForm('presetId', event.target.value)}
++                        disabled={mode === 'edit' || isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">Draft name</span>
++                      <input
++                        className="session-start-form__input"
++                        name="displayName"
++                        value={draftForm.displayName}
++                        onChange={(event) => updateForm('displayName', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">darktable version</span>
++                      <input
++                        className="session-start-form__input"
++                        name="darktableVersion"
++                        value={draftForm.darktableVersion}
++                        onChange={(event) => updateForm('darktableVersion', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">XMP template 경로</span>
++                      <input
++                        className="session-start-form__input"
++                        name="xmpTemplatePath"
++                        value={draftForm.xmpTemplatePath}
++                        onChange={(event) => updateForm('xmpTemplatePath', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <label className="session-start-form__field">
++                    <span className="session-start-form__label">darktable project 참조</span>
++                    <input
++                      className="session-start-form__input"
++                      name="darktableProjectPath"
++                      value={draftForm.darktableProjectPath}
++                      onChange={(event) =>
++                        updateForm('darktableProjectPath', event.target.value)
++                      }
++                      disabled={isBusy}
++                    />
++                  </label>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">preview profile ID</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.previewProfile.profileId}
++                        onChange={(event) =>
++                          updatePreviewProfile('profileId', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">preview profile 이름</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.previewProfile.displayName}
++                        onChange={(event) =>
++                          updatePreviewProfile('displayName', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">
++                        preview output color space
++                      </span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.previewProfile.outputColorSpace}
++                        onChange={(event) =>
++                          updatePreviewProfile('outputColorSpace', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">final profile ID</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.finalProfile.profileId}
++                        onChange={(event) => updateFinalProfile('profileId', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">final profile 이름</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.finalProfile.displayName}
++                        onChange={(event) =>
++                          updateFinalProfile('displayName', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">
++                        final output color space
++                      </span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.finalProfile.outputColorSpace}
++                        onChange={(event) =>
++                          updateFinalProfile('outputColorSpace', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">noise policy ID</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.noisePolicy.policyId}
++                        onChange={(event) => updateNoisePolicy('policyId', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">noise policy 이름</span>
++                      <input
++                        className="session-start-form__input"
++                        value={draftForm.noisePolicy.displayName}
++                        onChange={(event) =>
++                          updateNoisePolicy('displayName', event.target.value)
++                        }
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <label className="session-start-form__field">
++                    <span className="session-start-form__label">noise reduction mode</span>
++                    <input
++                      className="session-start-form__input"
++                      value={draftForm.noisePolicy.reductionMode}
++                      onChange={(event) =>
++                        updateNoisePolicy('reductionMode', event.target.value)
++                      }
++                      disabled={isBusy}
++                    />
++                  </label>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">대표 preview 경로</span>
++                      <input
++                        className="session-start-form__input"
++                        name="previewAssetPath"
++                        value={draftForm.preview.assetPath}
++                        onChange={(event) => updatePreview('assetPath', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">preview 설명</span>
++                      <input
++                        className="session-start-form__input"
++                        name="previewAltText"
++                        value={draftForm.preview.altText}
++                        onChange={(event) => updatePreview('altText', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <div className="authoring-form__group">
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">대표 sample-cut 경로</span>
++                      <input
++                        className="session-start-form__input"
++                        name="sampleCutAssetPath"
++                        value={draftForm.sampleCut.assetPath}
++                        onChange={(event) => updateSampleCut('assetPath', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++
++                    <label className="session-start-form__field">
++                      <span className="session-start-form__label">sample-cut 설명</span>
++                      <input
++                        className="session-start-form__input"
++                        name="sampleCutAltText"
++                        value={draftForm.sampleCut.altText}
++                        onChange={(event) => updateSampleCut('altText', event.target.value)}
++                        disabled={isBusy}
++                      />
++                    </label>
++                  </div>
++
++                  <label className="session-start-form__field">
++                    <span className="session-start-form__label">기본 설명</span>
++                    <textarea
++                      className="session-start-form__input authoring-form__textarea"
++                      name="description"
++                      value={draftForm.description ?? ''}
++                      onChange={(event) => updateForm('description', event.target.value)}
++                      disabled={isBusy}
++                    />
++                  </label>
++
++                  <label className="session-start-form__field">
++                    <span className="session-start-form__label">내부 메모</span>
++                    <textarea
++                      className="session-start-form__input authoring-form__textarea"
++                      name="notes"
++                      value={draftForm.notes ?? ''}
++                      onChange={(event) => updateForm('notes', event.target.value)}
++                      disabled={isBusy}
++                    />
++                  </label>
++
++                  <div className="authoring-form__footer">
++                    <p className="authoring-form__note">
++                      저장과 검증은 authoring 전용 경계에서만 일어나고, active booth session
++                      binding이나 published catalog는 그대로 유지돼요.
++                    </p>
++
++                    <div className="authoring-form__actions">
++                      {mode === 'edit' ? (
++                        <button
++                          className="surface-card__action surface-card__action--secondary"
++                          type="button"
++                          onClick={handleValidateDraft}
++                          disabled={isBusy || !selectedDraftId}
++                        >
++                          호환성 검증 실행
++                        </button>
++                      ) : null}
++                      <button className="surface-card__action" type="submit" disabled={isBusy}>
++                        {mode === 'create' ? 'draft 저장' : 'draft 업데이트'}
++                      </button>
++                    </div>
++                  </div>
++                </form>
++              </article>
++
++              <article className="surface-card authoring-card">
++                <div className="authoring-card__header">
++                  <div>
++                    <p className="authoring-card__eyebrow">Latest Validation</p>
++                    <h2>booth compatibility 결과</h2>
++                  </div>
++                  {selectedDraft ? (
++                    <p className="authoring-card__badge">
++                      {formatValidationStatus(latestValidation)} · history{' '}
++                      {selectedDraft.validation.history.length}
++                    </p>
++                  ) : null}
++                </div>
++
++                {selectedDraft ? (
++                  latestValidation ? (
++                    <div className="authoring-validation">
++                      <p className="authoring-validation__summary">
++                        host가 {latestValidation.checkedAt}에 검증을 실행했고,
++                        현재 lifecycle은 <strong>{formatLifecycleLabel(selectedDraft)}</strong>
++                        예요.
++                      </p>
++                      {latestValidation.findings.length ? (
++                        <ul className="authoring-validation__list">
++                          {latestValidation.findings.map((finding) => (
++                            <li
++                              key={`${finding.ruleCode}-${finding.fieldPath ?? 'artifact'}`}
++                              className={`authoring-validation__item authoring-validation__item--${finding.severity}`}
++                            >
++                              <p className="authoring-validation__meta">
++                                {formatFindingTone(finding)} · {finding.ruleCode}
++                                {finding.fieldPath ? ` · ${finding.fieldPath}` : ''}
++                              </p>
++                              <p className="authoring-validation__message">{finding.message}</p>
++                              <p className="authoring-validation__guidance">
++                                {finding.guidance}
++                              </p>
++                            </li>
++                          ))}
++                        </ul>
++                      ) : (
++                        <p className="authoring-validation__summary">
++                          필수 booth compatibility rule을 모두 통과했어요. 다음 단계는
++                          publish가 아니라 <strong>approval 준비 완료</strong> 상태 유지예요.
++                        </p>
++                      )}
++                    </div>
++                  ) : (
++                    <p className="authoring-card__support">
++                      아직 검증 기록이 없어요. 저장된 draft를 선택한 뒤 host 검증을 실행하면
++                      여기에서 rule별 수정 가이드를 확인할 수 있어요.
++                    </p>
++                  )
++                ) : (
++                  <p className="authoring-card__support">
++                    검증 결과를 보려면 저장된 draft를 먼저 선택해 주세요.
++                  </p>
++                )}
++              </article>
++            </div>
++          </div>
++        )}
++      </section>
+     </SurfaceLayout>
+   )
+ }
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 7b18a86..cfcce8a 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -1,22 +1,96 @@
+ import { describe, expect, it } from 'vitest'
+ 
+ import {
++  authoringWorkspaceResultSchema,
+   captureDeleteResultSchema,
+   activePresetBindingSchema,
+   boothSessionStubSchema,
+   captureReadinessSnapshotSchema,
+   captureRequestResultSchema,
+   capabilitySnapshotSchema,
++  draftPresetEditPayloadSchema,
++  draftPresetSummarySchema,
++  draftValidationReportSchema,
+   hostErrorEnvelopeSchema,
+   presetCatalogResultSchema,
++  presetLifecycleStateSchema,
+   presetSelectionInputSchema,
+   publishedPresetSummarySchema,
+   sessionManifestSchema,
+   sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
++  sessionTimingSnapshotSchema,
++  validateDraftPresetInputSchema,
++  validateDraftPresetResultSchema,
+ } from './index'
+ 
++function createDraftValidationReport(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'draft-preset-validation/v1',
++    presetId: 'preset_soft-glow-draft',
++    draftVersion: 2,
++    lifecycleState: 'draft',
++    status: 'failed',
++    checkedAt: '2026-03-26T00:10:00.000Z',
++    findings: [
++      {
++        ruleCode: 'missing-sample-cut',
++        severity: 'error',
++        fieldPath: 'sampleCut.assetPath',
++        message: 'sample-cut 대표 자산이 없어요.',
++        guidance: 'sampleCut.assetPath에 draft 작업공간 안의 대표 샘플 이미지를 추가해 주세요.',
++      },
++    ],
++    ...overrides,
++  }
++}
++
++function createDraftPresetSummary(overrides: Record<string, unknown> = {}) {
++  return {
++    schemaVersion: 'draft-preset-artifact/v1',
++    presetId: 'preset_soft-glow-draft',
++    displayName: 'Soft Glow Draft',
++    draftVersion: 2,
++    lifecycleState: 'draft',
++    darktableVersion: '5.4.1',
++    darktableProjectPath: 'darktable/soft-glow.dtpreset',
++    xmpTemplatePath: 'xmp/soft-glow.xmp',
++    previewProfile: {
++      profileId: 'preview-standard',
++      displayName: 'Preview Standard',
++      outputColorSpace: 'sRGB',
++    },
++    finalProfile: {
++      profileId: 'final-standard',
++      displayName: 'Final Standard',
++      outputColorSpace: 'sRGB',
++    },
++    noisePolicy: {
++      policyId: 'balanced-noise',
++      displayName: 'Balanced Noise',
++      reductionMode: 'balanced',
++    },
++    preview: {
++      assetPath: 'previews/soft-glow.jpg',
++      altText: 'Soft Glow draft portrait',
++    },
++    sampleCut: {
++      assetPath: 'samples/soft-glow-cut.jpg',
++      altText: 'Soft Glow sample cut',
++    },
++    description: '부드러운 피부톤 baseline',
++    notes: '하이라이트 재검토',
++    validation: {
++      status: 'not-run',
++      latestReport: null,
++      history: [],
++    },
++    updatedAt: '2026-03-26T00:00:00.000Z',
++    ...overrides,
++  }
++}
++
+ describe('shared contracts baseline', () => {
+   it('normalizes booth capability access to always include the booth surface', () => {
+     const parsed = capabilitySnapshotSchema.parse({
+@@ -118,6 +192,35 @@ describe('shared contracts baseline', () => {
+     expect(parsed.lifecycle.stage).toBe('capture-ready')
+   })
+ 
++  it('requires a completion variant before post-end completed truth can be claimed', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:00.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:15:00.000Z',
++        },
++      }),
++    ).toThrow()
++  })
++
+   it('parses a typed session start result and serializable host error envelope', () => {
+     const result = sessionStartResultSchema.parse({
+       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+@@ -154,6 +257,24 @@ describe('shared contracts baseline', () => {
+     expect(error.fieldErrors?.phoneLastFour).toBe('숫자 4자리여야 해요.')
+   })
+ 
++  it('parses host-owned session timing truth with warning and end markers', () => {
++    const parsed = sessionTimingSnapshotSchema.parse({
++      schemaVersion: 'session-timing/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      adjustedEndAt: '2026-03-20T00:15:00.000Z',
++      warningAt: '2026-03-20T00:10:00.000Z',
++      phase: 'warning',
++      captureAllowed: true,
++      approvedExtensionMinutes: 0,
++      approvedExtensionAuditRef: null,
++      warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++      endedTriggeredAt: null,
++    })
++
++    expect(parsed.phase).toBe('warning')
++    expect(parsed.captureAllowed).toBe(true)
++  })
++
+   it('accepts a booth-safe published preset summary with a customer preview asset', () => {
+     const parsed = publishedPresetSummarySchema.parse({
+       presetId: 'preset_soft-glow',
+@@ -218,6 +339,136 @@ describe('shared contracts baseline', () => {
+     expect(parsed.preset.publishedVersion).toBe('2026.03.20')
+   })
+ 
++  it('parses a draft artifact candidate with validation metadata and booth-safe render profiles', () => {
++    const parsed = draftPresetSummarySchema.parse(createDraftPresetSummary())
++
++    expect(parsed.lifecycleState).toBe('draft')
++    expect(parsed.xmpTemplatePath).toBe('xmp/soft-glow.xmp')
++    expect(parsed.validation.status).toBe('not-run')
++  })
++
++  it('keeps the lifecycle enum ready for validated, approved, and published follow-ups while limiting edits to draft payloads', () => {
++    expect(presetLifecycleStateSchema.parse('published')).toBe('published')
++
++    const parsedWorkspace = authoringWorkspaceResultSchema.parse({
++      schemaVersion: 'preset-authoring-workspace/v1',
++      supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
++      drafts: [],
++    })
++
++    expect(parsedWorkspace.supportedLifecycleStates).toContain('approved')
++
++    expect(() =>
++      draftPresetEditPayloadSchema.parse({
++        presetId: 'preset_soft-glow-draft',
++        displayName: 'Soft Glow Draft',
++        lifecycleState: 'approved',
++        darktableVersion: '5.4.1',
++        darktableProjectPath: 'darktable/soft-glow.dtpreset',
++        xmpTemplatePath: 'xmp/soft-glow.xmp',
++        previewProfile: {
++          profileId: 'preview-standard',
++          displayName: 'Preview Standard',
++          outputColorSpace: 'sRGB',
++        },
++        finalProfile: {
++          profileId: 'final-standard',
++          displayName: 'Final Standard',
++          outputColorSpace: 'sRGB',
++        },
++        noisePolicy: {
++          policyId: 'balanced-noise',
++          displayName: 'Balanced Noise',
++          reductionMode: 'balanced',
++        },
++        preview: {
++          assetPath: 'previews/soft-glow.jpg',
++          altText: 'Soft Glow draft portrait',
++        },
++        sampleCut: {
++          assetPath: 'samples/soft-glow-cut.jpg',
++          altText: 'Soft Glow sample cut',
++        },
++      }),
++    ).toThrow()
++  })
++
++  it('parses validation transition input and output with actionable findings', () => {
++    const parsedInput = validateDraftPresetInputSchema.parse({
++      presetId: 'preset_soft-glow-draft',
++    })
++    const parsedResult = validateDraftPresetResultSchema.parse({
++      schemaVersion: 'draft-preset-validation-result/v1',
++      draft: createDraftPresetSummary({
++        lifecycleState: 'validated',
++        validation: {
++          status: 'passed',
++          latestReport: createDraftValidationReport({
++            lifecycleState: 'validated',
++            status: 'passed',
++            findings: [],
++          }),
++          history: [
++            createDraftValidationReport({
++              lifecycleState: 'validated',
++              status: 'passed',
++              findings: [],
++            }),
++          ],
++        },
++      }),
++      report: createDraftValidationReport({
++        lifecycleState: 'validated',
++        status: 'passed',
++        findings: [],
++      }),
++    })
++
++    expect(parsedInput.presetId).toBe('preset_soft-glow-draft')
++    expect(parsedResult.draft.lifecycleState).toBe('validated')
++    expect(parsedResult.report.status).toBe('passed')
++  })
++
++  it('rejects invalid validation finding payloads and passed reports with error findings', () => {
++    expect(() =>
++      draftValidationReportSchema.parse({
++        ...createDraftValidationReport(),
++        findings: [
++          {
++            ruleCode: 'Invalid Rule',
++            severity: 'error',
++            fieldPath: 'sampleCut.assetPath',
++            message: 'sample-cut 대표 자산이 없어요.',
++            guidance: 'sampleCut.assetPath를 다시 확인해 주세요.',
++          },
++        ],
++      }),
++    ).toThrow()
++
++    expect(() =>
++      draftValidationReportSchema.parse({
++        ...createDraftValidationReport({
++          status: 'passed',
++        }),
++      }),
++    ).toThrow()
++  })
++
++  it('rejects preview or source references that try to escape the authoring workspace', () => {
++    expect(() =>
++      draftPresetEditPayloadSchema.parse({
++        ...createDraftPresetSummary({
++          validation: undefined,
++          updatedAt: undefined,
++        }),
++        preview: {
++          assetPath: '../outside/preview.jpg',
++          altText: 'Soft Glow draft portrait',
++        },
++      }),
++    ).toThrow()
++  })
++
+   it('parses customer-safe readiness snapshots and capture-saved request responses', () => {
+     const capture = sessionCaptureRecordSchema.parse({
+       schemaVersion: 'session-capture/v1',
+@@ -263,6 +514,18 @@ describe('shared contracts baseline', () => {
+       customerMessage: '사진이 안전하게 저장되었어요.',
+       supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+       reasonCode: 'preview-waiting',
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'active',
++        captureAllowed: true,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: null,
++        endedTriggeredAt: null,
++      },
+     })
+     const captureResult = captureRequestResultSchema.parse({
+       schemaVersion: 'capture-request-result/v1',
+@@ -276,6 +539,117 @@ describe('shared contracts baseline', () => {
+     expect(captureResult.capture.activePresetDisplayName).toBe('Soft Glow')
+     expect(captureResult.capture.raw.assetPath).toContain('captures/originals')
+     expect(captureResult.status).toBe('capture-saved')
++    expect(captureResult.readiness.timing?.adjustedEndAt).toBe(
++      '2026-03-20T00:15:00.000Z',
++    )
++  })
++
++  it('accepts a customer-safe explicit post-end readiness without leaking internal policy language', () => {
++    const readiness = captureReadinessSnapshotSchema.parse({
++      schemaVersion: 'capture-readiness/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      surfaceState: 'blocked',
++      customerState: 'Export Waiting',
++      canCapture: false,
++      primaryAction: 'wait',
++      customerMessage: '안내를 준비하고 있어요.',
++      supportMessage: '잠시만 기다리면 다음 안내를 보여드릴게요.',
++      reasonCode: 'export-waiting',
++      latestCapture: null,
++      postEnd: {
++        state: 'export-waiting',
++        evaluatedAt: '2026-03-20T00:15:00.000Z',
++      },
++      timing: {
++        schemaVersion: 'session-timing/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        adjustedEndAt: '2026-03-20T00:15:00.000Z',
++        warningAt: '2026-03-20T00:10:00.000Z',
++        phase: 'ended',
++        captureAllowed: false,
++        approvedExtensionMinutes: 0,
++        approvedExtensionAuditRef: null,
++        warningTriggeredAt: '2026-03-20T00:10:01.000Z',
++        endedTriggeredAt: '2026-03-20T00:15:00.000Z',
++      },
++    })
++
++    expect(readiness.reasonCode).toBe('export-waiting')
++    expect(readiness.postEnd?.state).toBe('export-waiting')
++    expect(readiness.supportMessage).not.toMatch(/policy|scheduler/i)
++  })
++
++  it('still parses legacy capture records that do not include activePresetId yet', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetVersion: '2026.03.20',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: null,
++        enqueuedAtMs: 100,
++        readyAtMs: null,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewWaiting',
++      postEndState: 'activeSession',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: null,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'pending',
++      },
++    })
++
++    expect(capture.activePresetId).toBeUndefined()
++    expect(capture.activePresetVersion).toBe('2026.03.20')
++  })
++
++  it('normalizes host kebab-case capture post-end states into the frontend contract', () => {
++    const capture = sessionCaptureRecordSchema.parse({
++      schemaVersion: 'session-capture/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      activePresetId: 'preset_soft-glow',
++      activePresetVersion: '2026.03.20',
++      activePresetDisplayName: 'Soft Glow',
++      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      raw: {
++        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.jpg',
++        persistedAtMs: 100,
++      },
++      preview: {
++        assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture.jpg',
++        enqueuedAtMs: 100,
++        readyAtMs: 500,
++      },
++      final: {
++        assetPath: null,
++        readyAtMs: null,
++      },
++      renderStatus: 'previewReady',
++      postEndState: 'local-deliverable-ready',
++      timing: {
++        captureAcknowledgedAtMs: 100,
++        previewVisibleAtMs: 500,
++        captureBudgetMs: 1000,
++        previewBudgetMs: 5000,
++        previewBudgetState: 'withinBudget',
++      },
++    })
++
++    expect(capture.postEndState).toBe('localDeliverableReady')
+   })
+ 
+   it('parses capture deletion results with the updated manifest and readiness', () => {
+@@ -343,6 +717,105 @@ describe('shared contracts baseline', () => {
+     expect(error.readiness?.primaryAction).toBe('call-support')
+   })
+ 
++  it('parses handoff-ready post-end guidance with handoff metadata', () => {
++    const manifest = sessionManifestSchema.parse({
++      schemaVersion: 'session-manifest/v1',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      boothAlias: 'Kim 4821',
++      customer: {
++        name: 'Kim',
++        phoneLastFour: '4821',
++      },
++      createdAt: '2026-03-20T00:00:00.000Z',
++      updatedAt: '2026-03-20T00:00:10.000Z',
++      lifecycle: {
++        status: 'active',
++        stage: 'completed',
++      },
++      activePreset: null,
++      captures: [],
++      postEnd: {
++        state: 'completed',
++        evaluatedAt: '2026-03-20T00:00:10.000Z',
++        completionVariant: 'handoff-ready',
++        approvedRecipientLabel: 'Front Desk',
++        primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
++        supportActionLabel: null,
++        showBoothAlias: true,
++      },
++    })
++
++    expect(manifest.postEnd?.state).toBe('completed')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.completionVariant
++        : null,
++    ).toBe('handoff-ready')
++    expect(
++      manifest.postEnd?.state === 'completed'
++        ? manifest.postEnd.approvedRecipientLabel
++        : null,
++    ).toBe('Front Desk')
++  })
++
++  it('rejects completed post-end guidance without a completion variant', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++        },
++      }),
++    ).toThrow(/completionVariant/i)
++  })
++
++  it('rejects handoff-ready post-end guidance without destination details', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:10.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'completed',
++        },
++        activePreset: null,
++        captures: [],
++        postEnd: {
++          state: 'completed',
++          evaluatedAt: '2026-03-20T00:00:10.000Z',
++          completionVariant: 'handoff-ready',
++          approvedRecipientLabel: null,
++          nextLocationLabel: null,
++          primaryActionLabel: '마지막 안내를 확인해 주세요.',
++          supportActionLabel: null,
++          showBoothAlias: false,
++        },
++      }),
++    ).toThrow(/승인된 수령 대상 또는 다음 이동 위치/i)
++  })
++
+   it('rejects capture request responses that omit the persisted capture record', () => {
+     expect(() =>
+       captureRequestResultSchema.parse({
+diff --git a/src/shared-contracts/dto/preset.ts b/src/shared-contracts/dto/preset.ts
+index e71b594..085e44f 100644
+--- a/src/shared-contracts/dto/preset.ts
++++ b/src/shared-contracts/dto/preset.ts
+@@ -1,14 +1,32 @@
+ import type { z } from 'zod'
+ 
+ import {
++  authoringWorkspaceResultSchema,
+   activePresetBindingSchema,
++  draftPresetEditPayloadSchema,
++  draftPresetSummarySchema,
++  draftValidationFindingSchema,
++  draftValidationReportSchema,
++  draftValidationSnapshotSchema,
+   loadPresetCatalogInputSchema,
++  presetLifecycleStateSchema,
+   presetCatalogResultSchema,
+   presetSelectionInputSchema,
+   presetSelectionResultSchema,
+   publishedPresetSummarySchema,
++  validateDraftPresetInputSchema,
++  validateDraftPresetResultSchema,
+ } from '../schemas'
+ 
++export type PresetLifecycleState = z.infer<typeof presetLifecycleStateSchema>
++export type DraftPresetSummary = z.infer<typeof draftPresetSummarySchema>
++export type DraftPresetEditPayload = z.infer<typeof draftPresetEditPayloadSchema>
++export type DraftValidationFinding = z.infer<typeof draftValidationFindingSchema>
++export type DraftValidationReport = z.infer<typeof draftValidationReportSchema>
++export type DraftValidationSnapshot = z.infer<typeof draftValidationSnapshotSchema>
++export type AuthoringWorkspaceResult = z.infer<typeof authoringWorkspaceResultSchema>
++export type ValidateDraftPresetInput = z.infer<typeof validateDraftPresetInputSchema>
++export type ValidateDraftPresetResult = z.infer<typeof validateDraftPresetResultSchema>
+ export type PublishedPresetSummary = z.infer<typeof publishedPresetSummarySchema>
+ export type LoadPresetCatalogInput = z.infer<typeof loadPresetCatalogInputSchema>
+ export type PresetCatalogResult = z.infer<typeof presetCatalogResultSchema>

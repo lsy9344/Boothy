@@ -8,20 +8,27 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    capture::normalized_state::normalize_capture_readiness,
     contracts::dto::{
         validate_session_id, HostErrorEnvelope, PresetSelectionInputDto, PresetSelectionResultDto,
         SessionStartInputDto,
     },
-    preset::preset_catalog::{
-        find_selectable_published_preset_summary, resolve_published_preset_catalog_dir,
+    diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
+    handoff::sync_post_end_state_in_dir,
+    preset::{
+        preset_catalog::{
+            find_selectable_published_preset_summary, resolve_published_preset_catalog_dir,
+        },
+        preset_catalog_state::capture_live_catalog_snapshot,
     },
     session::{
         session_manifest::{
-            build_session_manifest, current_timestamp, validate_session_start_input,
-            ActivePresetBinding, SessionManifest,
+            build_session_manifest, current_timestamp, normalize_legacy_manifest,
+            validate_session_start_input, ActivePresetBinding, SessionManifest,
         },
         session_paths::SessionPaths,
     },
+    timing::sync_session_timing_in_dir,
 };
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -44,6 +51,23 @@ pub fn start_session_in_dir(
     let manifest = build_session_manifest(session_id.clone(), validated_input)?;
 
     create_session_root(&paths, &manifest)?;
+    try_append_operator_audit_record(
+        base_dir,
+        OperatorAuditRecordInput {
+            occurred_at: manifest.created_at.clone(),
+            session_id: Some(session_id.clone()),
+            event_category: "session-lifecycle",
+            event_type: "session-started",
+            summary: "새 세션을 시작했어요.".into(),
+            detail: "운영자 review에 사용할 현재 세션 식별자와 기본 문맥이 생성되었어요.".into(),
+            actor_id: None,
+            source: "session-repository",
+            capture_id: None,
+            preset_id: None,
+            published_version: None,
+            reason_code: None,
+        },
+    );
 
     Ok(SessionStartResultDto {
         session_id,
@@ -59,11 +83,32 @@ pub fn select_active_preset_in_dir(
     validate_session_id(&input.session_id)?;
     let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
     let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    manifest =
+        sync_session_timing_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
+    manifest =
+        sync_post_end_state_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
+    if manifest.catalog_revision.is_none() || manifest.catalog_snapshot.is_none() {
+        let (catalog_revision, catalog_snapshot) = capture_live_catalog_snapshot(base_dir)?;
+        manifest.catalog_revision = Some(catalog_revision);
+        manifest.catalog_snapshot = Some(catalog_snapshot);
+        write_session_manifest(&paths.manifest_path, &manifest)?;
+    }
+
+    if manifest.post_end.is_some()
+        || manifest.timing.as_ref().map(|timing| timing.phase.as_str()) == Some("ended")
+    {
+        return Err(HostErrorEnvelope::capture_not_ready(
+            "지금은 룩을 바꿀 수 없어요.",
+            normalize_capture_readiness(base_dir, &manifest),
+        ));
+    }
+
     let catalog_root = resolve_published_preset_catalog_dir(base_dir);
     let selected_preset = find_selectable_published_preset_summary(
         &catalog_root,
         &input.preset_id,
         &input.published_version,
+        manifest.catalog_snapshot.as_deref().unwrap_or(&[]),
     )
     .map_err(|error| match error.code.as_str() {
         "validation-error" => HostErrorEnvelope::preset_not_available(
@@ -83,6 +128,24 @@ pub fn select_active_preset_in_dir(
     };
 
     if manifest.active_preset.as_ref() == Some(&active_preset) {
+        let mut changed = false;
+
+        if manifest.active_preset_id.as_deref() != Some(selected_preset.preset_id.as_str()) {
+            manifest.active_preset_id = Some(selected_preset.preset_id.clone());
+            changed = true;
+        }
+
+        if manifest.active_preset_display_name.as_deref()
+            != Some(selected_preset.display_name.as_str())
+        {
+            manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
+            changed = true;
+        }
+
+        if changed {
+            write_session_manifest(&paths.manifest_path, &manifest)?;
+        }
+
         return Ok(PresetSelectionResultDto {
             session_id: manifest.session_id.clone(),
             active_preset,
@@ -172,10 +235,13 @@ pub(crate) fn read_session_manifest(
     }
 
     let manifest_bytes = fs::read_to_string(manifest_path).map_err(map_fs_error)?;
-
-    serde_json::from_str(&manifest_bytes).map_err(|error| {
+    let mut manifest: SessionManifest = serde_json::from_str(&manifest_bytes).map_err(|error| {
         HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
-    })
+    })?;
+
+    normalize_legacy_manifest(&mut manifest);
+
+    Ok(manifest)
 }
 
 pub(crate) fn write_session_manifest(
