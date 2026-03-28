@@ -804,6 +804,7 @@ The system shall support staged branch rollout to explicitly selected branch set
 - A customer can start a session using name plus phone-last-four booth alias input only.
 - A customer can choose one approved published preset and reach a valid capture state without operator help.
 - Successful capture stores the new source photo under the current session before booth success feedback is shown.
+- Booth `Ready` is recognized as release truth only when live camera/helper truth is confirmed through the host-owned runtime boundary with fresh status rather than browser fallback, stale session state, or incomplete helper signals.
 - The booth reports preview readiness truthfully: current-session preview appears when ready, and explicit waiting guidance appears when it is not.
 - The customer can review only current-session photos, delete only as allowed by the `Current-Session Deletion Policy`, and change presets for future captures.
 - The adjusted end time is visible from session start, and the 5-minute warning plus exact-end alert fire correctly.

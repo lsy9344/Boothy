@@ -62,6 +62,7 @@ pub fn load_operator_session_summary_in_dir(
     let manifest = project_post_end_state_in_dir(base_dir, manifest, SystemTime::now())?;
     let diagnostics = read_diagnostics_context(base_dir, &manifest.session_id);
     let readiness = normalize_capture_readiness(base_dir, &manifest);
+    let live_capture_truth = readiness.live_capture_truth.clone();
     let reason_code = readiness.reason_code.clone();
     let render_status = readiness
         .latest_capture
@@ -110,7 +111,22 @@ pub fn load_operator_session_summary_in_dir(
         capture_boundary,
         preview_render_boundary,
         completion_boundary,
+        live_capture_truth,
     })
+}
+
+pub(crate) fn find_current_operator_session_id_in_dir(
+    base_dir: &Path,
+) -> Result<Option<String>, HostErrorEnvelope> {
+    let Some((_manifest_path, manifest)) = load_current_session_manifest(base_dir)? else {
+        return Ok(None);
+    };
+
+    if !is_current_operator_session(&manifest) {
+        return Ok(None);
+    }
+
+    Ok(Some(manifest.session_id))
 }
 
 pub fn ensure_operator_window_label(window_label: &str) -> Result<(), HostErrorEnvelope> {
@@ -167,6 +183,7 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
             "후처리 경계 비어 있음",
             "현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.",
         ),
+        live_capture_truth: None,
     }
 }
 

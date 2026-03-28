@@ -1,4 +1,5 @@
 use crate::{
+    capture::helper_supervisor::try_ensure_helper_running,
     commands::runtime_commands::resolve_runtime_capability_snapshot,
     contracts::dto::{
         HostErrorEnvelope, OperatorAuditQueryFilterDto, OperatorAuditQueryResultDto,
@@ -7,7 +8,8 @@ use crate::{
     },
     diagnostics::{
         audit_log::load_operator_audit_history_in_dir,
-        ensure_operator_window_label, load_operator_session_summary_in_dir,
+        ensure_operator_window_label, find_current_operator_session_id_in_dir,
+        load_operator_session_summary_in_dir,
         recovery::{
             execute_operator_recovery_action_in_dir, load_operator_recovery_summary_in_dir,
         },
@@ -27,6 +29,9 @@ pub fn load_operator_session_summary(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     let capability_snapshot = resolve_runtime_capability_snapshot();
     ensure_operator_window_label(window.label())?;
+    if let Some(session_id) = find_current_operator_session_id_in_dir(&base_dir)? {
+        try_ensure_helper_running(&base_dir, &session_id);
+    }
 
     load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
 }
@@ -42,6 +47,9 @@ pub fn load_operator_recovery_summary(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     let capability_snapshot = resolve_runtime_capability_snapshot();
     ensure_operator_window_label(window.label())?;
+    if let Some(session_id) = find_current_operator_session_id_in_dir(&base_dir)? {
+        try_ensure_helper_running(&base_dir, &session_id);
+    }
 
     load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
 }
@@ -74,6 +82,7 @@ pub fn run_operator_recovery_action(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     let capability_snapshot = resolve_runtime_capability_snapshot();
     ensure_operator_window_label(window.label())?;
+    try_ensure_helper_running(&base_dir, &input.session_id);
 
     execute_operator_recovery_action_in_dir(&base_dir, &capability_snapshot, input)
 }

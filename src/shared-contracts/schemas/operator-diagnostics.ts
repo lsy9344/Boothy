@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { liveCaptureTruthSchema } from './capture-readiness'
 import { presetDisplayNameSchema, presetIdSchema, publishedVersionSchema } from './preset-core'
 import { sessionIdSchema } from './ids'
 import { sessionPostEndStateSchema } from './session-manifest'
@@ -49,4 +50,5 @@ export const operatorSessionSummarySchema = z.object({
   captureBoundary: operatorBoundarySummarySchema,
   previewRenderBoundary: operatorBoundarySummarySchema,
   completionBoundary: operatorBoundarySummarySchema,
+  liveCaptureTruth: liveCaptureTruthSchema.optional(),
 })

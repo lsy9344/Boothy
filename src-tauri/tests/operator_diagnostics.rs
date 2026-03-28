@@ -10,10 +10,10 @@ use boothy_lib::{
     diagnostics::{ensure_operator_window_label, load_operator_session_summary_in_dir},
     session::{
         session_manifest::{
-            ActivePresetBinding, CaptureTimingMetrics, CompletedPostEnd, ExportWaitingPostEnd,
-            FinalCaptureAsset, PreviewCaptureAsset, RawCaptureAsset, SessionCaptureRecord,
-            SessionCustomer, SessionLifecycle, SessionManifest, SessionPostEnd,
-            SESSION_CAPTURE_SCHEMA_VERSION, SESSION_MANIFEST_SCHEMA_VERSION,
+            current_timestamp, ActivePresetBinding, CaptureTimingMetrics, CompletedPostEnd,
+            ExportWaitingPostEnd, FinalCaptureAsset, PreviewCaptureAsset, RawCaptureAsset,
+            SessionCaptureRecord, SessionCustomer, SessionLifecycle, SessionManifest,
+            SessionPostEnd, SESSION_CAPTURE_SCHEMA_VERSION, SESSION_MANIFEST_SCHEMA_VERSION,
             SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
         },
         session_paths::SessionPaths,
@@ -153,6 +153,45 @@ fn operator_diagnostics_classifies_post_end_blocked_sessions() {
             .map(|failure| failure.title.as_str()),
         Some("종료 후 완료 판정이 아직 보류돼 있어요.")
     );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_reuses_live_capture_truth_from_capture_readiness() {
+    let base_dir = unique_test_root("live-capture-truth");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1v";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "capture-ready".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_ready_helper_status(&base_dir, session_id);
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("operator summary should reuse live capture truth");
+    let live_truth = summary
+        .live_capture_truth
+        .as_ref()
+        .expect("operator summary should expose live capture truth");
+
+    assert_eq!(live_truth.source, "canon-helper-sidecar");
+    assert_eq!(live_truth.freshness, "fresh");
+    assert_eq!(live_truth.session_match, "matched");
+    assert_eq!(live_truth.camera_state, "ready");
+    assert_eq!(live_truth.helper_state, "healthy");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -481,4 +520,29 @@ fn create_published_bundle(
         .expect("bundle should serialize"),
     )
     .expect("bundle should write");
+}
+
+fn write_ready_helper_status(base_dir: &Path, session_id: &str) {
+    let status_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join("camera-helper-status.json");
+    fs::create_dir_all(
+        status_path
+            .parent()
+            .expect("helper status should have a diagnostics directory"),
+    )
+    .expect("diagnostics directory should exist");
+    fs::write(
+        status_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "canon-helper-status/v1",
+          "sessionId": session_id,
+          "sequence": 1,
+          "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+          "cameraState": "ready",
+          "helperState": "healthy"
+        }))
+        .expect("helper status should serialize"),
+    )
+    .expect("helper status should be writable");
 }

@@ -8,6 +8,7 @@ import {
   type PresetSelectionInput,
   type PresetSelectionResult,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface ActivePresetGateway {
   selectActivePreset(input: PresetSelectionInput): Promise<unknown>
@@ -79,10 +80,6 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     code: 'host-unavailable',
     message: '지금은 선택을 저장할 수 없어요. 잠시 후 다시 시도해 주세요.',
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 export function createBrowserActivePresetGateway(): ActivePresetGateway {

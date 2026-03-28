@@ -10,6 +10,7 @@ use boothy_lib::{
     session::{
         session_manifest::{
             build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
+            rfc3339_to_unix_seconds,
             SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
@@ -125,6 +126,16 @@ fn fails_manifest_build_when_system_time_precedes_unix_epoch() {
 
     assert_eq!(error.code, "session-persistence-failed");
     assert!(error.message.contains("시스템 시계"));
+}
+
+#[test]
+fn parses_rfc3339_timestamps_with_explicit_utc_offsets() {
+    let from_z = rfc3339_to_unix_seconds("2026-03-27T19:37:08Z")
+        .expect("zulu timestamp should parse");
+    let from_offset = rfc3339_to_unix_seconds("2026-03-27T19:37:08.3928625+00:00")
+        .expect("utc offset timestamp should parse");
+
+    assert_eq!(from_offset, from_z);
 }
 
 #[test]

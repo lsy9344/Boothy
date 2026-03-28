@@ -912,7 +912,7 @@ describe('SessionProvider', () => {
     })
   })
 
-  it('keeps the latest subscribed blocked readiness when the initial readiness request resolves late', async () => {
+  it('keeps the latest subscribed preparing readiness when the initial readiness request resolves late', async () => {
     let resolveReadiness!: (value: CaptureReadinessSnapshot) => void
     let emitReadiness:
       | ((readiness: CaptureReadinessSnapshot) => void)
@@ -999,20 +999,20 @@ describe('SessionProvider', () => {
     await act(async () => {
       emitReadiness?.(createReadinessSnapshot({
         surfaceState: 'blocked',
-        customerState: 'Phone Required',
+        customerState: 'Preparing',
         canCapture: false,
-        primaryAction: 'call-support',
-        customerMessage: '지금은 도움이 필요해요.',
-        supportMessage: '가까운 직원에게 알려 주세요.',
-        reasonCode: 'phone-required',
+        primaryAction: 'wait',
+        customerMessage: '촬영 준비 중이에요.',
+        supportMessage: '잠시만 기다려 주세요.',
+        reasonCode: 'helper-preparing',
       }))
     })
 
     await waitFor(() => {
       expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
-        primaryAction: 'call-support',
+        primaryAction: 'wait',
         canCapture: false,
-        reasonCode: 'phone-required',
+        reasonCode: 'helper-preparing',
       })
     })
 
@@ -1022,9 +1022,9 @@ describe('SessionProvider', () => {
 
     await waitFor(() => {
       expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
-        primaryAction: 'call-support',
+        primaryAction: 'wait',
         canCapture: false,
-        reasonCode: 'phone-required',
+        reasonCode: 'helper-preparing',
       })
     })
   })
@@ -3483,7 +3483,7 @@ describe('SessionProvider', () => {
     })
   })
 
-  it('returns a ready fallback when requestCapture gets foreign readiness for a same-session final-ready capture', async () => {
+  it('keeps requestCapture blocked when foreign readiness arrives for a same-session final-ready capture', async () => {
     let latestState: SessionStateContextValue | null = null
 
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
@@ -3593,10 +3593,10 @@ describe('SessionProvider', () => {
         },
         readiness: {
           sessionId,
-          surfaceState: 'captureReady',
-          reasonCode: 'ready',
-          primaryAction: 'capture',
-          canCapture: true,
+          surfaceState: 'blocked',
+          reasonCode: 'camera-preparing',
+          primaryAction: 'wait',
+          canCapture: false,
           latestCapture: {
             captureId: 'capture_final_ready_foreign_fallback',
             renderStatus: 'finalReady',
@@ -3608,10 +3608,10 @@ describe('SessionProvider', () => {
     await waitFor(() => {
       expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
         sessionId,
-        surfaceState: 'captureReady',
-        reasonCode: 'ready',
-        primaryAction: 'capture',
-        canCapture: true,
+        surfaceState: 'blocked',
+        reasonCode: 'camera-preparing',
+        primaryAction: 'wait',
+        canCapture: false,
         latestCapture: {
           captureId: 'capture_final_ready_foreign_fallback',
           renderStatus: 'finalReady',

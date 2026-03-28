@@ -3,8 +3,7 @@ use std::{fs, path::Path};
 use serde_json::json;
 
 use crate::{
-    contracts::dto::HostErrorEnvelope,
-    preset::preset_catalog::resolve_published_preset_catalog_dir,
+    contracts::dto::HostErrorEnvelope, preset::preset_catalog::resolve_published_preset_catalog_dir,
 };
 
 type DefaultPresetSeed = (&'static str, &'static str, &'static str, &'static str);

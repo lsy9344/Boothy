@@ -5,6 +5,7 @@ import {
   captureDeleteResultSchema,
   captureReadinessInputSchema,
   captureReadinessSnapshotSchema,
+  liveCaptureTruthSchema,
   captureReadinessUpdateSchema,
   captureRequestInputSchema,
   captureRequestResultSchema,
@@ -14,6 +15,7 @@ import {
 export type CaptureReadinessSnapshot = z.infer<
   typeof captureReadinessSnapshotSchema
 >
+export type LiveCaptureTruth = z.infer<typeof liveCaptureTruthSchema>
 export type CaptureReadinessInput = z.infer<typeof captureReadinessInputSchema>
 export type CaptureReadinessUpdate = z.infer<typeof captureReadinessUpdateSchema>
 export type CaptureDeleteInput = z.infer<typeof captureDeleteInputSchema>

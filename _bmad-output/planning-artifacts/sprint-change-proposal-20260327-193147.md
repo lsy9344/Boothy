@@ -4,6 +4,7 @@
 - 작성일시: 2026-03-27 19:31:47 +09:00
 - 변경 트리거: 실카메라/helper readiness truth 미연결로 인한 false-ready 위험과 Story 1.4 done 판정 불일치
 - 진행 모드: Batch
+- 승인 상태: approved and applied
 - 작성 근거:
   - `_bmad-output/implementation-artifacts/1-4-준비-상태-안내와-유효-상태에서만-촬영-허용.md`
   - `_bmad-output/implementation-artifacts/5-1-운영자용-현재-세션-문맥과-장애-진단-가시화.md`
@@ -232,7 +233,7 @@ Done 판정:
 
 권장 AC:
 
-1. Story 1.4, 1.5, 3.2, 4.2, 4.3은 지정된 HV 항목 통과 전 `done`으로 닫지 않는다.
+1. Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3은 지정된 HV 항목 통과 전 `done`으로 닫지 않는다.
 2. 각 story는 대응 HV evidence 경로를 명시한다.
 3. sprint review는 구현 완료와 hardware validation 완료를 별도 체크로 본다.
 4. No-Go 시 관련 story는 자동으로 `review` 상태를 유지하거나 되돌린다.
@@ -251,7 +252,7 @@ Done 판정:
 NEW:
 
 ```md
-- Story 1.4, 1.5, 3.2, 4.2, 4.3은 자동 테스트 완료만으로 제품 관점 `done`으로 간주하지 않는다.
+- Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3은 자동 테스트 완료만으로 제품 관점 `done`으로 간주하지 않는다.
 - 지정된 booth hardware validation checklist evidence가 수집되기 전까지 해당 story는 `review` 또는 동등한 pre-close 상태에 머문다.
 - booth `Ready`와 `Completed`는 각각 false-ready, false-complete 방지 evidence가 확보된 뒤에만 release truth로 인정한다.
 ```
@@ -332,7 +333,7 @@ epic-6: in-progress
 
 1. booth는 실카메라/helper ready일 때만 `Ready`와 `사진 찍기` 활성화를 보여준다.
 2. operator는 카메라 연결 상태를 generic blockage와 별도로 본다.
-3. Story 1.4, 1.5, 3.2, 4.2, 4.3은 실장비 검증 전 `done`이 아니다.
+3. Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3은 실장비 검증 전 `done`이 아니다.
 4. sprint review에서 automated pass와 hardware pass가 분리 기록된다.
 
 ## 7. 체크리스트 실행 로그
@@ -362,8 +363,8 @@ epic-6: in-progress
 | 5.5 인계 계획 수립 | [x] Done | Moderate handoff |
 | 6.1 체크리스트 종합 검토 | [x] Done | 완료 |
 | 6.2 제안서 정확성 검토 | [x] Done | runbook와 current status의 충돌을 중심으로 검토 |
-| 6.3 사용자 승인 | [!] Action-needed | 승인 후 status / story 생성 반영 |
-| 6.4 sprint-status 반영 | [!] Action-needed | 승인 전이라 실제 파일 미수정 |
+| 6.3 사용자 승인 | [x] Done | 사용자 승인 후 변경안 실행 |
+| 6.4 sprint-status 반영 | [x] Done | 기존 story를 review로 재분류하고 신규 story를 ready-for-dev로 추가 |
 | 6.5 다음 단계/인계 확인 | [x] Done | 적용 순서 포함 |
 
 ## 8. 최종 권고

@@ -5,6 +5,7 @@ import {
   capabilitySnapshotSchema,
   type CapabilitySnapshot,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface RuntimeCapabilityGateway {
   readSnapshot(): Promise<CapabilitySnapshot>
@@ -26,10 +27,6 @@ export function createTauriRuntimeCapabilityGateway(): RuntimeCapabilityGateway 
       return capabilitySnapshotSchema.parse(snapshot)
     },
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 export function createDefaultRuntimeCapabilityGateway() {

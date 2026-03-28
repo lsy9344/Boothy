@@ -1,12 +1,11 @@
 use std::{
     fs,
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
-    capture::{normalized_state::normalize_capture_readiness, CAPTURE_PIPELINE_LOCK},
+    capture::CAPTURE_PIPELINE_LOCK,
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     session::{
         session_manifest::{
@@ -20,11 +19,14 @@ use crate::{
     timing::sync_session_timing_in_dir,
 };
 
-static CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 pub fn persist_capture_in_dir(
     base_dir: &Path,
     input: &CaptureRequestInputDto,
+    capture_id: String,
+    request_id: String,
+    raw_asset_path: String,
+    acknowledged_at_ms: u64,
+    persisted_at_ms: u64,
 ) -> Result<(SessionManifest, SessionCaptureRecord), HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
     let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
@@ -33,39 +35,18 @@ pub fn persist_capture_in_dir(
     let mut manifest = read_session_manifest(&paths.manifest_path)?;
     manifest =
         sync_session_timing_in_dir(base_dir, &paths.manifest_path, manifest, SystemTime::now())?;
-    let readiness = normalize_capture_readiness(base_dir, &manifest);
-
-    if !readiness.can_capture {
-        return Err(HostErrorEnvelope::capture_not_ready(
-            "지금은 촬영할 수 없어요.",
-            readiness,
-        ));
-    }
-
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
-    let capture_id = generate_capture_id("capture");
-    let request_id = generate_capture_id("request");
-    let raw_path = paths
-        .captures_originals_dir
-        .join(format!("{capture_id}.jpg"));
-
-    fs::create_dir_all(&paths.captures_originals_dir).map_err(map_fs_error)?;
-    fs::write(
-        &raw_path,
-        build_placeholder_asset_bytes(&manifest, &capture_id, "raw"),
-    )
-    .map_err(map_fs_error)?;
-    let acknowledged_at_ms = current_time_ms()?;
 
     let capture = build_saved_capture_record(
         &manifest,
         &active_preset,
         capture_id,
         request_id,
-        raw_path.to_string_lossy().into_owned(),
+        raw_asset_path,
         acknowledged_at_ms,
+        persisted_at_ms,
     );
 
     manifest.captures.push(capture.clone());
@@ -200,6 +181,7 @@ fn build_saved_capture_record(
     request_id: String,
     raw_asset_path: String,
     acknowledged_at_ms: u64,
+    persisted_at_ms: u64,
 ) -> SessionCaptureRecord {
     SessionCaptureRecord {
         schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
@@ -212,11 +194,11 @@ fn build_saved_capture_record(
         request_id,
         raw: RawCaptureAsset {
             asset_path: raw_asset_path,
-            persisted_at_ms: acknowledged_at_ms,
+            persisted_at_ms,
         },
         preview: PreviewCaptureAsset {
             asset_path: None,
-            enqueued_at_ms: Some(acknowledged_at_ms),
+            enqueued_at_ms: Some(persisted_at_ms),
             ready_at_ms: None,
         },
         final_asset: FinalCaptureAsset {
@@ -245,17 +227,6 @@ fn build_placeholder_asset_bytes(
         manifest.session_id, manifest.booth_alias
     )
     .into_bytes()
-}
-
-fn generate_capture_id(prefix: &str) -> String {
-    let unix_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let counter = CAPTURE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
-    let value = unix_nanos ^ (counter << 16);
-
-    format!("{prefix}_{value:026x}")
 }
 
 fn current_time_ms() -> Result<u64, HostErrorEnvelope> {

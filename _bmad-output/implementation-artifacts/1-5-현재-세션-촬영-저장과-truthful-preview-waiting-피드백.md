@@ -1,6 +1,8 @@
 # Story 1.5: 현재 세션 촬영 저장과 truthful `Preview Waiting` 피드백
 
-Status: done
+Status: review
+
+Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 닫히기 전까지 제품 관점 완료로 보지 않는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -45,6 +47,10 @@ booth customer로서,
   - [x] integration test: `capture -> raw persisted -> preview waiting -> preview ready` 흐름이 순서대로 일어나는지 검증한다.
   - [x] privacy/integration test: 다른 세션 asset이 현재 세션 레일이나 확인 상태에 섞이지 않는지 검증한다.
   - [x] UI test: waiting copy의 문장 순서, active preset visibility, rail-empty helper copy, single-primary-action 원칙을 검증한다.
+
+### Review Findings
+
+- [x] [Review][Decision] `1-5` 리뷰 변경에 다른 스토리 상태 동시 반영 여부 확인 필요 — resolved: 사용자 확인 결과, `3-2`, `4-2`, `4-3`, `1-6`, `5-4`, `6-2` 상태 동기화는 의도된 변경으로 유지한다. [`_bmad-output/implementation-artifacts/sprint-status.yaml:50`](C:/Code/Project/Boothy/_bmad-output/implementation-artifacts/sprint-status.yaml#L50)
 
 ## Dev Notes
 

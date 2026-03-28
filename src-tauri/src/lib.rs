@@ -1,4 +1,4 @@
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 pub mod branch_config;
 pub mod capture;
@@ -12,7 +12,7 @@ pub mod timing;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -22,9 +22,10 @@ pub fn run() {
                 )?;
             }
 
-            let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
-                format!("앱 데이터 경로를 확인하지 못했어요: {error}")
-            })?;
+            let app_local_data_dir = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|error| format!("앱 데이터 경로를 확인하지 못했어요: {error}"))?;
             let runtime_base_dir =
                 session::session_repository::resolve_app_session_base_dir(app_local_data_dir);
             preset::default_catalog::ensure_default_preset_catalog_in_dir(&runtime_base_dir)
@@ -82,6 +83,7 @@ pub fn run() {
             commands::operator_commands::load_operator_audit_history,
             commands::operator_commands::run_operator_recovery_action,
             commands::runtime_commands::get_capability_snapshot,
+            commands::runtime_commands::log_capture_client_state,
             commands::preset_commands::load_preset_catalog,
             commands::preset_commands::load_authoring_workspace,
             commands::preset_commands::create_draft_preset,
@@ -93,6 +95,12 @@ pub fn run() {
             commands::preset_commands::select_active_preset,
             commands::session_commands::start_session
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, event| {
+        if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            capture::helper_supervisor::shutdown_helper_process();
+        }
+    });
 }

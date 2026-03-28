@@ -8,6 +8,7 @@ import {
   type SessionStartInput,
   type SessionStartResult,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface StartSessionGateway {
   startSession(input: SessionStartInput): Promise<unknown>
@@ -55,10 +56,6 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     code: 'host-unavailable',
     message: '지금은 시작할 수 없어요. 잠시 후 다시 시도해 주세요.',
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 export function createBrowserStartSessionGateway(): StartSessionGateway {

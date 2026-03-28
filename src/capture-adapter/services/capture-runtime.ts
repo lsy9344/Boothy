@@ -19,9 +19,41 @@ import {
   type CaptureRequestResult,
   type HostErrorEnvelope,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
+import { logCaptureClientState } from '../../shared/runtime/log-capture-client-state'
 
 const CAPTURE_READINESS_POLL_MS = 1500
 const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+
+function logCaptureRuntimeDebug(
+  label: string,
+  details: Record<string, unknown>,
+) {
+  if (typeof console === 'undefined') {
+    return
+  }
+
+  console.info(`[boothy][capture-runtime] ${label}`, details)
+  void logCaptureClientState({
+    label,
+    sessionId:
+      typeof details.sessionId === 'string' ? details.sessionId : undefined,
+    runtimeMode:
+      typeof details.mode === 'string'
+        ? details.mode
+        : typeof details.runtimeMode === 'string'
+          ? details.runtimeMode
+          : undefined,
+    message:
+      typeof details.message === 'string' ? details.message : undefined,
+    customerState:
+      typeof details.customerState === 'string' ? details.customerState : undefined,
+    reasonCode:
+      typeof details.reasonCode === 'string' ? details.reasonCode : undefined,
+    canCapture:
+      typeof details.canCapture === 'boolean' ? details.canCapture : undefined,
+  })
+}
 
 export type CaptureRuntimeMode = 'browser' | 'tauri'
 
@@ -63,23 +95,6 @@ function buildPreparingCaptureReadiness(): CaptureReadinessSnapshot {
   }
 }
 
-function buildReadyCaptureReadiness(): CaptureReadinessSnapshot {
-  return {
-    schemaVersion: 'capture-readiness/v1',
-    sessionId: BROWSER_SESSION_FIXTURE_ID,
-    surfaceState: 'captureReady',
-    customerState: 'Ready',
-    canCapture: true,
-    primaryAction: 'capture',
-    customerMessage: '지금 촬영할 수 있어요.',
-    supportMessage: '버튼을 누르면 바로 시작돼요.',
-    reasonCode: 'ready',
-    latestCapture: null,
-    postEnd: null,
-    timing: null,
-  }
-}
-
 function buildBrowserPreviewCaptureReadiness(): CaptureReadinessSnapshot {
   return {
     schemaVersion: 'capture-readiness/v1',
@@ -95,6 +110,26 @@ function buildBrowserPreviewCaptureReadiness(): CaptureReadinessSnapshot {
     postEnd: null,
     timing: null,
   }
+}
+
+function sanitizeBrowserPreviewFixtureReadiness(
+  fixture: CaptureReadinessSnapshot,
+): CaptureReadinessSnapshot {
+  if (
+    fixture.canCapture ||
+    fixture.primaryAction === 'capture' ||
+    fixture.customerState === 'Ready' ||
+    fixture.reasonCode === 'ready'
+  ) {
+    return {
+      ...buildBrowserPreviewCaptureReadiness(),
+      latestCapture: fixture.latestCapture,
+      postEnd: fixture.postEnd,
+      timing: fixture.timing,
+    }
+  }
+
+  return fixture
 }
 
 function buildPresetMissingCaptureReadiness(): CaptureReadinessSnapshot {
@@ -148,6 +183,23 @@ function buildPhoneRequiredCaptureReadiness(): CaptureReadinessSnapshot {
   }
 }
 
+function buildTransientUnavailableCaptureReadiness(): CaptureReadinessSnapshot {
+  return {
+    schemaVersion: 'capture-readiness/v1',
+    sessionId: BROWSER_SESSION_FIXTURE_ID,
+    surfaceState: 'blocked',
+    customerState: 'Preparing',
+    canCapture: false,
+    primaryAction: 'wait',
+    customerMessage: '촬영 준비 상태를 다시 확인하고 있어요.',
+    supportMessage: '잠시만 기다려 주세요.',
+    reasonCode: 'camera-preparing',
+    latestCapture: null,
+    postEnd: null,
+    timing: null,
+  }
+}
+
 function buildSessionMismatchHostError(): HostErrorEnvelope {
   return {
     code: 'host-unavailable',
@@ -184,13 +236,26 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
         return captureReadinessSnapshotSchema.parse(response)
       } catch (error) {
-        throw normalizeHostError(error, parsedInput.sessionId)
+        logCaptureRuntimeDebug('gateway-readiness-error', {
+          sessionId: parsedInput.sessionId,
+          mode: getCaptureRuntimeMode(),
+          message: error instanceof Error ? error.message : String(error),
+        })
+        throw normalizeHostError(error, parsedInput.sessionId, 'readiness')
       }
     })()
 
     if (parsedResponse.sessionId !== parsedInput.sessionId) {
       throw buildSessionMismatchHostError()
     }
+
+    logCaptureRuntimeDebug('gateway-readiness-success', {
+      sessionId: parsedResponse.sessionId,
+      mode: getCaptureRuntimeMode(),
+      customerState: parsedResponse.customerState,
+      reasonCode: parsedResponse.reasonCode,
+      canCapture: parsedResponse.canCapture,
+    })
 
     return parsedResponse
   }
@@ -209,7 +274,7 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
         return captureDeleteResultSchema.parse(response)
       } catch (error) {
-        throw normalizeHostError(error, parsedInput.sessionId)
+        throw normalizeHostError(error, parsedInput.sessionId, 'delete-capture')
       }
     })()
 
@@ -232,7 +297,7 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
         return captureRequestResultSchema.parse(response)
       } catch (error) {
-        throw normalizeHostError(error, parsedInput.sessionId)
+        throw normalizeHostError(error, parsedInput.sessionId, 'request-capture')
       }
     })()
 
@@ -302,6 +367,7 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 function normalizeHostError(
   error: unknown,
   requestedSessionId?: string,
+  operation: 'readiness' | 'request-capture' | 'delete-capture' = 'readiness',
 ): HostErrorEnvelope {
   const parsed = hostErrorEnvelopeSchema.safeParse(error)
 
@@ -347,6 +413,17 @@ function normalizeHostError(
       case 'preset-catalog-unavailable':
       case 'session-persistence-failed':
       case 'validation-error':
+        if (operation === 'readiness') {
+          return {
+            ...parsed.data,
+            message: '촬영 준비 상태를 다시 확인하고 있어요.',
+            readiness: withSessionId(
+              buildTransientUnavailableCaptureReadiness(),
+              requestedSessionId,
+            ),
+          }
+        }
+
         return {
           ...parsed.data,
           message: '지금은 도움이 필요해요.',
@@ -361,11 +438,33 @@ function normalizeHostError(
   }
 
   if (error instanceof Error) {
+    if (operation === 'readiness') {
+      return {
+        code: 'host-unavailable',
+        message: '촬영 준비 상태를 다시 확인하고 있어요.',
+        readiness: withSessionId(
+          buildTransientUnavailableCaptureReadiness(),
+          requestedSessionId,
+        ),
+      }
+    }
+
     return {
       code: 'host-unavailable',
       message: '지금은 도움이 필요해요.',
       readiness: withSessionId(
         buildPhoneRequiredCaptureReadiness(),
+        requestedSessionId,
+      ),
+    }
+  }
+
+  if (operation === 'readiness') {
+    return {
+      code: 'host-unavailable',
+      message: '촬영 준비 상태를 다시 확인하고 있어요.',
+      readiness: withSessionId(
+        buildTransientUnavailableCaptureReadiness(),
         requestedSessionId,
       ),
     }
@@ -379,10 +478,6 @@ function normalizeHostError(
       requestedSessionId,
     ),
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 export function getCaptureRuntimeMode(): CaptureRuntimeMode {
@@ -430,7 +525,7 @@ function readBrowserCaptureReadinessFixture() {
   const parsed = captureReadinessSnapshotSchema.safeParse(fixture)
 
   if (parsed.success) {
-    return parsed.data
+    return sanitizeBrowserPreviewFixtureReadiness(parsed.data)
   }
 
   throw {
@@ -493,10 +588,67 @@ export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
   }
 }
 
+function resolveActiveCaptureRuntimeGateway(): {
+  gateway: CaptureRuntimeGateway
+  mode: CaptureRuntimeMode
+} {
+  if (isTauriRuntime()) {
+    return {
+      gateway: createTauriCaptureRuntimeGateway(),
+      mode: 'tauri',
+    }
+  }
+
+  return {
+    gateway: createBrowserCaptureRuntimeGateway(),
+    mode: 'browser',
+  }
+}
+
 export function createDefaultCaptureRuntimeGateway() {
-  return isTauriRuntime()
-    ? createTauriCaptureRuntimeGateway()
-    : createBrowserCaptureRuntimeGateway()
+  return {
+    async getCaptureReadiness(input) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-get-readiness', {
+        sessionId: input.sessionId,
+        mode,
+      })
+      return gateway.getCaptureReadiness(input)
+    },
+    async deleteCapture(input) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-delete-capture', {
+        sessionId: input.sessionId,
+        captureId: input.captureId,
+        mode,
+      })
+
+      if (gateway.deleteCapture === undefined) {
+        throw {
+          code: 'host-unavailable',
+          message: '브라우저 미리보기에서는 실제 촬영 상태를 바꾸지 않아요.',
+          readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
+        } satisfies HostErrorEnvelope
+      }
+
+      return gateway.deleteCapture(input)
+    },
+    async requestCapture(input) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-request-capture', {
+        sessionId: input.sessionId,
+        mode,
+      })
+      return gateway.requestCapture(input)
+    },
+    async subscribeToCaptureReadiness(onEvent) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-subscribe-readiness', {
+        mode,
+      })
+      return gateway.subscribeToCaptureReadiness(onEvent)
+    },
+  }
 }
 
 type CreateCaptureRuntimeServiceOptions = {

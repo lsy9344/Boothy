@@ -318,6 +318,38 @@ describe('capture runtime adapter', () => {
     })
   })
 
+  it('downgrades generic readiness refresh failures to preparing instead of phone-required', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'get_capture_readiness') {
+        throw {
+          code: 'session-persistence-failed',
+          message: 'unexpected runtime bridge failure',
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.getCaptureReadiness({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).rejects.toMatchObject({
+      code: 'session-persistence-failed',
+      message: '촬영 준비 상태를 다시 확인하고 있어요.',
+      readiness: {
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        customerState: 'Preparing',
+        primaryAction: 'wait',
+        reasonCode: 'camera-preparing',
+      },
+    })
+  })
+
   it('rejects capture responses whose session id does not match the request', async () => {
     mockIPC((cmd) => {
       if (cmd === 'request_capture') {
@@ -500,6 +532,43 @@ describe('capture runtime adapter', () => {
     })
   })
 
+  it('downgrades browser fixture readiness that tries to claim Ready', async () => {
+    ;(
+      globalThis as typeof globalThis & {
+        __BOOTHY_BROWSER_CAPTURE_READINESS__?: unknown
+      }
+    ).__BOOTHY_BROWSER_CAPTURE_READINESS__ = {
+      schemaVersion: 'capture-readiness/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      surfaceState: 'captureReady',
+      customerState: 'Ready',
+      canCapture: true,
+      primaryAction: 'capture',
+      customerMessage: '지금 촬영할 수 있어요.',
+      supportMessage: '버튼을 누르면 바로 시작돼요.',
+      reasonCode: 'ready',
+      latestCapture: null,
+      postEnd: null,
+      timing: null,
+    }
+
+    const service = createCaptureRuntimeService({
+      gateway: createBrowserCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.getCaptureReadiness({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+      }),
+    ).resolves.toMatchObject({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+      customerState: 'Preparing',
+      canCapture: false,
+      primaryAction: 'wait',
+      supportMessage: '브라우저 미리보기에서는 실제 카메라 연결을 확인할 수 없어요.',
+    })
+  })
+
   it('polls readiness snapshots and stops after cleanup', async () => {
     vi.useFakeTimers()
     let pollCount = 0
@@ -587,5 +656,54 @@ describe('capture runtime adapter', () => {
     )
 
     unlisten()
+  })
+
+  it('recovers to tauri readiness when the runtime becomes available after service creation', async () => {
+    const runtimeWindow = window as typeof window & {
+      __TAURI_INTERNALS__?: unknown
+    }
+
+    delete runtimeWindow.__TAURI_INTERNALS__
+
+    const service = createCaptureRuntimeService()
+
+    runtimeWindow.__TAURI_INTERNALS__ = {}
+
+    mockIPC((cmd, payload) => {
+      if (cmd === 'get_capture_readiness') {
+        expect(payload).toEqual({
+          input: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          },
+        })
+
+        return {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'captureReady',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '버튼을 누르면 바로 시작돼요.',
+          reasonCode: 'ready',
+          latestCapture: null,
+          postEnd: null,
+          timing: null,
+        }
+      }
+
+      return undefined
+    })
+
+    await expect(
+      service.getCaptureReadiness({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).resolves.toMatchObject({
+      customerState: 'Ready',
+      canCapture: true,
+      reasonCode: 'ready',
+    })
   })
 })

@@ -14,6 +14,7 @@ import {
   type OperatorRecoveryActionResult,
   type OperatorRecoverySummary,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface OperatorDiagnosticsGateway {
   loadOperatorRecoverySummary(): Promise<unknown>
@@ -110,10 +111,6 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     code: 'host-unavailable',
     message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function readBrowserSummaryFixture() {

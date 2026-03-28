@@ -5,11 +5,8 @@ import { RouterProvider } from 'react-router-dom'
 import { createCapabilityService } from './app/services/capability-service'
 import { createBrowserAppRouter } from './app/routes'
 import { createDefaultRuntimeCapabilityGateway } from './session-domain/services/runtime-capability-gateway'
+import { isTauriRuntime } from './shared/runtime/is-tauri'
 import './index.css'
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-}
 
 async function readCurrentWindowLabel() {
   if (!isTauriRuntime()) {

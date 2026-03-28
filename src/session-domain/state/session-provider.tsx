@@ -33,6 +33,8 @@ import {
 import { isSessionScopedAssetPath } from '../utils/session-scoped-asset-path'
 import { SessionStateContext } from './session-context'
 import { DEFAULT_SESSION_DRAFT, type SessionDraft } from './session-draft'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
+import { logCaptureClientState } from '../../shared/runtime/log-capture-client-state'
 
 type SessionProviderProps = {
   children: ReactNode
@@ -55,14 +57,20 @@ function mergePreservedPostEndReadiness(
     return next
   }
 
+  const shouldPreserveCurrentPostEnd =
+    current.postEnd !== null && current.postEnd !== undefined
   const currentStrength = getPostEndStrength(current.reasonCode)
   const nextStrength = getPostEndStrength(next.reasonCode)
 
-  if (currentStrength === 2 && next.reasonCode !== current.reasonCode) {
+  if (
+    shouldPreserveCurrentPostEnd &&
+    currentStrength === 2 &&
+    next.reasonCode !== current.reasonCode
+  ) {
     return current
   }
 
-  if (currentStrength >= 1 && nextStrength === 0) {
+  if (shouldPreserveCurrentPostEnd && currentStrength >= 1 && nextStrength === 0) {
     return current
   }
 
@@ -234,7 +242,7 @@ function inferSurfaceStateFromSanitizedCapture(
   }
 
   if (latestCapture?.renderStatus === 'previewReady') {
-    return 'previewReady'
+    return readiness.canCapture ? 'previewReady' : 'blocked'
   }
 
   if (latestCapture?.renderStatus === 'previewWaiting') {
@@ -359,13 +367,13 @@ function buildCaptureFallbackReadiness(
       return {
         schemaVersion: 'capture-readiness/v1',
         sessionId,
-        surfaceState: 'captureReady',
-        customerState: 'Ready',
-        canCapture: true,
-        primaryAction: 'capture',
-        customerMessage: '지금 촬영할 수 있어요.',
-        supportMessage: '버튼을 누르면 바로 시작돼요.',
-        reasonCode: 'ready',
+        surfaceState: 'blocked',
+        customerState: 'Preparing',
+        canCapture: false,
+        primaryAction: 'wait',
+        customerMessage: '카메라 연결 상태를 다시 확인하는 중이에요.',
+        supportMessage: '잠시만 기다려 주세요.',
+        reasonCode: 'camera-preparing',
         latestCapture: capture,
         postEnd: null,
         timing: null,
@@ -389,6 +397,29 @@ function buildCaptureFallbackReadiness(
     default:
       return buildCaptureSavedFallbackReadiness(sessionId, capture)
   }
+}
+
+function logCaptureDebug(label: string, details: Record<string, unknown>) {
+  if (typeof console === 'undefined') {
+    return
+  }
+
+  console.info(`[boothy][capture] ${label}`, details)
+  void logCaptureClientState({
+    label,
+    sessionId:
+      typeof details.sessionId === 'string' ? details.sessionId : undefined,
+    runtimeMode:
+      typeof details.runtimeMode === 'string' ? details.runtimeMode : undefined,
+    customerState:
+      typeof details.customerState === 'string' ? details.customerState : undefined,
+    reasonCode:
+      typeof details.reasonCode === 'string' ? details.reasonCode : undefined,
+    canCapture:
+      typeof details.canCapture === 'boolean' ? details.canCapture : undefined,
+    message:
+      typeof details.message === 'string' ? details.message : undefined,
+  })
 }
 
 function sanitizeCaptureRequestResultForSession(
@@ -799,6 +830,13 @@ export function SessionProvider({
       return
     }
 
+    logCaptureDebug('apply-readiness-state', {
+      sessionId: readiness.sessionId,
+      customerState: readiness.customerState,
+      reasonCode: readiness.reasonCode,
+      canCapture: readiness.canCapture,
+    })
+
     setSessionDraft((current) => ({
       ...current,
       ...(() => {
@@ -1103,11 +1141,21 @@ export function SessionProvider({
     setIsLoadingCaptureReadiness(true)
 
     try {
+      logCaptureDebug('request-readiness', {
+        sessionId: input.sessionId,
+        runtimeMode: isTauriRuntime() ? 'tauri' : 'browser',
+      })
       const readiness = await captureRuntimeServiceRef.current.getCaptureReadiness(input)
       const safeReadiness = sanitizeCaptureReadinessForSession(
         input.sessionId,
         readiness,
       )
+      logCaptureDebug('apply-readiness-response', {
+        sessionId: safeReadiness.sessionId,
+        customerState: safeReadiness.customerState,
+        reasonCode: safeReadiness.reasonCode,
+        canCapture: safeReadiness.canCapture,
+      })
 
       if (
         !hasActiveSession(input.sessionId) ||
@@ -1128,6 +1176,12 @@ export function SessionProvider({
         input.sessionId,
         rawHostError,
       )
+      logCaptureDebug('readiness-error', {
+        sessionId: input.sessionId,
+        code: hostError.code,
+        message: hostError.message,
+        hasReadiness: hostError.readiness !== undefined && hostError.readiness !== null,
+      })
       const hadForeignReadiness = hasForeignReadinessForSession(
         input.sessionId,
         rawHostError,
@@ -1455,6 +1509,12 @@ export function SessionProvider({
       sessionDraftRef.current.manifest?.sessionId ?? sessionDraftRef.current.sessionId,
       readiness,
     )
+    logCaptureDebug('apply-subscribed-readiness', {
+      sessionId: sanitizedReadiness.sessionId,
+      customerState: sanitizedReadiness.customerState,
+      reasonCode: sanitizedReadiness.reasonCode,
+      canCapture: sanitizedReadiness.canCapture,
+    })
 
     captureReadinessRequestVersionRef.current += 1
     setIsLoadingCaptureReadiness(false)

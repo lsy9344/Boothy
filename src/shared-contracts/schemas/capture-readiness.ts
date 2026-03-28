@@ -24,6 +24,58 @@ export const customerReadinessStateSchema = z.enum([
   'Session Ended',
 ])
 
+export const liveCaptureTruthSourceSchema = z.enum([
+  'canon-helper-sidecar',
+  'browser-preview',
+  'fixture',
+  'unknown',
+])
+
+export const liveCaptureTruthFreshnessSchema = z.enum([
+  'fresh',
+  'stale',
+  'missing',
+])
+
+export const liveCaptureTruthSessionMatchSchema = z.enum([
+  'matched',
+  'mismatched',
+  'unknown',
+])
+
+export const liveCaptureCameraStateSchema = z.enum([
+  'unknown',
+  'disconnected',
+  'connecting',
+  'connected-idle',
+  'ready',
+  'capturing',
+  'recovering',
+  'degraded',
+  'error',
+])
+
+export const liveCaptureHelperStateSchema = z.enum([
+  'unknown',
+  'starting',
+  'connecting',
+  'healthy',
+  'recovering',
+  'degraded',
+  'error',
+])
+
+export const liveCaptureTruthSchema = z.object({
+  source: liveCaptureTruthSourceSchema,
+  freshness: liveCaptureTruthFreshnessSchema,
+  sessionMatch: liveCaptureTruthSessionMatchSchema,
+  cameraState: liveCaptureCameraStateSchema,
+  helperState: liveCaptureHelperStateSchema,
+  observedAt: z.string().datetime({ offset: true }).nullable(),
+  sequence: z.number().int().nonnegative().nullable().optional(),
+  detailCode: z.string().trim().min(1).max(80).nullable().optional(),
+})
+
 export const capturePrimaryActionSchema = z.enum([
   'wait',
   'finish',
@@ -81,6 +133,7 @@ const captureReadinessSnapshotInputSchema = z.object({
   supportMessage: customerGuidanceSchema,
   reasonCode: captureReasonCodeSchema,
   latestCapture: sessionCaptureRecordSchema.nullable().optional(),
+  liveCaptureTruth: liveCaptureTruthSchema.optional(),
   postEnd: sessionPostEndSchema.nullable().optional(),
   timing: sessionTimingSnapshotSchema.nullable().optional(),
 })
@@ -101,6 +154,7 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
       supportMessage: string
       reasonCode: z.infer<typeof captureReasonCodeSchema>
       latestCapture: z.infer<typeof sessionCaptureRecordSchema> | null
+      liveCaptureTruth?: z.infer<typeof liveCaptureTruthSchema>
       postEnd?: z.infer<typeof sessionPostEndSchema> | null
       timing?: z.infer<typeof sessionTimingSnapshotSchema> | null
     } = {
@@ -120,6 +174,10 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
       supportMessage: snapshot.supportMessage,
       reasonCode: snapshot.reasonCode,
       latestCapture,
+    }
+
+    if (snapshot.liveCaptureTruth !== undefined) {
+      normalized.liveCaptureTruth = snapshot.liveCaptureTruth
     }
 
     if (snapshot.postEnd !== undefined) {

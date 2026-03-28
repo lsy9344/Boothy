@@ -8,6 +8,7 @@ import {
   type LoadPresetCatalogInput,
   type PresetCatalogResult,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface PresetCatalogGateway {
   loadPresetCatalog(input: LoadPresetCatalogInput): Promise<unknown>
@@ -70,10 +71,6 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     code: 'host-unavailable',
     message: '지금은 프리셋을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function readBrowserCatalogFixture() {

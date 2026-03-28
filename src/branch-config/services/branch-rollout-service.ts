@@ -12,6 +12,7 @@ import {
   type BranchRolloutOverviewResult,
   type HostErrorEnvelope,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface BranchRolloutGateway {
   loadOverview(): Promise<unknown>
@@ -91,10 +92,6 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     code: 'host-unavailable',
     message: '지금은 지점 배포 거버넌스를 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
   }
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function readBrowserFixture() {

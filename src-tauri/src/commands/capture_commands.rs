@@ -4,6 +4,7 @@ use tauri::{Emitter, Manager};
 
 use crate::{
     capture::{
+        helper_supervisor::try_ensure_helper_running,
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
             delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
@@ -28,8 +29,41 @@ pub fn get_capture_readiness(
         HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
     })?;
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    try_ensure_helper_running(&base_dir, &input.session_id);
+    let session_id = input.session_id.clone();
 
-    get_capture_readiness_in_dir(&base_dir, input)
+    match get_capture_readiness_in_dir(&base_dir, input) {
+        Ok(readiness) => {
+            let live_truth_summary = readiness
+                .live_capture_truth
+                .as_ref()
+                .map(|truth| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        truth.freshness, truth.session_match, truth.camera_state, truth.helper_state
+                    )
+                })
+                .unwrap_or_else(|| "none".into());
+            log::info!(
+                "capture_readiness session={} customer_state={} reason_code={} can_capture={} live_truth={}",
+                session_id,
+                readiness.customer_state,
+                readiness.reason_code,
+                readiness.can_capture,
+                live_truth_summary
+            );
+            Ok(readiness)
+        }
+        Err(error) => {
+            log::warn!(
+                "capture_readiness_failed session={} code={} message={}",
+                session_id,
+                error.code,
+                error.message
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -54,6 +88,7 @@ pub fn request_capture(
         HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
     })?;
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    try_ensure_helper_running(&base_dir, &input.session_id);
     let result = request_capture_in_dir(&base_dir, input)?;
     let preview_base_dir = base_dir.clone();
     let preview_session_id = result.session_id.clone();

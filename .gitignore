@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local Canon SDK payload for helper development
+sidecar/canon-helper/vendor/canon-edsdk/
+sidecar/canon-helper/src/**/bin/
+sidecar/canon-helper/src/**/obj/
+sidecar/canon-helper/.tmp-runtime/
+
+# Local Rust build outputs
+src-tauri/target-camera-state-fix/
+src-tauri/target-tests/

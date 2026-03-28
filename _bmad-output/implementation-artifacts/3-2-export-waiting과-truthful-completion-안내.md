@@ -1,6 +1,8 @@
 # Story 3.2: Export Waiting과 truthful completion 안내
 
-Status: done
+Status: review
+
+Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

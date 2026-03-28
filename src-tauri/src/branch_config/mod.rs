@@ -24,8 +24,7 @@ use crate::{
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::sync_post_end_state_in_dir,
     session::{
-        session_manifest::current_timestamp,
-        session_paths::SessionPaths,
+        session_manifest::current_timestamp, session_paths::SessionPaths,
         session_repository::read_session_manifest,
     },
     timing::sync_session_timing_in_dir,
@@ -114,11 +113,7 @@ pub fn load_branch_rollout_overview_in_dir(
     Ok(BranchRolloutOverviewResultDto {
         schema_version: BRANCH_ROLLOUT_OVERVIEW_SCHEMA_VERSION.into(),
         approved_baselines: store.approved_baselines,
-        branches: store
-            .branches
-            .iter()
-            .map(build_branch_state_dto)
-            .collect(),
+        branches: store.branches.iter().map(build_branch_state_dto).collect(),
         recent_history: load_branch_rollout_history(base_dir)?
             .into_iter()
             .rev()
@@ -151,7 +146,13 @@ pub fn apply_branch_rollout_in_dir(
         actor_label: input.actor_label.clone(),
     };
 
-    apply_action(base_dir, "rollout", &input.branch_ids, Some(target_baseline), approval)
+    apply_action(
+        base_dir,
+        "rollout",
+        &input.branch_ids,
+        Some(target_baseline),
+        approval,
+    )
 }
 
 pub fn apply_branch_rollback_in_dir(
@@ -266,7 +267,9 @@ fn apply_action(
                 fallback_baseline.clone(),
                 None,
                 empty_local_settings_summary(),
-                incompatible_verdict("등록되지 않은 지점이라 release 거버넌스를 적용하지 않았어요."),
+                incompatible_verdict(
+                    "등록되지 않은 지점이라 release 거버넌스를 적용하지 않았어요.",
+                ),
                 Some(rejection(
                     "branch-not-found",
                     "승인된 지점 목록에 없는 식별자예요.",
@@ -361,7 +364,13 @@ fn apply_action(
         ));
     }
 
-    append_release_governance_audit_records(base_dir, action, &approval, &audit_entry.outcomes, &audit_entry.noted_at);
+    append_release_governance_audit_records(
+        base_dir,
+        action,
+        &approval,
+        &audit_entry.outcomes,
+        &audit_entry.noted_at,
+    );
 
     let message = build_action_message(action, &outcomes);
 
@@ -626,7 +635,10 @@ fn append_release_governance_audit_records(
                     ("rollback", "deferred") => "branch-rollback-deferred",
                     _ => "branch-rollback-rejected",
                 },
-                summary: format!("{} 지점 release 거버넌스를 평가했어요.", outcome.display_name),
+                summary: format!(
+                    "{} 지점 release 거버넌스를 평가했어요.",
+                    outcome.display_name
+                ),
                 detail: outcome
                     .rejection
                     .as_ref()
@@ -637,7 +649,10 @@ fn append_release_governance_audit_records(
                 capture_id: None,
                 preset_id: None,
                 published_version: None,
-                reason_code: outcome.rejection.as_ref().map(|rejection| rejection.code.clone()),
+                reason_code: outcome
+                    .rejection
+                    .as_ref()
+                    .map(|rejection| rejection.code.clone()),
             },
         );
     }
@@ -741,8 +756,7 @@ fn deferred_outcome(
         local_settings,
         compatibility: BranchCompatibilityVerdictDto {
             status: "deferred-until-safe-transition".into(),
-            summary: "진행 중인 세션은 기존 baseline을 유지하고 종료 후에만 전환돼요."
-                .into(),
+            summary: "진행 중인 세션은 기존 baseline을 유지하고 종료 후에만 전환돼요.".into(),
             session_baseline: branch
                 .active_session
                 .as_ref()
@@ -877,7 +891,8 @@ fn sync_branch_active_session(
     }
 
     let manifest = read_session_manifest(&manifest_path)?;
-    let manifest = sync_session_timing_in_dir(base_dir, &manifest_path, manifest, SystemTime::now())?;
+    let manifest =
+        sync_session_timing_in_dir(base_dir, &manifest_path, manifest, SystemTime::now())?;
     let manifest =
         sync_post_end_state_in_dir(base_dir, &manifest_path, manifest, SystemTime::now())?;
     let timing_phase = manifest
@@ -915,9 +930,7 @@ fn read_branch_rollout_history_from_path(
 ) -> Result<Vec<BranchRolloutAuditEntryDto>, HostErrorEnvelope> {
     let bytes = fs::read_to_string(path).map_err(map_fs_error)?;
     let parsed = serde_json::from_str::<BranchRolloutHistoryStore>(&bytes).map_err(|error| {
-        HostErrorEnvelope::persistence(format!(
-            "branch rollout history를 읽지 못했어요: {error}"
-        ))
+        HostErrorEnvelope::persistence(format!("branch rollout history를 읽지 못했어요: {error}"))
     })?;
 
     if parsed.schema_version != BRANCH_ROLLOUT_HISTORY_STORE_SCHEMA_VERSION {
@@ -964,7 +977,9 @@ fn persist_branch_rollout_store(
     })?;
     fs::create_dir_all(store_dir).map_err(map_fs_error)?;
     let bytes = serde_json::to_vec_pretty(store).map_err(|error| {
-        HostErrorEnvelope::persistence(format!("branch rollout store를 직렬화하지 못했어요: {error}"))
+        HostErrorEnvelope::persistence(format!(
+            "branch rollout store를 직렬화하지 못했어요: {error}"
+        ))
     })?;
 
     write_json_bytes_atomically(&store_path, &bytes)

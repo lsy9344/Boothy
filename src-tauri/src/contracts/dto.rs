@@ -351,8 +351,7 @@ pub fn is_valid_branch_id(branch_id: &str) -> bool {
         return false;
     }
 
-    branch_id.len() <= 48
-        && chars.all(|char| char.is_ascii_alphanumeric() || char == '-')
+    branch_id.len() <= 48 && chars.all(|char| char.is_ascii_alphanumeric() || char == '-')
 }
 
 pub fn is_valid_build_version(build_version: &str) -> bool {
@@ -760,6 +759,37 @@ pub struct OperatorBoundarySummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LiveCaptureTruthDto {
+    pub source: String,
+    pub freshness: String,
+    pub session_match: String,
+    pub camera_state: String,
+    pub helper_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_code: Option<String>,
+}
+
+impl LiveCaptureTruthDto {
+    pub fn unknown() -> Self {
+        Self {
+            source: "unknown".into(),
+            freshness: "missing".into(),
+            session_match: "unknown".into(),
+            camera_state: "unknown".into(),
+            helper_state: "unknown".into(),
+            observed_at: None,
+            sequence: None,
+            detail_code: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperatorAuditEntryDto {
     pub schema_version: String,
     pub event_id: String,
@@ -855,6 +885,8 @@ pub struct OperatorSessionSummaryDto {
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_capture_truth: Option<LiveCaptureTruthDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -879,6 +911,8 @@ pub struct OperatorRecoverySummaryDto {
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_capture_truth: Option<LiveCaptureTruthDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1098,6 +1132,8 @@ pub struct CaptureReadinessDto {
     pub reason_code: String,
     pub latest_capture: Option<SessionCaptureRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_capture_truth: Option<LiveCaptureTruthDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub post_end: Option<SessionPostEnd>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<SessionTiming>,
@@ -1126,6 +1162,7 @@ impl CaptureReadinessDto {
             support_message: support_message.into(),
             reason_code: reason_code.into(),
             latest_capture,
+            live_capture_truth: None,
             post_end: None,
             timing: None,
         }
@@ -1138,6 +1175,16 @@ impl CaptureReadinessDto {
 
     pub fn with_timing(mut self, timing: Option<SessionTiming>) -> Self {
         self.timing = timing;
+        self
+    }
+
+    pub fn with_latest_capture(mut self, latest_capture: Option<SessionCaptureRecord>) -> Self {
+        self.latest_capture = latest_capture;
+        self
+    }
+
+    pub fn with_live_capture_truth(mut self, live_capture_truth: LiveCaptureTruthDto) -> Self {
+        self.live_capture_truth = Some(live_capture_truth);
         self
     }
 
@@ -1167,6 +1214,38 @@ impl CaptureReadinessDto {
             false,
             "wait",
             "촬영 준비 중이에요.",
+            "잠시만 기다려 주세요.",
+            "camera-preparing",
+            None,
+        )
+    }
+
+    pub fn camera_waiting_for_power(session_id: impl Into<String>) -> Self {
+        let session_id = session_id.into();
+
+        Self::build(
+            session_id,
+            "blocked",
+            "Preparing",
+            false,
+            "wait",
+            "카메라 전원을 확인하고 있어요.",
+            "카메라를 켜고 연결이 안정되면 바로 촬영할 수 있어요.",
+            "camera-preparing",
+            None,
+        )
+    }
+
+    pub fn camera_connecting(session_id: impl Into<String>) -> Self {
+        let session_id = session_id.into();
+
+        Self::build(
+            session_id,
+            "blocked",
+            "Preparing",
+            false,
+            "wait",
+            "카메라를 확인했고 연결을 마무리하고 있어요.",
             "잠시만 기다려 주세요.",
             "camera-preparing",
             None,

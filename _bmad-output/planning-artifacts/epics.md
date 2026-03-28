@@ -58,6 +58,9 @@ NFR6: 제품은 선택된 지점 집합에 대한 단계적 배포와 단일 승
 - UI 컴포넌트는 직접 `invoke` 호출을 하지 않고, 타입이 지정된 adapter/service 계층을 통해서만 호스트 기능에 접근해야 한다.
 - 다음 계약 산출물은 구현 전제 조건으로 동결돼야 한다: `session.json` 스키마, preset bundle 스키마, sidecar protocol 메시지, authoring publication payload 계약.
 - 타이밍 정책, 경고/종료 알림, 사후 상태 전환, 강제 업데이트 금지, 단계적 배포/롤백 규칙은 호스트 소유 워크플로 규칙으로 구현되어야 한다.
+- Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3은 자동 테스트 통과만으로 제품 관점 `done`으로 간주하지 않는다.
+- 지정된 booth hardware validation checklist evidence가 수집되기 전까지 해당 story는 `review` 또는 동등한 pre-close 상태에 머물러야 한다.
+- booth `Ready`와 `Completed`는 각각 false-ready, false-complete 방지 evidence가 확보된 뒤에만 release truth로 인정한다.
 
 ### UX Design Requirements
 
@@ -189,14 +192,24 @@ So that I can trust the capture flow without understanding device internals.
 **Acceptance Criteria:**
 
 **Given** an active session and selected preset
-**When** camera or host readiness changes
+**When** live Tauri host receives real camera/helper readiness changes on approved booth hardware
 **Then** the booth translates runtime truth into plain-language customer states such as `Preparing`, `Ready`, or wait/call guidance
+**And** the booth shows `Ready` only when both the capture boundary and helper boundary are actually ready
 **And** customer copy stays within the approved low-density guidance rule
 
 **Given** the booth is not in an approved capture state
 **When** the customer attempts to capture
 **Then** capture is blocked
 **And** the booth tells the customer whether to wait or call without exposing technical diagnostics
+
+**Given** the booth loses camera or helper readiness after previously being ready
+**When** the live capture boundary degrades or disconnects
+**Then** the booth immediately exits `Ready`
+**And** the `사진 찍기` action becomes disabled without waiting for browser fallback or stale readiness refresh
+
+**Given** Story 1.4 implementation and automated tests are complete
+**When** the team evaluates done status
+**Then** the story remains in `review` until HV-02, HV-03, and HV-10 evidence is collected on approved booth hardware
 
 ### Story 1.5: 현재 세션 촬영 저장과 truthful preview waiting 피드백
 
@@ -225,6 +238,66 @@ So that I know my photo is saved even if the confirmation preview is still being
 **When** the preview rail is still empty
 **Then** the UI explains that this can be normal for the current session
 **And** no internal render failure cause is shown to the customer
+
+**Given** Story 1.5 implementation and automated tests are complete
+**When** the team evaluates done status
+**Then** the story remains in `review` until HV-04 and HV-05 evidence confirms persisted RAW truth and truthful preview readiness on approved booth hardware
+
+### Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단
+
+As a booth customer,
+I want `Ready` to open only after the real helper and camera report fresh readiness through the live host boundary,
+So that the booth never tells me to shoot from stale or synthetic truth.
+
+**Acceptance Criteria:**
+
+**Given** an approved booth hardware environment
+**When** the bundled `canon-helper.exe` baseline is launched by the Tauri host and the host receives fresh `helper-ready` and `camera-status`
+**Then** the booth may enter `Ready` only after the first fresh camera-ready truth is confirmed
+**And** `helper-ready` alone does not enable capture
+
+**Given** the booth is running in browser preview, fixture mode, stale readiness, disconnected or degraded camera/helper state, or reconnect-before-fresh-truth
+**When** readiness is evaluated
+**Then** the booth does not claim `Ready`
+**And** capture remains blocked with plain-language wait or call guidance
+
+**Given** the booth was previously ready and the helper process exits, the camera disconnects, or readiness degrades
+**When** the live hardware boundary changes
+**Then** the booth immediately exits `Ready`
+**And** it does not auto-return until fresh `camera-status` truth is observed again
+
+**Given** Story 1.6 is reviewed for closure
+**When** the helper project skeleton, host spawn/health management, or HV-02, HV-03, HV-10 evidence is incomplete
+**Then** the story remains in `in-progress` or `review`
+**And** it cannot be treated as release-safe readiness truth
+
+### Story 1.7: 실카메라 capture round-trip과 RAW handoff correlation
+
+As a booth customer,
+I want a real capture to finish only when the helper delivers the correct file back to my session,
+So that the booth never mistakes shutter acceptance for a saved photo.
+
+**Acceptance Criteria:**
+
+**Given** an approved booth hardware environment in a fresh ready state
+**When** the host sends `request-capture` to the bundled helper
+**Then** the helper accepts or rejects one correlated in-flight capture request
+**And** the host keeps a single in-flight capture guard for that request
+
+**Given** the helper accepts a capture
+**When** shutter trigger, RAW download, and final file handoff are still in progress
+**Then** the booth does not treat `capture-accepted` as capture success
+**And** success is confirmed only after correlated `file-arrived` and actual file presence are verified
+
+**Given** duplicate arrival, wrong session correlation, missing file, timeout, or a second capture during an in-flight capture
+**When** capture resolution is evaluated
+**Then** the host blocks false success and unsafe parallel capture
+**And** the booth falls back to truthful wait or recovery guidance without cross-session leakage
+
+**Given** Story 1.7 is reviewed for closure
+**When** real capture round-trip evidence is missing on approved booth hardware
+**Then** the story remains open
+**And** it does not inherit closure from Story 1.6 or synthetic preview flow
 
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 
@@ -372,6 +445,10 @@ So that I do not leave too early or worry that my session failed when it is stil
 **Then** 90% or more of sessions enter an explicit post-end state within 10 seconds of scheduled end time
 **And** render retries or failures do not invalidate already saved current-session captures
 
+**Given** Story 3.2 implementation and automated tests are complete
+**When** the team evaluates done status
+**Then** the story remains in `review` until HV-08 and HV-11 evidence confirms no false-complete outcome on approved booth hardware
+
 ### Story 3.3: Handoff Ready와 Phone Required 보호 안내
 
 As a booth customer,
@@ -430,6 +507,10 @@ So that only safe and reproducible presets can advance toward publication.
 **Then** the preset remains out of the customer catalog
 **And** the internal user sees actionable validation feedback without changing active sessions
 
+**Given** Story 4.2 implementation and automated tests are complete
+**When** the team evaluates done status
+**Then** the story remains in `review` until HV-01 and HV-09 evidence confirms draft and validated artifacts cannot leak into booth runtime
+
 ### Story 4.3: 승인과 불변 게시 아티팩트 생성
 
 As a authorized preset manager,
@@ -459,6 +540,10 @@ So that future booth sessions can use a stable and traceable preset catalog entr
 **When** the rejection is finalized
 **Then** the system records the rejected action, reason, actor, and timestamp in the audit history
 **And** the booth catalog and active sessions remain unchanged
+
+**Given** Story 4.3 implementation and automated tests are complete
+**When** the team evaluates done status
+**Then** the story remains in `review` until HV-01, HV-07, and HV-12 evidence confirms published bundles drive booth output without preset drift
 
 ### Story 4.4: 미래 세션 대상 롤백과 카탈로그 버전 관리
 
@@ -536,6 +621,28 @@ So that we can audit failures, recovery behavior, timing outcomes, and support b
 **Then** they can distinguish state transitions, intervention attempts, and final outcomes
 **And** the log remains separate from durable photo/session asset truth
 
+### Story 5.4: 운영자용 카메라 연결 상태 전용 항목과 helper readiness 가시화
+
+As a remote operator,
+I want camera connection status to appear as a dedicated diagnostic item,
+So that I can spot false-ready risk before it is hidden inside a generic blocked-state summary.
+
+**Acceptance Criteria:**
+
+**Given** the operator console is opened for an active or blocked booth session
+**When** diagnostics are rendered
+**Then** the console shows a dedicated `카메라 연결 상태` item in addition to the generic blocked-state category
+**And** the item is derived from host-normalized camera/helper truth
+
+**Given** the camera or helper is disconnected, still preparing, ready, or degraded after readiness
+**When** the operator reviews the session
+**Then** the dedicated item shows one explicit operator-safe state for that condition
+**And** the UI does not expose raw helper output or booth-customer copy
+
+**Given** the booth could otherwise appear ready from stale or incomplete truth
+**When** the operator reviews the active session
+**Then** the dedicated camera connection item makes the risk visible before a false-ready release decision is made
+
 ## Epic 6: 지점 배포와 롤백 거버넌스
 
 owner / brand operator가 선택된 지점 집합에 대해 빌드와 승인된 프리셋 스택을 안전하게 배포·롤백할 수 있게 한다.
@@ -583,3 +690,26 @@ So that branches stay consistent without forcing updates during active customer 
 **When** the prior approved baseline is restored
 **Then** each branch preserves its approved local settings while returning to the last approved build and preset stack
 **And** active-session compatibility remains protected until each branch reaches a safe transition point
+
+### Story 6.2: 실장비 hardware validation gate와 evidence 기반 done 정책
+
+As a owner / brand operator,
+I want sprint closure to require hardware validation evidence for truth-critical stories,
+So that implementation completion is not mistaken for product readiness.
+
+**Acceptance Criteria:**
+
+**Given** Story 1.4, 1.5, 1.6, 3.2, 4.2, or 4.3 has completed implementation and automated tests
+**When** the team evaluates story closure
+**Then** the story does not move to product-level `done` until the mapped hardware validation evidence is attached
+**And** the story remains in `review` or an equivalent pre-close state until then
+
+**Given** a truth-critical story is reviewed for hardware validation
+**When** the team records closure evidence
+**Then** the story references the exact checklist IDs, evidence location, execution date, and Go / No-Go result
+**And** sprint review distinguishes automated pass from hardware pass
+
+**Given** a hardware validation scenario results in `No-Go`
+**When** the sprint status is updated
+**Then** the impacted story remains or returns to `review`
+**And** the release decision cannot claim booth `Ready` or `Completed` truth without the missing evidence

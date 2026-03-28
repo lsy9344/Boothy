@@ -59,12 +59,15 @@ fn rollout_targets_only_selected_branches_and_preserves_local_settings() {
         .find(|branch| branch.branch_id == "hongdae-02")
         .expect("hongdae branch should exist");
 
-    assert_eq!(gangnam.deployment_baseline.build_version, "boothy-2026.03.27.1");
-    assert_eq!(hongdae.deployment_baseline.build_version, "boothy-2026.03.20.4");
-    assert!(gangnam
-        .local_settings
-        .summary
-        .contains("연락처"));
+    assert_eq!(
+        gangnam.deployment_baseline.build_version,
+        "boothy-2026.03.27.1"
+    );
+    assert_eq!(
+        hongdae.deployment_baseline.build_version,
+        "boothy-2026.03.20.4"
+    );
+    assert!(gangnam.local_settings.summary.contains("연락처"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -112,7 +115,10 @@ fn rollout_defers_active_session_branches_until_safe_transition_then_applies() {
         .find(|branch| branch.branch_id == "hongdae-02")
         .expect("hongdae branch should exist");
 
-    assert_eq!(hongdae.deployment_baseline.build_version, "boothy-2026.03.27.1");
+    assert_eq!(
+        hongdae.deployment_baseline.build_version,
+        "boothy-2026.03.27.1"
+    );
     assert!(hongdae.pending_baseline.is_none());
     assert!(hongdae.active_session.is_none());
 
@@ -159,7 +165,10 @@ fn rollback_cancels_staged_rollout_during_an_active_session() {
     .expect("rollback should cancel the staged rollout");
 
     assert_eq!(rollback.outcomes[0].result, "applied");
-    assert_eq!(rollback.outcomes[0].effective_baseline.build_version, "boothy-2026.03.20.4");
+    assert_eq!(
+        rollback.outcomes[0].effective_baseline.build_version,
+        "boothy-2026.03.20.4"
+    );
     assert!(rollback.outcomes[0].pending_baseline.is_none());
 
     let overview =
@@ -170,7 +179,10 @@ fn rollback_cancels_staged_rollout_during_an_active_session() {
         .find(|branch| branch.branch_id == "hongdae-02")
         .expect("hongdae branch should exist");
 
-    assert_eq!(hongdae.deployment_baseline.build_version, "boothy-2026.03.20.4");
+    assert_eq!(
+        hongdae.deployment_baseline.build_version,
+        "boothy-2026.03.20.4"
+    );
     assert!(hongdae.pending_baseline.is_none());
 
     let _ = fs::remove_dir_all(base_dir);
@@ -236,7 +248,10 @@ fn rejected_rollout_requests_are_still_written_to_audit_history() {
     )
     .expect("typed rejection should still succeed");
 
-    assert!(result.outcomes.iter().all(|outcome| outcome.result == "rejected"));
+    assert!(result
+        .outcomes
+        .iter()
+        .all(|outcome| outcome.result == "rejected"));
 
     let history_path = base_dir.join("branch-config").join("rollout-history.json");
     let history_bytes = fs::read_to_string(history_path).expect("history file should exist");

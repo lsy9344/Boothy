@@ -1,11 +1,19 @@
 use std::{
     fs,
     path::PathBuf,
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use boothy_lib::{
-    capture::normalized_state::get_capture_readiness_in_dir,
+    capture::{
+        normalized_state::get_capture_readiness_in_dir,
+        sidecar_client::{
+            read_capture_request_messages, CAMERA_HELPER_EVENTS_FILE_NAME,
+            CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION, CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
+        },
+    },
     commands::runtime_commands::capability_snapshot_for_profile,
     contracts::dto::{
         CaptureReadinessInputDto, OperatorRecoveryActionInputDto, SessionStartInputDto,
@@ -323,14 +331,9 @@ fn create_preview_waiting_session(base_dir: &PathBuf) -> String {
         },
     )
     .expect("preset should become active");
+    write_ready_helper_status(base_dir, &session.session_id);
 
-    let capture_result = boothy_lib::capture::normalized_state::request_capture_in_dir(
-        base_dir,
-        boothy_lib::contracts::dto::CaptureRequestInputDto {
-            session_id: session.session_id.clone(),
-        },
-    )
-    .expect("capture should save");
+    let capture_result = request_capture_with_helper_success(base_dir, &session.session_id);
 
     let raw_asset_path = capture_result.capture.raw.asset_path;
 
@@ -356,6 +359,107 @@ fn read_manifest(base_dir: &PathBuf, session_id: &str) -> SessionManifest {
     let manifest_bytes = fs::read_to_string(manifest_path).expect("manifest should be readable");
 
     serde_json::from_str(&manifest_bytes).expect("manifest should deserialize")
+}
+
+fn request_capture_with_helper_success(
+    base_dir: &PathBuf,
+    session_id: &str,
+) -> boothy_lib::contracts::dto::CaptureRequestResultDto {
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session_id.to_string();
+
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id);
+        let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
+            .captures_originals_dir
+            .join("operator_recovery_capture.jpg");
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("operator recovery raw path should have a parent"),
+        )
+        .expect("operator recovery raw dir should exist");
+        fs::write(&raw_path, b"helper-raw").expect("operator recovery raw should exist");
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": request.session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
+              "type": "file-arrived",
+              "sessionId": request.session_id,
+              "requestId": request.request_id,
+              "captureId": "capture_operator_recovery",
+              "arrivedAt": current_timestamp(SystemTime::now()).expect("arrival timestamp should serialize"),
+              "rawPath": raw_path.to_string_lossy().into_owned(),
+            }),
+        );
+    });
+
+    let result = boothy_lib::capture::normalized_state::request_capture_in_dir(
+        base_dir,
+        boothy_lib::contracts::dto::CaptureRequestInputDto {
+            session_id: session_id.into(),
+        },
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("operator recovery helper thread should complete");
+
+    result
+}
+
+fn wait_for_latest_capture_request(
+    base_dir: &PathBuf,
+    session_id: &str,
+) -> boothy_lib::capture::sidecar_client::CanonHelperCaptureRequestMessage {
+    for _ in 0..200 {
+        let requests = read_capture_request_messages(base_dir, session_id)
+            .expect("operator recovery request log should be readable");
+
+        if let Some(request) = requests.last() {
+            return request.clone();
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    panic!("operator recovery request should have been written")
+}
+
+fn append_helper_event(base_dir: &PathBuf, session_id: &str, event: serde_json::Value) {
+    let event_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join(CAMERA_HELPER_EVENTS_FILE_NAME);
+    fs::create_dir_all(
+        event_path
+            .parent()
+            .expect("operator recovery event path should have a parent"),
+    )
+    .expect("operator recovery event dir should exist");
+
+    let serialized_event =
+        serde_json::to_string(&event).expect("operator recovery event should serialize");
+    let existing = fs::read_to_string(&event_path).unwrap_or_default();
+    let next_contents = if existing.trim().is_empty() {
+        format!("{serialized_event}\n")
+    } else {
+        format!("{existing}{serialized_event}\n")
+    };
+
+    fs::write(event_path, next_contents).expect("operator recovery event log should be writable");
 }
 
 fn update_timing(
@@ -432,4 +536,30 @@ fn create_named_published_bundle(
         serde_json::to_vec_pretty(&bundle).expect("bundle should serialize"),
     )
     .expect("bundle should be writable");
+}
+
+fn write_ready_helper_status(base_dir: &PathBuf, session_id: &str) {
+    let status_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join("camera-helper-status.json");
+    fs::create_dir_all(
+        status_path
+            .parent()
+            .expect("helper status should have a diagnostics directory"),
+    )
+    .expect("diagnostics directory should exist");
+    fs::write(
+        status_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "canon-helper-status/v1",
+          "sessionId": session_id,
+          "sequence": 1,
+          "observedAt": current_timestamp(SystemTime::now())
+            .expect("helper timestamp should serialize"),
+          "cameraState": "ready",
+          "helperState": "healthy"
+        }))
+        .expect("helper status should serialize"),
+    )
+    .expect("helper status should be writable");
 }

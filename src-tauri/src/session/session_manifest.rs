@@ -441,9 +441,8 @@ pub(crate) fn unix_seconds_to_rfc3339(unix_seconds: u64) -> String {
 }
 
 pub fn rfc3339_to_unix_seconds(timestamp: &str) -> Result<u64, HostErrorEnvelope> {
-    let timestamp = timestamp.strip_suffix('Z').ok_or_else(|| {
-        HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
-    })?;
+    let timestamp = timestamp.trim();
+    let (timestamp, offset_seconds) = split_rfc3339_offset(timestamp)?;
     let (date, time) = timestamp.split_once('T').ok_or_else(|| {
         HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
     })?;
@@ -458,7 +457,81 @@ pub fn rfc3339_to_unix_seconds(timestamp: &str) -> Result<u64, HostErrorEnvelope
         ));
     }
 
-    Ok((days as u64) * 86_400 + (hour as u64) * 3_600 + (minute as u64) * 60 + second as u64)
+    let timestamp_seconds =
+        (days as i64) * 86_400 + (hour as i64) * 3_600 + (minute as i64) * 60 + second as i64;
+    let utc_seconds = timestamp_seconds
+        .checked_sub(offset_seconds)
+        .ok_or_else(|| {
+            HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
+        })?;
+
+    if utc_seconds < 0 {
+        return Err(HostErrorEnvelope::persistence(
+            "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(utc_seconds as u64)
+}
+
+fn split_rfc3339_offset(timestamp: &str) -> Result<(&str, i64), HostErrorEnvelope> {
+    if let Some(stripped) = timestamp.strip_suffix('Z') {
+        return Ok((stripped, 0));
+    }
+
+    let time_index = timestamp.find('T').ok_or_else(|| {
+        HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
+    })?;
+    let offset_index = timestamp[time_index + 1..]
+        .find(['+', '-'])
+        .map(|index| time_index + 1 + index)
+        .ok_or_else(|| {
+            HostErrorEnvelope::persistence(
+                "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+            )
+        })?;
+    let (date_time, offset) = timestamp.split_at(offset_index);
+
+    Ok((date_time, parse_rfc3339_offset(offset)?))
+}
+
+fn parse_rfc3339_offset(offset: &str) -> Result<i64, HostErrorEnvelope> {
+    if offset.len() != 6 {
+        return Err(HostErrorEnvelope::persistence(
+            "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+        ));
+    }
+
+    let sign = match offset.as_bytes()[0] {
+        b'+' => 1_i64,
+        b'-' => -1_i64,
+        _ => {
+            return Err(HostErrorEnvelope::persistence(
+                "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+            ))
+        }
+    };
+
+    if offset.as_bytes()[3] != b':' {
+        return Err(HostErrorEnvelope::persistence(
+            "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+        ));
+    }
+
+    let hours = offset[1..3].parse::<i64>().map_err(|_| {
+        HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
+    })?;
+    let minutes = offset[4..6].parse::<i64>().map_err(|_| {
+        HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
+    })?;
+
+    if hours > 23 || minutes > 59 {
+        return Err(HostErrorEnvelope::persistence(
+            "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(sign * (hours * 3_600 + minutes * 60))
 }
 
 fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {

@@ -7,6 +7,7 @@
 현재 코드베이스의 story `done`은 주로 구현 + 자동 테스트 완료를 의미한다. 이 문서는 제품 관점의 실장비 검증 완료를 별도로 잠그기 위한 마지막 게이트다.
 
 아키텍처 관점의 상세 근거와 연구 메모는 `docs/runbooks/booth-hardware-validation-architecture-research.md`를 함께 본다.
+EDSDK helper 구현 기준선은 `docs/contracts/camera-helper-edsdk-profile.md`를 함께 본다.
 
 ## 적용 범위
 
@@ -62,6 +63,7 @@
 이 검증은 아래 전제가 잠겨 있어야 의미가 있다.
 
 - 승인된 Windows 부스 PC에서만 수행한다.
+- camera helper는 `docs/contracts/camera-helper-edsdk-profile.md`를 따르는 Windows 전용 Canon EDSDK helper exe를 기준으로 본다.
 - darktable runtime pin은 `release-5.4.1` / commit `c3f96ca` 기준으로 검증한다.
 - booth runtime은 `preset-catalog/published/**/bundle.json`만 읽는다.
 - active session은 `session.json.catalogSnapshot`에 고정된 version만 사용한다.
@@ -75,6 +77,8 @@
 - 승인된 Windows 부스 PC 1대
 - 실제 카메라, 배터리 또는 전원 어댑터, 데이터 케이블
 - 실제 camera helper / sidecar 실행 가능 상태
+- `canon-helper.exe`와 Canon EDSDK DLL이 같은 배포 경계에 배치된 상태
+- helper version / sdk version / diagnostics path를 확인할 수 있는 상태
 - pinned darktable 런타임 사용 가능 상태
 - 게시된 preset bundle 최소 2개
 - 검증용 draft preset 최소 2개
@@ -84,6 +88,22 @@
 - 앱 로그 및 session root 확인 가능한 로컬 권한
 - 화면 녹화 또는 사진 촬영 도구
 - 운영 기준 이상의 디스크 여유 공간
+
+## EDSDK helper 전용 사전 확인
+
+실검증 전에 아래 helper 전용 항목을 먼저 기록하는 편이 좋다.
+
+- helper executable version
+- helper가 링크하거나 번들한 sdk package version
+- camera model
+- helper diagnostics path
+- last fresh `camera-status`를 기록할 수 있는지 여부
+
+권장 원칙:
+
+- `helper-ready`는 helper process boot 완료 신호일 뿐 camera `Ready`와 같지 않다.
+- helper가 떠 있어도 카메라가 없으면 정상적으로 blocked path가 나와야 한다.
+- helper raw detail은 운영 증거로 남길 수 있지만 고객 화면 copy에는 그대로 노출되면 안 된다.
 
 ## 앱 실행과 카메라 연결 확인 진입점
 
@@ -149,9 +169,11 @@ operator 화면에서 함께 볼 항목:
 4. preview, final, style 경로가 서로 다른 `configdir` / `library`를 쓰는지 확인한다.
 5. booth runtime과 authoring 작업이 같은 darktable state를 공유하지 않는지 확인한다.
 6. helper 프로세스와 darktable worker를 별도 경계로 보고 각각 실행 가능 상태를 확인한다.
-7. `preset-catalog/published/**/bundle.json`이 존재하고, 사용할 preset의 `publishedVersion`이 기록돼 있는지 확인한다.
-8. `preset-catalog/catalog-state.json`이 live version을 가리키고 있는지 확인한다.
-9. 세션 루트에 `session.json`, `captures/originals`, `renders/previews`, `renders/finals`, `handoff`, `diagnostics`를 만들 수 있는 권한이 있는지 확인한다.
+7. `canon-helper.exe`와 Canon EDSDK DLL이 같은 배포 경계에 있는지 확인한다.
+8. helper version, sdk version, diagnostics path를 이번 회차 evidence 메모에 기록한다.
+9. `preset-catalog/published/**/bundle.json`이 존재하고, 사용할 preset의 `publishedVersion`이 기록돼 있는지 확인한다.
+10. `preset-catalog/catalog-state.json`이 live version을 가리키고 있는지 확인한다.
+11. 세션 루트에 `session.json`, `captures/originals`, `renders/previews`, `renders/finals`, `handoff`, `diagnostics`를 만들 수 있는 권한이 있는지 확인한다.
 
 통과 기준:
 
@@ -164,6 +186,8 @@ operator 화면에서 함께 볼 항목:
 
 - `darktable --version` 결과
 - `darktable-cltest` 결과
+- helper version / sdk version 기록
+- helper diagnostics path 기록
 - preview/final/style `configdir` / `library` 경로 기록
 - published `bundle.json` 캡처 또는 사본
 - `catalog-state.json` 캡처 또는 사본
@@ -199,6 +223,8 @@ operator 화면에서 함께 볼 항목:
 - 부스 PC 이름
 - 카메라 모델
 - darktable 버전
+- helper version
+- sdk version
 - helper 실행 상태 확인 방법
 - 사용한 `presetId` / `publishedVersion`
 - 생성된 `sessionId`
@@ -209,6 +235,7 @@ operator 화면에서 함께 볼 항목:
 - final
 - `session.json` 사본 또는 핵심 필드 캡처
 - `timing-events.log` 마지막 이벤트 캡처
+- helper-ready 또는 최근 `camera-status` 캡처
 - `bundle.json`과 `catalog-state.json` 근거
 - pass / fail 판정
 - 실패 시 관찰 메모
@@ -277,7 +304,7 @@ operator 화면에서 함께 볼 항목:
 절차:
 
 1. 카메라를 실제로 연결한다.
-2. helper / sidecar가 정상 동작하는지 확인한다.
+2. helper / sidecar가 정상 동작하는지, `helper-ready` 이후 fresh `camera-status`가 들어오는지 확인한다.
 3. 같은 세션 또는 새 세션에서 preset을 선택한다.
 4. readiness가 `Ready`로 바뀌는지 확인한다.
 5. 고객 화면이 내부 용어 없이 촬영 가능 상태만 안내하는지 확인한다.
@@ -292,6 +319,7 @@ operator 화면에서 함께 볼 항목:
 
 - `Ready` 화면 캡처
 - helper 정상 동작 로그 또는 상태 캡처
+- 최근 `camera-status` 또는 동등한 helper freshness 근거
 - `session.json` 캡처
 
 ### HV-04 실제 촬영과 RAW 저장 확인
@@ -461,7 +489,7 @@ preset 변경이 이후 촬영부터만 적용되고 이전 촬영을 다시 쓰
 2. 카메라를 물리적으로 분리한다.
 3. 고객 화면이 즉시 `Ready`에서 내려오고 촬영이 차단되는지 확인한다.
 4. 카메라를 다시 연결한다.
-5. helper가 회복한 뒤 같은 세션 또는 새 세션에서 다시 `Ready`로 돌아오는지 확인한다.
+5. helper가 `recovering`에서 fresh status를 다시 보낸 뒤 같은 세션 또는 새 세션에서 다시 `Ready`로 돌아오는지 확인한다.
 6. 복구 후 실제 촬영 1회를 추가로 수행한다.
 
 통과 기준:
@@ -475,6 +503,7 @@ preset 변경이 이후 촬영부터만 적용되고 이전 촬영을 다시 쓰
 
 - 분리 직후 화면 캡처
 - 재연결 후 `Ready` 화면 캡처
+- recovery-status 또는 최근 `camera-status` sequence 근거
 - 복구 후 추가 capture 증거
 - `session.json` 전후 비교
 

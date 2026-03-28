@@ -1,0 +1,511 @@
+# Camera Helper Troubleshooting History
+
+## 목적
+
+이 문서는 Boothy의 실카메라/helper/readiness 문제를 다음 에이전트가 빠르게 이어서 처리할 수 있게 만들기 위한 운영 이력이다.
+
+목표는 세 가지다.
+
+1. 이미 겪은 문제를 다시 처음부터 추정하지 않게 한다.
+2. 증상별로 먼저 확인해야 할 파일, 프로세스, 명령을 고정한다.
+3. "실제 원인"과 "헷갈리기 쉬운 오진"을 분리해 중복 작업을 줄인다.
+
+## 현재까지 확인된 핵심 문제
+
+### 1. 앱이 helper를 자동으로 붙이지 못했던 문제
+
+- 초기 상태에서는 Rust/Tauri host가 helper status 파일은 읽었지만, 실제 `canon-helper.exe`를 active session에 맞춰 자동 실행하지 않았다.
+- 그 결과 카메라 전원을 나중에 켜도 status 파일이 생성되지 않아 booth/operator가 runtime truth를 갱신하지 못했다.
+
+해결:
+
+- session start
+- booth readiness 조회
+- capture 요청
+- operator diagnostics / recovery 진입
+
+경로에서 helper supervisor를 붙여 현재 session 기준 helper를 자동 실행하도록 수정했다.
+
+관련 파일:
+
+- [helper_supervisor.rs](/C:/Code/Project/Boothy/src-tauri/src/capture/helper_supervisor.rs)
+- [session_commands.rs](/C:/Code/Project/Boothy/src-tauri/src/commands/session_commands.rs)
+- [capture_commands.rs](/C:/Code/Project/Boothy/src-tauri/src/commands/capture_commands.rs)
+- [operator_commands.rs](/C:/Code/Project/Boothy/src-tauri/src/commands/operator_commands.rs)
+- [lib.rs](/C:/Code/Project/Boothy/src-tauri/src/lib.rs)
+
+### 2. helper status JSON이 UTF-8 BOM 때문에 `invalid-status`로 버려지던 문제
+
+- 실제 helper는 JSON 파일을 UTF-8 BOM 포함 형식으로 썼다.
+- Rust host의 status/event parser는 BOM을 제거하지 않아 valid JSON도 `invalid-status`로 판단했다.
+- 이 상태에서는 helper가 실제로 `ready/healthy`여도 host는 `helper-preparing` 또는 blocked path로만 내려갔다.
+
+실제 관찰 포인트:
+
+- `camera-helper-status.json` 내용은 정상처럼 보인다.
+- 하지만 host에서 직접 readiness를 계산하면 `detail_code=invalid-status`가 나온다.
+
+해결:
+
+- Rust host parser가 status/event line 앞의 BOM을 제거하도록 수정했다.
+- helper도 이후에는 BOM 없이 파일을 쓰도록 바꿨다.
+
+관련 파일:
+
+- [sidecar_client.rs](/C:/Code/Project/Boothy/src-tauri/src/capture/sidecar_client.rs)
+- [JsonFileProtocol.cs](/C:/Code/Project/Boothy/sidecar/canon-helper/src/CanonHelper/Runtime/JsonFileProtocol.cs)
+- [camera-helper-sidecar-protocol.md](/C:/Code/Project/Boothy/docs/contracts/camera-helper-sidecar-protocol.md)
+
+### 3. freshness 파서가 `Z`만 허용해서 helper status를 계속 stale로 보던 문제
+
+- helper는 `observedAt`를 `2026-03-27T19:37:08.3928625+00:00` 같은 형식으로 쓴다.
+- 기존 `rfc3339_to_unix_seconds(...)`는 `...Z` 형식만 허용했다.
+- 그래서 parser가 offset 형식을 읽지 못했고, freshness 계산이 항상 실패해 `ready` 상태도 `stale`로 간주됐다.
+- 이 경우 helper status JSON은 정상이고 session match도 맞지만, host readiness는 `Preparing / camera-preparing`로 떨어진다.
+
+실제 관찰 포인트:
+
+- helper status 파일에는 `cameraState=ready`, `helperState=healthy`
+- host readiness 직접 계산 결과는 `freshness=stale`
+
+해결:
+
+- `rfc3339_to_unix_seconds(...)`가 `Z`와 `+00:00` 같은 offset 형식을 모두 읽도록 수정했다.
+
+관련 파일:
+
+- [session_manifest.rs](/C:/Code/Project/Boothy/src-tauri/src/session/session_manifest.rs)
+- [session_manifest.rs test](/C:/Code/Project/Boothy/src-tauri/tests/session_manifest.rs)
+
+### 4. 프런트가 일반 `phone-required`까지 post-end 확정 상태처럼 붙잡던 문제
+
+- session provider는 `phone-required`를 post-end finalized reason과 같은 강도로 보존했다.
+- 그래서 일시적인 host 보호 상태가 들어오면, 뒤이어 `Preparing`이나 `Ready`가 와도 화면이 쉽게 풀리지 않을 수 있었다.
+- 이건 "종료 후 확정된 보호 상태"와 "촬영 중 일시 보호 상태"를 프런트가 구분하지 못한 문제다.
+
+해결:
+
+- explicit `postEnd`가 없는 일반 blocked `phone-required`는 영구 보존하지 않도록 완화했다.
+- `postEnd`가 명시된 finalized case만 보존한다.
+
+관련 파일:
+
+- [session-provider.tsx](/C:/Code/Project/Boothy/src/session-domain/state/session-provider.tsx)
+- [session-provider.test.tsx](/C:/Code/Project/Boothy/src/session-domain/state/session-provider.test.tsx)
+
+### 5. 현재 남아 있는 문제: 최신 세션 helper status가 `disconnected`로 고정되는 사례
+
+- `Phone Required` 과보호는 줄어들어 현재 customer 화면이 `Preparing`으로 바뀌는 것까지는 확인됐다.
+- 하지만 최신 dev 실행에서 실제 active session의 helper status가 `ready`가 아니라 `disconnected`로 기록되는 사례가 다시 확인됐다.
+- 이 경우 booth 화면이 `Preparing / 촬영 준비 상태를 다시 확인하고 있어요.`에 머무르는 것은 프런트 캐시 때문이 아니라, helper가 카메라를 다시 찾지 못했다고 host에 보고하고 있기 때문이다.
+
+실제 관찰 예시:
+
+- 실행 프로세스
+  - `boothy.exe` 시작 시각: `2026-03-28 10:53`
+  - `canon-helper.exe` 시작 시각: `2026-03-28 10:53`
+- 최신 session
+  - `session_000000000018a0de72f92dd220`
+- 해당 session의 helper status
+  - `cameraState: "disconnected"`
+  - `helperState: "healthy"`
+  - `detailCode: "camera-not-found"`
+
+해석:
+
+- 이 단계에서는 host freshness/parser 문제보다 helper의 실제 camera discovery truth를 우선 의심해야 한다.
+- 즉 "화면이 예전 보호 상태를 붙잡는다"가 핵심이 아니라, helper가 최신 세션에서도 카메라를 못 찾는다고 계속 쓰는 것이 현재 본문제다.
+- 사용자가 말한 "전원 on/off를 해도 동일" 증상도 이 관찰과 일치한다.
+
+다음 확인 우선순위:
+
+1. 최신 session의 `camera-helper-status.json`이 정말 `ready`로 올라오는 순간이 있는지 먼저 본다.
+2. helper process command line이 최신 session으로 바인딩돼 있는지 다시 확인한다.
+3. helper가 카메라 전원 off 상태에서 시작된 뒤 on으로 바뀌어도 `EdsGetCameraList` 결과가 계속 0인지 확인한다.
+4. 필요하면 `canon-helper.exe --self-check`와 runtime mode의 camera discovery 동작 차이를 비교한다.
+5. helper 쪽 reconnect/detection loop를 강화하거나, camera-not-found가 오래 지속될 때 session-bound helper 재기동 정책을 추가하는 쪽을 검토한다.
+
+이번 단계에서 분리된 사실:
+
+- host 직접 readiness 계산이 `Ready|ready|true|captureReady`로 나오는 session도 있었고, 그 문제는 freshness/parser 쪽 수정으로 해결됐다.
+- 하지만 최신 dev 실행에서는 별도의 새 session에서 helper status 자체가 `disconnected`로 기록되는 사례가 다시 생겼다.
+- 따라서 앞으로는 "host가 ready를 못 읽는다"와 "helper가 camera-not-found를 보고한다"를 서로 다른 이슈로 분리해 봐야 한다.
+
+### 6. 2026-03-28 추가 확인: Windows에 Canon 항목이 보여도 실제 `IsPresent=false`일 수 있다
+
+- 이번 회차에서 helper `self-check`와 session-bound runtime helper 모두 `cameraCount: 0`, `detailCode: camera-not-found`를 반환했다.
+- 같은 시각 Windows `Get-PnpDevice`에는 `Canon EOS 700D`가 보였지만, `Get-PnpDeviceProperty`로 확인한 핵심 값은 아래와 같았다.
+  - `DEVPKEY_Device_FriendlyName = Canon EOS 700D`
+  - `DEVPKEY_Device_InstanceId = USB\\VID_04A9&PID_3272\\5&17411534&0&9`
+  - `DEVPKEY_Device_IsPresent = false`
+  - `DEVPKEY_Device_LastArrivalDate = 2026-03-28 04:21:49`
+  - `DEVPKEY_Device_LastRemovalDate = 2026-03-28 10:53:52`
+
+해석:
+
+- Windows 장치 목록에 Canon 항목이 남아 있다고 해서, helper가 실제 present device를 잡을 수 있다는 뜻은 아니다.
+- 이 상태에서는 "카메라 전원이 켜져 보인다"는 육안 정보와 별개로, host/helper 입장에서는 여전히 `disconnected`가 맞다.
+- 즉 current booth symptom이 generic parser bug가 아니라, **Windows/PnP 기준으로도 현재 연결이 살아 있지 않은 상태**일 수 있다.
+
+이번 회차 코드 보정:
+
+- helper는 `camera-not-found`를 쓸 때 Windows 장치 존재 여부를 추가 probe하도록 보강했다.
+- booth readiness는 `cameraState=disconnected`일 때 generic `Preparing` 문구 대신, 고객에게 `카메라 전원을 확인하고 있어요.`라는 더 구체적인 안내를 보여 주도록 조정했다.
+- 반대로 helper가 `connecting` 또는 `connected-idle`를 주면 `카메라를 확인했고 연결을 마무리하고 있어요.` 쪽 copy로 구분된다.
+
+진단 원칙 갱신:
+
+- `Get-PnpDevice`에 Canon 문자열이 보이더라도 바로 "실제 연결됨"으로 해석하지 말 것.
+- 가능하면 `Get-PnpDeviceProperty <instanceId>`에서 `DEVPKEY_Device_IsPresent`를 먼저 본다.
+- `IsPresent=false`이면 helper의 `disconnected/camera-not-found`는 host bug보다 실제 Windows 연결 부재일 가능성이 높다.
+
+### 7. 2026-03-28 추가 확인: helper는 이미 `ready`인데 booth 화면만 `Preparing`에 머무르는 사례
+
+- 사용자가 `pnpm tauri dev --no-watch`로 새 인스턴스를 다시 띄운 뒤, 카메라 전원을 켠 후에도 booth 화면이 바뀌지 않는 사례를 재확인했다.
+- 같은 시각 최신 session `session_000000000018a0df9dd1bc0f04`의 실제 helper status는 아래처럼 기록돼 있었다.
+  - `cameraState: "ready"`
+  - `helperState: "healthy"`
+  - `cameraModel: "Canon EOS 700D"`
+  - `detailCode: "camera-ready"`
+- 즉 이 시점의 본문제는 helper readiness truth 자체가 아니라, **프런트가 Tauri runtime을 browser fallback처럼 오인해 host readiness를 반영하지 못하는 가능성**으로 좁혀졌다.
+
+근거:
+
+- repo 전반의 여러 서비스가 Tauri 판별을 `__TAURI_INTERNALS__ in window` 하나에만 의존하고 있었다.
+- 같은 패턴이 `capture-runtime`, `start-session`, `active-preset`, `operator-diagnostics`, `runtime-capability`, `main.tsx` 등 여러 경계에 반복돼 있었다.
+- 실제 Tauri dev 앱인데도 booth 화면이 helper truth와 분리되어 움직인 증상은 이 판별 취약성과 잘 맞는다.
+
+이번 회차 코드 보정:
+
+- 공통 유틸 [is-tauri.ts](/C:/Code/Project/Boothy/src/shared/runtime/is-tauri.ts)를 추가했다.
+- 판별 기준을 `__TAURI_INTERNALS__`만 보지 않고 `__TAURI__`, `__TAURI_IPC__`, `navigator.userAgent`의 `Tauri`까지 함께 보도록 넓혔다.
+- 이 공통 판별기를 아래 서비스/부트스트랩 경계에 적용했다.
+  - `src/main.tsx`
+  - `src/capture-adapter/services/capture-runtime.ts`
+  - `src/session-domain/services/start-session.ts`
+  - `src/session-domain/services/active-preset.ts`
+  - `src/session-domain/services/runtime-capability-gateway.ts`
+  - `src/operator-console/services/operator-diagnostics-service.ts`
+  - `src/preset-catalog/services/preset-catalog-service.ts`
+  - `src/preset-authoring/services/preset-authoring-service.ts`
+  - `src/branch-config/services/branch-rollout-service.ts`
+  - `src/booth-shell/components/preset-preview-src.ts`
+
+해석:
+
+- helper status가 이미 `ready`인데 화면만 `Preparing`이면, 다음 우선 확인 대상은 camera/helper가 아니라 **프런트 runtime detection**이다.
+- 특히 Tauri dev 앱에서 browser fallback처럼 동작하면, 실제 session/helper truth가 파일에 정상으로 들어와도 고객 화면은 로컬 `Preparing`에서 벗어나지 못할 수 있다.
+
+### 8. 2026-03-28 추가 확인: capture runtime gateway가 앱 시작 순간의 browser 판정을 고정할 수 있었다
+
+- 추가 점검 결과, booth의 capture runtime service는 `SessionProvider` 첫 렌더 시 `createCaptureRuntimeService()`를 한 번만 호출하고 있었다.
+- 기존 `createDefaultCaptureRuntimeGateway()`는 그 시점의 `isTauriRuntime()` 결과를 그대로 고정했다.
+- 따라서 앱 시작 초기에 Tauri bridge가 아직 붙기 전이라 `browser`로 판정되면, 이후 실제 Tauri runtime이 살아나도 capture readiness 경로는 계속 browser fallback gateway를 사용하게 된다.
+- 이 경우 helper status 파일이 이미 `ready`여도 booth 화면은 계속 브라우저용 `Preparing` copy에 머무를 수 있다.
+
+이번 회차 코드 보정:
+
+- capture runtime default gateway를 "생성 시점 1회 판정"이 아니라, 각 호출 시점마다 현재 runtime을 다시 결정하는 방식으로 바꿨다.
+- readiness polling은 이제 초기 subscribe가 browser fallback으로 시작되더라도, 이후 poll 시점에 Tauri bridge가 살아 있으면 host readiness로 자동 전환될 수 있다.
+- 재현 시 바로 확인할 수 있도록 프런트 콘솔에 `[boothy][capture-runtime]` 로그를 추가했다.
+  - `gateway-get-readiness`
+  - `gateway-request-capture`
+  - `gateway-delete-capture`
+  - `gateway-subscribe-readiness`
+
+추가 진단 원칙:
+
+- `helper status = ready`인데 booth가 계속 `Preparing`이면, 이제는 helper status 파일뿐 아니라 브라우저 개발자 도구 콘솔에서 아래 두 로그를 같이 본다.
+  - `[boothy][capture-runtime] ... mode: 'browser' | 'tauri'`
+  - `[boothy][capture] request-readiness / apply-readiness-response / readiness-error`
+- 특히 `gateway-get-readiness`가 반복해서 `mode: 'browser'`를 찍으면, 문제는 helper가 아니라 프런트 runtime bridge 인식 경계다.
+
+### 9. 2026-03-28 추가 확인: host는 이미 `Ready`를 반복 계산하므로 남은 병목은 프런트 적용 경계다
+
+- 사용자가 제공한 최신 dev 실행 로그에서 같은 session `session_000000000018a0e212968a9fc8`에 대해 host readiness는 아래처럼 바뀌는 것이 확인됐다.
+  - `03:00:23 ~ 03:00:28`: `Preparing / camera-preparing / live_truth=...disconnected|connecting`
+  - `03:00:29 이후 반복`: `Ready / ready / can_capture=true / live_truth=fresh:matched:ready:healthy`
+- 따라서 이 시점의 본문제는 helper discovery나 host normalized readiness가 아니라, **프런트가 host의 Ready 응답을 실제 화면 상태로 적용하는 마지막 경계**다.
+
+이번 회차 코드 보정:
+
+- 프런트가 남기는 capture debug 로그를 Tauri 터미널에서도 보이도록 `log_capture_client_state` 명령을 추가했다.
+- 아래 프런트 로그가 이제 Rust 실행 터미널에도 함께 찍힌다.
+  - `[boothy][capture-runtime] gateway-get-readiness`
+  - `[boothy][capture-runtime] gateway-readiness-success`
+  - `[boothy][capture-runtime] gateway-readiness-error`
+  - `[boothy][capture] request-readiness`
+  - `[boothy][capture] apply-readiness-response`
+  - `[boothy][capture] apply-readiness-state`
+  - `[boothy][capture] apply-subscribed-readiness`
+  - `[boothy][capture] readiness-error`
+
+다음 재현 때 판단 기준:
+
+- host에 `capture_readiness ... customer_state=Ready`가 찍히고,
+- 이어서 `capture_client_state ... label=apply-readiness-state ... customer_state=Ready`까지 찍히면,
+- 문제는 더 이상 readiness 상태 저장이 아니라 booth 화면 렌더 경계다.
+- 반대로 host는 `Ready`인데 client log가 `gateway-readiness-error` 또는 `readiness-error`를 찍으면, 프런트 parse/invoke 경계를 우선 본다.
+
+### 10. 2026-03-28 EDSDK 준비물 재확인
+
+- `C:\Code\cannon_sdk`에는 동일 크기의 Canon SDK zip 2개와 각 압축 해제본이 존재한다.
+- vendor 경로 [canon-edsdk](/C:/Code/Project/Boothy/sidecar/canon-helper/vendor/canon-edsdk)에는 Windows 런타임과 샘플이 실제로 들어와 있다.
+  - `Windows/EDSDK/Dll/EDSDK.dll`
+  - `Windows/EDSDK/Dll/EdsImage.dll`
+  - `Windows/Sample/CSharp/CameraControl/...`
+  - `Windows/Sample/VC/CameraControl/...`
+  - `Windows/Sample/VC/MultiCamCui/...`
+- 즉 현재 `Preparing` 현상은 "SDK 파일이 없어서 helper가 거짓 준비 상태가 된다" 쪽과는 분리해서 봐야 한다.
+
+### 11. 2026-03-28 추가 확인: 프런트 계약 스키마가 helper `observedAt` offset 시간을 거부하고 있었다
+
+- 사용자가 제공한 최신 로그에서, host는 이미 같은 session에 대해 `customer_state=Ready reason_code=ready can_capture=true`를 반복 계산하고 있었다.
+- 하지만 같은 시각 프런트 쪽 `capture_client_state`는 아래 에러를 반복 기록했다.
+  - `label=gateway-readiness-error`
+  - `path=["liveCaptureTruth","observedAt"]`
+  - `message="Invalid ISO datetime"`
+- 원인은 프런트 계약 [capture-readiness.ts](/C:/Code/Project/Boothy/src/shared-contracts/schemas/capture-readiness.ts)가 `observedAt`를 `z.string().datetime()`으로 검증하면서 `...Z` 형식만 허용하고, helper가 실제로 보내는 `2026-03-28T03:10:57.1234567+00:00` 같은 offset 형식을 거부하던 점이다.
+
+중요한 분리:
+
+- Rust host의 freshness parser는 이미 `Z`와 `+00:00`을 모두 읽도록 고쳐져 있었다.
+- 하지만 프런트 계약 스키마가 같은 offset 형식을 다시 거부하면서, host의 `Ready` 응답이 프런트에서는 parse 실패로 떨어지고 customer-safe `Preparing` fallback으로 내려갔다.
+- 즉 이 단계의 증상은 helper truth나 host normalized readiness 문제가 아니라, **프런트 contract parse drift**였다.
+
+이번 회차 코드 보정:
+
+- `liveCaptureTruth.observedAt`를 `z.string().datetime({ offset: true })`로 변경했다.
+- `+00:00` 형식의 helper timestamp를 그대로 통과시키는 계약 테스트를 추가했다.
+
+앞으로 같은 증상이 보이면 먼저 볼 로그:
+
+- `capture_readiness ... customer_state=Ready`
+- `capture_client_state label=gateway-readiness-success`
+
+만약 host는 `Ready`인데 프런트가 계속 `gateway-readiness-error`를 찍으면, helper보다 먼저 프런트 shared-contracts parse drift를 의심한다.
+
+### 12. 2026-03-28 전원 `off -> on -> ready` 성공 경로와 실제 원인 정리
+
+- 사용자가 확인한 성공 시나리오는 아래 순서였다.
+  1. 카메라 전원을 `off`한 상태로 앱 실행
+  2. booth/session 시작 후 helper가 `disconnected` 또는 `connecting`으로 상태를 기록
+  3. 같은 실행을 유지한 채 카메라 전원을 `on`
+  4. host 로그가 `Preparing -> Ready`로 전환
+- 이 성공 자체는 "앱을 다시 켜서 우연히 잡혔다"가 아니라, **helper의 session-bound reconnect loop가 살아 있었기 때문**이다.
+- helper는 루프마다 `EnsureConnectedAsync(...)`를 호출하고 있었고, 세션이 아직 열리지 않았을 때는 `EdsGetCameraList -> EdsOpenSession` 재시도를 계속 수행한다.
+- 그래서 카메라가 늦게 켜져도, helper가 같은 세션 아래에서 다시 카메라를 발견하면 host truth는 정상적으로 `ready`로 올라올 수 있다.
+
+다만 같은 성공 시나리오가 화면에 바로 반영되지 않았던 실제 원인은 별개였다.
+
+- host 쪽에서는 이미 `Ready / ready / can_capture=true`가 계산되고 있었지만,
+- 프런트 shared-contracts가 helper의 `liveCaptureTruth.observedAt` 값을 `...+00:00` 형식으로 받지 못해 parse error를 냈고,
+- 그 결과 customer 화면은 host `Ready`를 버리고 customer-safe `Preparing` fallback을 계속 적용했다.
+- 즉 이번 회차에서 확인된 "ready 성공"의 진짜 의미는,
+  - helper reconnect는 이미 동작했다.
+  - 화면 반영이 막혔던 원인은 helper가 아니라 **프런트 계약 parse drift**였다.
+
+실전 판단 포인트:
+
+- `capture_readiness ... customer_state=Ready reason_code=ready can_capture=true`
+  가 찍히면 helper reconnect는 성공한 것이다.
+- 그 뒤에도 화면이 `Preparing`이면, helper보다 먼저 프런트 `gateway-readiness-error`를 본다.
+
+### 13. 2026-03-28 추가 확인: `ready` 이후 전원 `off`가 반영되지 않던 원인
+
+- 사용자가 같은 세션에서 `off -> on -> ready`까지 올린 뒤 다시 전원을 `off`했을 때, 화면 상태가 바뀌지 않는 문제가 남아 있었다.
+- helper 코드를 확인한 결과, 세션이 열린 뒤에는 keep-alive만 간헐적으로 보내고 있었고, **콘솔 앱에서 Canon SDK 이벤트를 정기적으로 펌프하는 `EdsGetEvent()` 호출이 없었다.**
+- Canon SDK header와 MultiCamCui 샘플에는 아래 원칙이 명시되어 있다.
+  - 콘솔 애플리케이션에서는 `EdsGetEvent()`를 정기적으로 호출해 카메라 이벤트를 획득해야 한다.
+- 우리 helper는 `EdsSetCameraStateEventHandler(... StateEvent_All ...)`는 등록했지만, 이벤트 펌프가 없어서 `StateEvent_Shutdown` 같은 전원 차단/연결 해제 이벤트를 놓칠 수 있었다.
+- 그래서 전원을 꺼도 helper snapshot이 계속 이전 `ready`를 붙잡고, host도 바뀐 진실을 보지 못하는 경로가 생겼다.
+
+이번 회차 코드 보정:
+
+- helper 루프에 `EdsGetEvent()` 기반 SDK event pump를 추가했다.
+- event pump가 `COMM_DISCONNECTED`, `DEVICE_NOT_FOUND`, `DEVICE_INVALID`, `SESSION_NOT_OPEN` 같은 연결 상실 오류를 반환하면 helper가 즉시 recovery/disconnect 흐름으로 내리도록 보강했다.
+- 기존 `StateEvent_Shutdown` callback도 공통 connection-lost 경로를 타도록 정리했다.
+- 추가로 keep-alive health probe 간격을 더 짧게 조정해, 카메라가 shutdown 이벤트를 보내지 않는 경우에도 전원 `off`가 더 빨리 반영되도록 보강했다.
+
+수정 후 기대 동작:
+
+1. 카메라 `off` 상태 앱 실행
+2. 카메라 `on`
+3. helper reconnect로 `Ready`
+4. 카메라 `off`
+5. helper event pump 또는 keep-alive probe가 세션 상실을 감지
+6. status가 `recovering/disconnected` 계열로 내려가고 booth도 다시 준비/전원 확인 상태로 전환
+
+남은 검증:
+
+- 이 경로는 실장비에서 다시 확인해야 한다.
+- 현재 수정은 SDK 샘플/헤더 기준으로는 맞지만, 실제 EOS 700D가 전원 차단 시 `StateEvent_Shutdown`과 `EdsGetEvent()` 조합에서 어떤 오류 코드를 내는지는 하드웨어에서 최종 확인이 필요하다.
+
+## 오진하기 쉬운 포인트
+
+### "status 파일에 ready가 있으니 host도 ready일 것이다"
+
+틀릴 수 있다.
+
+- BOM 때문에 parser가 실패할 수 있다.
+- `observedAt` offset 형식 때문에 freshness 계산이 실패할 수 있다.
+- session match는 맞아도 freshness가 stale이면 host는 ready를 주지 않는다.
+
+### "카메라가 켜져 있는데 Phone Required면 helper가 죽었다"
+
+반드시 그렇지 않다.
+
+- helper는 살아 있고 status도 쓰고 있을 수 있다.
+- host parser/freshness 계산이 틀려 blocked path로 내려가는 경우가 있다.
+- 프런트가 이전 `phone-required`를 붙잡고 있을 수도 있다.
+- 최신 단계에서는 helper가 살아 있지만 `camera-not-found`를 지속 보고하는 경우도 실제로 확인됐다.
+
+### "현재 증상은 operator diagnostics 쪽 문제다"
+
+booth `Phone Required`와 operator diagnostics 오류는 같은 root cause에서 같이 나올 수 있지만,
+항상 같은 원인은 아니다.
+
+- booth는 capture readiness 경로를 본다.
+- operator는 recovery summary / audit load path를 본다.
+- 둘 다 session/helper truth를 공유하므로 session 파일과 helper status를 먼저 확인해야 한다.
+
+## 다음 에이전트용 진단 순서
+
+아래 순서를 지키면 중복 추정을 많이 줄일 수 있다.
+
+### 1. 실행 중 프로세스 확인
+
+PowerShell:
+
+```powershell
+Get-Process | Where-Object {
+  $_.ProcessName -like 'boothy*' -or $_.ProcessName -like '*canon-helper*'
+} | Select-Object ProcessName, Id, StartTime, Path
+```
+
+확인 포인트:
+
+- `boothy.exe`가 최신 시작 시각인지
+- `canon-helper.exe`가 실제 publish 경로에서 떠 있는지
+
+### 2. active runtime root 확인
+
+현재 dev 경로 기준 런타임 root:
+
+```text
+%LOCALAPPDATA%\com.tauri.dev\booth-runtime
+```
+
+최신 session 확인:
+
+```powershell
+Get-ChildItem -Path $env:LOCALAPPDATA\com.tauri.dev\booth-runtime\sessions -Directory |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 5 FullName, Name, LastWriteTime
+```
+
+### 3. 최신 session의 manifest와 helper status를 같이 읽기
+
+확인 파일:
+
+- `session.json`
+- `diagnostics/camera-helper-status.json`
+- 필요 시 `diagnostics/camera-helper-events.jsonl`
+
+반드시 같은 session을 보고 있는지 먼저 맞춘다.
+
+### 4. host가 그 세션을 실제로 어떻게 해석하는지 직접 계산
+
+정적 파일 내용만 보지 말고, Rust host readiness 계산 결과를 직접 확인한다.
+
+판단 기준:
+
+- `ready / fresh / matched`면 booth도 ready가 맞다.
+- `stale / matched / ready / healthy`면 freshness 계산 문제를 먼저 의심한다.
+- `missing / unknown / invalid-status`면 BOM이나 parser 문제를 먼저 의심한다.
+- `fresh / matched / disconnected / healthy`면 parser 문제가 아니라 helper camera discovery 자체를 먼저 의심한다.
+
+### 5. 프런트가 이전 blocked state를 붙잡는지 확인
+
+파일:
+
+- [session-provider.tsx](/C:/Code/Project/Boothy/src/session-domain/state/session-provider.tsx)
+
+특히 확인할 것:
+
+- `mergePreservedPostEndReadiness(...)`
+- `applyReadinessState(...)`
+
+## 실제로 유효했던 확인 명령
+
+### helper process command line 확인
+
+```powershell
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -eq 'canon-helper.exe' } |
+  Select-Object ProcessId, CommandLine, ExecutablePath
+```
+
+### helper status raw bytes 확인
+
+```powershell
+Format-Hex -Path <camera-helper-status.json 경로> | Select-Object -First 40
+```
+
+이걸로 BOM(`EF BB BF`) 유무를 바로 확인할 수 있다.
+
+### 최신 status가 실제로 갱신되는지 확인
+
+```powershell
+Start-Sleep -Seconds 3
+Get-Content -Path <camera-helper-status.json 경로>
+```
+
+## 관련 계약 / 스토리 문서
+
+문제 재발 시 아래 문서를 먼저 다시 본다.
+
+- [Story 1.6](/C:/Code/Project/Boothy/_bmad-output/implementation-artifacts/1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md)
+- [Story 1.7](/C:/Code/Project/Boothy/_bmad-output/implementation-artifacts/1-7-실카메라-capture-round-trip과-raw-handoff-correlation.md)
+- [Camera Helper Sidecar Protocol](/C:/Code/Project/Boothy/docs/contracts/camera-helper-sidecar-protocol.md)
+- [Camera Helper EDSDK Profile](/C:/Code/Project/Boothy/docs/contracts/camera-helper-edsdk-profile.md)
+- [Hardware Validation Checklist](/C:/Code/Project/Boothy/docs/runbooks/booth-hardware-validation-checklist.md)
+
+## 검증할 때 자주 쓴 명령
+
+Rust:
+
+```powershell
+cargo test --test session_manifest --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check
+cargo test --test capture_readiness --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check
+```
+
+Frontend targeted tests:
+
+```powershell
+pnpm vitest run src/session-domain/state/session-provider.test.tsx src/capture-adapter/services/capture-runtime.test.ts
+```
+
+Helper:
+
+```powershell
+dotnet publish sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=false
+```
+
+주의:
+
+- `pnpm build`는 현재 operator diagnostics 타입 이슈로 전체 빌드가 막힐 수 있었다.
+- 이 문제를 따로 고치지 않는 한, camera/helper 이슈 검증은 targeted vitest 쪽이 더 빠르고 안정적이다.
+
+## 에이전트 작업 원칙
+
+비슷한 문제가 다시 오면 아래 순서로 처리한다.
+
+1. 실행 중 `boothy.exe`와 `canon-helper.exe`를 먼저 확인한다.
+2. 최신 session 하나를 고르고 manifest/status/events를 같은 session 기준으로 본다.
+3. 파일 내용만 믿지 말고 host readiness 계산 결과를 직접 확인한다.
+4. `invalid-status`면 BOM부터, `stale`면 timestamp parser/freshness부터 본다.
+5. readiness는 정상인데 화면만 보호 상태면 프런트 state preservation을 본다.
+6. 수정 후에는 Rust test, targeted vitest, helper publish까지 최소 세 축을 확인한다.
+
+이 순서를 건너뛰고 추정부터 시작하면 다시 같은 삽질을 반복할 가능성이 높다.

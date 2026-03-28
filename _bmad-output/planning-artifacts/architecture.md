@@ -192,6 +192,7 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - darktable-backed preset authoring and apply are the authoritative preset truth path; detailed module control stays only inside internal preset-authoring, not as a customer-facing editing workspace.
 - The Rust host is the single normalization point for camera/helper truth, timing truth, and post-end workflow truth before those states are translated to UI.
 - Camera integration is isolated behind a bundled helper/sidecar boundary with versioned messages and filesystem handoff; camera SDK truth does not leak into React.
+- The first approved camera implementation profile is a Windows-only Canon EDSDK helper exe; generic multi-vendor abstraction is deferred until hardware evidence justifies it.
 - Session timing rules, warning alerts, exact-end behavior, and post-end state transitions are host-owned workflow rules.
 - Release behavior must preserve staged rollout, rollback, and zero forced update during active customer sessions.
 
@@ -261,6 +262,8 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Host to frontend streaming:** Tauri channels carry ordered state changes for readiness, capture progress, latest-photo availability, timing transitions, completion state, and operator diagnostics.
 - **Host to helper:** The camera/helper boundary uses bundled sidecar stdio with versioned JSON-line messages.
 - **Helper contract shape:** The first contract should cover session configuration, capture request, health/status, restart/recovery, and correlation of file arrival back to the host.
+- **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
+- **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
 - **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
@@ -678,6 +681,7 @@ boothy/
 - React UI reaches native behavior only through typed adapters/services under `src/*/services` or `src/*/host`.
 - Tauri commands in `src-tauri/src/commands/` are the only frontend-to-host entry points.
 - Sidecar communication is isolated to `src-tauri/src/capture/sidecar_client.rs` and `sidecar/canon-helper/`.
+- `sidecar/canon-helper/` is expected to remain a thin Canon EDSDK adapter boundary, not a second source of session, preset, timing, or UI truth.
 
 **Component Boundaries:**
 - `booth-shell` owns booth customer flow only.
@@ -809,7 +813,8 @@ The architecture is now ready to support regenerated implementation stories agai
 
 - Session manifest contract: exact `session.json` schema including capture correlation IDs, preset version references, raw/preview/final fields, render-status correlation, and post-end state fields.
 - Preset bundle contract: immutable published preset artifact schema including approved compatibility metadata, preview/final render profiles, rollback-safe identifiers, and catalog-facing metadata required for future-session publication only.
-- Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery.
+- Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery, with booth `Ready` and operator `카메라 연결 상태` both derived from the same host-normalized camera/helper truth.
+- Canon helper implementation profile: the chosen Windows-only Canon EDSDK helper packaging, ownership split, diagnostics expectations, and recovery semantics that refine the generic sidecar contract for the current product decision.
 - Authoring publication contract: required publication payload fields, approval-state transitions, immutable published artifact requirements, audit metadata, and future-session-only application rules.
 - Release runbooks, fixture naming conventions, and sample datasets may continue to expand, but they no longer block regeneration of the corrected implementation-story baseline for preset publication, operator recovery, and release-governance tracks.
 

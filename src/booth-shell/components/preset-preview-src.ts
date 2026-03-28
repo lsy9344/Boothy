@@ -1,12 +1,9 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { isTauriRuntime as detectTauriRuntime } from '../../shared/runtime/is-tauri'
 
 type ResolvePresetPreviewSrcOptions = {
   convertFileSrcFn?: typeof convertFileSrc
   isTauriRuntime?: boolean
-}
-
-function detectTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function isAbsoluteFilesystemPath(assetPath: string) {

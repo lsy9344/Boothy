@@ -24,6 +24,7 @@ import {
   type ValidateDraftPresetInput,
   type ValidateDraftPresetResult,
 } from '../../shared-contracts'
+import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
 export interface PresetAuthoringGateway {
   loadAuthoringWorkspace(): Promise<unknown>
@@ -298,10 +299,6 @@ function ensureMatchingRollbackResult(
   }
 
   return response
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function getBrowserDraftStore() {

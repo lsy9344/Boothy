@@ -218,6 +218,16 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
       title: '완료 경계 대기 전',
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
+    liveCaptureTruth: {
+      source: 'canon-helper-sidecar',
+      freshness: 'fresh',
+      sessionMatch: 'matched',
+      cameraState: 'ready',
+      helperState: 'healthy',
+      observedAt: '2026-03-26T00:10:00.000Z',
+      sequence: 42,
+      detailCode: 'camera-ready',
+    },
     ...overrides,
   }
 }
@@ -536,6 +546,8 @@ describe('shared contracts baseline', () => {
     expect(parsed.blockedStateCategory).toBe('preview-render-blocked')
     expect(parsed.previewRenderBoundary.status).toBe('blocked')
     expect(parsed.recentFailure?.title).toBe('프리뷰/렌더 결과 준비 지연')
+    expect(parsed.liveCaptureTruth?.cameraState).toBe('ready')
+    expect(parsed.liveCaptureTruth?.helperState).toBe('healthy')
   })
 
   it('rejects operator summaries whose blocked-state category or safe detail shape drift', () => {
@@ -1156,6 +1168,16 @@ describe('shared contracts baseline', () => {
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       surfaceState: 'previewWaiting',
       latestCapture: capture,
+      liveCaptureTruth: {
+        source: 'canon-helper-sidecar',
+        freshness: 'fresh',
+        sessionMatch: 'matched',
+        cameraState: 'ready',
+        helperState: 'healthy',
+        observedAt: '2026-03-20T00:10:00.000Z',
+        sequence: 7,
+        detailCode: 'camera-ready',
+      },
       customerState: 'Ready',
       canCapture: false,
       primaryAction: 'wait',
@@ -1190,6 +1212,36 @@ describe('shared contracts baseline', () => {
     expect(captureResult.readiness.timing?.adjustedEndAt).toBe(
       '2026-03-20T00:15:00.000Z',
     )
+  })
+
+  it('accepts live capture truth timestamps that use an explicit UTC offset', () => {
+    const readiness = captureReadinessSnapshotSchema.parse({
+      schemaVersion: 'capture-readiness/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      surfaceState: 'captureReady',
+      customerState: 'Ready',
+      canCapture: true,
+      primaryAction: 'capture',
+      customerMessage: '지금 촬영할 수 있어요.',
+      supportMessage: '버튼을 누르면 바로 시작돼요.',
+      reasonCode: 'ready',
+      latestCapture: null,
+      liveCaptureTruth: {
+        source: 'canon-helper-sidecar',
+        freshness: 'fresh',
+        sessionMatch: 'matched',
+        cameraState: 'ready',
+        helperState: 'healthy',
+        observedAt: '2026-03-28T03:10:57.1234567+00:00',
+        sequence: 12,
+        detailCode: 'camera-ready',
+      },
+    })
+
+    expect(readiness.liveCaptureTruth?.observedAt).toBe(
+      '2026-03-28T03:10:57.1234567+00:00',
+    )
+    expect(readiness.liveCaptureTruth?.cameraState).toBe('ready')
   })
 
   it('accepts a customer-safe explicit post-end readiness without leaking internal policy language', () => {
