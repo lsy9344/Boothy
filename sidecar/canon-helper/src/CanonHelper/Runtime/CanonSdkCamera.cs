@@ -7,7 +7,7 @@ namespace CanonHelper.Runtime;
 internal sealed class CanonSdkCamera : IDisposable
 {
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
 
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;

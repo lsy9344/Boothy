@@ -13,6 +13,7 @@ internal sealed class CanonHelperService : IDisposable
     private ulong _statusSequence;
     private Task<CaptureDownloadResult>? _activeCaptureTask;
     private CaptureRequestMessage? _activeRequest;
+    private CameraSnapshot? _lastWrittenSnapshot;
 
     public CanonHelperService(CanonHelperOptions options)
     {
@@ -99,7 +100,7 @@ internal sealed class CanonHelperService : IDisposable
                 }
             }
 
-            if (DateTimeOffset.UtcNow >= nextStatusAt)
+            if (ShouldWriteStatus(nextStatusAt))
             {
                 WriteStatus();
                 nextStatusAt = DateTimeOffset.UtcNow.AddMilliseconds(_options.StatusIntervalMs);
@@ -174,6 +175,7 @@ internal sealed class CanonHelperService : IDisposable
     private void WriteStatus()
     {
         var snapshot = _camera.Snapshot;
+        _lastWrittenSnapshot = snapshot;
         _statusSequence += 1;
         _protocol.WriteStatus(
             new CameraStatusMessage(
@@ -189,6 +191,14 @@ internal sealed class CanonHelperService : IDisposable
                 snapshot.DetailCode
             )
         );
+    }
+
+    private bool ShouldWriteStatus(DateTimeOffset nextStatusAt)
+    {
+        var snapshot = _camera.Snapshot;
+        return _lastWrittenSnapshot is null
+            || _lastWrittenSnapshot != snapshot
+            || DateTimeOffset.UtcNow >= nextStatusAt;
     }
 
     private static string UtcNow()

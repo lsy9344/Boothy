@@ -341,6 +341,44 @@
 - 이 경로는 실장비에서 다시 확인해야 한다.
 - 현재 수정은 SDK 샘플/헤더 기준으로는 맞지만, 실제 EOS 700D가 전원 차단 시 `StateEvent_Shutdown`과 `EdsGetEvent()` 조합에서 어떤 오류 코드를 내는지는 하드웨어에서 최종 확인이 필요하다.
 
+### 14. 2026-03-29 추가 확인: `helper-binary-missing` 복구와 로컬 SDK fallback으로 실제 통신 경계 복원
+
+- 사용자가 같은 증상을 다시 재현했을 때, 최신 session `session_000000000018a12309c488c584`의 `camera-helper-status.json`은 아래처럼 기록돼 있었다.
+  - `cameraState: "error"`
+  - `helperState: "error"`
+  - `detailCode: "helper-binary-missing"`
+- 즉 이 시점의 본문제는 camera discovery가 아니라, **helper 자체가 런타임에서 전혀 뜨지 못한 것**이었다.
+
+실제 확인 사실:
+
+- workspace 안에는 `canon-helper.exe`가 없었다.
+- 하지만 로컬 머신에는 `C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU` 아래 Canon SDK 원본이 남아 있었다.
+  - `Windows\Sample\CSharp\CameraControl\CameraControl\EDSDK.cs`
+  - `Windows\EDSDK_64\Dll\EDSDK.dll`
+- 기존 helper project는 repo 내부 `sidecar/canon-helper/vendor/canon-edsdk`만 고정 참조하고 있어, fresh workspace에서는 helper build와 runtime attach가 함께 막힐 수 있었다.
+
+이번 회차 코드 보정:
+
+- helper supervisor가 publish/debug exe를 찾지 못해도, dev 환경에서는 helper source project를 `dotnet run`으로 바로 띄울 수 있게 fallback을 추가했다.
+- helper project는 `BOOTHY_CANON_SDK_ROOT` 또는 local vendor를 Canon SDK root로 받아 build/runtime payload를 해석할 수 있게 바꿨다.
+- supervisor는 `vendor/README.md`에 기록된 selected SDK path와 `C:\Code\cannon_sdk\*` fallback도 함께 탐색하도록 보강했다.
+- 같은 회차에서 helper debug build를 실제로 다시 생성했다.
+  - `sidecar/canon-helper/src/CanonHelper/bin/Debug/net8.0/canon-helper.exe`
+
+이번 회차 검증:
+
+- `canon-helper.exe --version` 성공
+- `canon-helper.exe --self-check --sdk-root C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU` 성공
+- self-check 결과는 더 이상 `helper-binary-missing`이 아니라 `camera-not-found`까지 진입했다.
+  - 즉 실패 지점이 "helper 없음"에서 "실제 카메라 발견 단계"로 이동한 것이다.
+- 이후 사용자가 앱을 다시 실행해 실제 booth flow를 확인했고, **카메라 통신이 다시 성공했다고 확인했다.**
+
+운영 판단 기준:
+
+- 최신 session status가 `helper-binary-missing`이면 camera on/off 반응 속도보다 먼저 helper artifact 존재 여부를 본다.
+- 이 경우 `camera-not-found`와 같은 discovery 단계로 되돌리는 것이 우선이며, 그 뒤에야 reconnect/off-detection 품질을 논할 수 있다.
+- fresh workspace나 새 머신에서 dev 실행을 재현할 때는 helper exe 존재만 보지 말고, local Canon SDK root와 helper source fallback까지 같이 점검하는 편이 안전하다.
+
 ## 오진하기 쉬운 포인트
 
 ### "status 파일에 ready가 있으니 host도 ready일 것이다"

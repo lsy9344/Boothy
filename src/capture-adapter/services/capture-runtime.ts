@@ -22,7 +22,7 @@ import {
 import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 import { logCaptureClientState } from '../../shared/runtime/log-capture-client-state'
 
-const CAPTURE_READINESS_POLL_MS = 1500
+export const CAPTURE_READINESS_POLL_MS = 300
 const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
 
 function logCaptureRuntimeDebug(
@@ -320,6 +320,9 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
       sessionId: input.sessionId,
     })
     let latestReadinessKey: string | null = null
+    let isDisposed = false
+    let isPolling = false
+    let pollId: ReturnType<typeof globalThis.setTimeout> | null = null
 
     const emitReadiness = (readiness: CaptureReadinessSnapshot) => {
       const nextKey = JSON.stringify(readiness)
@@ -330,6 +333,43 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
       latestReadinessKey = nextKey
       input.onReadiness(readiness)
+    }
+
+    const schedulePoll = (delayMs = CAPTURE_READINESS_POLL_MS) => {
+      if (isDisposed) {
+        return
+      }
+
+      if (pollId !== null) {
+        globalThis.clearTimeout(pollId)
+      }
+
+      pollId = globalThis.setTimeout(() => {
+        pollId = null
+        void pollReadiness()
+      }, delayMs)
+    }
+
+    const pollReadiness = async () => {
+      if (isDisposed || isPolling) {
+        return
+      }
+
+      isPolling = true
+
+      try {
+        const readiness = await this.getCaptureReadiness(parsedInput)
+        emitReadiness(readiness)
+      } catch (error) {
+        const hostError = error as HostErrorEnvelope
+
+        if (hostError.readiness) {
+          emitReadiness(hostError.readiness)
+        }
+      } finally {
+        isPolling = false
+        schedulePoll()
+      }
     }
 
     const unlisten = await this.gateway.subscribeToCaptureReadiness((payload) => {
@@ -343,22 +383,15 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
       }
     })
 
-    const pollId = globalThis.setInterval(() => {
-      void this.getCaptureReadiness(parsedInput)
-        .then((readiness) => {
-          emitReadiness(readiness)
-        })
-        .catch((error) => {
-          const hostError = error as HostErrorEnvelope
-
-          if (hostError.readiness) {
-            emitReadiness(hostError.readiness)
-          }
-        })
-    }, CAPTURE_READINESS_POLL_MS)
+    schedulePoll()
 
     return () => {
-      globalThis.clearInterval(pollId)
+      isDisposed = true
+
+      if (pollId !== null) {
+        globalThis.clearTimeout(pollId)
+      }
+
       unlisten()
     }
   }
@@ -605,9 +638,9 @@ function resolveActiveCaptureRuntimeGateway(): {
   }
 }
 
-export function createDefaultCaptureRuntimeGateway() {
+export function createDefaultCaptureRuntimeGateway(): CaptureRuntimeGateway {
   return {
-    async getCaptureReadiness(input) {
+    async getCaptureReadiness(input: CaptureReadinessInput) {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
       logCaptureRuntimeDebug('gateway-get-readiness', {
         sessionId: input.sessionId,
@@ -615,7 +648,7 @@ export function createDefaultCaptureRuntimeGateway() {
       })
       return gateway.getCaptureReadiness(input)
     },
-    async deleteCapture(input) {
+    async deleteCapture(input: CaptureDeleteInput) {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
       logCaptureRuntimeDebug('gateway-delete-capture', {
         sessionId: input.sessionId,
@@ -633,7 +666,7 @@ export function createDefaultCaptureRuntimeGateway() {
 
       return gateway.deleteCapture(input)
     },
-    async requestCapture(input) {
+    async requestCapture(input: CaptureRequestInput) {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
       logCaptureRuntimeDebug('gateway-request-capture', {
         sessionId: input.sessionId,
@@ -641,7 +674,7 @@ export function createDefaultCaptureRuntimeGateway() {
       })
       return gateway.requestCapture(input)
     },
-    async subscribeToCaptureReadiness(onEvent) {
+    async subscribeToCaptureReadiness(onEvent: (payload: unknown) => void) {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
       logCaptureRuntimeDebug('gateway-subscribe-readiness', {
         mode,

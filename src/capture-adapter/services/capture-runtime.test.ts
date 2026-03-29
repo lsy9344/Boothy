@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { SessionCaptureRecord } from '../../shared-contracts'
 import {
+  CAPTURE_READINESS_POLL_MS,
   createBrowserCaptureRuntimeGateway,
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
@@ -611,13 +612,13 @@ describe('capture runtime adapter', () => {
       onReadiness,
     })
 
-    await vi.advanceTimersByTimeAsync(1500)
-    await vi.advanceTimersByTimeAsync(1500)
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
 
     expect(onReadiness).toHaveBeenCalledTimes(2)
 
     unlisten()
-    await vi.advanceTimersByTimeAsync(1500)
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
 
     expect(onReadiness).toHaveBeenCalledTimes(2)
   })
@@ -646,7 +647,7 @@ describe('capture runtime adapter', () => {
       onReadiness,
     })
 
-    await vi.advanceTimersByTimeAsync(1500)
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
 
     expect(onReadiness).toHaveBeenCalledWith(
       expect.objectContaining({

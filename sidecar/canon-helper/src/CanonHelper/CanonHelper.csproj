@@ -10,17 +10,33 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="..\..\vendor\canon-edsdk\Windows\Sample\CSharp\CameraControl\CameraControl\EDSDK.cs">
+  <PropertyGroup>
+    <CanonSdkRoot Condition="'$(CanonSdkRoot)' == '' and '$(BOOTHY_CANON_SDK_ROOT)' != ''">$(BOOTHY_CANON_SDK_ROOT)</CanonSdkRoot>
+    <CanonSdkRoot Condition="'$(CanonSdkRoot)' == ''">..\..\vendor\canon-edsdk</CanonSdkRoot>
+    <CanonSdkInteropFile>$(CanonSdkRoot)\Windows\Sample\CSharp\CameraControl\CameraControl\EDSDK.cs</CanonSdkInteropFile>
+    <CanonSdkRuntimeDir>$(CanonSdkRoot)\Windows\EDSDK_64\Dll</CanonSdkRuntimeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(CanonSdkInteropFile)')">
+    <Compile Include="$(CanonSdkInteropFile)">
       <Link>Interop\EDSDK.cs</Link>
     </Compile>
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Include="..\..\vendor\canon-edsdk\Windows\EDSDK_64\Dll\**\*">
+  <ItemGroup Condition="Exists('$(CanonSdkRuntimeDir)')">
+    <Content Include="$(CanonSdkRuntimeDir)\**\*">
       <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
+
+  <Target Name="ValidateCanonSdkInputs" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="!Exists('$(CanonSdkInteropFile)')"
+      Text="Canon SDK source not found. Set BOOTHY_CANON_SDK_ROOT or restore sidecar/canon-helper/vendor/canon-edsdk." />
+    <Error
+      Condition="!Exists('$(CanonSdkRuntimeDir)\EDSDK.dll')"
+      Text="Canon SDK runtime DLL not found. Set BOOTHY_CANON_SDK_ROOT or restore sidecar/canon-helper/vendor/canon-edsdk." />
+  </Target>
 </Project>
