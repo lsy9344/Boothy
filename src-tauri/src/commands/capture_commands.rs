@@ -40,7 +40,10 @@ pub fn get_capture_readiness(
                 .map(|truth| {
                     format!(
                         "{}:{}:{}:{}",
-                        truth.freshness, truth.session_match, truth.camera_state, truth.helper_state
+                        truth.freshness,
+                        truth.session_match,
+                        truth.camera_state,
+                        truth.helper_state
                     )
                 })
                 .unwrap_or_else(|| "none".into());

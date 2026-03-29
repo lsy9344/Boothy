@@ -462,7 +462,9 @@ pub fn rfc3339_to_unix_seconds(timestamp: &str) -> Result<u64, HostErrorEnvelope
     let utc_seconds = timestamp_seconds
         .checked_sub(offset_seconds)
         .ok_or_else(|| {
-            HostErrorEnvelope::persistence("세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.")
+            HostErrorEnvelope::persistence(
+                "세션 타이밍을 읽지 못했어요. 잠시 후 다시 확인해 주세요.",
+            )
         })?;
 
     if utc_seconds < 0 {

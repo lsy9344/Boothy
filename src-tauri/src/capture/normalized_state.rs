@@ -26,12 +26,11 @@ use crate::{
     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
     session::{
         session_manifest::{
-            current_timestamp, normalize_legacy_manifest, rfc3339_to_unix_seconds,
-            ActivePresetBinding, SessionManifest, SESSION_POST_END_COMPLETED,
-            SESSION_POST_END_PHONE_REQUIRED,
+            current_timestamp, rfc3339_to_unix_seconds, ActivePresetBinding, SessionManifest,
+            SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
-        session_repository::write_session_manifest,
+        session_repository::{read_session_manifest, write_session_manifest},
     },
     timing::{sync_session_timing_in_dir, TimingPhase},
 };
@@ -57,7 +56,8 @@ pub fn get_capture_readiness_in_dir(
     base_dir: &Path,
     input: CaptureReadinessInputDto,
 ) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
-    let manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+    let mut manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+    sync_better_preview_assets_in_manifest(base_dir, &mut manifest)?;
 
     Ok(normalize_capture_readiness(base_dir, &manifest))
 }
@@ -882,37 +882,12 @@ fn is_session_scoped_asset_path(paths: &SessionPaths, asset_path: &str) -> bool 
     normalized_asset_path.starts_with(&normalized_session_root)
 }
 
-fn read_session_manifest(
-    base_dir: &Path,
-    session_id: &str,
-) -> Result<SessionManifest, HostErrorEnvelope> {
-    let manifest_path = SessionPaths::try_new(base_dir, session_id)?.manifest_path;
-
-    if !manifest_path.is_file() {
-        return Err(HostErrorEnvelope::session_not_found(
-            "진행 중인 세션을 찾지 못했어요. 처음 화면에서 다시 시작해 주세요.",
-        ));
-    }
-
-    let manifest_bytes = fs::read_to_string(manifest_path).map_err(|error| {
-        HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
-    })?;
-
-    let mut manifest: SessionManifest = serde_json::from_str(&manifest_bytes).map_err(|error| {
-        HostErrorEnvelope::persistence(format!("세션 매니페스트를 읽지 못했어요: {error}"))
-    })?;
-
-    normalize_legacy_manifest(&mut manifest);
-
-    Ok(manifest)
-}
-
 fn read_session_manifest_with_timing(
     base_dir: &Path,
     session_id: &str,
 ) -> Result<SessionManifest, HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, session_id)?;
-    let manifest = read_session_manifest(base_dir, session_id)?;
+    let manifest = read_session_manifest(&paths.manifest_path)?;
 
     sync_session_timing_in_dir(
         base_dir,
@@ -928,6 +903,58 @@ fn read_session_manifest_with_timing(
             std::time::SystemTime::now(),
         )
     })
+}
+
+fn sync_better_preview_assets_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<(), HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
+    let mut updated = false;
+
+    for capture in &mut manifest.captures {
+        let Some(current_preview_path) = capture.preview.asset_path.as_deref() else {
+            continue;
+        };
+
+        if !is_session_scoped_asset_path(&paths, current_preview_path) {
+            continue;
+        }
+
+        let Some(better_preview_path) =
+            find_better_session_preview_asset(&paths, &capture.capture_id)
+        else {
+            continue;
+        };
+
+        if better_preview_path == current_preview_path {
+            continue;
+        }
+
+        capture.preview.asset_path = Some(better_preview_path);
+        updated = true;
+    }
+
+    if updated {
+        manifest.updated_at = current_timestamp(SystemTime::now())?;
+        write_session_manifest(&paths.manifest_path, manifest)?;
+    }
+
+    Ok(())
+}
+
+fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<String> {
+    let preferred_extensions = ["jpg", "jpeg", "png", "webp", "gif", "bmp"];
+
+    preferred_extensions
+        .iter()
+        .map(|extension| {
+            paths
+                .renders_previews_dir
+                .join(format!("{capture_id}.{extension}"))
+        })
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 fn timing_phase(timing: Option<&crate::session::session_manifest::SessionTiming>) -> TimingPhase {

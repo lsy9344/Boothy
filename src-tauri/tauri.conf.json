@@ -21,6 +21,13 @@
       }
     ],
     "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$PICTURE/dabi_shoot/**",
+          "$APPLOCALDATA/dabi_shoot/**"
+        ]
+      },
       "csp": null
     }
   },

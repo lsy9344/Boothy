@@ -8,6 +8,16 @@ internal sealed class CanonSdkCamera : IDisposable
 {
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
+    private const uint DefaultPreviewJpegQuality = 8;
+    private static readonly string[] DisplayablePreviewExtensions =
+    [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".gif",
+        ".bmp",
+    ];
     private const string CaptureCompletionTimeoutOverrideFileName =
         ".camera-helper-capture-timeout-ms";
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
@@ -233,6 +243,36 @@ internal sealed class CanonSdkCamera : IDisposable
         }
 
         return result;
+    }
+
+    public void TryBackfillPreviewAssets(SessionPaths paths)
+    {
+        bool sdkInitialized;
+        lock (_sync)
+        {
+            sdkInitialized = _sdkInitialized;
+        }
+
+        if (!sdkInitialized || !Directory.Exists(paths.CapturesOriginalsDir))
+        {
+            return;
+        }
+
+        foreach (var rawPath in Directory.EnumerateFiles(paths.CapturesOriginalsDir))
+        {
+            var captureId = Path.GetFileNameWithoutExtension(rawPath);
+            if (string.IsNullOrWhiteSpace(captureId))
+            {
+                continue;
+            }
+
+            if (HasRasterPreviewAsset(paths, captureId))
+            {
+                continue;
+            }
+
+            TryRenderPreviewFromRaw(paths, rawPath, captureId);
+        }
     }
 
     public void Dispose()
@@ -684,6 +724,8 @@ internal sealed class CanonSdkCamera : IDisposable
                 );
             }
 
+            TryMaterializePreviewAsset(context.Paths, directoryItem, captureId, finalPath);
+
             context.Completion.TrySetResult(
                 new CaptureDownloadResult(
                     context.Request.RequestId,
@@ -743,6 +785,269 @@ internal sealed class CanonSdkCamera : IDisposable
             if (directoryItem != IntPtr.Zero)
             {
                 EDSDK.EdsRelease(directoryItem);
+            }
+        }
+    }
+
+    private void TryMaterializePreviewAsset(
+        SessionPaths paths,
+        IntPtr directoryItem,
+        string captureId,
+        string rawPath
+    )
+    {
+        TryDownloadPreviewThumbnail(paths, directoryItem, captureId);
+
+        if (!HasRasterPreviewAsset(paths, captureId))
+        {
+            TryRenderPreviewFromRaw(paths, rawPath, captureId);
+        }
+
+        if (!HasRasterPreviewAsset(paths, captureId))
+        {
+            TryExtractPreviewWithWindowsShell(paths, rawPath, captureId);
+        }
+    }
+
+    private void TryDownloadPreviewThumbnail(
+        SessionPaths paths,
+        IntPtr directoryItem,
+        string captureId
+    )
+    {
+        IntPtr thumbnailStream = IntPtr.Zero;
+        var tempPreviewPath = Path.Combine(
+            paths.RendersPreviewsDir,
+            $"{captureId}.thumbnail.downloading.jpg"
+        );
+
+        try
+        {
+            Directory.CreateDirectory(paths.RendersPreviewsDir);
+
+            if (File.Exists(tempPreviewPath))
+            {
+                File.Delete(tempPreviewPath);
+            }
+
+            var previewPath = Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg");
+            var createStreamResult = EDSDK.EdsCreateFileStream(
+                tempPreviewPath,
+                EDSDK.EdsFileCreateDisposition.CreateAlways,
+                EDSDK.EdsAccess.ReadWrite,
+                out thumbnailStream
+            );
+
+            if (createStreamResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            var thumbnailResult = EDSDK.EdsDownloadThumbnail(directoryItem, thumbnailStream);
+            if (thumbnailResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            EDSDK.EdsRelease(thumbnailStream);
+            thumbnailStream = IntPtr.Zero;
+
+            var previewFileInfo = new FileInfo(tempPreviewPath);
+            if (!previewFileInfo.Exists || previewFileInfo.Length == 0)
+            {
+                return;
+            }
+
+            File.Move(tempPreviewPath, previewPath, overwrite: true);
+        }
+        catch
+        {
+            // Thumbnail extraction is best-effort. RAW persistence remains the source of truth.
+        }
+        finally
+        {
+            if (thumbnailStream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(thumbnailStream);
+            }
+
+            if (File.Exists(tempPreviewPath))
+            {
+                try
+                {
+                    File.Delete(tempPreviewPath);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private void TryRenderPreviewFromRaw(SessionPaths paths, string rawPath, string captureId)
+    {
+        IntPtr rawStream = IntPtr.Zero;
+        IntPtr imageRef = IntPtr.Zero;
+        IntPtr previewStream = IntPtr.Zero;
+        var tempPreviewPath = Path.Combine(
+            paths.RendersPreviewsDir,
+            $"{captureId}.rendering.jpg"
+        );
+
+        try
+        {
+            Directory.CreateDirectory(paths.RendersPreviewsDir);
+
+            if (!File.Exists(rawPath))
+            {
+                return;
+            }
+
+            if (File.Exists(tempPreviewPath))
+            {
+                File.Delete(tempPreviewPath);
+            }
+
+            var previewPath = Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg");
+            var createRawStreamResult = EDSDK.EdsCreateFileStream(
+                rawPath,
+                EDSDK.EdsFileCreateDisposition.OpenExisting,
+                EDSDK.EdsAccess.Read,
+                out rawStream
+            );
+
+            if (createRawStreamResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            var createImageRefResult = EDSDK.EdsCreateImageRef(rawStream, out imageRef);
+            if (createImageRefResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            var createPreviewStreamResult = EDSDK.EdsCreateFileStream(
+                tempPreviewPath,
+                EDSDK.EdsFileCreateDisposition.CreateAlways,
+                EDSDK.EdsAccess.ReadWrite,
+                out previewStream
+            );
+
+            if (createPreviewStreamResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            var saveResult = CanonSdkNative.EdsSaveImage(
+                imageRef,
+                EDSDK.EdsTargetImageType.Jpeg,
+                new EDSDK.EdsSaveImageSetting
+                {
+                    JPEGQuality = DefaultPreviewJpegQuality,
+                    reserved = 0,
+                },
+                previewStream
+            );
+
+            if (saveResult != EDSDK.EDS_ERR_OK)
+            {
+                return;
+            }
+
+            EDSDK.EdsRelease(previewStream);
+            previewStream = IntPtr.Zero;
+
+            var previewFileInfo = new FileInfo(tempPreviewPath);
+            if (!previewFileInfo.Exists || previewFileInfo.Length == 0)
+            {
+                return;
+            }
+
+            File.Move(tempPreviewPath, previewPath, overwrite: true);
+        }
+        catch
+        {
+            // RAW preview rendering is best-effort. The session keeps the RAW source of truth.
+        }
+        finally
+        {
+            if (previewStream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(previewStream);
+            }
+
+            if (imageRef != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(imageRef);
+            }
+
+            if (rawStream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(rawStream);
+            }
+
+            if (File.Exists(tempPreviewPath))
+            {
+                try
+                {
+                    File.Delete(tempPreviewPath);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private static bool HasRasterPreviewAsset(SessionPaths paths, string captureId)
+    {
+        return DisplayablePreviewExtensions.Any((extension) =>
+            File.Exists(Path.Combine(paths.RendersPreviewsDir, $"{captureId}{extension}"))
+        );
+    }
+
+    private void TryExtractPreviewWithWindowsShell(
+        SessionPaths paths,
+        string rawPath,
+        string captureId
+    )
+    {
+        var tempPreviewPath = Path.Combine(
+            paths.RendersPreviewsDir,
+            $"{captureId}.shell-preview.jpg"
+        );
+
+        try
+        {
+            if (File.Exists(tempPreviewPath))
+            {
+                File.Delete(tempPreviewPath);
+            }
+
+            var previewPath = Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg");
+            if (!WindowsShellThumbnail.TrySavePreviewJpeg(rawPath, tempPreviewPath))
+            {
+                return;
+            }
+
+            File.Move(tempPreviewPath, previewPath, overwrite: true);
+        }
+        catch
+        {
+            // Windows shell thumbnail extraction is best-effort.
+        }
+        finally
+        {
+            if (File.Exists(tempPreviewPath))
+            {
+                try
+                {
+                    File.Delete(tempPreviewPath);
+                }
+                catch
+                {
+                }
             }
         }
     }

@@ -79,6 +79,8 @@ fn ensure_helper_running(base_dir: &Path, session_id: &str) -> Result<(), Helper
         }
     }
 
+    terminate_stale_helper_processes(&helper_launch_target, base_dir);
+
     let child = spawn_compatible_helper_process(&helper_launch_target, base_dir, session_id)
         .map_err(|_| HelperLaunchFailure {
             detail_code: "helper-launch-failed",
@@ -285,7 +287,9 @@ fn spawn_helper_process(
         .arg("--runtime-root")
         .arg(base_dir)
         .arg("--session-id")
-        .arg(session_id);
+        .arg(session_id)
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string());
 
     if use_fast_status_args {
         command
@@ -308,6 +312,82 @@ fn spawn_helper_process(
     }
 
     command.spawn()
+}
+
+#[cfg(windows)]
+fn terminate_stale_helper_processes(helper_launch_target: &HelperLaunchTarget, base_dir: &Path) {
+    let script = build_stale_helper_cleanup_script(helper_launch_target, base_dir);
+    if script.is_empty() {
+        return;
+    }
+
+    let _ = Command::new("powershell")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-WindowStyle")
+        .arg("Hidden")
+        .arg("-Command")
+        .arg(script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    thread::sleep(HELPER_STARTUP_PROBE_DELAY_MS);
+}
+
+#[cfg(not(windows))]
+fn terminate_stale_helper_processes(_helper_launch_target: &HelperLaunchTarget, _base_dir: &Path) {}
+
+#[cfg(windows)]
+fn build_stale_helper_cleanup_script(
+    helper_launch_target: &HelperLaunchTarget,
+    base_dir: &Path,
+) -> String {
+    let runtime_root = powershell_single_quote_literal(&base_dir.to_string_lossy());
+
+    match helper_launch_target {
+        HelperLaunchTarget::Executable(helper_executable) => {
+            let helper_path = powershell_single_quote_literal(&helper_executable.to_string_lossy());
+
+            format!(
+                "$runtimeRoot = '{runtime_root}'\n\
+$helperPath = '{helper_path}'\n\
+Get-CimInstance Win32_Process |\n\
+  Where-Object {{\n\
+    $_.CommandLine -like '*--runtime-root*' -and\n\
+    $_.CommandLine -like ('*' + $runtimeRoot + '*') -and\n\
+    ($_.ExecutablePath -eq $helperPath -or $_.Name -eq 'canon-helper.exe')\n\
+  }} |\n\
+  ForEach-Object {{\n\
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue\n\
+  }}\n"
+            )
+        }
+        HelperLaunchTarget::DotnetProject { project_path, .. } => {
+            let project_path = powershell_single_quote_literal(&project_path.to_string_lossy());
+
+            format!(
+                "$runtimeRoot = '{runtime_root}'\n\
+$projectPath = '{project_path}'\n\
+Get-CimInstance Win32_Process |\n\
+  Where-Object {{\n\
+    $_.Name -eq 'dotnet.exe' -and\n\
+    $_.CommandLine -like '*--runtime-root*' -and\n\
+    $_.CommandLine -like ('*' + $runtimeRoot + '*') -and\n\
+    $_.CommandLine -like ('*' + $projectPath + '*')\n\
+  }} |\n\
+  ForEach-Object {{\n\
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue\n\
+  }}\n"
+            )
+        }
+    }
+}
+
+#[cfg(windows)]
+fn powershell_single_quote_literal(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn terminate_child(child: &mut Child) {
@@ -355,4 +435,55 @@ fn write_supervisor_failure_status(
     )?;
 
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executable_cleanup_script_targets_runtime_root_and_helper_path() {
+        let script = build_stale_helper_cleanup_script(
+            &HelperLaunchTarget::Executable(PathBuf::from(
+                r"C:\Code\Project\Boothy\sidecar\canon-helper\canon-helper.exe",
+            )),
+            Path::new(r"C:\Users\KimYS\Pictures\dabi_shoot"),
+        );
+
+        assert!(script.contains("$runtimeRoot = 'C:\\Users\\KimYS\\Pictures\\dabi_shoot'"));
+        assert!(script.contains(
+            "$helperPath = 'C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\canon-helper.exe'"
+        ));
+        assert!(script.contains("$_.ExecutablePath -eq $helperPath"));
+        assert!(script.contains("$_.CommandLine -like '*--runtime-root*'"));
+    }
+
+    #[test]
+    fn dotnet_cleanup_script_targets_helper_project_processes() {
+        let script = build_stale_helper_cleanup_script(
+            &HelperLaunchTarget::DotnetProject {
+                project_path: PathBuf::from(
+                    r"C:\Code\Project\Boothy\sidecar\canon-helper\src\CanonHelper\CanonHelper.csproj",
+                ),
+                sdk_root: None,
+            },
+            Path::new(r"C:\Users\KimYS\Pictures\dabi_shoot"),
+        );
+
+        assert!(script.contains("$_.Name -eq 'dotnet.exe'"));
+        assert!(
+            script.contains(
+                "$projectPath = 'C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj'"
+            )
+        );
+        assert!(script.contains("$_.CommandLine -like ('*' + $projectPath + '*')"));
+    }
+
+    #[test]
+    fn powershell_literals_escape_single_quotes() {
+        assert_eq!(
+            powershell_single_quote_literal("C:\\Users\\Kim'YS"),
+            "C:\\Users\\Kim''YS"
+        );
+    }
 }

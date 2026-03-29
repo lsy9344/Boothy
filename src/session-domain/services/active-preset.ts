@@ -133,9 +133,15 @@ export function createTauriActivePresetGateway(): ActivePresetGateway {
 }
 
 export function createDefaultActivePresetGateway() {
-  return isTauriRuntime()
-    ? createTauriActivePresetGateway()
-    : createBrowserActivePresetGateway()
+  return {
+    async selectActivePreset(input) {
+      const gateway = isTauriRuntime()
+        ? createTauriActivePresetGateway()
+        : createBrowserActivePresetGateway()
+
+      return gateway.selectActivePreset(input)
+    },
+  } satisfies ActivePresetGateway
 }
 
 type CreateActivePresetServiceOptions = {

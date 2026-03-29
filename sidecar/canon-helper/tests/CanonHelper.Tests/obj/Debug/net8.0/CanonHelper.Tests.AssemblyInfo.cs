@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CanonHelper.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+989dbc924c6cbe51159bd0f5a9b9a317515f2143")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7933f8732178fa71713c2c66acae068a34b67a09")]
 [assembly: System.Reflection.AssemblyProductAttribute("CanonHelper.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CanonHelper.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,6 +1,8 @@
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -18,6 +20,9 @@ use crate::{
     },
     timing::sync_session_timing_in_dir,
 };
+
+const SIDECAR_PREVIEW_DISCOVERY_TIMEOUT_MS: u64 = 900;
+const SIDECAR_PREVIEW_DISCOVERY_POLL_INTERVAL_MS: u64 = 75;
 
 pub fn persist_capture_in_dir(
     base_dir: &Path,
@@ -86,13 +91,8 @@ pub fn complete_preview_render_in_dir(
 
     fs::create_dir_all(&paths.renders_previews_dir).map_err(map_fs_error)?;
 
-    let preview_path = paths.renders_previews_dir.join(format!("{capture_id}.jpg"));
-
-    fs::write(
-        &preview_path,
-        build_placeholder_asset_bytes(&manifest, capture_id, "preview"),
-    )
-    .map_err(map_fs_error)?;
+    let preview_path = materialize_preview_asset(&paths, &manifest.captures[capture_index])
+        .map_err(map_fs_error)?;
 
     let preview_visible_at_ms = current_time_ms()?;
     let capture = {
@@ -217,14 +217,98 @@ fn build_saved_capture_record(
     }
 }
 
-fn build_placeholder_asset_bytes(
-    manifest: &SessionManifest,
+fn materialize_preview_asset(
+    paths: &SessionPaths,
+    capture: &SessionCaptureRecord,
+) -> Result<PathBuf, std::io::Error> {
+    let raw_path = Path::new(&capture.raw.asset_path);
+    let raw_extension = raw_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase());
+
+    let preview_extension = match raw_extension.as_deref() {
+        Some("jpg" | "jpeg") => "jpg",
+        Some("png") => "png",
+        Some("webp") => "webp",
+        Some("gif") => "gif",
+        Some("bmp") => "bmp",
+        Some("svg") => "svg",
+        _ => "svg",
+    };
+    let preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.{}", capture.capture_id, preview_extension));
+
+    if matches!(
+        raw_extension.as_deref(),
+        Some("jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "svg")
+    ) {
+        fs::copy(raw_path, &preview_path)?;
+    } else if let Some(existing_preview_path) =
+        find_existing_sidecar_preview_asset(paths, &capture.capture_id)
+    {
+        return Ok(existing_preview_path);
+    } else if let Some(delayed_preview_path) =
+        wait_for_existing_sidecar_preview_asset(paths, &capture.capture_id)
+    {
+        return Ok(delayed_preview_path);
+    } else {
+        fs::write(
+            &preview_path,
+            build_preview_fallback_svg_bytes(&capture.capture_id),
+        )?;
+    }
+
+    Ok(preview_path)
+}
+
+fn find_existing_sidecar_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<PathBuf> {
+    ["jpg", "jpeg", "png", "webp", "gif", "bmp", "svg"]
+        .iter()
+        .map(|extension| {
+            paths
+                .renders_previews_dir
+                .join(format!("{capture_id}.{extension}"))
+        })
+        .find(|path| path.is_file())
+}
+
+fn wait_for_existing_sidecar_preview_asset(
+    paths: &SessionPaths,
     capture_id: &str,
-    asset_kind: &str,
-) -> Vec<u8> {
+) -> Option<PathBuf> {
+    let poll_interval = Duration::from_millis(SIDECAR_PREVIEW_DISCOVERY_POLL_INTERVAL_MS);
+    let max_attempts = SIDECAR_PREVIEW_DISCOVERY_TIMEOUT_MS
+        .div_ceil(SIDECAR_PREVIEW_DISCOVERY_POLL_INTERVAL_MS)
+        .max(1);
+
+    for _ in 0..max_attempts {
+        if let Some(preview_path) = find_existing_sidecar_preview_asset(paths, capture_id) {
+            return Some(preview_path);
+        }
+
+        thread::sleep(poll_interval);
+    }
+
+    find_existing_sidecar_preview_asset(paths, capture_id)
+}
+
+fn build_preview_fallback_svg_bytes(capture_id: &str) -> Vec<u8> {
     format!(
-        "boothy-{asset_kind}\nsession={}\nboothAlias={}\ncapture={capture_id}\n",
-        manifest.session_id, manifest.booth_alias
+        concat!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">"##,
+            r##"<rect width="1200" height="800" fill="#101820"/>"##,
+            r##"<rect x="80" y="80" width="1040" height="640" rx="28" fill="#1f3140" stroke="#89b8d8" stroke-width="4"/>"##,
+            r##"<text x="600" y="360" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="52" fill="#f6fbff">"##,
+            r#"Preview unavailable"#,
+            r#"</text>"#,
+            r##"<text x="600" y="430" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#c7d9e6">"##,
+            r#"capture: {capture_id}"#,
+            r#"</text>"#,
+            r#"</svg>"#,
+        ),
+        capture_id = capture_id,
     )
     .into_bytes()
 }

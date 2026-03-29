@@ -8,6 +8,7 @@ internal sealed class SessionPaths
         SessionId = sessionId;
         SessionRoot = Path.Combine(RuntimeRoot, "sessions", sessionId);
         CapturesOriginalsDir = Path.Combine(SessionRoot, "captures", "originals");
+        RendersPreviewsDir = Path.Combine(SessionRoot, "renders", "previews");
         DiagnosticsDir = Path.Combine(SessionRoot, "diagnostics");
         RequestLogPath = Path.Combine(DiagnosticsDir, "camera-helper-requests.jsonl");
         ProcessedRequestsPath = Path.Combine(
@@ -22,6 +23,7 @@ internal sealed class SessionPaths
     public string SessionId { get; }
     public string SessionRoot { get; }
     public string CapturesOriginalsDir { get; }
+    public string RendersPreviewsDir { get; }
     public string DiagnosticsDir { get; }
     public string RequestLogPath { get; }
     public string ProcessedRequestsPath { get; }
@@ -31,6 +33,7 @@ internal sealed class SessionPaths
     public void EnsureExists()
     {
         Directory.CreateDirectory(CapturesOriginalsDir);
+        Directory.CreateDirectory(RendersPreviewsDir);
         Directory.CreateDirectory(DiagnosticsDir);
     }
 }

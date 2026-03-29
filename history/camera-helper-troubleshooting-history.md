@@ -478,7 +478,92 @@
 - helper는 살아 있고 status도 쓰고 있을 수 있다.
 - host parser/freshness 계산이 틀려 blocked path로 내려가는 경우가 있다.
 - 프런트가 이전 `phone-required`를 붙잡고 있을 수도 있다.
+
+### 17. 2026-03-29 추가 확인: 최신 session 진단이 비고 helper가 이전 session에 묶여 있으면 preset 선택 직후 재부착 경계를 먼저 본다
+
+- 이번 회차에서는 사용자가 `카메라 연결상태 확인`을 눌렀을 때 계속 `Preparing`에 머무르는 증상이 다시 보고됐다.
+- 실제 확인 결과는 아래와 같았다.
+  - 최신 session manifest는 새 session으로 정상 생성되고 active preset도 기록돼 있었다.
+  - 하지만 최신 session의 `diagnostics` 폴더에는 `camera-helper-status.json`이 없었다.
+  - 반대로 실행 중인 `canon-helper.exe` command line은 직전 session id에 계속 바인딩돼 있었다.
+- 즉 이 케이스의 본문제는 helper truth 내용이 아니라, **latest session으로 helper를 다시 붙이는 경계가 비어 있거나 너무 늦은 것**에 가까웠다.
+
+이번 회차 코드 보정:
+
+- Rust host의 [preset_commands.rs](/C:/Code/Project/Boothy/src-tauri/src/commands/preset_commands.rs)에서 `select_active_preset` 성공 직후에도 `try_ensure_helper_running(...)`을 호출하도록 보강했다.
+- 프런트 [active-preset.ts](/C:/Code/Project/Boothy/src/session-domain/services/active-preset.ts)는 runtime 판정을 서비스 생성 시점에 고정하지 않고, 실제 `selectActivePreset(...)` 호출 시점마다 다시 판단하도록 바꿨다.
+- 그래서 Tauri bridge가 앱 초기에는 아직 붙지 않았더라도, 이후 실제 선택 동작 시점에는 host command와 helper 재부착으로 자연스럽게 넘어갈 수 있다.
+
+운영 판단 기준:
+
+1. 최신 session의 `diagnostics/camera-helper-status.json`이 비어 있다.
+2. 동시에 `canon-helper.exe` process command line이 이전 session id를 가리킨다.
+3. 그런데 최신 session manifest에는 `activePreset`이 이미 기록돼 있다.
+
+이 세 조건이 함께 보이면, camera discovery나 freshness parser보다 먼저 **preset 선택 이후 helper session rebind 경계**를 점검하는 편이 빠르다.
+
+### 18. 2026-03-29 추가 확인: helper는 이미 `ready`인데 capture 진입 첫 확인이 fallback이면 화면이 계속 `Preparing`에 남을 수 있다
+
+- 이번 회차에서 최신 session에 helper를 수동으로 다시 붙여 보니, 실제 status는 아래처럼 바로 정상으로 올라왔다.
+  - `cameraState: "ready"`
+  - `helperState: "healthy"`
+  - `detailCode: "camera-ready"`
+- 즉 카메라/helper truth는 이미 정상이었는데도 booth 화면이 계속 `Preparing`에 머무를 수 있었다.
+
+실제 원인:
+
+- [session-provider.tsx](/C:/Code/Project/Boothy/src/session-domain/state/session-provider.tsx)는 capture 화면 진입 시 `getCaptureReadiness(...)`를 한 번 호출하고 readiness event subscribe를 한 번 등록한다.
+- 이 첫 호출/구독 순간에 runtime bridge가 아직 browser fallback 경로를 타면, 초기 `Preparing` 응답과 no-op subscribe가 그대로 남을 수 있다.
+- 이후 helper가 같은 session에서 `ready`가 되어도, 추가 host 재확인이 없으면 화면은 자동으로 회복되지 않는다.
+
+이번 회차 코드 보정:
+
+- capture flow에 들어와 있는 동안에는 주기적으로 readiness를 다시 읽도록 보강했다.
+- 그래서 첫 진입 순간 fallback이 있었더라도, 잠시 뒤 host/Tauri 경로가 살아나면 같은 session의 실제 `Ready` 상태로 스스로 회복할 수 있다.
+
+운영 판단 기준:
+
+1. 최신 session `camera-helper-status.json`이 이미 `ready/healthy`다.
+2. 그런데 booth 화면은 계속 `Preparing`이다.
+3. 최신 session 진단과 helper process session id는 서로 맞다.
+
+이 세 조건이 함께 보이면 helper나 host normalized readiness보다 먼저 **capture 진입 직후 1회성 readiness 조회와 이후 재확인 경계**를 점검하는 편이 빠르다.
 - 최신 단계에서는 helper가 살아 있지만 `camera-not-found`를 지속 보고하는 경우도 실제로 확인됐다.
+
+### 19. 2026-03-29 추가 확인: 이전 세션 helper orphan이 남아 새 세션을 `session-open-failed -> Phone Required`로 밀어 올리던 문제
+
+- 이번 회차에서는 고객 화면의 `Phone Required`가 프런트 과승격이 아니라,
+  host 로그의 `live_truth=fresh:matched:error:error`와 실제 helper status `detailCode=session-open-failed`로 바로 확인됐다.
+- 같은 시각 실행 중인 `canon-helper.exe`를 확인해 보니,
+  현재 실패 세션이 아니라 **이전 세션에 바인딩된 helper가 `ready/healthy` 상태로 계속 살아 있었다.**
+- 이 상태에서는 새 session-bound helper가 카메라를 찾더라도 `EdsOpenSession(...)`에서 충돌할 수 있고,
+  그 결과 최신 session status가 `cameraState=error`, `helperState=error`, `detailCode=session-open-failed`로 기록되며
+  booth는 `Phone Required`로 내려갈 수 있었다.
+
+실제 원인:
+
+- helper supervisor는 같은 앱 프로세스 안에서는 child helper를 추적하고 종료했지만,
+  **이전 앱 인스턴스가 남긴 orphan helper**까지는 정리하지 못했다.
+- 그래서 앱을 다시 켠 뒤 새 session을 시작하면, 이전 helper가 계속 카메라 세션을 잡고 있어
+  새 helper 연결이 막히는 레이스가 생길 수 있었다.
+
+이번 회차 코드 보정:
+
+- Rust helper supervisor가 새 helper를 띄우기 전에
+  **같은 runtime root를 바라보는 stale helper process를 먼저 정리**하도록 보강했다.
+- 새 helper 실행 시 `--parent-pid`를 함께 넘기고,
+  helper는 부모 프로세스가 사라지면 스스로 종료하도록 보강했다.
+- 이 조합으로
+  1. 이미 남아 있는 orphan helper를 다음 실행에서 정리하고,
+  2. 이후 새 orphan helper가 다시 쌓이는 것도 줄이게 했다.
+
+운영 판단 기준:
+
+1. 최신 session status가 `session-open-failed`다.
+2. 동시에 별도 `canon-helper.exe`가 이전 session id로 계속 떠 있다.
+3. 그 이전 helper status는 `ready/healthy`다.
+
+이 세 조건이 함께 보이면 카메라 미발견보다 먼저 **stale helper orphan 충돌**을 의심하는 편이 빠르다.
 
 ### "현재 증상은 operator diagnostics 쪽 문제다"
 

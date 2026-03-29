@@ -68,6 +68,38 @@ fn readiness_requires_an_active_preset_before_capture_is_allowed() {
 }
 
 #[test]
+fn readiness_recovers_from_a_manifest_backup_left_during_an_atomic_swap_gap() {
+    let base_dir = unique_test_root("manifest-backup-gap");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+    let backup_path = manifest_path.with_extension("json.bak");
+
+    fs::rename(&manifest_path, &backup_path).expect("manifest should move to backup");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should recover from the backup manifest");
+
+    assert_eq!(readiness.session_id, session.session_id);
+    assert_eq!(readiness.reason_code, "preset-missing");
+    assert!(manifest_path.is_file());
+    assert!(!backup_path.exists());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn readiness_stays_blocked_until_live_helper_truth_is_fresh() {
     let base_dir = unique_test_root("missing-helper-truth");
     let session = start_session_in_dir(
@@ -313,9 +345,7 @@ fn readiness_surfaces_camera_connecting_guidance_when_helper_detects_powered_dev
 #[test]
 fn readiness_stays_blocked_when_helper_truth_is_absent_even_in_runtime_dir() {
     let local_app_data_root = unique_test_root("runtime-probe-localappdata");
-    let base_dir = local_app_data_root
-        .join("com.tauri.dev")
-        .join("dabi_shoot");
+    let base_dir = local_app_data_root.join("com.tauri.dev").join("dabi_shoot");
     let _env_guard = scoped_env_vars(vec![(
         "LOCALAPPDATA",
         Some(std::ffi::OsString::from(local_app_data_root.clone())),
@@ -598,6 +628,17 @@ fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_aft
             .expect("preview path should exist after completion"),
     )
     .is_file());
+    assert_eq!(
+        fs::read(
+            ready_capture
+                .preview
+                .asset_path
+                .as_deref()
+                .expect("preview path should exist after completion"),
+        )
+        .expect("preview file should be readable"),
+        b"helper-raw",
+    );
 
     let ready = get_capture_readiness_in_dir(
         &base_dir,
@@ -626,6 +667,237 @@ fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_aft
             .timing
             .preview_budget_state,
         "withinBudget",
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn capture_flow_prefers_a_sidecar_generated_preview_for_raw_only_captures() {
+    let base_dir = unique_test_root("capture-preview-sidecar-generated");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture_result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let capture_id = capture_result.capture.capture_id.clone();
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let manifest_path = session_paths.manifest_path.clone();
+    let raw_cr3_path = session_paths
+        .captures_originals_dir
+        .join(format!("{capture_id}.cr3"));
+    fs::write(&raw_cr3_path, b"helper-raw-cr3").expect("cr3 raw should be writable");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.captures[0].raw.asset_path = raw_cr3_path.to_string_lossy().into_owned();
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    fs::create_dir_all(&session_paths.renders_previews_dir)
+        .expect("preview directory should exist");
+    let sidecar_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.jpg"));
+    fs::write(&sidecar_preview_path, b"sidecar-preview-jpg")
+        .expect("sidecar preview should be writable");
+
+    let ready_capture = complete_preview_render_in_dir(&base_dir, &session.session_id, &capture_id)
+        .expect("preview render should complete with sidecar preview");
+
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(sidecar_preview_path.to_string_lossy().as_ref()),
+    );
+    assert_eq!(
+        fs::read(&sidecar_preview_path).expect("preview file should be readable"),
+        b"sidecar-preview-jpg",
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_repairs_a_placeholder_svg_preview_when_a_raster_sidecar_exists() {
+    let base_dir = unique_test_root("capture-preview-repair-from-sidecar");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture_result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &capture_result.capture.capture_id,
+    )
+    .expect("preview render should complete");
+    let capture_id = ready_capture.capture_id.clone();
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let svg_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.svg"));
+    let jpg_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.jpg"));
+    fs::write(&svg_preview_path, b"<svg></svg>").expect("svg placeholder should be writable");
+    fs::write(&jpg_preview_path, b"rendered-jpg").expect("jpg preview should be writable");
+
+    let manifest_path = session_paths.manifest_path.clone();
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.captures[0].preview.asset_path = Some(svg_preview_path.to_string_lossy().into_owned());
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should repair the preview asset path");
+
+    assert_eq!(
+        readiness
+            .latest_capture
+            .as_ref()
+            .and_then(|capture| capture.preview.asset_path.as_ref()),
+        Some(&jpg_preview_path.to_string_lossy().into_owned()),
+    );
+
+    let repaired_manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should still be readable"),
+    )
+    .expect("manifest should deserialize after repair");
+    assert_eq!(
+        repaired_manifest.captures[0].preview.asset_path.as_deref(),
+        Some(jpg_preview_path.to_string_lossy().as_ref()),
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_waits_briefly_for_a_delayed_sidecar_preview_before_falling_back() {
+    let base_dir = unique_test_root("capture-preview-delayed-sidecar");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture_result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let capture_id = capture_result.capture.capture_id.clone();
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let manifest_path = session_paths.manifest_path.clone();
+    let raw_cr3_path = session_paths
+        .captures_originals_dir
+        .join(format!("{capture_id}.cr3"));
+    fs::write(&raw_cr3_path, b"helper-raw-cr3").expect("cr3 raw should be writable");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.captures[0].raw.asset_path = raw_cr3_path.to_string_lossy().into_owned();
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    fs::create_dir_all(&session_paths.renders_previews_dir)
+        .expect("preview directory should exist");
+    let sidecar_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.jpg"));
+    let delayed_preview_path = sidecar_preview_path.clone();
+
+    let preview_writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(150));
+        fs::write(&delayed_preview_path, b"delayed-sidecar-preview")
+            .expect("delayed sidecar preview should be writable");
+    });
+
+    let ready_capture = complete_preview_render_in_dir(&base_dir, &session.session_id, &capture_id)
+        .expect("preview render should wait for the delayed sidecar preview");
+
+    preview_writer
+        .join()
+        .expect("delayed preview writer should complete");
+
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(sidecar_preview_path.to_string_lossy().as_ref()),
+    );
+    assert_eq!(
+        fs::read(&sidecar_preview_path).expect("preview file should be readable"),
+        b"delayed-sidecar-preview",
     );
 
     let _ = fs::remove_dir_all(base_dir);

@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 use crate::{
+    capture::helper_supervisor::try_ensure_helper_running,
     commands::runtime_commands::resolve_runtime_capability_snapshot,
     contracts::dto::{
         AuthoringWorkspaceResultDto, DraftPresetEditPayloadDto, DraftPresetSummaryDto,
@@ -44,8 +45,11 @@ pub fn select_active_preset(
         HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
     })?;
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let session_id = input.session_id.clone();
+    let result = select_active_preset_in_dir(&base_dir, input)?;
+    try_ensure_helper_running(&base_dir, &session_id);
 
-    select_active_preset_in_dir(&base_dir, input)
+    Ok(result)
 }
 
 #[tauri::command]

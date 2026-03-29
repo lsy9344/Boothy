@@ -227,3 +227,6 @@ C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\obj\Debug\ne
 C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\obj\Debug\net8.0\CanonHelper.Tests.pdb
 C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\obj\Debug\net8.0\CanonHelper.Tests.genruntimeconfig.cache
 C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\obj\Debug\net8.0\ref\CanonHelper.Tests.dll
+C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\bin\Debug\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\bin\Debug\net8.0\System.Drawing.Common.dll
+C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\bin\Debug\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll

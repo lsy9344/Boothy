@@ -100,11 +100,22 @@ describe('selectCurrentSessionPreviews', () => {
         }),
         createCapture({
           captureId: 'capture_waiting',
+          raw: {
+            assetPath: 'fixtures/waiting-raw.jpg',
+            persistedAtMs: 80,
+          },
           renderStatus: 'previewWaiting',
           preview: {
             assetPath: 'fixtures/waiting.jpg',
-            enqueuedAtMs: 170,
+            enqueuedAtMs: 80,
             readyAtMs: null,
+          },
+          timing: {
+            captureAcknowledgedAtMs: 80,
+            previewVisibleAtMs: null,
+            captureBudgetMs: 1000,
+            previewBudgetMs: 5000,
+            previewBudgetState: 'pending',
           },
         }),
       ]),
@@ -185,6 +196,67 @@ describe('selectCurrentSessionPreviews', () => {
         isCurrentActivePreset: true,
         postEndState: 'activeSession',
         readyAtMs: 430,
+        isLatest: false,
+      },
+    ])
+  })
+
+  it('does not mark an older preview as latest while a newer same-session capture is still waiting', () => {
+    const previews = selectCurrentSessionPreviews(
+      createManifest([
+        createCapture({
+          captureId: 'capture_waiting_newer',
+          raw: {
+            assetPath: 'fixtures/waiting-newer-raw.jpg',
+            persistedAtMs: 220,
+          },
+          preview: {
+            assetPath: null,
+            enqueuedAtMs: 220,
+            readyAtMs: null,
+          },
+          timing: {
+            captureAcknowledgedAtMs: 220,
+            previewVisibleAtMs: null,
+            captureBudgetMs: 1000,
+            previewBudgetMs: 5000,
+            previewBudgetState: 'pending',
+          },
+          renderStatus: 'previewWaiting',
+        }),
+        createCapture({
+          captureId: 'capture_ready_older',
+          raw: {
+            assetPath: 'fixtures/ready-older-raw.jpg',
+            persistedAtMs: 120,
+          },
+          preview: {
+            assetPath: 'fixtures/ready-older.jpg',
+            enqueuedAtMs: 120,
+            readyAtMs: 180,
+          },
+          timing: {
+            captureAcknowledgedAtMs: 120,
+            previewVisibleAtMs: 180,
+            captureBudgetMs: 1000,
+            previewBudgetMs: 5000,
+            previewBudgetState: 'withinBudget',
+          },
+          renderStatus: 'previewReady',
+        }),
+      ]),
+    )
+
+    expect(previews).toEqual([
+      {
+        captureId: 'capture_ready_older',
+        assetPath: 'fixtures/ready-older.jpg',
+        activePresetId: 'preset_soft-glow',
+        activePresetVersion: '2026.03.20',
+        presetDisplayName: null,
+        isCurrentActivePreset: true,
+        postEndState: 'activeSession',
+        readyAtMs: 180,
         isLatest: false,
       },
     ])

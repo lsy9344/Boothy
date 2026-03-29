@@ -337,6 +337,35 @@
 - 같은 세션의 follow-up capture round-trip이 `request_capture -> capture-accepted -> file-arrived -> 썸네일 반영`까지 반복해서 닫히는 것이 확인됐다.
 - 이 문서에 남아 있던 `hardware validation 필요` 상태는 이번 사용자 검증으로 해소됐다.
 
+### 10. 2026-03-29 추가 확인: 이전 session helper orphan이 남아 새 연결이 바로 `Phone Required`로 떨어질 수 있었다
+
+증상:
+
+- 최신 수정 전까지 정상 동작하던 카메라 연결 상태가 다시 `Phone Required`로 떨어지는 회귀가 보고됐다.
+- 이번 케이스는 첫 촬영/두 번째 촬영 경계보다 더 앞단에서, `카메라 연결상태 확인` 단계부터 바로 막히는 쪽에 가까웠다.
+
+실제 원인:
+
+- host 로그는 `live_truth=fresh:matched:error:error`를 남겼고,
+  최신 session helper status는 `detailCode=session-open-failed`를 기록하고 있었다.
+- 동시에 실행 중인 `canon-helper.exe`를 확인하면,
+  **이전 session에 묶인 helper가 여전히 `ready/healthy` 상태로 살아 있는 경우**가 있었다.
+- 이 orphan helper가 카메라 세션을 계속 잡고 있으면, 새 session helper는 `EdsOpenSession(...)`에서 충돌할 수 있고
+  booth는 이를 실제 보호 상태로 해석해 `Phone Required`로 내려갈 수 있었다.
+
+조치:
+
+- Rust helper supervisor가 새 helper를 띄우기 전에
+  같은 runtime root를 바라보는 stale helper process를 먼저 정리하도록 보강했다.
+- 새 helper 실행 시 부모 앱 PID를 함께 넘기고,
+  helper는 부모 프로세스가 사라지면 스스로 종료하도록 보강했다.
+
+운영 판단:
+
+- 최신 session status가 `session-open-failed`인데,
+  별도 `canon-helper.exe`가 이전 session id로 계속 떠 있으면
+  카메라 미발견보다 먼저 **stale helper orphan 충돌**을 본다.
+
 ## 오진하기 쉬운 포인트
 
 ### "`Phone Required`가 떴으니 카메라 연결이 바로 끊긴 것이다"
@@ -480,4 +509,3 @@ Select-String -Path <camera-helper-events.jsonl 경로> -Pattern "<requestId>"
 - [CanonHelperService.cs](/C:/Code/Project/Boothy/sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs)
 - [JsonFileProtocol.cs](/C:/Code/Project/Boothy/sidecar/canon-helper/src/CanonHelper/Runtime/JsonFileProtocol.cs)
 - [SessionPaths.cs](/C:/Code/Project/Boothy/sidecar/canon-helper/src/CanonHelper/Runtime/SessionPaths.cs)
-

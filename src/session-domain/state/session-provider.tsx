@@ -46,6 +46,7 @@ type SessionProviderProps = {
 
 const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
 const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
+const CAPTURE_READINESS_RETRY_MS = 1500
 type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
 type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
 
@@ -1605,6 +1606,25 @@ export function SessionProvider({
       }
     }
   }, [
+    sessionDraft.flowStep,
+    sessionDraft.sessionId,
+  ])
+
+  useEffect(() => {
+    if (sessionDraft.flowStep !== 'capture' || sessionDraft.sessionId === null) {
+      return
+    }
+
+    const sessionId = sessionDraft.sessionId
+    const intervalId = window.setInterval(() => {
+      applyCaptureReadiness(sessionId)
+    }, CAPTURE_READINESS_RETRY_MS)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [
+    applyCaptureReadiness,
     sessionDraft.flowStep,
     sessionDraft.sessionId,
   ])

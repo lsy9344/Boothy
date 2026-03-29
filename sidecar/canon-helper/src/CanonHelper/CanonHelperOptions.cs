@@ -7,6 +7,7 @@ internal sealed record CanonHelperOptions(
     string? RuntimeRoot = null,
     string? SessionId = null,
     string? SdkRoot = null,
+    int? ParentPid = null,
     int PollIntervalMs = 250,
     int StatusIntervalMs = 1_000
 )
@@ -38,6 +39,15 @@ internal sealed record CanonHelperOptions(
                     break;
                 case "--sdk-root":
                     options = options with { SdkRoot = ReadValue(args, ref index, argument) };
+                    break;
+                case "--parent-pid":
+                    options = options with
+                    {
+                        ParentPid = ParsePositiveInt(
+                            ReadValue(args, ref index, argument),
+                            argument
+                        ),
+                    };
                     break;
                 case "--poll-interval-ms":
                     options = options with

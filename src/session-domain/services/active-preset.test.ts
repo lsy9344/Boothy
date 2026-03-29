@@ -3,19 +3,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }))
+const { isTauriRuntimeMock } = vi.hoisted(() => ({
+  isTauriRuntimeMock: vi.fn(() => false),
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }))
+vi.mock('../../shared/runtime/is-tauri', () => ({
+  isTauriRuntime: isTauriRuntimeMock,
+}))
 
 import {
   createActivePresetService,
+  createDefaultActivePresetGateway,
   createTauriActivePresetGateway,
 } from './active-preset'
 
 describe('active preset service', () => {
   beforeEach(() => {
     invokeMock.mockReset()
+    isTauriRuntimeMock.mockReset()
+    isTauriRuntimeMock.mockReturnValue(false)
   })
 
   it('rejects mismatched preset selection responses from the host', async () => {
@@ -120,6 +129,67 @@ describe('active preset service', () => {
     })
 
     await createTauriActivePresetGateway().selectActivePreset({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      preset: {
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith('select_active_preset', {
+      input: {
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+    })
+  })
+
+  it('re-checks the runtime when selecting a preset so tauri can take over after startup', async () => {
+    invokeMock.mockResolvedValue({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      activePreset: {
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+      manifest: {
+        schemaVersion: 'session-manifest/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        boothAlias: 'Kim 4821',
+        customer: {
+          name: 'Kim',
+          phoneLastFour: '4821',
+        },
+        createdAt: '2026-03-20T00:00:00.000Z',
+        updatedAt: '2026-03-20T00:05:00.000Z',
+        lifecycle: {
+          status: 'active',
+          stage: 'preset-selected',
+        },
+        activePreset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.03.20',
+        },
+        captures: [],
+        postEnd: null,
+      },
+    })
+    const gateway = createDefaultActivePresetGateway()
+
+    isTauriRuntimeMock.mockReturnValue(false)
+    const browserResult = await gateway.selectActivePreset({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      preset: {
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+    })
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(browserResult.sessionId).toBe('session_01hs6n1r8b8zc5v4ey2x7b9g1m')
+
+    isTauriRuntimeMock.mockReturnValue(true)
+    await gateway.selectActivePreset({
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       preset: {
         presetId: 'preset_soft-glow',

@@ -45,8 +45,14 @@ internal sealed class CanonHelperService : IDisposable
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!ParentProcessMonitor.IsAlive(_options.ParentPid))
+            {
+                return;
+            }
+
             _camera.PumpEvents();
             await _camera.EnsureConnectedAsync(cancellationToken);
+            _camera.TryBackfillPreviewAssets(_paths);
             await CompleteCaptureIfFinishedAsync();
 
             if (_activeCaptureTask is null)

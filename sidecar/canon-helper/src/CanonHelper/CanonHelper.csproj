@@ -31,6 +31,10 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
   <Target Name="ValidateCanonSdkInputs" BeforeTargets="PrepareForBuild">
     <Error
       Condition="!Exists('$(CanonSdkInteropFile)')"

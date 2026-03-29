@@ -1189,6 +1189,120 @@ describe('CaptureScreen', () => {
     })
   })
 
+  it('does not label an older thumbnail as the latest photo while a newer capture preview is still pending', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'previewWaiting',
+          customerState: 'Preview Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '사진이 안전하게 저장되었어요.',
+          supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+          reasonCode: 'preview-waiting',
+          latestCapture: createCaptureRecord({
+            captureId: 'capture_waiting_newer',
+            raw: {
+              assetPath: 'fixtures/waiting-newer-raw.jpg',
+              persistedAtMs: 220,
+            },
+            preview: {
+              assetPath: null,
+              enqueuedAtMs: 220,
+              readyAtMs: null,
+            },
+            timing: {
+              captureAcknowledgedAtMs: 220,
+              previewVisibleAtMs: null,
+              captureBudgetMs: 1000,
+              previewBudgetMs: 5000,
+              previewBudgetState: 'pending',
+            },
+            renderStatus: 'previewWaiting',
+          }),
+        },
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'preview-waiting',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_waiting_newer',
+              raw: {
+                assetPath: 'fixtures/waiting-newer-raw.jpg',
+                persistedAtMs: 220,
+              },
+              preview: {
+                assetPath: null,
+                enqueuedAtMs: 220,
+                readyAtMs: null,
+              },
+              timing: {
+                captureAcknowledgedAtMs: 220,
+                previewVisibleAtMs: null,
+                captureBudgetMs: 1000,
+                previewBudgetMs: 5000,
+                previewBudgetState: 'pending',
+              },
+              renderStatus: 'previewWaiting',
+            }),
+            createCaptureRecord({
+              captureId: 'capture_ready_older',
+              raw: {
+                assetPath: 'fixtures/ready-older-raw.jpg',
+                persistedAtMs: 120,
+              },
+              preview: {
+                assetPath: 'fixtures/ready-older.jpg',
+                enqueuedAtMs: 120,
+                readyAtMs: 180,
+              },
+              timing: {
+                captureAcknowledgedAtMs: 120,
+                previewVisibleAtMs: 180,
+                captureBudgetMs: 1000,
+                previewBudgetMs: 5000,
+                previewBudgetState: 'withinBudget',
+              },
+              renderStatus: 'previewReady',
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('img', {
+        name: /현재 세션 사진,\s*1번째,\s*soft glow 룩/i,
+      }),
+    ).toHaveAttribute('src', 'fixtures/ready-older.jpg')
+    expect(
+      screen.queryByRole('img', {
+        name: /현재 세션 최신 사진,\s*1번째,\s*soft glow 룩/i,
+      }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('최신 사진')).not.toBeInTheDocument()
+  })
+
   it('keeps earlier captures labeled with their original look after the active preset changes', async () => {
     renderCaptureScreen(
       {},

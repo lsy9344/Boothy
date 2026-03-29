@@ -1,7 +1,7 @@
 import type { KeyboardEvent } from 'react'
-import { resolvePresetPreviewSrc } from './preset-preview-src'
 import { isFinalizedCapturePostEndState } from '../../completion-handoff/post-end'
 import type { CurrentSessionPreview } from '../../session-domain/selectors'
+import { SessionPreviewImage } from './SessionPreviewImage'
 
 type LatestPhotoRailProps = {
   previews: CurrentSessionPreview[]
@@ -106,8 +106,8 @@ export function LatestPhotoRail({
               {preview.isLatest ? (
                 <span className="latest-photo-rail__badge">최신 사진</span>
               ) : null}
-              <img
-                src={resolvePresetPreviewSrc(preview.assetPath)}
+              <SessionPreviewImage
+                assetPath={preview.assetPath}
                 alt={buildPreviewAltText(preview, index + 1)}
               />
               <figcaption>
