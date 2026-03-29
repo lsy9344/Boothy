@@ -252,7 +252,7 @@ describe('selectCurrentSessionPreviews', () => {
             captureId: 'capture_foreign_asset',
             preview: {
               assetPath:
-                'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\other-session.jpg',
+                'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\other-session.jpg',
               enqueuedAtMs: 140,
               readyAtMs: 320,
             },
@@ -390,7 +390,7 @@ describe('selectCurrentSessionPreviews', () => {
             captureId: 'capture_visible',
             preview: {
               assetPath:
-                'C:\\Users\\Kim\\AppData\\Local\\Boothy\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current-session.jpg',
+                'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current-session.jpg',
               enqueuedAtMs: 130,
               readyAtMs: 220,
             },
@@ -413,7 +413,7 @@ describe('selectCurrentSessionPreviews', () => {
       {
         captureId: 'capture_visible',
         assetPath:
-          'C:\\Users\\Kim\\AppData\\Local\\Boothy\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current-session.jpg',
+          'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current-session.jpg',
         activePresetId: 'preset_soft-glow',
         activePresetVersion: '2026.03.20',
         presetDisplayName: null,
@@ -435,7 +435,7 @@ describe('selectCurrentSessionPreviews', () => {
             captureId: 'capture_versioned_filename',
             preview: {
               assetPath:
-                'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\portrait..v2.jpg',
+                'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\portrait..v2.jpg',
               enqueuedAtMs: 130,
               readyAtMs: 220,
             },
@@ -449,7 +449,7 @@ describe('selectCurrentSessionPreviews', () => {
       {
         captureId: 'capture_versioned_filename',
         assetPath:
-          'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\portrait..v2.jpg',
+          'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\portrait..v2.jpg',
         activePresetId: 'preset_soft-glow',
         activePresetVersion: '2026.03.20',
         presetDisplayName: null,

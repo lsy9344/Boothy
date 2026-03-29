@@ -379,6 +379,88 @@
 - 이 경우 `camera-not-found`와 같은 discovery 단계로 되돌리는 것이 우선이며, 그 뒤에야 reconnect/off-detection 품질을 논할 수 있다.
 - fresh workspace나 새 머신에서 dev 실행을 재현할 때는 helper exe 존재만 보지 말고, local Canon SDK root와 helper source fallback까지 같이 점검하는 편이 안전하다.
 
+### 15. 2026-03-29 추가 확인: 첫 촬영 성공 뒤 두 번째 촬영이 `Phone Required`로 과승격되던 원인
+
+- 사용자가 세션 이름 입력 후 카메라 상태를 확인하고 `촬영`을 눌렀을 때, 첫 촬영은 정상 저장되었고 최근 썸네일까지 표시됐다.
+- 하지만 이어서 같은 세션에서 `촬영`을 한 번 더 누르면 `Phone Required`가 뜨는 회귀가 재현됐다.
+- 이 패턴은 "실제 카메라 치명 장애"라기보다, **직전 촬영 직후의 임시 재확인/일시 busy 상태를 프런트가 `Phone Required`로 잘못 번역한 것**으로 보는 편이 더 맞았다.
+
+실제 확인 사실:
+
+- Rust host 쪽 기본 계약은 `can_capture=false`일 때 같은 session의 readiness를 함께 반환하도록 되어 있고, 이 readiness가 `preview-waiting` 또는 `camera-preparing`이면 고객 화면도 직원 호출이 아니라 대기 상태여야 한다.
+- 그런데 프런트 `capture runtime` 정규화는 `request_capture` 실패에서 readiness가 비어 있거나 파싱되지 않으면, 이를 보수적으로 `Phone Required`로 승격하고 있었다.
+- 그 결과 "실패 원인을 아직 단정할 수 없는 임시 재확인 상태"와 "실제 보호 전환이 확정된 상태"가 고객 화면에서 같은 `Phone Required`로 합쳐졌다.
+
+이번 회차 코드 보정:
+
+- `request_capture` 실패 정규화에서 readiness가 없는 `capture-not-ready`와 일반 host 실패를 더 이상 자동 `Phone Required`로 바꾸지 않도록 조정했다.
+- 이런 경우 고객 화면은 `Preparing / 잠시 기다리기` 계열의 일시 상태로 내리고, `Phone Required`는 host가 명시적으로 그 보호 상태를 보낸 경우에만 유지되게 했다.
+- 같은 회차에서 최근 same-session 썸네일이 이미 보이는 상태에서 follow-up capture가 임시 실패해도, 기존 썸네일이 사라지지 않고 세션이 직원 호출 상태로 잠기지 않는 회귀 테스트를 추가했다.
+
+관련 파일:
+
+- [capture-runtime.ts](/C:/Code/Project/Boothy/src/capture-adapter/services/capture-runtime.ts)
+- [capture-runtime.test.ts](/C:/Code/Project/Boothy/src/capture-adapter/services/capture-runtime.test.ts)
+- [session-provider.test.tsx](/C:/Code/Project/Boothy/src/session-domain/state/session-provider.test.tsx)
+
+이번 회차 검증:
+
+- `pnpm vitest run src/capture-adapter/services/capture-runtime.test.ts src/session-domain/state/session-provider.test.tsx`
+- `pnpm exec eslint src/capture-adapter/services/capture-runtime.ts src/capture-adapter/services/capture-runtime.test.ts src/session-domain/state/session-provider.test.tsx`
+- 검증 결과, 관련 targeted test `54 passed`와 lint 통과를 확인했다.
+
+운영 판단 기준:
+
+- 첫 촬영 성공 뒤 최근 썸네일이 뜬 상태에서만 두 번째 촬영이 `Phone Required`로 떨어지면, camera on/off나 helper binary보다 먼저 **프런트 request failure 정규화**를 의심한다.
+- 이 경우 `Phone Required`가 실제 host readiness에 의해 명시된 것인지, 아니면 readiness 없는 request failure를 프런트가 과승격한 것인지 먼저 구분해야 한다.
+- 동일 패턴 재발 시에는 `capture-runtime` 로그와 `request_capture` 오류 payload에 readiness가 실려 있는지부터 확인하는 편이 가장 빠르다.
+
+### 16. 2026-03-29 작업 시작 기록: duplicate-shutter 완화 뒤 capture가 무한 로딩 후 `Phone Required`로 떨어지는 회귀
+
+- 이번 회차에서는 "카메라가 자기 혼자 계속 셔터를 찍는다"는 증상을 막기 위해 helper request log 재소비 방어를 넣은 직후,
+  반대로 정상 `사진찍기` 요청이 끝까지 닫히지 않고 버튼이 오래 로딩된 뒤 `Phone Required`로 떨어지는 회귀가 보고됐다.
+- 사용자 체감 증상은 아래와 같다.
+  - `사진찍기` 버튼을 누르면 즉시 결과가 오지 않고 로딩이 길게 유지된다.
+  - 이후 customer 화면이 `Phone Required`로 내려간다.
+- 이 단계의 1차 의심 지점은 camera discovery나 프런트 문구보다, **helper가 새 request를 실제로 소비하고 `capture-accepted` / `file-arrived` / `helper-error`를 남기는 경계가 막힌 것인지**다.
+- 특히 직전 변경에서 아래 경계가 바뀌었으므로 우선순위를 높게 본다.
+  - `sidecar/canon-helper/src/CanonHelper/Runtime/JsonFileProtocol.cs`
+  - `sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs`
+  - `sidecar/canon-helper/src/CanonHelper/Runtime/SessionPaths.cs`
+- 이번 회차에서는 먼저
+  1. helper request 소비 로직이 새 request를 놓치거나 중복 필터로 잘못 버리지 않는지,
+  2. request를 `processed`로 기록하는 시점이 너무 이르지 않은지,
+  3. host가 기다리는 event contract와 helper event emission 사이에 drift가 생기지 않았는지
+  순서로 다시 확인한다.
+
+실제 원인:
+
+- 이번 회귀의 직접 원인은, 새 helper가 `camera-helper-processed-request-ids.txt`가 아직 없던 **기존 세션**에 붙을 때였다.
+- 이 경우 helper는 request log를 처음부터 읽으면서 예전에 이미 성공했던 촬영 요청도 "아직 처리 안 된 request"로 오인할 수 있었다.
+- 그러면 helper는 방금 누른 새 `requestId`보다 먼저 **오래된 requestId**에 반응해 셔터를 실행하고,
+  host는 새 `requestId`의 `capture-accepted` / `file-arrived`를 기다리다 timeout으로 `Phone Required`에 떨어질 수 있었다.
+- 즉 증상은 "캡처가 안 된다"였지만, 실제로는 **helper replay 대상이 잘못돼 host correlation이 어긋난 것**에 가까웠다.
+
+이번 회차 코드 보정:
+
+- helper startup 시 `processed-request` 파일만 보지 않고, 기존 `camera-helper-events.jsonl`의
+  `capture-accepted` / `file-arrived` requestId도 함께 읽어 이미 처리된 요청 집합을 backfill 하도록 보강했다.
+- 그래서 업그레이드 전 세션처럼 processed file이 비어 있어도, 이미 성공 이력이 있는 request는 다시 실행하지 않는다.
+- request log는 계속 새로 append된 완전한 line만 incremental read 하고, 위 backfill 집합과 합쳐 stale request replay를 막는다.
+- helper 전용 regression test를 추가해
+  - processed file 기반 재시작 중복 방지
+  - event log 기반 기존 성공 request backfill
+  - partial trailing request line 보류
+  를 고정했다.
+
+현재 검증 상태:
+
+- 코드 레벨에서는 helper regression test와 helper build를 통과했다.
+  - `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
+  - `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`
+- 아직 부스 앱과 실카메라로 다시 눌러 본 최종 결과는 기록하지 않았다.
+- 실제 customer flow 결과는 사용자 하드웨어 테스트 후 이 문서에 후속으로 남기는 것이 맞다.
+
 ## 오진하기 쉬운 포인트
 
 ### "status 파일에 ready가 있으니 host도 ready일 것이다"

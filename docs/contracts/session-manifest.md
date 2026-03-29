@@ -6,8 +6,8 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 
 ## 저장 위치
 
-- 세션 루트: `appLocalData/booth-runtime/sessions/{sessionId}/`
-- 매니페스트: `appLocalData/booth-runtime/sessions/{sessionId}/session.json`
+- 세션 루트: `Pictures/dabi_shoot/sessions/{sessionId}/`
+- 매니페스트: `Pictures/dabi_shoot/sessions/{sessionId}/session.json`
 
 ## 디렉터리 구조
 
@@ -69,7 +69,7 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
   - `export-waiting`: `{ state, evaluatedAt }`
   - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel? , nextLocationLabel?, supportActionLabel? }`
   - `phone-required`: `{ state, evaluatedAt, primaryActionLabel, unsafeActionWarning, showBoothAlias, supportActionLabel? }`
-- `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 app-local-data 절대경로 아래의 현재 세션 루트(`.../booth-runtime/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `booth-runtime/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
+- `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 사용자 Pictures 경로 아래의 현재 세션 루트(`.../Pictures/dabi_shoot/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `pictures/dabi_shoot/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
 
 ## 변경 규칙
 

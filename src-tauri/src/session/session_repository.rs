@@ -311,5 +311,8 @@ fn map_fs_error(error: std::io::Error) -> HostErrorEnvelope {
 }
 
 pub fn resolve_app_session_base_dir(app_local_data_dir: PathBuf) -> PathBuf {
-    app_local_data_dir.join("booth-runtime")
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|user_profile| user_profile.join("Pictures").join("dabi_shoot"))
+        .unwrap_or_else(|| app_local_data_dir.join("dabi_shoot"))
 }

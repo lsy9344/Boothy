@@ -203,13 +203,13 @@ operator 화면에서 함께 볼 항목:
 
 검증 증거는 아래 경로와 연결되어야 한다.
 
-- 세션 루트: `appLocalData/booth-runtime/sessions/{sessionId}/`
-- 매니페스트: `appLocalData/booth-runtime/sessions/{sessionId}/session.json`
-- RAW: `appLocalData/booth-runtime/sessions/{sessionId}/captures/originals/`
-- preview: `appLocalData/booth-runtime/sessions/{sessionId}/renders/previews/`
-- final: `appLocalData/booth-runtime/sessions/{sessionId}/renders/finals/`
-- diagnostics: `appLocalData/booth-runtime/sessions/{sessionId}/diagnostics/`
-- timing log: `appLocalData/booth-runtime/sessions/{sessionId}/diagnostics/timing-events.log`
+- 세션 루트: `Pictures/dabi_shoot/sessions/{sessionId}/`
+- 매니페스트: `Pictures/dabi_shoot/sessions/{sessionId}/session.json`
+- RAW: `Pictures/dabi_shoot/sessions/{sessionId}/captures/originals/`
+- preview: `Pictures/dabi_shoot/sessions/{sessionId}/renders/previews/`
+- final: `Pictures/dabi_shoot/sessions/{sessionId}/renders/finals/`
+- diagnostics: `Pictures/dabi_shoot/sessions/{sessionId}/diagnostics/`
+- timing log: `Pictures/dabi_shoot/sessions/{sessionId}/diagnostics/timing-events.log`
 - published bundle: `preset-catalog/published/{presetId}/{publishedVersion}/bundle.json`
 - live catalog state: `preset-catalog/catalog-state.json`
 - catalog audit: `preset-catalog/catalog-audit/{presetId}.json`

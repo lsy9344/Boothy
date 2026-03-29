@@ -256,7 +256,7 @@ describe('capture runtime adapter', () => {
     })
   })
 
-  it('adds customer-safe blocked readiness when capture-not-ready arrives without readiness', async () => {
+  it('downgrades capture-not-ready without readiness to a transient wait state', async () => {
     mockIPC((cmd) => {
       if (cmd === 'request_capture') {
         throw {
@@ -278,17 +278,51 @@ describe('capture runtime adapter', () => {
       }),
     ).rejects.toMatchObject({
       code: 'capture-not-ready',
-      message: '지금은 도움이 필요해요.',
+      message: '촬영 준비 상태를 다시 확인하고 있어요.',
       readiness: {
         sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
-        customerState: 'Phone Required',
-        primaryAction: 'call-support',
+        customerState: 'Preparing',
+        primaryAction: 'wait',
         canCapture: false,
+        reasonCode: 'camera-preparing',
       },
     })
   })
 
-  it('sanitizes raw host failures into customer-safe phone-required guidance', async () => {
+  it('downgrades same-session request session-not-found to a transient wait state', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'request_capture') {
+        throw {
+          code: 'session-not-found',
+          message: 'manifest missing',
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.requestCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).rejects.toMatchObject({
+      code: 'session-not-found',
+      message: '촬영 준비 상태를 다시 확인하고 있어요.',
+      readiness: {
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        customerState: 'Preparing',
+        primaryAction: 'wait',
+        canCapture: false,
+        reasonCode: 'camera-preparing',
+      },
+    })
+  })
+
+  it('downgrades raw request failures to customer-safe preparing guidance', async () => {
     mockIPC((cmd) => {
       if (cmd === 'request_capture') {
         throw {
@@ -310,11 +344,12 @@ describe('capture runtime adapter', () => {
       }),
     ).rejects.toMatchObject({
       code: 'session-persistence-failed',
-      message: '지금은 도움이 필요해요.',
+      message: '촬영 준비 상태를 다시 확인하고 있어요.',
       readiness: {
         sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
-        customerState: 'Phone Required',
-        primaryAction: 'call-support',
+        customerState: 'Preparing',
+        primaryAction: 'wait',
+        reasonCode: 'camera-preparing',
       },
     })
   })

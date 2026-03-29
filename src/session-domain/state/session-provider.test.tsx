@@ -818,7 +818,7 @@ describe('SessionProvider', () => {
     })
   })
 
-  it('applies customer-safe blocked readiness when capture-not-ready arrives without readiness payload', async () => {
+  it('downgrades capture-not-ready without readiness payload to a transient wait state', async () => {
     let latestState: SessionStateContextValue | null = null
 
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
@@ -896,8 +896,9 @@ describe('SessionProvider', () => {
       ).rejects.toMatchObject({
         code: 'capture-not-ready',
         readiness: {
-          primaryAction: 'call-support',
-          customerState: 'Phone Required',
+          primaryAction: 'wait',
+          customerState: 'Preparing',
+          reasonCode: 'camera-preparing',
         },
       })
     })
@@ -905,9 +906,255 @@ describe('SessionProvider', () => {
     await waitFor(() => {
       expect(latestState!.sessionDraft.flowStep).toBe('capture')
       expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
-        primaryAction: 'call-support',
-        customerState: 'Phone Required',
+        primaryAction: 'wait',
+        customerState: 'Preparing',
         canCapture: false,
+        reasonCode: 'camera-preparing',
+      })
+    })
+  })
+
+  it('keeps the latest same-session thumbnail visible when a follow-up capture request transiently fails', async () => {
+    let latestState: SessionStateContextValue | null = null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const latestCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_recent',
+      requestId: 'request_recent',
+      renderStatus: 'previewReady',
+      preview: {
+        assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/capture_recent.jpg`,
+        enqueuedAtMs: 100,
+        readyAtMs: 500,
+      },
+    })
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [latestCapture],
+        },
+      })
+
+    const captureRuntimeService = createCaptureRuntimeService({
+      gateway: {
+        getCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
+          .mockResolvedValue(
+            createReadinessSnapshot({
+              sessionId,
+              surfaceState: 'previewReady',
+              customerState: 'Ready',
+              canCapture: true,
+              primaryAction: 'capture',
+              customerMessage: '지금 촬영할 수 있어요.',
+              supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
+              reasonCode: 'ready',
+              latestCapture,
+            }),
+          ),
+        requestCapture: vi
+          .fn<CaptureRuntimeGateway['requestCapture']>()
+          .mockRejectedValue({
+            code: 'session-persistence-failed',
+            message: 'unexpected runtime bridge failure',
+          }),
+        subscribeToCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
+          .mockResolvedValue(() => undefined),
+      },
+    })
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        reasonCode: 'ready',
+        canCapture: true,
+        latestCapture: {
+          captureId: 'capture_recent',
+        },
+      })
+    })
+
+    await act(async () => {
+      await expect(
+        latestState!.requestCapture({
+          sessionId,
+        }),
+      ).rejects.toMatchObject({
+        code: 'session-persistence-failed',
+        readiness: {
+          customerState: 'Preparing',
+          primaryAction: 'wait',
+          reasonCode: 'camera-preparing',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        customerState: 'Preparing',
+        primaryAction: 'wait',
+        reasonCode: 'camera-preparing',
+      })
+      expect(latestState!.sessionDraft.manifest?.captures).toHaveLength(1)
+      expect(latestState!.sessionDraft.manifest?.captures[0]?.captureId).toBe(
+        'capture_recent',
+      )
+    })
+  })
+
+  it('keeps the current capture session when requestCapture hits a same-session session-not-found error', async () => {
+    let latestState: SessionStateContextValue | null = null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        },
+      })
+
+    const captureRuntimeService = createCaptureRuntimeService({
+      gateway: {
+        getCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
+          .mockResolvedValue(
+            createReadinessSnapshot({
+              sessionId,
+              surfaceState: 'captureReady',
+              customerState: 'Ready',
+              canCapture: true,
+              primaryAction: 'capture',
+              customerMessage: '지금 촬영할 수 있어요.',
+              supportMessage: '버튼을 누르면 바로 시작돼요.',
+              reasonCode: 'ready',
+            }),
+          ),
+        requestCapture: vi
+          .fn<CaptureRuntimeGateway['requestCapture']>()
+          .mockRejectedValue({
+            code: 'session-not-found',
+            message: 'manifest missing',
+          }),
+        subscribeToCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
+          .mockResolvedValue(() => undefined),
+      },
+    })
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.flowStep).toBe('capture')
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        reasonCode: 'ready',
+        canCapture: true,
+      })
+    })
+
+    await act(async () => {
+      await expect(
+        latestState!.requestCapture({
+          sessionId,
+        }),
+      ).rejects.toMatchObject({
+        code: 'session-not-found',
+        readiness: {
+          sessionId,
+          customerState: 'Preparing',
+          primaryAction: 'wait',
+          reasonCode: 'camera-preparing',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.sessionId).toBe(sessionId)
+      expect(latestState!.sessionDraft.flowStep).toBe('capture')
+      expect(latestState!.sessionDraft.selectedPreset).toMatchObject({
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      })
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        customerState: 'Preparing',
+        primaryAction: 'wait',
+        reasonCode: 'camera-preparing',
       })
     })
   })
@@ -1492,7 +1739,7 @@ describe('SessionProvider', () => {
             renderStatus: 'previewReady',
             preview: {
               assetPath:
-                'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
+                'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
               enqueuedAtMs: 120,
               readyAtMs: 450,
             },
@@ -1530,7 +1777,7 @@ describe('SessionProvider', () => {
             renderStatus: 'previewReady',
             preview: {
               assetPath:
-                'C:\\Users\\Kim\\AppData\\Local\\Boothy\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
+                'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
               enqueuedAtMs: 120,
               readyAtMs: 450,
             },
@@ -1881,7 +2128,7 @@ describe('SessionProvider', () => {
               renderStatus: 'previewReady',
               preview: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
                 enqueuedAtMs: 120,
                 readyAtMs: 450,
               },
@@ -1901,7 +2148,7 @@ describe('SessionProvider', () => {
                 renderStatus: 'previewReady',
                 preview: {
                   assetPath:
-                    'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
+                    'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
                   enqueuedAtMs: 120,
                   readyAtMs: 450,
                 },
@@ -2034,13 +2281,13 @@ describe('SessionProvider', () => {
               renderStatus: 'finalReady',
               preview: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
                 enqueuedAtMs: 120,
                 readyAtMs: 450,
               },
               final: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\finals\\foreign.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\finals\\foreign.jpg',
                 readyAtMs: 480,
               },
             }),
@@ -2059,13 +2306,13 @@ describe('SessionProvider', () => {
                 renderStatus: 'finalReady',
                 preview: {
                   assetPath:
-                    'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
+                    'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
                   enqueuedAtMs: 120,
                   readyAtMs: 450,
                 },
                 final: {
                   assetPath:
-                    'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\finals\\foreign.jpg',
+                    'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\finals\\foreign.jpg',
                   readyAtMs: 480,
                 },
               }),
@@ -2188,13 +2435,13 @@ describe('SessionProvider', () => {
               renderStatus: 'finalReady',
               preview: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
                 enqueuedAtMs: 120,
                 readyAtMs: 450,
               },
               final: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
                 readyAtMs: 520,
               },
             }),
@@ -2251,7 +2498,7 @@ describe('SessionProvider', () => {
           },
           final: {
             assetPath:
-              'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
+              'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
             readyAtMs: 520,
           },
         },
@@ -2271,7 +2518,7 @@ describe('SessionProvider', () => {
           },
           final: {
             assetPath:
-              'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
+              'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
             readyAtMs: 520,
           },
         },
@@ -2314,7 +2561,7 @@ describe('SessionProvider', () => {
               renderStatus: 'previewReady',
               preview: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1n\\renders\\previews\\foreign.jpg',
                 enqueuedAtMs: 120,
                 readyAtMs: 450,
               },
@@ -3515,13 +3762,13 @@ describe('SessionProvider', () => {
               renderStatus: 'finalReady',
               preview: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg',
                 enqueuedAtMs: 120,
                 readyAtMs: 450,
               },
               final: {
                 assetPath:
-                  'C:\\appLocalData\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
+                  'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg',
                 readyAtMs: 520,
               },
             }),
@@ -3626,9 +3873,9 @@ describe('SessionProvider', () => {
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
     const captureId = 'capture_preserve_existing_preview'
     const preservedPreviewPath =
-      'C:\\Users\\Kim\\AppData\\Local\\Boothy\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg'
+      'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\previews\\current.jpg'
     const finalAssetPath =
-      'C:\\Users\\Kim\\AppData\\Local\\Boothy\\booth-runtime\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg'
+      'C:\\Users\\Example\\Pictures\\dabi_shoot\\sessions\\session_01hs6n1r8b8zc5v4ey2x7b9g1m\\renders\\finals\\current.jpg'
     const startSession = vi
       .fn<StartSessionGateway['startSession']>()
       .mockResolvedValue({
@@ -3778,7 +4025,7 @@ describe('SessionProvider', () => {
               captureId: 'capture_existing',
               renderStatus: 'previewReady',
               preview: {
-                assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/capture_existing.jpg`,
+                assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/capture_existing.jpg`,
                 enqueuedAtMs: 100,
                 readyAtMs: 500,
               },
@@ -3900,7 +4147,7 @@ describe('SessionProvider', () => {
             captureId: 'capture_existing',
             renderStatus: 'previewReady',
             preview: {
-              assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/capture_existing.jpg`,
+              assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/capture_existing.jpg`,
               enqueuedAtMs: 100,
               readyAtMs: 500,
             },
@@ -4056,7 +4303,7 @@ describe('SessionProvider', () => {
             captureId: latestCaptureId,
             renderStatus: 'previewReady',
             preview: {
-              assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${latestCaptureId}.jpg`,
+              assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${latestCaptureId}.jpg`,
               enqueuedAtMs: 200,
               readyAtMs: 800,
             },
@@ -4066,7 +4313,7 @@ describe('SessionProvider', () => {
             captureId: remainingCaptureId,
             renderStatus: 'previewReady',
             preview: {
-              assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
+              assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
               enqueuedAtMs: 100,
               readyAtMs: 500,
             },
@@ -4106,7 +4353,7 @@ describe('SessionProvider', () => {
                 captureId: remainingCaptureId,
                 renderStatus: 'previewReady',
                 preview: {
-                  assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
+                  assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
                   enqueuedAtMs: 100,
                   readyAtMs: 500,
                 },
@@ -4128,7 +4375,7 @@ describe('SessionProvider', () => {
               captureId: remainingCaptureId,
               renderStatus: 'previewReady',
               preview: {
-                assetPath: `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
+                assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${remainingCaptureId}.jpg`,
                 enqueuedAtMs: 100,
                 readyAtMs: 500,
               },
@@ -4217,7 +4464,7 @@ describe('SessionProvider', () => {
               captureId,
               renderStatus: 'previewReady',
               preview: {
-                assetPath: `C:/boothy/booth-runtime/sessions/${firstSessionId}/renders/previews/${captureId}.jpg`,
+                assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${firstSessionId}/renders/previews/${captureId}.jpg`,
                 enqueuedAtMs: 100,
                 readyAtMs: 500,
               },
@@ -4306,7 +4553,7 @@ describe('SessionProvider', () => {
     let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
     const captureId = 'capture_latest'
-    const previewAssetPath = `C:/boothy/booth-runtime/sessions/${sessionId}/renders/previews/${captureId}.jpg`
+    const previewAssetPath = `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${captureId}.jpg`
     const startSession = vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
       sessionId,
       boothAlias: 'Kim 4821',

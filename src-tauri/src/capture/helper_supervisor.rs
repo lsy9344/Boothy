@@ -101,6 +101,15 @@ fn resolve_helper_launch_target() -> Option<HelperLaunchTarget> {
     }
 
     let helper_dir = resolve_helper_dir();
+    let helper_project_path = helper_dir.join("src/CanonHelper/CanonHelper.csproj");
+    let can_launch_dotnet_project = helper_project_path.is_file() && dotnet_available();
+
+    if cfg!(debug_assertions) && can_launch_dotnet_project {
+        return Some(HelperLaunchTarget::DotnetProject {
+            project_path: helper_project_path,
+            sdk_root: resolve_canon_sdk_root(&helper_dir),
+        });
+    }
 
     candidates.push(helper_dir.join("canon-helper.exe"));
     candidates.push(
@@ -120,8 +129,7 @@ fn resolve_helper_launch_target() -> Option<HelperLaunchTarget> {
         return Some(HelperLaunchTarget::Executable(path));
     }
 
-    let helper_project_path = helper_dir.join("src/CanonHelper/CanonHelper.csproj");
-    if helper_project_path.is_file() && dotnet_available() {
+    if can_launch_dotnet_project {
         return Some(HelperLaunchTarget::DotnetProject {
             project_path: helper_project_path,
             sdk_root: resolve_canon_sdk_root(&helper_dir),
@@ -273,7 +281,11 @@ fn spawn_helper_process(
         }
     };
 
-    command.arg("--runtime-root").arg(base_dir).arg("--session-id").arg(session_id);
+    command
+        .arg("--runtime-root")
+        .arg(base_dir)
+        .arg("--session-id")
+        .arg(session_id);
 
     if use_fast_status_args {
         command
@@ -283,7 +295,10 @@ fn spawn_helper_process(
             .arg(HELPER_STATUS_INTERVAL_MS);
     }
 
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 
     #[cfg(windows)]
     {

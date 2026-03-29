@@ -37,3 +37,4 @@ sidecar/canon-helper/.tmp-runtime-publish/
 # Local Rust/Tauri build outputs
 src-tauri/target/
 src-tauri/target-*/
+.codex/hook-state/

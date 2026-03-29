@@ -21,12 +21,14 @@ use crate::{
         CaptureReadinessInputDto, CaptureRequestInputDto, CaptureRequestResultDto,
         HostErrorEnvelope, LiveCaptureTruthDto,
     },
+    diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::sync_post_end_state_in_dir,
     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
     session::{
         session_manifest::{
-            normalize_legacy_manifest, rfc3339_to_unix_seconds, ActivePresetBinding,
-            SessionManifest, SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
+            current_timestamp, normalize_legacy_manifest, rfc3339_to_unix_seconds,
+            ActivePresetBinding, SessionManifest, SESSION_POST_END_COMPLETED,
+            SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
         session_repository::write_session_manifest,
@@ -78,13 +80,13 @@ pub fn request_capture_in_dir(
         ));
     }
 
-    let _in_flight_guard = acquire_in_flight_capture_guard(base_dir, &input.session_id)?;
+    let in_flight_guard = acquire_in_flight_capture_guard(base_dir, &input.session_id)?;
     let manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
     let request_id = generate_capture_request_id();
-    let requested_at = crate::session::session_manifest::current_timestamp(SystemTime::now())?;
+    let requested_at = current_timestamp(SystemTime::now())?;
     let request_message = CanonHelperCaptureRequestMessage {
         schema_version: CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION.into(),
         message_type: "request-capture".into(),
@@ -98,8 +100,29 @@ pub fn request_capture_in_dir(
     write_capture_request_message(base_dir, &request_message)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
 
-    let round_trip = wait_for_capture_round_trip(base_dir, &input.session_id, &request_id)
-        .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
+    let round_trip = match wait_for_capture_round_trip(base_dir, &input.session_id, &request_id) {
+        Ok(round_trip) => round_trip,
+        Err(error) => {
+            if should_persist_capture_round_trip_failure(&error) {
+                persist_capture_round_trip_failure(base_dir, &input.session_id, &error)?;
+            }
+
+            drop(in_flight_guard);
+
+            let readiness = get_capture_readiness_in_dir(
+                base_dir,
+                CaptureReadinessInputDto {
+                    session_id: input.session_id.clone(),
+                },
+            )
+            .unwrap_or_else(|_| CaptureReadinessDto::phone_required(input.session_id.clone()));
+
+            return Err(HostErrorEnvelope::capture_not_ready(
+                capture_round_trip_failure_message(&error),
+                readiness,
+            ));
+        }
+    };
     let (manifest, capture) = persist_capture_in_dir(
         base_dir,
         &input,
@@ -119,6 +142,134 @@ pub fn request_capture_in_dir(
             .with_timing(manifest.timing.clone())
             .with_live_capture_truth(project_live_capture_truth(base_dir, &manifest).dto),
     })
+}
+
+fn should_persist_capture_round_trip_failure(error: &SidecarClientError) -> bool {
+    matches!(
+        error,
+        SidecarClientError::CaptureTimedOut
+            | SidecarClientError::CaptureRejected
+            | SidecarClientError::RecoveryRequired
+            | SidecarClientError::CaptureSessionMismatch
+            | SidecarClientError::CaptureFileMissing
+            | SidecarClientError::CaptureFileEmpty
+            | SidecarClientError::CaptureFileUnscoped
+            | SidecarClientError::CaptureProtocolViolation
+    )
+}
+
+fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static str {
+    match error {
+        SidecarClientError::CaptureTimedOut => {
+            "사진 저장을 끝내지 못했어요. 가까운 직원에게 알려 주세요."
+        }
+        SidecarClientError::CaptureRejected
+        | SidecarClientError::RecoveryRequired
+        | SidecarClientError::CaptureSessionMismatch
+        | SidecarClientError::CaptureFileMissing
+        | SidecarClientError::CaptureFileEmpty
+        | SidecarClientError::CaptureFileUnscoped
+        | SidecarClientError::CaptureProtocolViolation => {
+            "사진 저장을 확인하지 못했어요. 가까운 직원에게 알려 주세요."
+        }
+        SidecarClientError::RequestWriteFailed
+        | SidecarClientError::EventsUnreadable
+        | SidecarClientError::InvalidEvents
+        | SidecarClientError::StatusUnreadable
+        | SidecarClientError::InvalidStatus => {
+            "카메라 연결 상태를 확인하지 못했어요. 가까운 직원에게 알려 주세요."
+        }
+    }
+}
+
+fn capture_round_trip_failure_reason_code(error: &SidecarClientError) -> &'static str {
+    match error {
+        SidecarClientError::CaptureTimedOut => "capture-timeout",
+        SidecarClientError::CaptureRejected => "capture-rejected",
+        SidecarClientError::RecoveryRequired => "capture-recovery-required",
+        SidecarClientError::CaptureSessionMismatch => "capture-session-mismatch",
+        SidecarClientError::CaptureFileMissing => "capture-file-missing",
+        SidecarClientError::CaptureFileEmpty => "capture-file-empty",
+        SidecarClientError::CaptureFileUnscoped => "capture-file-unscoped",
+        SidecarClientError::CaptureProtocolViolation => "capture-protocol-violation",
+        SidecarClientError::RequestWriteFailed => "capture-request-write-failed",
+        SidecarClientError::EventsUnreadable => "capture-events-unreadable",
+        SidecarClientError::InvalidEvents => "capture-events-invalid",
+        SidecarClientError::StatusUnreadable => "capture-status-unreadable",
+        SidecarClientError::InvalidStatus => "capture-status-invalid",
+    }
+}
+
+fn capture_round_trip_failure_detail(error: &SidecarClientError) -> &'static str {
+    match error {
+        SidecarClientError::CaptureTimedOut => {
+            "셔터 요청 뒤 file-arrived 경계를 확인하지 못해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureRejected => {
+            "helper가 캡처 요청을 끝까지 수락하지 못해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::RecoveryRequired => {
+            "캡처 중 helper recovery가 필요해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureSessionMismatch => {
+            "다른 세션으로 보이는 촬영 이벤트를 감지해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureFileMissing => {
+            "촬영 완료 이벤트는 도착했지만 RAW 파일을 찾지 못해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureFileEmpty => {
+            "촬영 RAW 파일이 비어 있어 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureFileUnscoped => {
+            "세션 범위를 벗어난 RAW 파일 경로가 감지돼 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::CaptureProtocolViolation => {
+            "capture-accepted 없이 file-arrived가 도착해 세션을 phone-required로 고정했어요."
+        }
+        SidecarClientError::RequestWriteFailed
+        | SidecarClientError::EventsUnreadable
+        | SidecarClientError::InvalidEvents
+        | SidecarClientError::StatusUnreadable
+        | SidecarClientError::InvalidStatus => "캡처 경계 진단을 읽지 못했어요.",
+    }
+}
+
+fn persist_capture_round_trip_failure(
+    base_dir: &Path,
+    session_id: &str,
+    error: &SidecarClientError,
+) -> Result<(), HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let mut manifest = read_session_manifest_with_timing(base_dir, session_id)?;
+    let occurred_at = current_timestamp(SystemTime::now())?;
+
+    manifest.lifecycle.stage = "phone-required".into();
+    manifest.post_end = None;
+    manifest.updated_at = occurred_at.clone();
+    write_session_manifest(&paths.manifest_path, &manifest)?;
+
+    try_append_operator_audit_record(
+        base_dir,
+        OperatorAuditRecordInput {
+            occurred_at,
+            session_id: Some(session_id.to_string()),
+            event_category: "critical-failure",
+            event_type: "capture-round-trip-failed",
+            summary: "촬영 결과를 세션에 저장하지 못했어요.".into(),
+            detail: capture_round_trip_failure_detail(error).into(),
+            actor_id: None,
+            source: "capture-boundary",
+            capture_id: None,
+            preset_id: manifest.active_preset_id.clone(),
+            published_version: manifest
+                .active_preset
+                .as_ref()
+                .map(|preset| preset.published_version.clone()),
+            reason_code: Some(capture_round_trip_failure_reason_code(error).into()),
+        },
+    );
+
+    Ok(())
 }
 
 pub fn delete_capture_in_dir(
@@ -562,7 +713,8 @@ fn build_blocked_readiness_from_live_camera_gate(
                 .with_latest_capture(latest_capture),
             "connecting" | "connected-idle" => CaptureReadinessDto::camera_connecting(session_id)
                 .with_latest_capture(latest_capture),
-            _ => CaptureReadinessDto::camera_preparing(session_id).with_latest_capture(latest_capture),
+            _ => CaptureReadinessDto::camera_preparing(session_id)
+                .with_latest_capture(latest_capture),
         },
         LiveCameraGate::HelperPreparing => {
             CaptureReadinessDto::helper_preparing(session_id).with_latest_capture(latest_capture)

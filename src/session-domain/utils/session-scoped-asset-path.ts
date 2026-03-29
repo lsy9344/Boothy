@@ -14,7 +14,7 @@ export function isSessionScopedAssetPath(
 ) {
   const normalizedAssetPath = normalizeAssetPath(assetPath)
   const normalizedRuntimeSessionMarker =
-    `/booth-runtime/sessions/${sessionId.toLowerCase()}/`
+    `/pictures/dabi_shoot/sessions/${sessionId.toLowerCase()}/`
 
   if (hasPathTraversalSegment(normalizedAssetPath)) {
     return false

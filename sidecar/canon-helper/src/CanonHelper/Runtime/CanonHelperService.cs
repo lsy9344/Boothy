@@ -8,7 +8,7 @@ internal sealed class CanonHelperService : IDisposable
     private readonly SessionPaths _paths;
     private readonly JsonFileProtocol _protocol;
     private readonly CanonSdkCamera _camera = new();
-    private readonly HashSet<string> _processedRequestIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _processedRequestIds;
 
     private ulong _statusSequence;
     private Task<CaptureDownloadResult>? _activeCaptureTask;
@@ -20,6 +20,10 @@ internal sealed class CanonHelperService : IDisposable
         _options = options;
         _paths = new SessionPaths(options.RuntimeRoot!, options.SessionId!);
         _protocol = new JsonFileProtocol(_paths, options.EchoJsonToStdout);
+        _processedRequestIds = new HashSet<string>(
+            _protocol.ReadProcessedRequestIds(),
+            StringComparer.Ordinal
+        );
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -47,12 +51,15 @@ internal sealed class CanonHelperService : IDisposable
 
             if (_activeCaptureTask is null)
             {
-                foreach (var request in _protocol.ReadRequests())
+                foreach (var request in _protocol.ReadRequests(_processedRequestIds))
                 {
-                    if (!_processedRequestIds.Add(request.RequestId))
+                    if (_processedRequestIds.Contains(request.RequestId))
                     {
                         continue;
                     }
+
+                    _protocol.AppendProcessedRequestId(request.RequestId);
+                    _processedRequestIds.Add(request.RequestId);
 
                     if (request.SessionId != _paths.SessionId)
                     {

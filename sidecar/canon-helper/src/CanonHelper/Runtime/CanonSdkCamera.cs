@@ -8,6 +8,11 @@ internal sealed class CanonSdkCamera : IDisposable
 {
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
+    private const string CaptureCompletionTimeoutOverrideFileName =
+        ".camera-helper-capture-timeout-ms";
+    private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
+        15000
+    );
 
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;
@@ -185,7 +190,33 @@ internal sealed class CanonSdkCamera : IDisposable
             );
         }
 
-        var result = await captureContext.Completion.Task.WaitAsync(cancellationToken);
+        CaptureDownloadResult result;
+        try
+        {
+            var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
+            result = await captureContext.Completion.Task.WaitAsync(
+                captureCompletionTimeout,
+                cancellationToken
+            );
+        }
+        catch (TimeoutException)
+        {
+            var timeoutException = new CanonCaptureException(
+                "capture-download-timeout",
+                "RAW handoff를 기다리다 시간이 초과되었어요.",
+                recoveryRequired: true
+            );
+
+            captureContext.Completion.TrySetException(timeoutException);
+            ClearCaptureContext(
+                captureContext,
+                timeoutException.DetailCode,
+                "recovering",
+                timeoutException.RecoveryRequired
+            );
+            throw timeoutException;
+        }
+
         lock (_sync)
         {
             if (_currentCapture == captureContext)
@@ -222,6 +253,24 @@ internal sealed class CanonSdkCamera : IDisposable
         GC.KeepAlive(_objectHandler);
         GC.KeepAlive(_propertyHandler);
         GC.KeepAlive(_stateHandler);
+    }
+
+    private static TimeSpan ResolveCaptureCompletionTimeout(string runtimeRoot)
+    {
+        var overridePath = Path.Combine(runtimeRoot, CaptureCompletionTimeoutOverrideFileName);
+        if (File.Exists(overridePath))
+        {
+            var overrideValue = File.ReadAllText(overridePath).Trim();
+            if (long.TryParse(overrideValue, out var timeoutMs) && timeoutMs > 0)
+            {
+                return TimeSpan.FromMilliseconds(timeoutMs);
+            }
+        }
+
+        var configured = Environment.GetEnvironmentVariable("BOOTHY_CAPTURE_TIMEOUT_MS");
+        return long.TryParse(configured, out var configuredTimeoutMs) && configuredTimeoutMs > 0
+            ? TimeSpan.FromMilliseconds(configuredTimeoutMs)
+            : DefaultCaptureCompletionTimeout;
     }
 
     public static SelfCheckResult RunSelfCheck(string? sdkRoot)
@@ -460,15 +509,32 @@ internal sealed class CanonSdkCamera : IDisposable
 
     private void KeepCameraAwakeIfNeeded()
     {
-        if (_camera == IntPtr.Zero || DateTimeOffset.UtcNow - _lastKeepAlive < KeepAliveInterval)
+        IntPtr camera;
+
+        lock (_sync)
         {
-            return;
+            if (
+                _camera == IntPtr.Zero
+                || _currentCapture is not null
+                || DateTimeOffset.UtcNow - _lastKeepAlive < KeepAliveInterval
+            )
+            {
+                return;
+            }
+
+            camera = _camera;
         }
 
-        var result = EDSDK.EdsSendCommand(_camera, EDSDK.CameraCommand_ExtendShutDownTimer, 0);
+        var result = EDSDK.EdsSendCommand(camera, EDSDK.CameraCommand_ExtendShutDownTimer, 0);
         if (result == EDSDK.EDS_ERR_OK)
         {
-            _lastKeepAlive = DateTimeOffset.UtcNow;
+            lock (_sync)
+            {
+                if (_camera == camera)
+                {
+                    _lastKeepAlive = DateTimeOffset.UtcNow;
+                }
+            }
             return;
         }
 
@@ -508,7 +574,9 @@ internal sealed class CanonSdkCamera : IDisposable
             return EDSDK.EDS_ERR_OK;
         }
 
-        Task.Run(() => DownloadCapture(captureContext, inRef));
+        // Keep RAW transfer on the SDK callback path instead of hopping to an
+        // arbitrary threadpool thread, which can destabilize follow-up captures.
+        DownloadCapture(captureContext, inRef);
         return EDSDK.EDS_ERR_OK;
     }
 

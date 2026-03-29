@@ -23,7 +23,10 @@ pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-reco
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
 
 const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
-const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 5_000;
+// Real camera follow-up captures can exceed 5 seconds while still succeeding.
+// Keep the host budget longer than the helper budget so helper-side failures
+// can surface before the host prematurely locks the session.
+const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 20_000;
 const CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME: &str = ".camera-helper-capture-timeout-ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

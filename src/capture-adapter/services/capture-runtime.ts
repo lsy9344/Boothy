@@ -200,6 +200,10 @@ function buildTransientUnavailableCaptureReadiness(): CaptureReadinessSnapshot {
   }
 }
 
+function buildTransientCaptureBlockReadiness(): CaptureReadinessSnapshot {
+  return buildTransientUnavailableCaptureReadiness()
+}
+
 function buildSessionMismatchHostError(): HostErrorEnvelope {
   return {
     code: 'host-unavailable',
@@ -411,6 +415,17 @@ function normalizeHostError(
 
     switch (parsed.data.code) {
       case 'session-not-found':
+        if (operation === 'request-capture') {
+          return {
+            ...parsed.data,
+            message: '촬영 준비 상태를 다시 확인하고 있어요.',
+            readiness: withSessionId(
+              buildTransientCaptureBlockReadiness(),
+              requestedSessionId,
+            ),
+          }
+        }
+
         return {
           ...parsed.data,
           message: '세션을 다시 시작해 주세요.',
@@ -436,9 +451,9 @@ function normalizeHostError(
       case 'capture-not-ready':
         return {
           ...parsed.data,
-          message: '지금은 도움이 필요해요.',
+          message: '촬영 준비 상태를 다시 확인하고 있어요.',
           readiness: withSessionId(
-            buildPhoneRequiredCaptureReadiness(),
+            buildTransientCaptureBlockReadiness(),
             requestedSessionId,
           ),
         }
@@ -446,7 +461,7 @@ function normalizeHostError(
       case 'preset-catalog-unavailable':
       case 'session-persistence-failed':
       case 'validation-error':
-        if (operation === 'readiness') {
+        if (operation === 'readiness' || operation === 'request-capture') {
           return {
             ...parsed.data,
             message: '촬영 준비 상태를 다시 확인하고 있어요.',
@@ -471,7 +486,7 @@ function normalizeHostError(
   }
 
   if (error instanceof Error) {
-    if (operation === 'readiness') {
+    if (operation === 'readiness' || operation === 'request-capture') {
       return {
         code: 'host-unavailable',
         message: '촬영 준비 상태를 다시 확인하고 있어요.',
@@ -492,7 +507,7 @@ function normalizeHostError(
     }
   }
 
-  if (operation === 'readiness') {
+  if (operation === 'readiness' || operation === 'request-capture') {
     return {
       code: 'host-unavailable',
       message: '촬영 준비 상태를 다시 확인하고 있어요.',

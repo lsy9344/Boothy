@@ -315,7 +315,7 @@ fn readiness_stays_blocked_when_helper_truth_is_absent_even_in_runtime_dir() {
     let local_app_data_root = unique_test_root("runtime-probe-localappdata");
     let base_dir = local_app_data_root
         .join("com.tauri.dev")
-        .join("booth-runtime");
+        .join("dabi_shoot");
     let _env_guard = scoped_env_vars(vec![(
         "LOCALAPPDATA",
         Some(std::ffi::OsString::from(local_app_data_root.clone())),
@@ -742,9 +742,19 @@ fn capture_flow_times_out_when_helper_accepts_but_no_file_arrives() {
             .reason_code,
         "phone-required",
     );
-    assert!(read_manifest(&base_dir, &session.session_id)
-        .captures
-        .is_empty());
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert!(manifest.captures.is_empty());
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("follow-up readiness should resolve");
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert_eq!(readiness.customer_state, "Phone Required");
 
     let _ = fs::remove_dir_all(base_dir);
 }

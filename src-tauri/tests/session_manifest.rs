@@ -565,11 +565,11 @@ fn legacy_v1_manifest_with_existing_captures_backfills_capture_preset_identity()
         "captureId": "capture_01hs6n1r8b8zc5v4ey2x7b9g1m",
         "requestId": "request_01hs6n1r8b8zc5v4ey2x7b9g1m",
         "raw": {
-          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg",
+          "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg",
           "persistedAtMs": 100
         },
         "preview": {
-          "assetPath": "C:/boothy/booth-runtime/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg",
+          "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg",
           "enqueuedAtMs": 120,
           "readyAtMs": 200
         },

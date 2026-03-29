@@ -1186,11 +1186,19 @@ export function SessionProvider({
         input.sessionId,
         rawHostError,
       )
+      const shouldPreserveCurrentSession =
+        hostError.code === 'session-not-found' &&
+        !hadForeignReadiness &&
+        isRequestingCaptureRef.current
 
       if (
         !hasActiveSession(input.sessionId) ||
         captureReadinessRequestVersionRef.current !== requestVersion
       ) {
+        throw hostError
+      }
+
+      if (shouldPreserveCurrentSession) {
         throw hostError
       }
 

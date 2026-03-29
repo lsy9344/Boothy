@@ -15,6 +15,12 @@
 - status output: `sessions/<sessionId>/diagnostics/camera-helper-status.json`
 - event output: `sessions/<sessionId>/diagnostics/camera-helper-events.jsonl`
 
+request log 소비 규칙:
+
+- helper는 이미 소비한 `requestId`를 세션 진단 경계에 남겨 재시작 후에도 기억한다
+- 재시작 후에도 과거 request line을 다시 실행하면 안 된다
+- 새로 append된 완전한 JSON line만 촬영 요청으로 소비한다
+
 주요 명령:
 
 - version: `dotnet run --project sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -- --version`

@@ -468,6 +468,14 @@ fn build_recent_failure_summary(
                 observed_at: None,
             })
         }
+        "phone-required" if render_status.is_none() && post_end_state.is_none() => {
+            return Some(OperatorRecentFailureSummaryDto {
+                title: "최근 촬영을 세션에 저장하지 못했어요.".into(),
+                detail: "셔터 동작 뒤 RAW handoff를 확인하지 못해 운영자 확인이 필요한 상태예요."
+                    .into(),
+                observed_at: None,
+            })
+        }
         _ => {}
     }
 
