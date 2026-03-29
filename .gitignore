@@ -1,5 +1,5 @@
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,28 +7,33 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Frontend dependencies and build outputs
+node_modules/
+dist/
+dist-ssr/
 *.local
 
-# Editor directories and files
+# Editor and OS files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+.vs/
 .DS_Store
+Thumbs.db
 *.suo
+*.user
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Local Canon SDK payload for helper development
+# Local Canon SDK payload and helper-generated runtime files
 sidecar/canon-helper/vendor/canon-edsdk/
 sidecar/canon-helper/src/**/bin/
 sidecar/canon-helper/src/**/obj/
 sidecar/canon-helper/.tmp-runtime/
+sidecar/canon-helper/.tmp-runtime-publish/
 
-# Local Rust build outputs
-src-tauri/target-camera-state-fix/
-src-tauri/target-tests/
+# Local Rust/Tauri build outputs
+src-tauri/target/
+src-tauri/target-*/
