@@ -241,7 +241,8 @@ So that I know my photo is saved even if the confirmation preview is still being
 
 **Given** Story 1.5 implementation and automated tests are complete
 **When** the team evaluates done status
-**Then** the story remains in `review` until HV-04 and HV-05 evidence confirms persisted RAW truth and truthful preview readiness on approved booth hardware
+**Then** the story remains in `review` until truthful preview readiness evidence is confirmed on approved booth hardware
+**And** in the post-Story-1.7 operating model, HV-04 round-trip closure is owned by Story 1.7 while HV-05 continues to serve as Story 1.5 truthfulness regression evidence
 
 ### Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단
 
@@ -280,9 +281,14 @@ So that the booth never mistakes shutter acceptance for a saved photo.
 **Acceptance Criteria:**
 
 **Given** an approved booth hardware environment in a fresh ready state
-**When** the host sends `request-capture` to the bundled helper
+**When** the customer uses the booth app `사진 찍기` action and the host sends `request-capture` to the bundled helper
 **Then** the helper accepts or rejects one correlated in-flight capture request
 **And** the host keeps a single in-flight capture guard for that request
+
+**Given** the camera body shutter is pressed directly without a host `request-capture`
+**When** capture resolution is evaluated for the active booth session
+**Then** the event is not treated as a supported booth capture success path
+**And** it must not be used as Story 1.7 closure evidence or silently attached to the active session success UI
 
 **Given** the helper accepts a capture
 **When** shutter trigger, RAW download, and final file handoff are still in progress
@@ -295,9 +301,9 @@ So that the booth never mistakes shutter acceptance for a saved photo.
 **And** the booth falls back to truthful wait or recovery guidance without cross-session leakage
 
 **Given** Story 1.7 is reviewed for closure
-**When** real capture round-trip evidence is missing on approved booth hardware
+**When** HV-04 primary evidence or HV-05 supporting evidence for the booth-app `사진 찍기` path is missing on approved booth hardware
 **Then** the story remains open
-**And** it does not inherit closure from Story 1.6 or synthetic preview flow
+**And** it does not inherit closure from Story 1.6, Story 1.5 historical evidence alone, or synthetic preview flow
 
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 

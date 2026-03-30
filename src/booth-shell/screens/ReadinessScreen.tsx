@@ -1,12 +1,8 @@
 import type {
-  CompletedPostEndRecord,
-  PhoneRequiredPostEndRecord,
   SessionPostEndRecord,
   SessionTimingSnapshot,
 } from '../../shared-contracts'
 import { SessionTimingPanel } from '../../timing-policy/components/SessionTimingPanel'
-import { HandoffReadyPanel } from '../components/HandoffReadyPanel'
-import { PhoneRequiredSupportCard } from '../components/PhoneRequiredSupportCard'
 
 type ReadinessScreenProps = {
   boothAlias: string | null
@@ -43,17 +39,9 @@ export function ReadinessScreen({
   onPrimaryAction,
   onChangePreset,
 }: ReadinessScreenProps) {
-  const handoffReadyGuidance =
-    postEndGuidance?.state === 'completed' &&
-    postEndGuidance.completionVariant === 'handoff-ready'
-      ? (postEndGuidance as CompletedPostEndRecord)
-      : null
-  const phoneRequiredGuidance =
-    postEndGuidance?.state === 'phone-required'
-      ? (postEndGuidance as PhoneRequiredPostEndRecord)
-      : null
   const shouldHidePrimaryAction =
-    handoffReadyGuidance !== null || phoneRequiredGuidance !== null
+    postEndGuidance?.state === 'completed' ||
+    postEndGuidance?.state === 'phone-required'
 
   return (
     <>
@@ -83,14 +71,7 @@ export function ReadinessScreen({
       </article>
 
       <article className="surface-card readiness-screen__action-card">
-        {handoffReadyGuidance !== null ? (
-          <HandoffReadyPanel
-            boothAlias={boothAlias}
-            guidance={handoffReadyGuidance}
-          />
-        ) : phoneRequiredGuidance !== null ? (
-          <PhoneRequiredSupportCard guidance={phoneRequiredGuidance} />
-        ) : isExplicitPostEnd ? (
+        {isExplicitPostEnd ? (
           <div
             className="readiness-screen__post-end"
           >

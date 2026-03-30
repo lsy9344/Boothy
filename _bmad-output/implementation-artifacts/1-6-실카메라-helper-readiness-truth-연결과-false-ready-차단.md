@@ -1,8 +1,8 @@
 # Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단
 
-Status: in-progress
+Status: done
 
-Correct Course Note: 기존 Story 1.6에 섞여 있던 실제 촬영 round-trip 책임은 Story 1.7로 분리한다. 이 문서는 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth, freshness/disconnect/reconnect false-ready 차단까지만 소유한다. 실제 helper exe 프로젝트 골격과 live readiness evidence가 닫히기 전까지 Story 1.6은 `in-progress`가 맞다.
+Correct Course Note: 기존 Story 1.6에 섞여 있던 실제 촬영 round-trip 책임은 Story 1.7로 분리한다. 이 문서는 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth, freshness/disconnect/reconnect false-ready 차단까지만 소유한다. 2026-03-29 실장비 검증에서 HV-02/HV-03/HV-10 evidence를 닫았으므로 Story 1.6은 `done`으로 마무리한다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -14,44 +14,49 @@ booth customer로서,
 
 ## Acceptance Criteria
 
-1. 승인된 booth hardware에서 Tauri host가 bundled `canon-helper.exe` baseline을 실제로 spawn하고 health를 감시해야 한다. helper boot 이후 fresh `helper-ready`와 `camera-status`를 받더라도, host가 first fresh `camera-status=ready`, session match, freshness를 확인하기 전에는 booth가 `Ready`와 `사진 찍기` 활성화를 보여주면 안 된다.
+1. 승인된 booth hardware에서 Tauri host가 bundled `canon-helper.exe` baseline을 실제로 spawn하고 health를 감시해야 한다. helper boot 이후 fresh `helper-ready`와 `camera-status`를 받더라도, host가 first fresh `camera-status=ready`, session match, freshness를 확인하기 전에는 booth가 `Ready`와 `사진 찍기` 활성화를 보여주면 안 된다. 여기서 `Ready`는 booth 앱의 `사진 찍기` 경로 기준 readiness를 뜻하며, 카메라 본체 셔터 직접 입력의 tethered capture 성공까지 보장하지 않는다.
 2. browser preview, fixture, stale readiness, session mismatch, helper 미기동, helper preparing, camera disconnect, degraded-after-ready, reconnect-before-fresh-truth 상태에서는 booth가 `Ready`를 주장하면 안 된다. customer는 계속 plain-language wait/call guidance만 보고, internal helper terminology는 보지 않는다.
 3. previously-ready 상태에서 helper process exit, health timeout, camera disconnect, readiness degrade가 발생하면 booth는 즉시 `Ready`를 해제하고 capture를 차단해야 한다. reconnect 또는 helper restart 이후에도 fresh `camera-status`가 다시 확인되기 전까지 자동 복귀하면 안 된다.
 4. Story 1.6은 실제 helper 프로젝트 골격, host spawn/health 관리, HV-02/HV-03/HV-10 evidence가 checklist 기준으로 닫히기 전까지 `done`으로 닫지 않고 `in-progress` 또는 `review`에 머물러야 한다.
 
 ## Tasks / Subtasks
 
-- [ ] shared readiness truth family를 real-helper 기준으로 고정한다. (AC: 1, 2, 3)
-  - [ ] `src/shared-contracts/schemas/capture-readiness.ts`, `src/shared-contracts/dto/capture.ts`, `src-tauri/src/contracts/dto.rs`에서 이미 정의된 `liveCaptureTruth` shape를 계속 재사용하고 별도 helper truth contract를 새로 만들지 않는다.
-  - [ ] `src/shared-contracts/schemas/operator-diagnostics.ts`가 booth와 같은 `liveCaptureTruth` family를 재사용하도록 유지한다.
-  - [ ] browser preview와 fixture path는 계속 `browser-preview` / `fixture` source로만 남기고, synthetic `Ready`를 만들지 못하게 유지한다.
+- [x] shared readiness truth family를 real-helper 기준으로 고정한다. (AC: 1, 2, 3)
+  - [x] `src/shared-contracts/schemas/capture-readiness.ts`, `src/shared-contracts/dto/capture.ts`, `src-tauri/src/contracts/dto.rs`에서 이미 정의된 `liveCaptureTruth` shape를 계속 재사용하고 별도 helper truth contract를 새로 만들지 않는다.
+  - [x] `src/shared-contracts/schemas/operator-diagnostics.ts`가 booth와 같은 `liveCaptureTruth` family를 재사용하도록 유지한다.
+  - [x] browser preview와 fixture path는 계속 `browser-preview` / `fixture` source로만 남기고, synthetic `Ready`를 만들지 못하게 유지한다.
 
-- [ ] `sidecar/canon-helper/` 아래에 실제 Windows helper baseline을 만든다. (AC: 1, 4)
-  - [ ] `canon-helper.exe` 프로젝트 골격, 빌드 출력 위치, diagnostics 출력 경계를 고정한다.
-  - [ ] helper는 boot self-check 뒤 `helper-ready`를 송신하고, 이후 `camera-status`를 freshness 가능한 형태로 송신해야 한다.
-  - [ ] helper version, sdk version, runtime platform, diagnostics path를 확인 가능한 최소 진단 surface를 남긴다.
-  - [ ] Canon SDK DLL/headers는 공개 저장소에 직접 커밋하지 말고 private build input 또는 승인된 내부 artifact 경계로 유지한다.
+- [x] `sidecar/canon-helper/` 아래에 실제 Windows helper baseline을 만든다. (AC: 1, 4)
+  - [x] `canon-helper.exe` 프로젝트 골격, 빌드 출력 위치, diagnostics 출력 경계를 고정한다.
+  - [x] helper는 boot self-check 뒤 `helper-ready`를 송신하고, 이후 `camera-status`를 freshness 가능한 형태로 송신해야 한다.
+  - [x] helper version, sdk version, runtime platform, diagnostics path를 확인 가능한 최소 진단 surface를 남긴다.
+  - [x] Canon SDK DLL/headers는 공개 저장소에 직접 커밋하지 말고 private build input 또는 승인된 내부 artifact 경계로 유지한다.
 
-- [ ] Tauri host가 real helper spawn/health/recovery 경계를 소유한다. (AC: 1, 2, 3)
-  - [ ] `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json`을 갱신해 packaged sidecar 실행에 필요한 Tauri shell baseline을 닫는다.
-  - [ ] `src-tauri/src/capture/sidecar_client.rs` 또는 동등 모듈에서 helper 시작, 종료, 비정상 exit, health timeout, 상태 수집 경계를 관리한다.
-  - [ ] `helper-ready`와 `camera-status`를 분리한 readiness gate를 host에서 강제하고, booth React가 helper를 직접 spawn하거나 raw detail을 해석하지 못하게 유지한다.
-  - [ ] capture/file handoff 메시지 DTO는 보존할 수 있지만, round-trip closure 책임은 Story 1.7에 남긴다.
+- [x] Tauri host가 real helper spawn/health/recovery 경계를 소유한다. (AC: 1, 2, 3)
+  - [x] `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json`을 갱신해 packaged sidecar 실행에 필요한 Tauri shell baseline을 닫는다.
+  - [x] `src-tauri/src/capture/sidecar_client.rs` 또는 동등 모듈에서 helper 시작, 종료, 비정상 exit, health timeout, 상태 수집 경계를 관리한다.
+  - [x] `helper-ready`와 `camera-status`를 분리한 readiness gate를 host에서 강제하고, booth React가 helper를 직접 spawn하거나 raw detail을 해석하지 못하게 유지한다.
+  - [x] capture/file handoff 메시지 DTO는 보존할 수 있지만, round-trip closure 책임은 Story 1.7에 남긴다.
 
-- [ ] fresh `camera-status` 기준 readiness 복귀 규칙을 실장비 기준으로 닫는다. (AC: 1, 2, 3)
-  - [ ] `src-tauri/src/capture/normalized_state.rs`의 freshness/session-match gate를 real helper runtime과 연결하고, stale snapshot만으로 `Ready`가 열리지 않게 유지한다.
-  - [ ] once-ready 이후 helper exit, disconnect, degraded, reconnect-before-fresh-truth를 모두 blocked path로 유지한다.
-  - [ ] booth `Ready`, capture enablement, operator diagnostics가 같은 host-owned truth에서 파생되도록 유지한다.
-  - [ ] 현재 코드에 잠긴 helper freshness 기준이 바뀌면 runbook evidence와 함께 조정하고, 임시 완화로 false-ready를 허용하지 않는다. [Source: src-tauri/src/capture/normalized_state.rs]
+- [x] fresh `camera-status` 기준 readiness 복귀 규칙을 실장비 기준으로 닫는다. (AC: 1, 2, 3)
+  - [x] `src-tauri/src/capture/normalized_state.rs`의 freshness/session-match gate를 real helper runtime과 연결하고, stale snapshot만으로 `Ready`가 열리지 않게 유지한다.
+  - [x] once-ready 이후 helper exit, disconnect, degraded, reconnect-before-fresh-truth를 모두 blocked path로 유지한다.
+  - [x] booth `Ready`, capture enablement, operator diagnostics가 같은 host-owned truth에서 파생되도록 유지한다.
+  - [x] 현재 코드에 잠긴 helper freshness 기준이 바뀌면 runbook evidence와 함께 조정하고, 임시 완화로 false-ready를 허용하지 않는다. [Source: src-tauri/src/capture/normalized_state.rs]
 
-- [ ] Story 1.7과의 경계를 문서와 구현 메모에 고정한다. (AC: 1, 4)
-  - [ ] `request-capture`, `capture-accepted`, RAW download, `file-arrived`, in-flight capture guard, capture correlation의 end-to-end closure는 Story 1.7 범위라고 명시한다.
-  - [ ] 1.6에서는 readiness truth를 여는 최소 helper baseline과 recovery-safe block/unblock만 닫는다.
+- [x] Story 1.7과의 경계를 문서와 구현 메모에 고정한다. (AC: 1, 4)
+  - [x] `request-capture`, `capture-accepted`, RAW download, `file-arrived`, in-flight capture guard, capture correlation의 end-to-end closure는 Story 1.7 범위라고 명시한다.
+  - [x] 1.6에서는 readiness truth를 여는 최소 helper baseline과 recovery-safe block/unblock만 닫는다.
 
-- [ ] 테스트와 hardware validation evidence를 준비한다. (AC: 2, 3, 4)
-  - [ ] `src-tauri/tests/capture_readiness.rs`에 missing helper, stale status, session mismatch, degraded-after-ready, reconnect-before-fresh-truth, helper exit 시나리오를 추가 또는 강화한다.
-  - [ ] `src-tauri/tests/operator_diagnostics.rs`에서 operator가 같은 `liveCaptureTruth`를 재사용하는지 계속 검증한다.
-  - [ ] HV-02, HV-03, HV-10 evidence에 helper version, sdk version 또는 helper identifier, 최근 `camera-status` freshness 근거, `session.json` 캡처를 연결한다.
+- [x] 테스트와 hardware validation evidence를 준비한다. (AC: 2, 3, 4)
+  - [x] `src-tauri/tests/capture_readiness.rs`에 missing helper, stale status, session mismatch, degraded-after-ready, reconnect-before-fresh-truth, helper exit 시나리오를 추가 또는 강화한다.
+  - [x] `src-tauri/tests/operator_diagnostics.rs`에서 operator가 같은 `liveCaptureTruth`를 재사용하는지 계속 검증한다.
+  - [x] HV-02, HV-03, HV-10 evidence에 helper version, sdk version 또는 helper identifier, 최근 `camera-status` freshness 근거, `session.json` 캡처를 연결한다.
+
+### Review Findings
+
+- [x] [Review][Pass] blocking findings 없음. host-owned freshness gate, helper lifecycle 정리, operator truth 재사용이 스토리 acceptance criteria와 일치한다. [src-tauri/src/capture/normalized_state.rs:603] [src-tauri/src/capture/helper_supervisor.rs:82] [src-tauri/tests/capture_readiness.rs:103] [src-tauri/tests/operator_diagnostics.rs:147]
+- [x] [Review][Pass] 사용자 실장비 체크리스트 기준 HV-02, HV-03, HV-10이 모두 통과로 보고되었고, false-ready / 즉시 복귀 / 내부 기술용어 노출 실패 조건도 재현되지 않았다. [docs/runbooks/booth-hardware-validation-checklist.md:273] [docs/runbooks/booth-hardware-validation-checklist.md:299] [docs/runbooks/booth-hardware-validation-checklist.md:481]
 
 ## Dev Notes
 
@@ -60,6 +65,7 @@ booth customer로서,
 - 이번 Story 1.6의 목적은 release-level `Ready` 진실을 여는 최소 helper baseline을 닫는 것이다.
 - 핵심은 bundled helper가 실제로 존재하고, host가 그 helper를 띄우고 감시하며, `helper-ready`와 `camera-status`를 fresh truth로 해석해 false-ready를 막는 데 있다.
 - 실제 촬영 요청, RAW 다운로드, `file-arrived` correlation, capture success 최종 확정은 Story 1.7이 소유한다. [Source: _bmad-output/planning-artifacts/epics.md#Story-1.6:-실카메라/helper-readiness-truth-연결과-false-ready-차단] [Source: _bmad-output/planning-artifacts/epics.md#Story-1.7:-실카메라-capture-round-trip과-RAW-handoff-correlation] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260328-023725.md]
+- 따라서 Story 1.6의 `Ready`가 확인됐더라도, 카메라 본체 셔터 직접 입력으로 들어온 out-of-band capture가 active session에 반영되는지는 이 story의 success 범위가 아니다.
 
 ### 스토리 기반 요구사항
 
@@ -112,6 +118,7 @@ booth customer로서,
 - stale status, mismatched session, reconnect 직후 old status, helper exit 이후 마지막 `ready` snapshot을 그대로 믿으면 안 된다.
 - React component가 raw helper detailCode, stdout/stderr, diagnostics path를 읽어 최종 readiness를 판단하면 안 된다.
 - booth `Ready`, `사진 찍기` 활성화, operator camera/helper projection은 모두 host normalization에서 파생돼야 한다.
+- Story 1.6의 `Ready`를 카메라 본체 셔터 직접 입력까지 지원한다는 의미로 확장 해석하면 안 된다.
 - 고객 copy에는 helper, sidecar, USB, SDK, diagnostics path, raw enum 이름이 새면 안 된다.
 - Story 1.7 범위인 capture/file handoff를 1.6 closure 조건으로 다시 끌어오면 안 된다.
 
@@ -234,6 +241,7 @@ GPT-5 Codex
 
 - 2026-03-28 03:xx +09:00 - Story 1.6, sprint change proposal, hardware validation runbook, helper protocol, EDSDK profile, current repo capture/readiness code, official Tauri/Canon docs를 교차 검토해 story를 재작성했다.
 - 2026-03-28 03:xx +09:00 - 현재 repo는 host-normalized readiness seam은 이미 존재하지만, real helper project와 packaged spawn boundary는 아직 없다는 점을 확인했다.
+- 2026-03-29 22:01:35 +09:00 - stale helper 정리, parent PID 종료 연동, helper handoff 안정화 수정 이후 자동화 검증과 실장비 HV-02/HV-03/HV-10 통과 보고를 반영해 Story 1.6을 `done`으로 정리했다.
 
 ### Implementation Plan
 
@@ -243,4 +251,25 @@ GPT-5 Codex
 
 ### Completion Notes List
 
+- `helper-ready` 단독 신호로는 `Ready`가 열리지 않도록 host freshness gate를 유지하고, fresh `camera-status` 확인 뒤에만 촬영 가능 상태가 열리도록 고정했다.
+- stale `canon-helper.exe`가 다음 세션을 오염시키지 않도록 helper 정리와 parent PID 종료 연동을 추가해 `Phone Required` 회귀를 막았다.
+- booth/customer 문구는 계속 plain-language로 유지하고, operator surface만 같은 `liveCaptureTruth`를 재사용하도록 정리했다.
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`, `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`, `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`를 통과했고, 사용자 실장비 검증에서 HV-02/HV-03/HV-10을 모두 통과했다.
+
 ### File List
+
+- _bmad-output/implementation-artifacts/1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md
+- _bmad-output/implementation-artifacts/sprint-status.yaml
+- history/camera-helper-troubleshooting-history.md
+- history/camera-capture-validation-history.md
+- sidecar/canon-helper/src/CanonHelper/CanonHelperOptions.cs
+- sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs
+- sidecar/canon-helper/src/CanonHelper/Runtime/ParentProcessMonitor.cs
+- src-tauri/src/capture/helper_supervisor.rs
+- src-tauri/src/capture/normalized_state.rs
+- src-tauri/tests/capture_readiness.rs
+- src-tauri/tests/operator_diagnostics.rs
+
+### Change Log
+
+- 2026-03-29 22:01:35 +09:00 - 실장비 체크리스트 통과와 최신 helper 안정화 수정을 반영해 Story 1.6 상태를 `done`으로 올리고 스프린트 추적 문서를 동기화했다.

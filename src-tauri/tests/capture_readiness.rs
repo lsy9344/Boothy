@@ -24,7 +24,7 @@ use boothy_lib::{
     },
     preset::preset_catalog::resolve_published_preset_catalog_dir,
     session::{
-        session_manifest::{current_timestamp, SessionManifest},
+        session_manifest::{current_timestamp, CompletedPostEnd, SessionManifest, SessionPostEnd},
         session_paths::SessionPaths,
         session_repository::{select_active_preset_in_dir, start_session_in_dir},
     },
@@ -1624,7 +1624,8 @@ fn completed_post_end_uses_handoff_guidance_when_final_handoff_metadata_is_prese
 }
 
 #[test]
-fn handoff_ready_completion_falls_back_to_local_deliverable_without_destination_metadata() {
+fn handoff_ready_completion_preserves_variant_with_generic_destination_without_destination_metadata(
+) {
     let base_dir = unique_test_root("handoff-ready-fallback");
     let session = start_session_in_dir(
         &base_dir,
@@ -1657,6 +1658,8 @@ fn handoff_ready_completion_falls_back_to_local_deliverable_without_destination_
         &base_dir,
         &session.session_id,
         serde_json::json!({
+            "approvedRecipientLabel": "   ",
+            "nextLocationLabel": "",
             "primaryActionLabel": "안내를 확인해 주세요."
         }),
     );
@@ -1678,10 +1681,92 @@ fn handoff_ready_completion_falls_back_to_local_deliverable_without_destination_
 
     let post_end = readiness.post_end.expect("completed guidance should exist");
     assert_eq!(post_end.state(), "completed");
-    assert_eq!(
-        post_end.completion_variant(),
-        Some("local-deliverable-ready")
+    assert_eq!(post_end.completion_variant(), Some("handoff-ready"));
+    match post_end {
+        SessionPostEnd::Completed(value) => {
+            assert_eq!(value.next_location_label.as_deref(), Some("안내된 곳"));
+            assert_eq!(value.primary_action_label, "안내를 확인해 주세요.");
+        }
+        _ => panic!("expected completed post-end"),
+    }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn invalid_existing_handoff_ready_record_is_rebuilt_with_safe_destination_guidance() {
+    let base_dir = unique_test_root("handoff-ready-invalid-existing");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
+        .expect("preview should complete");
+    mark_capture_final_ready(&base_dir, &session.session_id, &capture.capture.capture_id);
+    update_timing(
+        &base_dir,
+        &session.session_id,
+        &timestamp_offset(-60),
+        &timestamp_offset(-10),
+        "active",
     );
+
+    let mut manifest = read_manifest(&base_dir, &session.session_id);
+    manifest.lifecycle.stage = "completed".into();
+    manifest.post_end = Some(SessionPostEnd::Completed(CompletedPostEnd {
+        state: "completed".into(),
+        evaluated_at: timestamp_offset(-5),
+        completion_variant: "handoff-ready".into(),
+        approved_recipient_label: None,
+        next_location_label: None,
+        primary_action_label: "안내를 확인해 주세요.".into(),
+        support_action_label: None,
+        show_booth_alias: false,
+        handoff: None,
+    }));
+    fs::write(
+        SessionPaths::new(&base_dir, &session.session_id).manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("handoff-ready completion should be repaired safely");
+
+    let post_end = readiness.post_end.expect("completed guidance should exist");
+    assert_eq!(post_end.completion_variant(), Some("handoff-ready"));
+    match post_end {
+        SessionPostEnd::Completed(value) => {
+            assert_eq!(value.next_location_label.as_deref(), Some("안내된 곳"));
+            assert_eq!(value.primary_action_label, "안내된 곳으로 이동해 주세요.");
+        }
+        _ => panic!("expected completed post-end"),
+    }
 
     let _ = fs::remove_dir_all(base_dir);
 }

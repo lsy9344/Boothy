@@ -63,14 +63,6 @@ function mergePreservedPostEndReadiness(
   const currentStrength = getPostEndStrength(current.reasonCode)
   const nextStrength = getPostEndStrength(next.reasonCode)
 
-  if (
-    shouldPreserveCurrentPostEnd &&
-    currentStrength === 2 &&
-    next.reasonCode !== current.reasonCode
-  ) {
-    return current
-  }
-
   if (shouldPreserveCurrentPostEnd && currentStrength >= 1 && nextStrength === 0) {
     return current
   }

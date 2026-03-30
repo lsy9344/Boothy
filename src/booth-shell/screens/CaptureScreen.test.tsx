@@ -412,12 +412,8 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /부스 준비가 끝났어요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /안내 확인/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/인계 안내/i)).toBeInTheDocument()
-    expect(screen.getByText(/front desk/i)).toBeInTheDocument()
-    expect(
-      screen.getByRole('heading', { name: /승인된 수령 대상/i }),
-    ).toBeInTheDocument()
-    expect(screen.getAllByText(/kim 4821/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/인계 안내/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/front desk/i)).not.toBeInTheDocument()
     expect(
       screen.queryByRole('heading', { level: 1, name: /촬영 시간이 끝났어요/i }),
     ).not.toBeInTheDocument()
@@ -512,11 +508,10 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /지금은 도움이 필요해요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /도움 요청/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/보호 안내/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/가까운 직원에게 알려 주세요\./i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/보호 안내/i)).not.toBeInTheDocument()
     expect(
-      screen.getByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
-    ).toBeInTheDocument()
+      screen.queryByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
+    ).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^사진 정리$/i })).not.toBeInTheDocument()
     expect(
       screen.getByText(/지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요\./i),

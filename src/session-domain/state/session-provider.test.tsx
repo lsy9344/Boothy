@@ -5099,4 +5099,115 @@ describe('SessionProvider', () => {
       approvedRecipientLabel: 'Front Desk',
     })
   })
+
+  it('accepts a host correction from completed to phone-required for the same session', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(
+              createReadinessSnapshot({
+                sessionId,
+                surfaceState: 'blocked',
+                customerState: 'Completed',
+                canCapture: false,
+                primaryAction: 'wait',
+                customerMessage: '부스 준비가 끝났어요.',
+                supportMessage: '마지막 안내를 확인해 주세요.',
+                reasonCode: 'completed',
+                postEnd: {
+                  state: 'completed',
+                  evaluatedAt: '2026-03-20T00:00:10.000Z',
+                  completionVariant: 'handoff-ready',
+                  approvedRecipientLabel: 'Front Desk',
+                  primaryActionLabel: '안내된 직원에게 이름을 말씀해 주세요.',
+                  supportActionLabel: null,
+                  showBoothAlias: true,
+                },
+              }),
+            ),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockImplementation(async ({ onReadiness }) => {
+              emitReadiness = onReadiness
+              return () => undefined
+            }),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    act(() => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'blocked',
+          customerState: 'Phone Required',
+          canCapture: false,
+          primaryAction: 'call-support',
+          customerMessage: '지금은 도움이 필요해요.',
+          supportMessage: '가까운 직원에게 알려 주세요.',
+          reasonCode: 'phone-required',
+          postEnd: {
+            state: 'phone-required',
+            evaluatedAt: '2026-03-20T00:00:30.000Z',
+            primaryActionLabel: '가까운 직원에게 알려 주세요.',
+            supportActionLabel: '직원에게 도움을 요청해 주세요.',
+            unsafeActionWarning: '다시 찍기나 기기 조작은 잠시 멈춰 주세요.',
+            showBoothAlias: false,
+          },
+        }),
+      )
+    })
+
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('phone-required')
+    expect(latestState!.sessionDraft.captureReadiness?.postEnd).toMatchObject({
+      state: 'phone-required',
+      primaryActionLabel: '가까운 직원에게 알려 주세요.',
+    })
+  })
 })

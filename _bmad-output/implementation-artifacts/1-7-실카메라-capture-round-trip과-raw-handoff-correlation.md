@@ -1,8 +1,8 @@
 # Story 1.7: 실카메라 capture round-trip과 RAW handoff correlation
 
-Status: in-progress
+Status: done
 
-Correct Course Note: Story 1.6은 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth까지만 닫는다. Story 1.7은 실제 `request-capture -> capture-accepted -> file-arrived -> session persistence` round-trip을 닫는 별도 story이며, placeholder capture flow나 Story 1.6 상태를 근거로 완료 처리하면 안 된다.
+Correct Course Note: Story 1.6은 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth까지만 닫는다. Story 1.7은 실제 `request-capture -> capture-accepted -> file-arrived -> session persistence` round-trip을 닫는 별도 story이며, placeholder capture flow나 Story 1.6 상태를 근거로 완료 처리하면 안 된다. 현재 제품 기준 supported success path는 booth 앱의 `사진 찍기` 버튼이 시작한 host-owned `request-capture` 경로이며, 카메라 본체 셔터 직접 입력은 이 story의 성공 경로나 closure evidence로 간주하지 않는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -14,18 +14,20 @@ booth customer로서,
 
 ## Acceptance Criteria
 
-1. 승인된 booth hardware의 fresh `Ready` 상태에서 host가 bundled helper로 `request-capture`를 보낼 때, helper는 한 번에 하나의 correlated in-flight capture만 accept 또는 reject해야 한다. host도 같은 요청에 대해 단일 in-flight guard를 유지해야 하며, second capture나 stale request가 parallel로 열리면 안 된다.
+1. 승인된 booth hardware의 fresh `Ready` 상태에서 고객이 booth 앱의 `사진 찍기` 버튼으로 촬영을 시작해 host가 bundled helper로 `request-capture`를 보낼 때, helper는 한 번에 하나의 correlated in-flight capture만 accept 또는 reject해야 한다. host도 같은 요청에 대해 단일 in-flight guard를 유지해야 하며, second capture나 stale request가 parallel로 열리면 안 된다.
 2. `capture-accepted`는 capture success가 아니다. host는 correlated `file-arrived`와 실제 파일 존재를 active session root 아래에서 함께 확인한 뒤에만 `capture-saved`를 확정해야 한다. 그때 생성되는 capture record는 최소 `sessionId`, `requestId`, `captureId`, `activePresetVersion`, RAW asset path를 포함해야 하고 `session.json`과 shared contract가 같은 의미를 유지해야 한다.
-3. duplicate arrival, wrong session correlation, wrong request correlation, missing file, partial file, timeout, helper/session mismatch, 또는 in-flight 중 second capture 시도는 false success를 막아야 한다. booth는 unsafe parallel capture를 허용하지 않고, customer-safe wait 또는 recovery guidance로만 내려가야 하며 cross-session leakage가 생기면 안 된다.
-4. preview/render 후속 처리와 customer-facing `Preview Waiting`/`Preview Ready` 흐름은 실제 RAW persistence 뒤에만 시작돼야 한다. helper가 셔터를 수락했거나 내부적으로 다운로드 중이라는 사실만으로 preview thread, success copy, latest-photo confirmation이 먼저 열리면 안 된다.
-5. Story 1.7은 approved booth hardware에서 real capture round-trip evidence가 확보되기 전까지 닫히면 안 된다. closure evidence는 최소 실제 `request-capture`, `session.json` capture record, `captures/originals/` RAW, helper/correlation 근거, 그리고 `Preview Waiting`이 persistence 뒤에 truthful하게 이어지는 supporting proof를 포함해야 한다.
+3. 카메라 본체 셔터 직접 입력처럼 host의 `request-capture` 없이 발생한 out-of-band 촬영은 현재 제품의 supported booth capture success path가 아니다. 이런 입력은 active session 성공, `Preview Waiting`, `Preview Ready`, story closure evidence로 자동 승격되면 안 되며, 현장 검증에서도 앱의 `사진 찍기` 버튼 경로와 구분해 기록해야 한다.
+4. duplicate arrival, wrong session correlation, wrong request correlation, missing file, partial file, timeout, helper/session mismatch, 또는 in-flight 중 second capture 시도는 false success를 막아야 한다. booth는 unsafe parallel capture를 허용하지 않고, customer-safe wait 또는 recovery guidance로만 내려가야 하며 cross-session leakage가 생기면 안 된다.
+5. preview/render 후속 처리와 customer-facing `Preview Waiting`/`Preview Ready` 흐름은 실제 RAW persistence 뒤에만 시작돼야 한다. helper가 셔터를 수락했거나 내부적으로 다운로드 중이라는 사실만으로 preview thread, success copy, latest-photo confirmation이 먼저 열리면 안 된다.
+6. Story 1.7은 approved booth hardware에서 real capture round-trip evidence가 확보되기 전까지 닫히면 안 된다. closure evidence는 최소 실제 `request-capture`, `session.json` capture record, `captures/originals/` RAW, helper/correlation 근거, 그리고 `Preview Waiting`이 persistence 뒤에 truthful하게 이어지는 supporting proof를 포함해야 한다. 카메라 본체 셔터 직접 입력만으로 생긴 결과는 이 closure evidence에 포함하지 않는다.
 
 ## Tasks / Subtasks
 
-- [x] helper capture round-trip contract와 correlation ownership을 닫는다. (AC: 1, 2, 3)
+- [x] helper capture round-trip contract와 correlation ownership을 닫는다. (AC: 1, 2, 3, 4)
   - [x] `src-tauri/src/capture/sidecar_client.rs`가 `capture-accepted`, `file-arrived`, `recovery-status`, `helper-error`를 실제 round-trip에서 읽고 검증할 수 있게 확장한다.
   - [x] `requestId`와 `captureId`의 소유 주체를 host/helper 경계에서 명확히 고정하고, `docs/contracts/camera-helper-sidecar-protocol.md`, Rust DTO, TypeScript schema가 같은 의미를 유지하게 맞춘다.
   - [x] helper와 host 모두 동시에 하나의 in-flight capture만 허용하도록 guard를 건다.
+  - [x] 지원되는 촬영 트리거는 booth 앱의 `사진 찍기` 버튼이 시작한 host `request-capture`라는 점을 문서 경계에 고정하고, 카메라 본체 셔터 직접 입력은 supported success path로 간주하지 않는다고 명시한다.
 
 - [x] placeholder RAW 저장 경로를 real helper handoff 기반 ingest로 교체한다. (AC: 1, 2, 3, 4)
   - [x] `src-tauri/src/capture/normalized_state.rs`와 `src-tauri/src/capture/ingest_pipeline.rs`에서 helper correlation이 닫히기 전 placeholder RAW를 만들어 `capture-saved`를 선언하는 흐름을 제거한다.
@@ -37,15 +39,30 @@ booth customer로서,
   - [x] 실제 round-trip이 현재 sync `request_capture` 반환 시점보다 길어지면, host-owned in-flight projection 또는 동등한 typed update path를 추가해 "action acknowledged"와 "capture saved"를 구분한다.
   - [x] booth surface에는 helper, SDK, USB, raw stderr/stdout 같은 내부 진단어를 노출하지 않는다.
 
-- [x] mismatch / duplicate / timeout / recovery 경계를 잠근다. (AC: 1, 3, 5)
+- [x] mismatch / duplicate / timeout / recovery 경계를 잠근다. (AC: 1, 4, 5)
   - [x] wrong `sessionId`, wrong `requestId`, duplicate `file-arrived`, missing RAW, timeout, reconnect-before-file-close, helper restart mid-flight를 각각 bounded host error와 safe readiness로 정규화한다.
   - [x] once-ready 이후 helper/camera truth가 흔들리면 Story 1.6 규칙대로 false-ready를 막되, Story 1.7은 그 상태에서 false capture success도 함께 막아야 한다.
   - [x] render failure와 capture failure를 섞지 않고, RAW가 남아 있으면 render failure는 별도 isolation path로 유지한다.
 
-- [ ] 테스트와 hardware evidence를 준비한다. (AC: 1, 2, 3, 4, 5)
+- [x] 테스트와 hardware evidence를 준비한다. (AC: 1, 2, 3, 4, 5, 6)
   - [x] `src-tauri/tests/capture_readiness.rs` 또는 동등한 integration test에 happy path, accepted-but-no-file, duplicate arrival, wrong session/request correlation, timeout, in-flight second capture block을 추가한다.
   - [x] `src/shared-contracts/schemas/capture-readiness.ts`, `src/shared-contracts/schemas/session-capture.ts`, `src/capture-adapter/services/capture-runtime.ts` 관련 contract/service test가 schema 변경 후에도 same-session guard를 유지하는지 검증한다.
-  - [ ] approved booth hardware에서 최소 HV-04 성격의 actual RAW persistence evidence와, HV-05 성격의 truthful `Preview Waiting -> Preview Ready` supporting evidence를 묶어 close package를 남긴다.
+  - [x] 실장비 세션 `session_000000000018a138ef5c96c18c`에서 booth 앱의 `사진 찍기` 버튼 경로로 actual capture round-trip evidence 1건을 확보했다.
+    - [x] `diagnostics/camera-helper-requests.jsonl`에 `request_000000000018a138f3793d7020` 기록 확인
+    - [x] `diagnostics/camera-helper-events.jsonl`에서 같은 `requestId`로 `capture-accepted -> file-arrived` 순서와 `captureId` `capture_20260329053227617_23c7b14960` 확인
+    - [x] `captures/originals/capture_20260329053227617_23c7b14960.CR2` 실제 파일 존재 확인
+    - [x] `session.json` capture record에 같은 `requestId`, `captureId`, `raw.assetPath`, `activePresetVersion` 기록 확인
+    - [x] `renders/previews/capture_20260329053227617_23c7b14960.jpg` 생성과 `preview.readyAtMs > raw.persistedAtMs` 확인
+- [x] approved booth hardware에서 최소 HV-04 성격의 actual RAW persistence evidence와, HV-05 성격의 truthful `Preview Waiting -> Preview Ready` supporting evidence를 묶어 close package를 남긴다.
+- [x] 이번 회차 evidence package에는 `Preview Waiting` 화면 검증과 timing supporting proof를 함께 남긴다.
+- [x] 현장 evidence에는 앱의 `사진 찍기` 버튼 경로를 이번 story closure 근거로 고정하고, direct shutter는 후속 별도 story에서 다루는 범위라고 남긴다.
+
+### Review Findings
+
+- [x] [Review][Patch] direct shutter만 관찰된 HV-04/HV-05 회차는 `Fail`로 닫히도록 runbook과 결과 표를 정렬해야 함 [docs/runbooks/booth-hardware-validation-checklist.md:578]
+- [x] [Review][Patch] HV-04/HV-05 소유권과 적용 범위가 Story 1.5/1.7 사이에서 충돌함 [_bmad-output/implementation-artifacts/1-7-실카메라-capture-round-trip과-raw-handoff-correlation.md:157]
+- [x] [Review][Patch] Story 1.7 closure에 필요한 helper correlation 근거가 HV-04/HV-05 증거 목록에 반영되지 않음 [docs/runbooks/booth-hardware-validation-checklist.md:347]
+- [x] [Review][Patch] AC 재번호 부여 뒤에도 mismatch/timeout task의 traceability 라벨이 이전 번호를 가리킴 [_bmad-output/implementation-artifacts/1-7-실카메라-capture-round-trip과-raw-handoff-correlation.md:42]
 
 ## Dev Notes
 
@@ -99,9 +116,10 @@ booth customer로서,
 ### helper / protocol 구현 기준선
 
 - `helper-ready`는 boot 완료일 뿐 capture success와 무관하다.
-- `request-capture`는 기본적으로 `sessionId`, `requestId`, active preset reference를 동반한다. `file-arrived`는 `sessionId`, `requestId`, `captureId`, `rawPath`를 포함해야 한다. [Source: docs/contracts/camera-helper-sidecar-protocol.md]
+- `request-capture`는 booth 앱의 `사진 찍기` 버튼이 시작한 supported success path를 뜻하며, 기본적으로 `sessionId`, `requestId`, active preset reference를 동반한다. `file-arrived`는 `sessionId`, `requestId`, `captureId`, `rawPath`를 포함해야 한다. [Source: docs/contracts/camera-helper-sidecar-protocol.md]
 - helper는 한 번에 하나의 in-flight capture만 허용하는 보수적 경계를 기본값으로 본다. [Source: docs/contracts/camera-helper-sidecar-protocol.md] [Source: docs/contracts/camera-helper-edsdk-profile.md]
 - `capture-accepted`는 success가 아니고, helper는 final path가 준비되고 file close가 끝난 뒤에만 `file-arrived`를 보내야 한다. host는 그 뒤에도 실제 파일 존재를 다시 확인해야 한다. [Source: docs/contracts/camera-helper-edsdk-profile.md]
+- 카메라 본체 셔터 직접 입력은 현재 제품 문서 기준 supported booth capture path가 아니므로, active session success나 closure evidence로 자동 해석하면 안 된다.
 
 ### 프로젝트 구조 요구사항
 
@@ -143,11 +161,11 @@ booth customer로서,
 ### Hardware gate 및 운영 메모
 
 - 실장비 close evidence는 단순 화면 확인이 아니라 truth transition 증명으로 남겨야 한다. 즉, `request-capture` 수락, RAW persistence, preview waiting, preview ready가 각각 언제 확정됐는지 구분되는 증거가 필요하다. [Source: docs/runbooks/booth-hardware-validation-architecture-research.md]
-- Story split 이후에도 runbook은 아직 HV-04/HV-05를 Story 1.5 이름으로 설명한다. 현재 제품 경계상 해석은 아래가 더 안전하다.
+- Story split 이후 runbook 적용 범위는 Story 1.7을 명시적으로 포함하고, HV-04/HV-05는 아래처럼 해석한다.
   - HV-04: Story 1.7 primary closure evidence
   - HV-05: Story 1.7 supporting regression evidence이자 Story 1.5 truthfulness regression
 - 따라서 Story 1.7은 최소 HV-04 성격의 actual RAW persistence evidence가 없으면 닫지 않는다. HV-05 성격의 `Preview Waiting -> Preview Ready` 증거는 supporting proof로 함께 남긴다.
-- evidence package는 최소 `session.json`, RAW path, helper/camera freshness 또는 correlation 근거, capture 직후 화면, `Preview Waiting` 화면, preview file path를 연결해야 한다. [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-04-실제-촬영과-RAW-저장-확인] [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-05-Preview-Waiting---Preview-Ready-확인]
+- evidence package는 최소 `session.json`, RAW path, helper/camera freshness 또는 correlation 근거, capture 직후 화면, `Preview Waiting` 화면, preview file path를 연결해야 한다. 이때 supported closure path는 booth 앱의 `사진 찍기` 버튼 경로이며, 카메라 본체 셔터 직접 입력은 별도 관찰 메모로만 남긴다. [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-04-실제-촬영과-RAW-저장-확인] [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-05-Preview-Waiting---Preview-Ready-확인]
 
 ### 금지사항 / 안티패턴
 
@@ -155,6 +173,7 @@ booth customer로서,
 - helper가 보낸 `rawPath` 문자열만 믿고 실제 파일 존재를 재검증하지 않는 것 금지
 - placeholder `.jpg` RAW 생성 경로를 real helper handoff라고 포장하는 것 금지
 - preview completion timer를 `capture-accepted` 직후 유지해 false success를 만드는 것 금지
+- 카메라 본체 셔터 직접 입력 결과를 host `request-capture` 성공처럼 active session에 묶거나 HV closure evidence로 쓰는 것 금지
 - React에서 helper correlation을 ad-hoc 해석하고 host truth를 우회하는 것 금지
 - wrong-session file handoff를 "이번 세션 latest photo"로 읽는 것 금지
 - customer 화면에 helper/SDK/USB/internal error vocabulary를 노출하는 것 금지
@@ -242,7 +261,25 @@ GPT-5 Codex
 - Windows 전용 `.NET 8` 기반 `canon-helper.exe` 프로젝트를 추가했고, local Canon EDSDK 13.19.0 payload를 output/publish에 함께 싣도록 구성했다.
 - `canon-helper.exe --self-check`가 현재 장비에서 `cameraCount=1`, `camera-ready`, `Canon EOS 700D` readiness smoke까지 통과했다.
 - helper를 임시 runtime/session에 붙여 `camera-helper-status.json`이 실제 세션 diagnostics 아래에 생성되는 비파괴 smoke를 확인했다.
-- approved booth hardware 실증(HV-04/HV-05) evidence package는 현재 워크스페이스에서 확보할 수 없어 미완료로 남긴다.
+- 2026-03-29 실장비 세션 `session_000000000018a138ef5c96c18c`에서 booth 앱 `사진 찍기` 버튼으로 시작한 `request-capture -> capture-accepted -> file-arrived -> session persistence` round-trip을 확인했다.
+- 같은 회차에서 `camera-helper-requests.jsonl`, `camera-helper-events.jsonl`, `session.json`, 실제 RAW 파일, preview 파일이 동일한 `requestId`/`captureId`로 닫히는 것을 확인했다.
+- 2026-03-29 실장비 세션 `session_000000000018a157b0cfc8cea4`에서도 booth 앱 `사진 찍기` 버튼 경로로 actual capture round-trip을 다시 확인했다.
+- 같은 회차에서 `request_000000000018a157b2a1a5e4ec`와 `capture_20260329145553949_656bbc58ff`가 `camera-helper-requests.jsonl`, `camera-helper-events.jsonl`, `session.json`, 실제 RAW, preview 파일에서 동일하게 correlation 되는 것을 직접 확인했다.
+- 해당 세션 `session.json`의 timing 필드는 `captureAcknowledgedAtMs`와 `previewVisibleAtMs`를 함께 남기고 있고, 사용자는 같은 회차의 `Preview Waiting -> Preview Ready` booth 검증을 완료했다고 확인했다.
+- 이번 story closure package는 booth 앱 `사진 찍기` 버튼 경로 증거를 기준으로 닫고, 카메라 본체 direct shutter는 후속 별도 story에서 구현/검증한다.
+
+### Hardware Validation Evidence
+
+- sessionId: `session_000000000018a157b0cfc8cea4`
+- requestId: `request_000000000018a157b2a1a5e4ec`
+- captureId: `capture_20260329145553949_656bbc58ff`
+- helper request evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\diagnostics\camera-helper-requests.jsonl`
+- helper event evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\diagnostics\camera-helper-events.jsonl`
+- RAW evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\captures\originals\capture_20260329145553949_656bbc58ff.CR2`
+- preview evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\renders\previews\capture_20260329145553949_656bbc58ff.jpg`
+- session manifest evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\session.json`
+- timing supporting proof: `session.json.captures[0].timing.captureAcknowledgedAtMs=1774796153069`, `previewVisibleAtMs=1774796155107`
+- booth validation note: 사용자가 같은 회차의 `Preview Waiting -> Preview Ready` 검증 완료를 확인했다.
 
 ### File List
 
@@ -272,3 +309,4 @@ GPT-5 Codex
 
 - 2026-03-28 - helper-backed capture round-trip, correlated RAW persistence validation, runtime-scoped in-flight guard, and round-trip regression tests를 추가했다.
 - 2026-03-28 - Windows용 `canon-helper.exe` baseline project, Canon EDSDK payload wiring, `--version`/`--self-check`, session diagnostics status writer를 추가했다.
+- 2026-03-29 - 실장비 세션 `session_000000000018a138ef5c96c18c`에서 actual capture round-trip, helper correlation, RAW persistence, manifest correlation, preview file 생성 evidence를 수집했다.

@@ -35,21 +35,21 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-03-28 03:27:00 +09:00"
+last_updated: "2026-03-30 20:12:18 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
-  epic-1: in-progress
+  epic-1: done
   1-1-set-up-initial-project-from-starter-template: done
   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
-  1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: review
-  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: in-progress
-  1-7-실카메라-capture-round-trip과-raw-handoff-correlation: in-progress
+  1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
+  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
+  1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
   epic-1-retrospective: optional
 
   epic-2: in-progress
@@ -61,7 +61,7 @@ development_status:
 
   epic-3: in-progress
   3-1-종료-직후-명시적-사후-상태-진입: done
-  3-2-export-waiting과-truthful-completion-안내: review
+  3-2-export-waiting과-truthful-completion-안내: done
   3-3-handoff-ready와-phone-required-보호-안내: done
   epic-3-retrospective: optional
 

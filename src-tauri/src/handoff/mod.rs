@@ -46,6 +46,58 @@ struct HandoffGuidanceFile {
     show_booth_alias: Option<bool>,
 }
 
+fn normalize_optional_label(value: Option<String>) -> Option<String> {
+    value.and_then(|label| {
+        let trimmed = label.trim();
+
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn build_safe_handoff_ready_post_end(
+    evaluated_at: &str,
+    guidance: Option<&HandoffGuidanceFile>,
+    existing_completed: Option<&CompletedPostEnd>,
+) -> CompletedPostEnd {
+    let existing_handoff = existing_completed.filter(|record| {
+        record.completion_variant == SESSION_POST_END_HANDOFF_READY
+    });
+    let approved_recipient_label = guidance
+        .and_then(|value| value.approved_recipient_label.clone())
+        .or_else(|| existing_handoff.and_then(|value| value.approved_recipient_label.clone()));
+    let next_location_label = guidance
+        .and_then(|value| value.next_location_label.clone())
+        .or_else(|| existing_handoff.and_then(|value| value.next_location_label.clone()))
+        .or_else(|| Some("안내된 곳".into()));
+    let primary_action_label = guidance
+        .and_then(|value| value.primary_action_label.clone())
+        .or_else(|| existing_handoff.map(|value| value.primary_action_label.clone()))
+        .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into());
+    let support_action_label = guidance
+        .and_then(|value| value.support_action_label.clone())
+        .or_else(|| existing_handoff.and_then(|value| value.support_action_label.clone()));
+    let show_booth_alias = guidance
+        .and_then(|value| value.show_booth_alias)
+        .or_else(|| existing_handoff.map(|value| value.show_booth_alias))
+        .unwrap_or(false);
+
+    CompletedPostEnd {
+        state: SESSION_POST_END_COMPLETED.into(),
+        evaluated_at: evaluated_at.into(),
+        completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
+        approved_recipient_label,
+        next_location_label,
+        primary_action_label,
+        support_action_label,
+        show_booth_alias,
+        handoff: existing_handoff.and_then(|value| value.handoff.clone()),
+    }
+}
+
 pub fn sync_post_end_state_in_dir(
     base_dir: &Path,
     manifest_path: &Path,
@@ -312,20 +364,33 @@ fn build_completed_post_end(
     let variant = completion_variant.unwrap_or(SESSION_POST_END_LOCAL_DELIVERABLE_READY);
 
     if variant == SESSION_POST_END_HANDOFF_READY {
-        if let Some(file_guidance) = read_handoff_guidance_file(base_dir, session_id)? {
-            return Ok(CompletedPostEnd {
-                state: SESSION_POST_END_COMPLETED.into(),
-                evaluated_at: evaluated_at.into(),
-                completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
-                approved_recipient_label: file_guidance.approved_recipient_label,
-                next_location_label: file_guidance.next_location_label,
-                primary_action_label: file_guidance
-                    .primary_action_label
-                    .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into()),
-                support_action_label: file_guidance.support_action_label,
-                show_booth_alias: file_guidance.show_booth_alias.unwrap_or(false),
-                handoff: None,
-            });
+        let file_guidance = read_handoff_guidance_file(base_dir, session_id)?;
+
+        if let Some(file_guidance) = file_guidance.as_ref() {
+            if file_guidance.approved_recipient_label.is_some()
+                || file_guidance.next_location_label.is_some()
+            {
+                return Ok(CompletedPostEnd {
+                    state: SESSION_POST_END_COMPLETED.into(),
+                    evaluated_at: evaluated_at.into(),
+                    completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
+                    approved_recipient_label: file_guidance.approved_recipient_label.clone(),
+                    next_location_label: file_guidance.next_location_label.clone(),
+                    primary_action_label: file_guidance
+                        .primary_action_label
+                        .clone()
+                        .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into()),
+                    support_action_label: file_guidance.support_action_label.clone(),
+                    show_booth_alias: file_guidance.show_booth_alias.unwrap_or(false),
+                    handoff: None,
+                });
+            }
+
+            return Ok(build_safe_handoff_ready_post_end(
+                evaluated_at,
+                Some(file_guidance),
+                existing_completed.as_ref(),
+            ));
         }
 
         if let Some(existing) = existing_completed.as_ref() {
@@ -339,6 +404,12 @@ fn build_completed_post_end(
                 });
             }
         }
+
+        return Ok(build_safe_handoff_ready_post_end(
+            evaluated_at,
+            None,
+            existing_completed.as_ref(),
+        ));
     }
 
     if let Some(existing) = existing_completed {
@@ -378,14 +449,15 @@ fn read_handoff_guidance_file(
     let guidance_bytes = fs::read_to_string(&guidance_path).map_err(|error| {
         HostErrorEnvelope::persistence(format!("handoff 안내를 읽지 못했어요: {error}"))
     })?;
-    let guidance: HandoffGuidanceFile = match serde_json::from_str(&guidance_bytes) {
+    let mut guidance: HandoffGuidanceFile = match serde_json::from_str(&guidance_bytes) {
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-
-    if guidance.approved_recipient_label.is_none() && guidance.next_location_label.is_none() {
-        return Ok(None);
-    }
+    guidance.approved_recipient_label =
+        normalize_optional_label(guidance.approved_recipient_label);
+    guidance.next_location_label = normalize_optional_label(guidance.next_location_label);
+    guidance.primary_action_label = normalize_optional_label(guidance.primary_action_label);
+    guidance.support_action_label = normalize_optional_label(guidance.support_action_label);
 
     Ok(Some(guidance))
 }

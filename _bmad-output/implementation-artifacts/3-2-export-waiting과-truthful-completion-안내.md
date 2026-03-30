@@ -1,6 +1,6 @@
 # Story 3.2: Export Waiting과 truthful completion 안내
 
-Status: review
+Status: done
 
 Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다.
 
@@ -250,3 +250,11 @@ GPT-5 Codex
 - [x] [Review][Patch] `finalReady`가 handoff metadata 파일 상태에 따라 `local-deliverable-ready`로 강등됨 [src-tauri/src/handoff/mod.rs:179]
 - [x] [Review][Patch] Story 3.3로 미뤄 둔 handoff/phone-required 상세 패널이 Story 3.2 화면에 이미 노출됨 [src/booth-shell/screens/CaptureScreen.tsx:163]
 - [x] [Review][Patch] `nextLocationLabel`만 있는 handoff 안내가 잘못된 제목(`승인된 수령 대상`)으로 렌더링됨 [src/booth-shell/components/HandoffReadyPanel.tsx:12]
+
+#### 2026-03-30 Re-review
+
+- [x] [Review][Patch] `finalReady` 완료가 handoff 안내 파일 누락/파손 시 `local-deliverable-ready`로 강등됨 [src-tauri/src/handoff/mod.rs:314]
+- [x] [Review][Patch] Story 3.3 범위의 handoff/phone-required 상세 UI가 Story 3.2 화면에서 그대로 노출됨 [src/booth-shell/screens/ReadinessScreen.tsx:46]
+- [x] [Review][Patch] finalized post-end를 보존하는 프런트 병합 로직이 `completed`와 `phone-required` 사이의 host 정정을 무시함 [src/session-domain/state/session-provider.tsx:66]
+- [x] [Review][Patch] 기존 `handoff-ready` 레코드에 목적지 라벨이 비어 있어도 그대로 재사용해 schema-invalid truth가 유지됨 [src-tauri/src/handoff/mod.rs:331]
+- [x] [Review][Patch] handoff 안내 JSON의 blank string 라벨을 정규화하지 않아 schema-invalid post-end payload를 만들 수 있음 [src-tauri/src/handoff/mod.rs:381]
