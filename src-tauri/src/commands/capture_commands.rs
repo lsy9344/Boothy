@@ -92,7 +92,28 @@ pub fn request_capture(
     })?;
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     try_ensure_helper_running(&base_dir, &input.session_id);
-    let result = request_capture_in_dir(&base_dir, input)?;
+    let session_id = input.session_id.clone();
+    let result = match request_capture_in_dir(&base_dir, input) {
+        Ok(result) => {
+            log::info!(
+                "capture_request_saved session={} capture_id={} request_id={} readiness={}",
+                session_id,
+                result.capture.capture_id,
+                result.capture.request_id,
+                result.readiness.reason_code
+            );
+            result
+        }
+        Err(error) => {
+            log::warn!(
+                "capture_request_failed session={} code={} message={}",
+                session_id,
+                error.code,
+                error.message
+            );
+            return Err(error);
+        }
+    };
     let preview_base_dir = base_dir.clone();
     let preview_session_id = result.session_id.clone();
     let preview_capture_id = result.capture.capture_id.clone();
@@ -105,11 +126,30 @@ pub fn request_capture(
             &preview_session_id,
             &preview_capture_id,
         ) {
-            Ok(capture) => read_current_capture_readiness(&preview_base_dir, &preview_session_id)
-                .unwrap_or_else(|| {
-                    CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture)
-                }),
+            Ok(capture) => {
+                let preview_elapsed_ms = capture
+                    .timing
+                    .preview_visible_at_ms
+                    .unwrap_or(capture.raw.persisted_at_ms)
+                    .saturating_sub(capture.timing.capture_acknowledged_at_ms);
+                log::info!(
+                    "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={}",
+                    preview_session_id,
+                    preview_capture_id,
+                    preview_elapsed_ms,
+                    capture.timing.preview_budget_state
+                );
+                read_current_capture_readiness(&preview_base_dir, &preview_session_id)
+                    .unwrap_or_else(|| {
+                        CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture)
+                    })
+            }
             Err(_) => {
+                log::warn!(
+                    "capture_preview_failed session={} capture_id={}",
+                    preview_session_id,
+                    preview_capture_id
+                );
                 let _ = mark_preview_render_failed_in_dir(
                     &preview_base_dir,
                     &preview_session_id,

@@ -36,6 +36,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
       observedAt: '2026-03-26T00:10:01.000Z',
     },
+    cameraConnection: {
+      state: 'connected',
+      title: '카메라와 helper 연결이 확인됐어요.',
+      detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+      observedAt: '2026-03-26T00:10:00.000Z',
+    },
     captureBoundary: {
       status: 'clear',
       title: '캡처 경계 정상',

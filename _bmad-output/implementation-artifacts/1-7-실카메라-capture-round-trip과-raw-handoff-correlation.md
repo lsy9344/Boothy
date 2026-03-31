@@ -162,9 +162,9 @@ booth customer로서,
 
 - 실장비 close evidence는 단순 화면 확인이 아니라 truth transition 증명으로 남겨야 한다. 즉, `request-capture` 수락, RAW persistence, preview waiting, preview ready가 각각 언제 확정됐는지 구분되는 증거가 필요하다. [Source: docs/runbooks/booth-hardware-validation-architecture-research.md]
 - Story split 이후 runbook 적용 범위는 Story 1.7을 명시적으로 포함하고, HV-04/HV-05는 아래처럼 해석한다.
-  - HV-04: Story 1.7 primary closure evidence
-  - HV-05: Story 1.7 supporting regression evidence이자 Story 1.5 truthfulness regression
-- 따라서 Story 1.7은 최소 HV-04 성격의 actual RAW persistence evidence가 없으면 닫지 않는다. HV-05 성격의 `Preview Waiting -> Preview Ready` 증거는 supporting proof로 함께 남긴다.
+  - HV-04: Story 1.5 close review에 공급하는 Story 1.7 primary supporting correlation evidence
+  - HV-05: Story 1.5 truthfulness regression에 공급하는 Story 1.7 supporting evidence
+- 따라서 Story 1.7은 최소 HV-04 성격의 actual RAW persistence evidence를 supporting package로 남겨야 한다. 다만 canonical close owner는 Story 1.5 ledger row이며, HV-05 성격의 `Preview Waiting -> Preview Ready` 증거도 같은 close review에 supporting proof로 함께 공급한다.
 - evidence package는 최소 `session.json`, RAW path, helper/camera freshness 또는 correlation 근거, capture 직후 화면, `Preview Waiting` 화면, preview file path를 연결해야 한다. 이때 supported closure path는 booth 앱의 `사진 찍기` 버튼 경로이며, 카메라 본체 셔터 직접 입력은 별도 관찰 메모로만 남긴다. [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-04-실제-촬영과-RAW-저장-확인] [Source: docs/runbooks/booth-hardware-validation-checklist.md#HV-05-Preview-Waiting---Preview-Ready-확인]
 
 ### 금지사항 / 안티패턴

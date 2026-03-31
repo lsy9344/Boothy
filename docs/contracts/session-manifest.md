@@ -70,6 +70,12 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
   - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel? , nextLocationLabel?, supportActionLabel? }`
   - `phone-required`: `{ state, evaluatedAt, primaryActionLabel, unsafeActionWarning, showBoothAlias, supportActionLabel? }`
 - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 사용자 Pictures 경로 아래의 현재 세션 루트(`.../Pictures/dabi_shoot/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `pictures/dabi_shoot/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
+- `captures[*].renderStatus`:
+  - `previewWaiting`: RAW persistence는 끝났지만 preset-applied preview render가 아직 닫히지 않음
+  - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 실제 preview file이 존재함
+  - `finalReady`: published bundle의 `xmpTemplatePath + finalProfile`로 만든 실제 final file이 존재함
+  - `renderFailed`: preview 또는 final render truth를 닫지 못해 bounded failure 상태로 잠김
+- RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady`나 `finalReady`의 근거가 될 수 없다.
 
 ## 변경 규칙
 
@@ -79,3 +85,4 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - 새 구현은 `activePreset`을 canonical field로 사용하고, `activePresetId`는 구버전 호환을 위해 함께 유지한다.
 - `catalogSnapshot`은 customer-visible top 6 preset만 고정하고, rollback이나 publish 이후에도 기존
   active session manifest를 다시 쓰지 않는다.
+- post-end `completed`는 `finalReady`가 없는 capture에서 먼저 올라가면 안 된다.

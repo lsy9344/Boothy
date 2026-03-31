@@ -305,6 +305,40 @@ So that the booth never mistakes shutter acceptance for a saved photo.
 **Then** the story remains open
 **And** it does not inherit closure from Story 1.6, Story 1.5 historical evidence alone, or synthetic preview flow
 
+### Story 1.8: 게시된 프리셋 XMP 적용과 preview/final render worker 연결
+
+As a booth customer,
+I want the preset I selected to be actually applied to my booth preview and final output,
+So that the look I chose matches what I see and what is later delivered.
+
+**Acceptance Criteria:**
+
+**Given** an active session has a published preset binding and Story 1.7 has already confirmed RAW persistence
+**When** the host starts booth render follow-up for that capture
+**Then** the runtime resolves the immutable published bundle for the capture-bound `presetId + publishedVersion`
+**And** preview render uses the bundle `xmpTemplatePath`, pinned darktable version, and preview profile through `darktable-cli`
+**And** `previewReady` is recorded only after a real raster preview file exists under `renders/previews/`
+
+**Given** preview render succeeds for a booth capture
+**When** the latest-photo rail and confirmation surface update
+**Then** they use the preset-applied capture preview rather than a raw copy, placeholder fallback, or bundle representative tile
+**And** if render has not completed or has failed, the booth remains in truthful `Preview Waiting` or bounded failure guidance instead of false-ready
+
+**Given** shooting has ended and the booth evaluates final deliverable truth
+**When** final render is required for the active session
+**Then** the runtime uses the same capture-bound published bundle and its final profile to write a real asset under `renders/finals/`
+**And** `finalReady` and `Completed` are never claimed before that asset actually exists
+
+**Given** a newer catalog publish or rollback happens after a capture was already saved
+**When** preview or final render is evaluated for that existing capture
+**Then** the runtime uses the preset version stored on that capture record
+**And** it does not silently drift to the newer live catalog version
+
+**Given** `darktable-cli` is unavailable, the bundle is malformed, the XMP template is missing, or render fails or times out
+**When** render truth is evaluated
+**Then** the host preserves RAW and current-session assets, records bounded render failure truth, and avoids cross-session leakage
+**And** it does not hide the failure behind a raw-copy success or false `previewReady` / `Completed`
+
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 
 고객이 현재 세션 사진만 검토하고 정책 범위 내에서 삭제하며, 세션 중 언제든 프리셋을 바꾸고, 조정된 종료 시각과 경고 알림을 이해하면서 촬영을 이어갈 수 있게 한다.

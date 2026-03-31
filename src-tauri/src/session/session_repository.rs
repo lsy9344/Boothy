@@ -1,7 +1,11 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    sync::{Mutex, OnceLock},
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -32,6 +36,16 @@ use crate::{
 };
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
+const MANIFEST_WRITE_RETRY_ATTEMPTS: usize = 12;
+const MANIFEST_WRITE_RETRY_DELAY_MS: u64 = 25;
+
+#[derive(Debug, Default)]
+struct ManifestWriteFailureInjection {
+    remaining_failures_by_path: HashMap<PathBuf, usize>,
+}
+
+static MANIFEST_WRITE_FAILURE_INJECTION: OnceLock<Mutex<ManifestWriteFailureInjection>> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,37 +268,151 @@ pub(crate) fn write_session_manifest(
     let temp_path = manifest_temp_path(manifest_path);
     let backup_path = manifest_backup_path(manifest_path);
 
-    if temp_path.exists() {
-        fs::remove_file(&temp_path).map_err(map_fs_error)?;
+    let mut last_error: Option<std::io::Error> = None;
+
+    for attempt in 0..MANIFEST_WRITE_RETRY_ATTEMPTS {
+        match write_session_manifest_once(manifest_path, &temp_path, &backup_path, &manifest_bytes)
+        {
+            Ok(()) => {
+                if backup_path.exists() {
+                    if let Err(error) = fs::remove_file(&backup_path) {
+                        if !is_retryable_manifest_write_error(&error) {
+                            return Err(map_fs_error(error));
+                        }
+                    }
+                }
+
+                return Ok(());
+            }
+            Err(error) if is_retryable_manifest_write_error(&error) => {
+                log::warn!(
+                    "manifest_write_retry path={} attempt={} reason={}",
+                    manifest_path.display(),
+                    attempt + 1,
+                    error
+                );
+                last_error = Some(error);
+                restore_manifest_from_backup_if_needed(manifest_path, &backup_path);
+                remove_temp_manifest_if_present(&temp_path);
+
+                if attempt + 1 < MANIFEST_WRITE_RETRY_ATTEMPTS {
+                    thread::sleep(Duration::from_millis(MANIFEST_WRITE_RETRY_DELAY_MS));
+                }
+            }
+            Err(error) => {
+                restore_manifest_from_backup_if_needed(manifest_path, &backup_path);
+                remove_temp_manifest_if_present(&temp_path);
+                return Err(map_fs_error(error));
+            }
+        }
     }
 
-    fs::write(&temp_path, manifest_bytes).map_err(map_fs_error)?;
+    restore_manifest_from_backup_if_needed(manifest_path, &backup_path);
+    remove_temp_manifest_if_present(&temp_path);
+
+    Err(map_fs_error(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "manifest write retry budget exhausted",
+        )
+    })))
+}
+
+fn write_session_manifest_once(
+    manifest_path: &Path,
+    temp_path: &Path,
+    backup_path: &Path,
+    manifest_bytes: &[u8],
+) -> Result<(), std::io::Error> {
+    if let Some(error) = take_injected_manifest_write_failure(manifest_path) {
+        return Err(error);
+    }
+
+    if temp_path.exists() {
+        fs::remove_file(temp_path)?;
+    }
+
+    fs::write(temp_path, manifest_bytes)?;
 
     if backup_path.exists() {
-        fs::remove_file(&backup_path).map_err(map_fs_error)?;
+        fs::remove_file(backup_path)?;
     }
 
     if manifest_path.exists() {
-        fs::rename(manifest_path, &backup_path).map_err(|error| {
-            let _ = fs::remove_file(&temp_path);
-            map_fs_error(error)
-        })?;
+        fs::rename(manifest_path, backup_path)?;
     }
 
-    if let Err(error) = fs::rename(&temp_path, manifest_path) {
+    if let Err(error) = fs::rename(temp_path, manifest_path) {
         if backup_path.exists() {
-            let _ = fs::rename(&backup_path, manifest_path);
+            let _ = fs::rename(backup_path, manifest_path);
         }
-        let _ = fs::remove_file(&temp_path);
+        let _ = fs::remove_file(temp_path);
 
-        return Err(map_fs_error(error));
-    }
-
-    if backup_path.exists() {
-        fs::remove_file(&backup_path).map_err(map_fs_error)?;
+        return Err(error);
     }
 
     Ok(())
+}
+
+fn is_retryable_manifest_write_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::PermissionDenied)
+        || matches!(error.raw_os_error(), Some(32 | 33 | 5))
+}
+
+fn restore_manifest_from_backup_if_needed(manifest_path: &Path, backup_path: &Path) {
+    if !manifest_path.exists() && backup_path.exists() {
+        let _ = fs::rename(backup_path, manifest_path);
+    }
+}
+
+fn remove_temp_manifest_if_present(temp_path: &Path) {
+    if temp_path.exists() {
+        let _ = fs::remove_file(temp_path);
+    }
+}
+
+#[doc(hidden)]
+pub fn set_manifest_write_retryable_failures_for_tests(manifest_path: &Path, failures: usize) {
+    let injection = MANIFEST_WRITE_FAILURE_INJECTION
+        .get_or_init(|| Mutex::new(ManifestWriteFailureInjection::default()));
+    let mut guard = injection
+        .lock()
+        .expect("manifest write failure injection lock should be available");
+
+    if failures == 0 {
+        guard.remaining_failures_by_path.remove(manifest_path);
+        return;
+    }
+
+    guard
+        .remaining_failures_by_path
+        .insert(manifest_path.to_path_buf(), failures);
+}
+
+fn take_injected_manifest_write_failure(manifest_path: &Path) -> Option<std::io::Error> {
+    let injection = MANIFEST_WRITE_FAILURE_INJECTION
+        .get_or_init(|| Mutex::new(ManifestWriteFailureInjection::default()));
+    let mut guard = injection
+        .lock()
+        .expect("manifest write failure injection lock should be available");
+
+    let remaining_failures = guard.remaining_failures_by_path.get_mut(manifest_path)?;
+
+    if *remaining_failures == 0 {
+        guard.remaining_failures_by_path.remove(manifest_path);
+        return None;
+    }
+
+    *remaining_failures -= 1;
+
+    if *remaining_failures == 0 {
+        guard.remaining_failures_by_path.remove(manifest_path);
+    }
+
+    Some(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "injected manifest write retryable failure",
+    ))
 }
 
 fn manifest_temp_path(manifest_path: &Path) -> PathBuf {

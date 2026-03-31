@@ -89,6 +89,7 @@ export const captureReasonCodeSchema = z.enum([
   'session-missing',
   'preset-missing',
   'camera-preparing',
+  'capture-retry-required',
   'helper-preparing',
   'preview-waiting',
   'export-waiting',

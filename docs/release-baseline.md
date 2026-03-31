@@ -47,6 +47,14 @@ The exact NSIS output path depends on how `tauri build` is invoked (`debug` vs r
 - Release promotion remains outside the active booth session path
 - Branch rollout governance applies build and preset-stack baselines only at safe transition points and never force-updates an active customer session
 
+## Release Truth Gates
+
+- `automated proof` and `hardware proof` are separate release gates.
+- The canonical hardware close record lives in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
+- Automated build/test success can prove implementation readiness, but booth `Ready` / `Completed` truth is not release-claimable until the ledger records `Go`.
+- Any `No-Go`, missing evidence package, or unresolved blocker in the ledger keeps the branch on `release hold`.
+- Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
+
 ## Current State
 
 Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The local and CI signing-ready paths now accept either a materialized certificate path or a base64-encoded PFX supplied through environment variables.

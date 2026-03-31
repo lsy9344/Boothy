@@ -145,6 +145,7 @@ pub enum SidecarClientError {
     RequestWriteFailed,
     EventsUnreadable,
     InvalidEvents,
+    CaptureTriggerRetryRequired,
     CaptureTimedOut,
     CaptureRejected,
     RecoveryRequired,
@@ -221,10 +222,38 @@ pub fn read_capture_request_messages(
         .map_err(|_| SidecarClientError::InvalidEvents)
 }
 
+pub fn read_capture_event_count(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<usize, SidecarClientError> {
+    Ok(read_capture_event_messages(base_dir, session_id)?.len())
+}
+
+pub fn read_latest_helper_error_message(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<Option<CanonHelperErrorMessage>, SidecarClientError> {
+    let events = read_capture_event_messages(base_dir, session_id)?;
+
+    Ok(events.into_iter().rev().find_map(|event| match event {
+        CanonHelperEvent::HelperError(message)
+            if message
+                .session_id
+                .as_deref()
+                .map(|value| value == session_id)
+                .unwrap_or(true) =>
+        {
+            Some(message)
+        }
+        _ => None,
+    }))
+}
+
 pub fn wait_for_capture_round_trip(
     base_dir: &Path,
     session_id: &str,
     request_id: &str,
+    starting_event_count: usize,
 ) -> Result<CompletedCaptureRoundTrip, SidecarClientError> {
     let timeout_ms = capture_round_trip_timeout_ms(base_dir);
     let timeout_deadline = current_time_ms()
@@ -235,7 +264,7 @@ pub fn wait_for_capture_round_trip(
     loop {
         let events = read_capture_event_messages(base_dir, session_id)?;
 
-        for event in events {
+        for event in events.into_iter().skip(starting_event_count) {
             match event {
                 CanonHelperEvent::CaptureAccepted(message) => {
                     if message.request_id != request_id {
@@ -282,14 +311,20 @@ pub fn wait_for_capture_round_trip(
                     }
                 }
                 CanonHelperEvent::HelperError(message) => {
-                    if message
+                    if !message
                         .session_id
                         .as_deref()
                         .map(|value| value == session_id)
                         .unwrap_or(true)
                     {
-                        return Err(SidecarClientError::CaptureRejected);
+                        continue;
                     }
+
+                    return if is_retryable_capture_helper_error(&message) {
+                        Err(SidecarClientError::CaptureTriggerRetryRequired)
+                    } else {
+                        Err(SidecarClientError::CaptureRejected)
+                    };
                 }
             }
         }
@@ -312,6 +347,13 @@ pub fn map_capture_round_trip_error(
         crate::contracts::dto::CaptureReadinessDto::phone_required(session_id.to_string());
 
     match error {
+        SidecarClientError::CaptureTriggerRetryRequired => HostErrorEnvelope::capture_not_ready(
+            "사진을 아직 찍지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
+            crate::contracts::dto::CaptureReadinessDto::capture_retry_required(
+                session_id.to_string(),
+                None,
+            ),
+        ),
         SidecarClientError::CaptureTimedOut => HostErrorEnvelope::capture_not_ready(
             "사진 저장을 끝내지 못했어요. 가까운 직원에게 알려 주세요.",
             readiness,
@@ -337,6 +379,22 @@ pub fn map_capture_round_trip_error(
             )
         }
     }
+}
+
+pub fn is_retryable_capture_helper_error(message: &CanonHelperErrorMessage) -> bool {
+    match message.detail_code.as_str() {
+        "camera-busy" | "capture-focus-not-locked" => true,
+        "capture-trigger-failed" => message
+            .message
+            .as_deref()
+            .map(is_legacy_focus_failure_message)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn is_legacy_focus_failure_message(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("0x00008d01")
 }
 
 fn read_capture_event_messages(

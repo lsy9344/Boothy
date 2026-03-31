@@ -7,6 +7,7 @@ pub mod contracts;
 pub mod diagnostics;
 pub mod handoff;
 pub mod preset;
+pub mod render;
 pub mod session;
 pub mod timing;
 
@@ -89,6 +90,7 @@ pub fn run() {
             commands::preset_commands::create_draft_preset,
             commands::preset_commands::save_draft_preset,
             commands::preset_commands::validate_draft_preset,
+            commands::preset_commands::repair_invalid_draft,
             commands::preset_commands::publish_validated_preset,
             commands::preset_commands::load_preset_catalog_state,
             commands::preset_commands::rollback_preset_catalog,

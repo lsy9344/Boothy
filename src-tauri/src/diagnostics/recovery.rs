@@ -469,6 +469,7 @@ fn build_operator_recovery_summary(
         updated_at: session_summary.updated_at,
         post_end_state: session_summary.post_end_state,
         recent_failure: session_summary.recent_failure,
+        camera_connection: session_summary.camera_connection,
         capture_boundary: session_summary.capture_boundary,
         preview_render_boundary: session_summary.preview_render_boundary,
         completion_boundary: session_summary.completion_boundary,

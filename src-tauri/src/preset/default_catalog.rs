@@ -3,10 +3,16 @@ use std::{fs, path::Path};
 use serde_json::json;
 
 use crate::{
-    contracts::dto::HostErrorEnvelope, preset::preset_catalog::resolve_published_preset_catalog_dir,
+    contracts::dto::HostErrorEnvelope,
+    preset::{
+        preset_bundle::{load_published_preset_runtime_bundle, load_published_preset_summary},
+        preset_catalog::resolve_published_preset_catalog_dir,
+    },
 };
 
 type DefaultPresetSeed = (&'static str, &'static str, &'static str, &'static str);
+const DEFAULT_RENDER_TEMPLATE: &str =
+    include_str!("default_catalog_assets/default-render-template.xmp");
 
 const DEFAULT_PRESET_SEEDS: [DefaultPresetSeed; 3] = [
     (
@@ -31,15 +37,35 @@ const DEFAULT_PRESET_SEEDS: [DefaultPresetSeed; 3] = [
 
 pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostErrorEnvelope> {
     let catalog_root = resolve_published_preset_catalog_dir(base_dir);
+    let has_any_bundle = contains_any_bundle_json(&catalog_root)?;
+    let has_existing_default_seed =
+        DEFAULT_PRESET_SEEDS
+            .iter()
+            .any(|(preset_id, published_version, _, _)| {
+                catalog_root
+                    .join(preset_id)
+                    .join(published_version)
+                    .exists()
+            });
 
-    if contains_any_bundle_json(&catalog_root)? {
+    if has_any_bundle && !has_existing_default_seed {
         return Ok(());
     }
 
     for (preset_id, published_version, display_name, preview_svg) in DEFAULT_PRESET_SEEDS {
         let bundle_dir = catalog_root.join(preset_id).join(published_version);
+        if has_any_bundle && !bundle_requires_runtime_backfill(&bundle_dir) {
+            continue;
+        }
+
         fs::create_dir_all(&bundle_dir).map_err(map_fs_error)?;
+        fs::create_dir_all(bundle_dir.join("xmp")).map_err(map_fs_error)?;
         fs::write(bundle_dir.join("preview.svg"), preview_svg).map_err(map_fs_error)?;
+        fs::write(
+            bundle_dir.join("xmp").join("template.xmp"),
+            DEFAULT_RENDER_TEMPLATE,
+        )
+        .map_err(map_fs_error)?;
 
         let bundle = json!({
             "schemaVersion": "published-preset-bundle/v1",
@@ -48,6 +74,18 @@ pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostE
             "publishedVersion": published_version,
             "lifecycleStatus": "published",
             "boothStatus": "booth-safe",
+            "darktableVersion": "5.4.1",
+            "xmpTemplatePath": "xmp/template.xmp",
+            "previewProfile": {
+                "profileId": "preview-jpeg",
+                "displayName": "Booth Preview JPEG",
+                "outputColorSpace": "sRGB",
+            },
+            "finalProfile": {
+                "profileId": "final-jpeg",
+                "displayName": "Booth Final JPEG",
+                "outputColorSpace": "sRGB",
+            },
             "preview": {
                 "kind": "preview-tile",
                 "assetPath": "preview.svg",
@@ -65,6 +103,15 @@ pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostE
     }
 
     Ok(())
+}
+
+fn bundle_requires_runtime_backfill(bundle_dir: &Path) -> bool {
+    if !bundle_dir.join("bundle.json").is_file() {
+        return true;
+    }
+
+    load_published_preset_summary(bundle_dir).is_none()
+        || load_published_preset_runtime_bundle(bundle_dir).is_none()
 }
 
 fn contains_any_bundle_json(catalog_root: &Path) -> Result<bool, HostErrorEnvelope> {

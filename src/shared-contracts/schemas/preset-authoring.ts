@@ -47,6 +47,19 @@ const workspaceReferenceSchema = z
   .min(1, '작업공간 참조 경로를 입력해 주세요.')
   .refine(isSafeWorkspaceReference, '작업공간 바깥 경로는 저장할 수 없어요.')
 
+const draftFolderNameSchema = z
+  .string()
+  .trim()
+  .min(1, '복구할 draft 폴더 이름을 입력해 주세요.')
+  .refine(
+    (value) => {
+      const normalized = value.replaceAll('\\', '/')
+
+      return isSafeWorkspaceReference(value) && !normalized.includes('/')
+    },
+    '복구할 draft 폴더 이름을 다시 확인해 주세요.',
+  )
+
 const optionalTextSchema = z
   .string()
   .max(2000, '설명은 2000자 이하여야 해요.')
@@ -470,6 +483,10 @@ export const validateDraftPresetInputSchema = z.object({
   presetId: presetIdSchema,
 })
 
+export const repairInvalidDraftInputSchema = z.object({
+  draftFolder: draftFolderNameSchema,
+})
+
 export const validateDraftPresetResultSchema = z
   .object({
     schemaVersion: z.literal('draft-preset-validation-result/v1'),
@@ -681,6 +698,13 @@ export const publishValidatedPresetResultSchema = z.discriminatedUnion('status',
   publishValidatedPresetRejectionSchema,
 ])
 
+export const invalidDraftArtifactSchema = z.object({
+  draftFolder: z.string().trim().min(1, '복구 대상 draft 폴더 이름이 필요해요.'),
+  message: z.string().trim().min(1, '복구 안내 메시지가 필요해요.'),
+  guidance: z.string().trim().min(1, '복구 가이드가 필요해요.'),
+  canRepair: z.boolean().default(false),
+})
+
 export const authoringWorkspaceResultSchema = z.object({
   schemaVersion: z.literal('preset-authoring-workspace/v1'),
   supportedLifecycleStates: z
@@ -692,4 +716,5 @@ export const authoringWorkspaceResultSchema = z.object({
     ])
     .readonly(),
   drafts: z.array(draftPresetSummarySchema),
+  invalidDrafts: z.array(invalidDraftArtifactSchema).default([]),
 })

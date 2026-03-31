@@ -21,10 +21,24 @@ export const operatorBoundaryStatusSchema = z.enum(['clear', 'blocked'])
 
 const operatorSafeCopySchema = z.string().trim().min(1).max(160)
 
+export const operatorCameraConnectionStateSchema = z.enum([
+  'disconnected',
+  'connecting',
+  'connected',
+  'recovery-required',
+])
+
 export const operatorBoundarySummarySchema = z.object({
   status: operatorBoundaryStatusSchema,
   title: operatorSafeCopySchema,
   detail: z.string().trim().min(1).max(240),
+})
+
+export const operatorCameraConnectionSummarySchema = z.object({
+  state: operatorCameraConnectionStateSchema,
+  title: operatorSafeCopySchema,
+  detail: z.string().trim().min(1).max(240),
+  observedAt: z.string().datetime().nullable().optional(),
 })
 
 export const operatorRecentFailureSummarySchema = z.object({
@@ -47,6 +61,7 @@ export const operatorSessionSummarySchema = z.object({
   updatedAt: z.string().datetime().nullable(),
   postEndState: sessionPostEndStateSchema.nullable().optional(),
   recentFailure: operatorRecentFailureSummarySchema.nullable(),
+  cameraConnection: operatorCameraConnectionSummarySchema,
   captureBoundary: operatorBoundarySummarySchema,
   previewRenderBoundary: operatorBoundarySummarySchema,
   completionBoundary: operatorBoundarySummarySchema,

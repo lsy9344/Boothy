@@ -12,6 +12,7 @@ import {
   draftValidationFindingSchema,
   draftValidationReportSchema,
   draftValidationSnapshotSchema,
+  invalidDraftArtifactSchema,
   publicationAuditRecordSchema,
   publicationAuditActionSchema,
   publicationRejectionReasonCodeSchema,
@@ -21,6 +22,7 @@ import {
   publishValidatedPresetResultSchema,
   publishValidatedPresetRejectionSchema,
   publishValidatedPresetSuccessSchema,
+  repairInvalidDraftInputSchema,
   presetLifecycleStateSchema,
   presetCatalogResultSchema,
   presetSelectionInputSchema,
@@ -41,8 +43,10 @@ export type DraftPresetEditPayload = z.infer<typeof draftPresetEditPayloadSchema
 export type DraftValidationFinding = z.infer<typeof draftValidationFindingSchema>
 export type DraftValidationReport = z.infer<typeof draftValidationReportSchema>
 export type DraftValidationSnapshot = z.infer<typeof draftValidationSnapshotSchema>
+export type InvalidDraftArtifact = z.infer<typeof invalidDraftArtifactSchema>
 export type AuthoringWorkspaceResult = z.infer<typeof authoringWorkspaceResultSchema>
 export type ValidateDraftPresetInput = z.infer<typeof validateDraftPresetInputSchema>
+export type RepairInvalidDraftInput = z.infer<typeof repairInvalidDraftInputSchema>
 export type ValidateDraftPresetResult = z.infer<typeof validateDraftPresetResultSchema>
 export type PublicationAuditAction = z.infer<typeof publicationAuditActionSchema>
 export type PublicationScope = z.infer<typeof publicationScopeSchema>

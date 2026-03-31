@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "pnpm tauri dev",
+    "dev:desktop:stable": "pnpm tauri dev --no-watch",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm build && pnpm tauri build --debug",
     "lint": "eslint .",

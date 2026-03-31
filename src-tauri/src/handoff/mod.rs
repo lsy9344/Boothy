@@ -8,6 +8,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
+    capture::ingest_pipeline::{complete_final_render_in_dir, mark_final_render_failed_in_dir},
     contracts::dto::HostErrorEnvelope,
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     session::{
@@ -18,7 +19,7 @@ use crate::{
             SESSION_POST_END_LOCAL_DELIVERABLE_READY, SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
-        session_repository::write_session_manifest,
+        session_repository::{read_session_manifest, write_session_manifest},
     },
 };
 
@@ -63,9 +64,8 @@ fn build_safe_handoff_ready_post_end(
     guidance: Option<&HandoffGuidanceFile>,
     existing_completed: Option<&CompletedPostEnd>,
 ) -> CompletedPostEnd {
-    let existing_handoff = existing_completed.filter(|record| {
-        record.completion_variant == SESSION_POST_END_HANDOFF_READY
-    });
+    let existing_handoff = existing_completed
+        .filter(|record| record.completion_variant == SESSION_POST_END_HANDOFF_READY);
     let approved_recipient_label = guidance
         .and_then(|value| value.approved_recipient_label.clone())
         .or_else(|| existing_handoff.and_then(|value| value.approved_recipient_label.clone()));
@@ -113,6 +113,8 @@ pub fn sync_post_end_state_in_dir(
     if timing_phase != "ended" {
         return Ok(manifest);
     }
+
+    manifest = attempt_final_render_if_needed(base_dir, manifest_path, manifest)?;
 
     let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
         return Ok(manifest);
@@ -288,8 +290,8 @@ fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
             completion_variant: None,
         },
         "previewReady" => PostEndEvaluation {
-            state: SESSION_POST_END_COMPLETED.into(),
-            completion_variant: Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY.into()),
+            state: SESSION_POST_END_EXPORT_WAITING.into(),
+            completion_variant: None,
         },
         "finalReady" => PostEndEvaluation {
             state: SESSION_POST_END_COMPLETED.into(),
@@ -303,6 +305,33 @@ fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
         },
+    }
+}
+
+fn attempt_final_render_if_needed(
+    base_dir: &Path,
+    manifest_path: &Path,
+    manifest: SessionManifest,
+) -> Result<SessionManifest, HostErrorEnvelope> {
+    let Some(latest_capture) = manifest.captures.last() else {
+        return Ok(manifest);
+    };
+
+    if latest_capture.render_status != "previewReady"
+        || latest_capture.final_asset.asset_path.is_some()
+    {
+        return Ok(manifest);
+    }
+
+    let capture_id = latest_capture.capture_id.clone();
+    let session_id = manifest.session_id.clone();
+
+    match complete_final_render_in_dir(base_dir, &session_id, &capture_id) {
+        Ok(_) => read_session_manifest(manifest_path),
+        Err(_) => {
+            let _ = mark_final_render_failed_in_dir(base_dir, &session_id, &capture_id);
+            read_session_manifest(manifest_path)
+        }
     }
 }
 
@@ -453,8 +482,7 @@ fn read_handoff_guidance_file(
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    guidance.approved_recipient_label =
-        normalize_optional_label(guidance.approved_recipient_label);
+    guidance.approved_recipient_label = normalize_optional_label(guidance.approved_recipient_label);
     guidance.next_location_label = normalize_optional_label(guidance.next_location_label);
     guidance.primary_action_label = normalize_optional_label(guidance.primary_action_label);
     guidance.support_action_label = normalize_optional_label(guidance.support_action_label);

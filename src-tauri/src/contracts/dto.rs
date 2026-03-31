@@ -111,6 +111,22 @@ pub fn is_safe_workspace_reference(reference: &str) -> bool {
     saw_normal_component
 }
 
+pub fn is_safe_draft_folder_name(value: &str) -> bool {
+    if !is_non_blank(value) {
+        return false;
+    }
+
+    let path = Path::new(value);
+
+    if path.is_absolute() {
+        return false;
+    }
+
+    let mut components = path.components();
+
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
 pub fn validate_session_id(session_id: &str) -> Result<(), HostErrorEnvelope> {
     if is_valid_session_id(session_id) {
         Ok(())
@@ -249,6 +265,18 @@ pub fn validate_draft_validation_input(
     if !is_valid_preset_id(&input.preset_id) {
         return Err(HostErrorEnvelope::validation_message(
             "검증할 draft presetId 형식을 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_repair_invalid_draft_input(
+    input: &RepairInvalidDraftInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    if !is_safe_draft_folder_name(&input.draft_folder) {
+        return Err(HostErrorEnvelope::validation_message(
+            "정리할 손상 draft 폴더 이름을 다시 확인해 주세요.",
         ));
     }
 
@@ -605,10 +633,18 @@ pub struct ValidateDraftPresetInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepairInvalidDraftInputDto {
+    pub draft_folder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthoringWorkspaceResultDto {
     pub schema_version: String,
     pub supported_lifecycle_states: Vec<String>,
     pub drafts: Vec<DraftPresetSummaryDto>,
+    #[serde(default)]
+    pub invalid_drafts: Vec<InvalidDraftArtifactDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -617,6 +653,16 @@ pub struct ValidateDraftPresetResultDto {
     pub schema_version: String,
     pub draft: DraftPresetSummaryDto,
     pub report: DraftValidationReportDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvalidDraftArtifactDto {
+    pub draft_folder: String,
+    pub message: String,
+    pub guidance: String,
+    #[serde(default)]
+    pub can_repair: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -759,6 +805,16 @@ pub struct OperatorBoundarySummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OperatorCameraConnectionSummaryDto {
+    pub state: String,
+    pub title: String,
+    pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LiveCaptureTruthDto {
     pub source: String,
     pub freshness: String,
@@ -882,6 +938,7 @@ pub struct OperatorSessionSummaryDto {
     pub updated_at: Option<String>,
     pub post_end_state: Option<String>,
     pub recent_failure: Option<OperatorRecentFailureSummaryDto>,
+    pub camera_connection: OperatorCameraConnectionSummaryDto,
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
@@ -908,6 +965,7 @@ pub struct OperatorRecoverySummaryDto {
     pub updated_at: Option<String>,
     pub post_end_state: Option<String>,
     pub recent_failure: Option<OperatorRecentFailureSummaryDto>,
+    pub camera_connection: OperatorCameraConnectionSummaryDto,
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
@@ -1265,6 +1323,25 @@ impl CaptureReadinessDto {
             "잠시만 기다려 주세요.",
             "helper-preparing",
             None,
+        )
+    }
+
+    pub fn capture_retry_required(
+        session_id: impl Into<String>,
+        latest_capture: Option<SessionCaptureRecord>,
+    ) -> Self {
+        let session_id = session_id.into();
+
+        Self::build(
+            session_id,
+            "blocked",
+            "Preparing",
+            false,
+            "wait",
+            "사진을 아직 찍지 못했어요.",
+            "대상을 다시 맞춘 뒤 잠시 후 다시 시도해 주세요.",
+            "capture-retry-required",
+            latest_capture,
         )
     }
 

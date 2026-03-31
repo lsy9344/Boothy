@@ -9,6 +9,7 @@ import {
   rollbackPresetCatalogResultSchema,
   publishValidatedPresetInputSchema,
   publishValidatedPresetResultSchema,
+  repairInvalidDraftInputSchema,
   validateDraftPresetInputSchema,
   validateDraftPresetResultSchema,
   hostErrorEnvelopeSchema,
@@ -19,6 +20,7 @@ import {
   type HostErrorEnvelope,
   type PublishValidatedPresetInput,
   type PublishValidatedPresetResult,
+  type RepairInvalidDraftInput,
   type RollbackPresetCatalogInput,
   type RollbackPresetCatalogResult,
   type ValidateDraftPresetInput,
@@ -31,6 +33,7 @@ export interface PresetAuthoringGateway {
   createDraftPreset(input: DraftPresetEditPayload): Promise<unknown>
   saveDraftPreset(input: DraftPresetEditPayload): Promise<unknown>
   validateDraftPreset(input: ValidateDraftPresetInput): Promise<unknown>
+  repairInvalidDraft(input: RepairInvalidDraftInput): Promise<unknown>
   publishValidatedPreset(input: PublishValidatedPresetInput): Promise<unknown>
   loadPresetCatalogState(): Promise<unknown>
   rollbackPresetCatalog(input: RollbackPresetCatalogInput): Promise<unknown>
@@ -41,6 +44,7 @@ export interface PresetAuthoringService {
   createDraftPreset(input: DraftPresetEditPayload): Promise<DraftPresetSummary>
   saveDraftPreset(input: DraftPresetEditPayload): Promise<DraftPresetSummary>
   validateDraftPreset(input: ValidateDraftPresetInput): Promise<ValidateDraftPresetResult>
+  repairInvalidDraft(input: RepairInvalidDraftInput): Promise<void>
   publishValidatedPreset(
     input: PublishValidatedPresetInput,
   ): Promise<PublishValidatedPresetResult>
@@ -101,6 +105,16 @@ class DefaultPresetAuthoringService implements PresetAuthoringService {
         parsedInput,
         validateDraftPresetResultSchema.parse(response),
       )
+    } catch (error) {
+      throw normalizeHostError(error)
+    }
+  }
+
+  async repairInvalidDraft(input: RepairInvalidDraftInput) {
+    const parsedInput = repairInvalidDraftInputSchema.parse(input)
+
+    try {
+      await this.gateway.repairInvalidDraft(parsedInput)
     } catch (error) {
       throw normalizeHostError(error)
     }
@@ -324,6 +338,7 @@ function buildBrowserWorkspace(): AuthoringWorkspaceResult {
     drafts: [...store.drafts].sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     ),
+    invalidDrafts: [],
   }
 }
 
@@ -363,6 +378,14 @@ function buildHostValidationUnavailableError(): HostErrorEnvelope {
     code: 'host-unavailable',
     message:
       'booth compatibility 검증은 authoring host에서만 실행할 수 있어요. 브라우저 미리보기에서는 approval 준비 상태를 계산하지 않아요.',
+  }
+}
+
+function buildHostInvalidDraftRepairUnavailableError(): HostErrorEnvelope {
+  return {
+    code: 'host-unavailable',
+    message:
+      '손상 draft 정리는 authoring host에서만 실행할 수 있어요. 브라우저 미리보기에서는 저장 기록을 정리하지 않아요.',
   }
 }
 
@@ -437,6 +460,10 @@ export function createBrowserPresetAuthoringGateway(): PresetAuthoringGateway {
 
       throw buildHostValidationUnavailableError()
     },
+    async repairInvalidDraft(input) {
+      void input
+      throw buildHostInvalidDraftRepairUnavailableError()
+    },
     async publishValidatedPreset(input) {
       const store = getBrowserDraftStore()
       const existingDraft = store.drafts.find((draft) => draft.presetId === input.presetId)
@@ -473,6 +500,9 @@ export function createTauriPresetAuthoringGateway(): PresetAuthoringGateway {
     },
     async validateDraftPreset(input) {
       return invoke<unknown>('validate_draft_preset', { input })
+    },
+    async repairInvalidDraft(input) {
+      return invoke<unknown>('repair_invalid_draft', { input })
     },
     async publishValidatedPreset(input) {
       return invoke<unknown>('publish_validated_preset', { input })

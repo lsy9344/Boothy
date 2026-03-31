@@ -905,11 +905,109 @@ describe('SessionProvider', () => {
 
     await waitFor(() => {
       expect(latestState!.sessionDraft.flowStep).toBe('capture')
+      expect(latestState!.isRequestingCapture).toBe(false)
       expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
         primaryAction: 'wait',
         customerState: 'Preparing',
         canCapture: false,
         reasonCode: 'camera-preparing',
+      })
+    })
+  })
+
+  it('applies retryable capture guidance and clears loading when the host reports a capture-start timeout', async () => {
+    let latestState: SessionStateContextValue | null = null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        },
+      })
+
+    const captureRuntimeService = createCaptureRuntimeService({
+      gateway: {
+        getCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
+          .mockResolvedValue(createReadinessSnapshot()),
+        requestCapture: vi
+          .fn<CaptureRuntimeGateway['requestCapture']>()
+          .mockRejectedValue({
+            code: 'capture-not-ready',
+            message: '사진을 아직 찍지 못했어요.',
+            readiness: {
+              sessionId,
+              customerState: 'Preparing',
+              canCapture: false,
+              primaryAction: 'wait',
+              customerMessage: '사진을 아직 찍지 못했어요.',
+              supportMessage: '대상을 다시 맞춘 뒤 잠시 후 다시 시도해 주세요.',
+              reasonCode: 'capture-retry-required',
+            },
+          }),
+        subscribeToCaptureReadiness: vi
+          .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
+          .mockResolvedValue(() => undefined),
+      },
+    })
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await expect(
+        latestState!.requestCapture({
+          sessionId,
+        }),
+      ).rejects.toMatchObject({
+        code: 'capture-not-ready',
+        readiness: {
+          primaryAction: 'wait',
+          customerState: 'Preparing',
+          reasonCode: 'capture-retry-required',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.isRequestingCapture).toBe(false)
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        primaryAction: 'wait',
+        customerState: 'Preparing',
+        canCapture: false,
+        reasonCode: 'capture-retry-required',
       })
     })
   })

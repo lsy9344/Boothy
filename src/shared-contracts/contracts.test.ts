@@ -26,6 +26,7 @@ import {
   presetCatalogResultSchema,
   presetLifecycleStateSchema,
   presetSelectionInputSchema,
+  repairInvalidDraftInputSchema,
   rollbackPresetCatalogInputSchema,
   rollbackPresetCatalogResultSchema,
   publishValidatedPresetInputSchema,
@@ -203,6 +204,12 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
       detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
       observedAt: '2026-03-26T00:10:01.000Z',
     },
+    cameraConnection: {
+      state: 'connected',
+      title: '카메라와 helper 연결이 확인됐어요.',
+      detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+      observedAt: '2026-03-26T00:10:00.000Z',
+    },
     captureBoundary: {
       status: 'clear',
       title: '캡처 경계 정상',
@@ -257,6 +264,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       title: '프리뷰/렌더 결과 준비 지연',
       detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
       observedAt: '2026-03-26T00:10:01.000Z',
+    },
+    cameraConnection: {
+      state: 'connected',
+      title: '카메라와 helper 연결이 확인됐어요.',
+      detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+      observedAt: '2026-03-26T00:10:00.000Z',
     },
     captureBoundary: {
       status: 'clear',
@@ -544,6 +557,7 @@ describe('shared contracts baseline', () => {
     )
 
     expect(parsed.blockedStateCategory).toBe('preview-render-blocked')
+    expect(parsed.cameraConnection.state).toBe('connected')
     expect(parsed.previewRenderBoundary.status).toBe('blocked')
     expect(parsed.recentFailure?.title).toBe('프리뷰/렌더 결과 준비 지연')
     expect(parsed.liveCaptureTruth?.cameraState).toBe('ready')
@@ -556,6 +570,11 @@ describe('shared contracts baseline', () => {
     expect(() =>
       operatorSessionSummarySchema.parse(
         createOperatorSessionSummary({
+          cameraConnection: {
+            state: 'camera-ready',
+            title: '카메라 준비 완료',
+            detail: '잘못된 상태예요.',
+          },
           recentFailure: {
             title: 'render stderr',
             detail: '',
@@ -723,9 +742,27 @@ describe('shared contracts baseline', () => {
       schemaVersion: 'preset-authoring-workspace/v1',
       supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
       drafts: [],
+      invalidDrafts: [
+        {
+          draftFolder: 'preset_broken-draft',
+          message: '저장된 draft JSON 형식이 손상되어 작업공간에서 열 수 없어요.',
+          guidance:
+            '목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요.',
+          canRepair: true,
+        },
+      ],
     })
 
     expect(parsedWorkspace.supportedLifecycleStates).toContain('approved')
+    expect(parsedWorkspace.invalidDrafts).toHaveLength(1)
+    expect(parsedWorkspace.invalidDrafts[0]?.canRepair).toBe(true)
+    expect(
+      repairInvalidDraftInputSchema.parse({
+        draftFolder: 'preset_broken-draft',
+      }),
+    ).toEqual({
+      draftFolder: 'preset_broken-draft',
+    })
 
     expect(() =>
       draftPresetEditPayloadSchema.parse({

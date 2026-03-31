@@ -3,6 +3,8 @@ import type {
   OperatorAuditQueryResult,
   OperatorBlockedStateCategory,
   OperatorBoundarySummary,
+  OperatorCameraConnectionState,
+  OperatorCameraConnectionSummary,
   OperatorRecoveryAction,
   OperatorRecoverySummary,
 } from '../../shared-contracts'
@@ -126,6 +128,20 @@ function formatPostEndState(value: string | null | undefined) {
 
 function formatBoundaryStatus(boundary: OperatorBoundarySummary) {
   return boundary.status === 'blocked' ? 'blocked' : 'clear'
+}
+
+function formatCameraConnectionStateLabel(state: OperatorCameraConnectionState) {
+  switch (state) {
+    case 'disconnected':
+      return '미연결'
+    case 'connecting':
+      return '연결 중'
+    case 'connected':
+      return '연결됨'
+    case 'recovery-required':
+    default:
+      return '복구 필요'
+  }
 }
 
 function formatBlockedCategory(category: OperatorRecoverySummary['blockedCategory']) {
@@ -382,6 +398,38 @@ function BoundaryCard({
   )
 }
 
+function CameraConnectionCard({
+  cameraConnection,
+}: {
+  cameraConnection: OperatorCameraConnectionSummary
+}) {
+  return (
+    <article className="surface-card operator-console__camera-card">
+      <div className="operator-console__section-header">
+        <div>
+          <p className="operator-console__section-label">Camera Connection</p>
+          <h2>카메라 연결 상태</h2>
+        </div>
+        <p
+          className={`operator-console__camera-badge operator-console__camera-badge--${cameraConnection.state}`}
+        >
+          {formatCameraConnectionStateLabel(cameraConnection.state)}
+        </p>
+      </div>
+      <div className="operator-console__callout">
+        <p className="operator-console__callout-title">{cameraConnection.title}</p>
+        <p>{cameraConnection.detail}</p>
+        {cameraConnection.observedAt === null ||
+        cameraConnection.observedAt === undefined ? null : (
+          <p className="operator-console__meta">
+            Observed At: {formatFieldValue(cameraConnection.observedAt)}
+          </p>
+        )}
+      </div>
+    </article>
+  )
+}
+
 function SessionFacts({ summary }: { summary: OperatorRecoverySummary }) {
   return (
     <article className="surface-card operator-console__section">
@@ -629,6 +677,7 @@ export function OperatorSummaryScreen() {
           <>
             {summary.state === 'session-loaded' ? (
               <>
+                <CameraConnectionCard cameraConnection={summary.cameraConnection} />
                 <SessionFacts summary={summary} />
                 <RecentFailureCard summary={summary} />
                 <ActionPanel
@@ -653,6 +702,10 @@ export function OperatorSummaryScreen() {
                 </p>
               </article>
             )}
+
+            {summary.state === 'no-session' ? (
+              <CameraConnectionCard cameraConnection={summary.cameraConnection} />
+            ) : null}
 
             <section className="operator-console__boundary-grid">
               <BoundaryCard

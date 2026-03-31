@@ -52,6 +52,12 @@ function buildCameraStatus(
         detail: '카메라 연결 또는 초기화가 끝나면 자동으로 촬영 가능 상태로 바뀌어요.',
         tone: 'neutral' as const,
       }
+    case 'capture-retry-required':
+      return {
+        label: '다시 확인 중',
+        detail: input.supportMessage,
+        tone: 'neutral' as const,
+      }
     case 'phone-required':
       return {
         label: '직원 확인 필요',

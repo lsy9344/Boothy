@@ -2,6 +2,8 @@ import type {
   SessionPostEndRecord,
   SessionTimingSnapshot,
 } from '../../shared-contracts'
+import { HandoffReadyPanel } from '../components/HandoffReadyPanel'
+import { PhoneRequiredSupportCard } from '../components/PhoneRequiredSupportCard'
 import { SessionTimingPanel } from '../../timing-policy/components/SessionTimingPanel'
 
 type ReadinessScreenProps = {
@@ -42,10 +44,22 @@ export function ReadinessScreen({
   const shouldHidePrimaryAction =
     postEndGuidance?.state === 'completed' ||
     postEndGuidance?.state === 'phone-required'
+  const shouldHideTimingPanel =
+    postEndGuidance?.state === 'completed' ||
+    postEndGuidance?.state === 'phone-required' ||
+    (isExplicitPostEnd && timing !== null && timing.phase === 'ended')
+  const shouldShowHandoffReadyPanel =
+    postEndGuidance?.state === 'completed' &&
+    postEndGuidance.completionVariant === 'handoff-ready'
+  const shouldShowPhoneRequiredSupportCard =
+    postEndGuidance?.state === 'phone-required'
+  const currentLookDetail = shouldHidePrimaryAction
+    ? '이번 세션에서 사용된 룩이 그대로 반영돼요.'
+    : '지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요.'
 
   return (
     <>
-      {timing !== null && !(isExplicitPostEnd && timing.phase === 'ended') ? (
+      {timing !== null && !shouldHideTimingPanel ? (
         <SessionTimingPanel timing={timing} canCapture={canCapture} />
       ) : null}
 
@@ -57,7 +71,7 @@ export function ReadinessScreen({
         <div>
           <h2>현재 룩</h2>
           <p>{selectedPresetName ?? '선택 대기 중'}</p>
-          <p>지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요.</p>
+          <p>{currentLookDetail}</p>
         </div>
         <div className="readiness-screen__camera-status">
           <h2>카메라 상태</h2>
@@ -71,9 +85,17 @@ export function ReadinessScreen({
       </article>
 
       <article className="surface-card readiness-screen__action-card">
-        {isExplicitPostEnd ? (
+        {shouldShowHandoffReadyPanel ? (
+          <HandoffReadyPanel boothAlias={boothAlias} guidance={postEndGuidance} />
+        ) : shouldShowPhoneRequiredSupportCard ? (
+          <PhoneRequiredSupportCard guidance={postEndGuidance} />
+        ) : isExplicitPostEnd ? (
           <div
-            className="readiness-screen__post-end"
+            className={`readiness-screen__post-end${
+              postEndGuidance?.state === 'phone-required'
+                ? ' readiness-screen__post-end--phone-required'
+                : ''
+            }`}
           >
             <p className="readiness-screen__post-end-label">{stateLabel}</p>
           </div>

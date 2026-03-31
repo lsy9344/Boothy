@@ -109,6 +109,9 @@ export function LatestPhotoRail({
               <SessionPreviewImage
                 assetPath={preview.assetPath}
                 alt={buildPreviewAltText(preview, index + 1)}
+                captureId={preview.captureId}
+                readyAtMs={preview.readyAtMs}
+                isLatest={preview.isLatest}
               />
               <figcaption>
                 촬영 당시{' '}

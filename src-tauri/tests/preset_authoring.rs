@@ -12,17 +12,19 @@ use boothy_lib::{
     contracts::dto::{
         DraftNoisePolicyDto, DraftPresetEditPayloadDto, DraftPresetPreviewReferenceDto,
         DraftRenderProfileDto, LoadPresetCatalogInputDto, PresetCatalogStateResultDto,
-        PresetSelectionInputDto, PublishValidatedPresetInputDto, PublishValidatedPresetResultDto,
-        RollbackPresetCatalogInputDto, RollbackPresetCatalogResultDto, SessionStartInputDto,
-        ValidateDraftPresetInputDto,
+        PresetPublicationAuditRecordDto, PresetSelectionInputDto, PublishValidatedPresetInputDto,
+        PublishValidatedPresetResultDto, RepairInvalidDraftInputDto, RollbackPresetCatalogInputDto,
+        RollbackPresetCatalogResultDto, SessionStartInputDto, ValidateDraftPresetInputDto,
     },
     preset::{
         authoring_pipeline::{
             create_draft_preset_in_dir, ensure_authoring_window_label,
             load_authoring_workspace_in_dir, publish_validated_preset_in_dir,
-            resolve_draft_authoring_root, save_draft_preset_in_dir, validate_draft_preset_in_dir,
+            repair_invalid_draft_in_dir, resolve_draft_authoring_root, save_draft_preset_in_dir,
+            validate_draft_preset_in_dir,
         },
         default_catalog::ensure_default_preset_catalog_in_dir,
+        preset_bundle::load_published_preset_runtime_bundle,
         preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
         preset_catalog_state::{load_preset_catalog_state_in_dir, rollback_preset_catalog_in_dir},
     },
@@ -269,6 +271,38 @@ fn draft_validation_rejects_history_markers_hidden_inside_comments() {
 
     assert_eq!(result.report.status, "failed");
     assert!(result
+        .report
+        .findings
+        .iter()
+        .any(|finding| finding.rule_code == "render-compatibility-check"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn draft_validation_accepts_standard_darktable_sidecar_history_entries() {
+    let base_dir = unique_test_root("standard-darktable-sidecar");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_standard_darktable_sidecar_assets(&base_dir, "preset_soft-glow-draft");
+
+    let result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should return a report");
+
+    assert_eq!(result.report.status, "passed");
+    assert_eq!(result.draft.lifecycle_state, "validated");
+    assert!(!result
         .report
         .findings
         .iter()
@@ -603,6 +637,255 @@ fn authoring_workspace_skips_persisted_drafts_with_mismatched_latest_validation_
 }
 
 #[test]
+fn malformed_persisted_draft_returns_actionable_repair_guidance_during_validation() {
+    let base_dir = unique_test_root("malformed-validate-guidance");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+
+    let draft_path = resolve_draft_authoring_root(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join("draft.json");
+    fs::write(&draft_path, "{ not-valid-json").expect("corrupt draft should write");
+
+    let error = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect_err("corrupted persisted draft should surface repair guidance");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("손상"));
+    assert!(error.message.contains("다시 저장") || error.message.contains("새 draft"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn authoring_workspace_surfaces_corrupted_drafts_as_repair_needed_entries() {
+    let base_dir = unique_test_root("workspace-invalid-draft");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+
+    let broken_draft_dir = resolve_draft_authoring_root(&base_dir).join("preset_broken-draft");
+    fs::create_dir_all(&broken_draft_dir).expect("broken draft directory should exist");
+    fs::write(broken_draft_dir.join("draft.json"), "{ not-valid-json")
+        .expect("broken draft should write");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still load with repair-needed entries");
+
+    assert_eq!(workspace.drafts.len(), 1);
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert_eq!(
+        workspace.invalid_drafts[0].draft_folder,
+        "preset_broken-draft"
+    );
+    assert!(workspace.invalid_drafts[0].message.contains("손상"));
+    assert!(workspace.invalid_drafts[0].guidance.contains("새 draft"));
+    assert!(workspace.invalid_drafts[0].can_repair);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn repairing_invalid_draft_preserves_publication_history_and_allows_recreation() {
+    let base_dir = unique_test_root("repair-invalid-draft");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    let broken_draft_dir = resolve_draft_authoring_root(&base_dir).join("preset_broken-draft");
+    let audit_path = base_dir
+        .join("preset-authoring")
+        .join("publication-audit")
+        .join("preset_broken-draft.json");
+    let audit_history = vec![PresetPublicationAuditRecordDto {
+        schema_version: "preset-publication-audit/v1".into(),
+        preset_id: "preset_broken-draft".into(),
+        draft_version: 3,
+        published_version: "2026.03.26".into(),
+        actor_id: "manager-noah".into(),
+        actor_label: "Noah Lee".into(),
+        review_note: Some("이전 거절 이력 보존".into()),
+        action: "rejected".into(),
+        reason_code: Some("stale-validation".into()),
+        guidance: "최신 검증을 다시 실행해 주세요.".into(),
+        noted_at: "2026-03-26T09:30:00+09:00".into(),
+    }];
+
+    fs::create_dir_all(&broken_draft_dir).expect("broken draft directory should exist");
+    fs::write(broken_draft_dir.join("draft.json"), "{ not-valid-json")
+        .expect("broken draft should write");
+    fs::create_dir_all(audit_path.parent().expect("audit directory should exist"))
+        .expect("audit directory should exist");
+    fs::write(
+        &audit_path,
+        serde_json::to_vec_pretty(&audit_history).expect("audit history should serialize"),
+    )
+    .expect("audit file should write");
+
+    repair_invalid_draft_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RepairInvalidDraftInputDto {
+            draft_folder: "preset_broken-draft".into(),
+        },
+    )
+    .expect("invalid draft repair should succeed");
+
+    assert!(!broken_draft_dir.exists());
+    assert!(audit_path.exists());
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should load after repair");
+    assert!(workspace.invalid_drafts.is_empty());
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_broken-draft", "Broken Draft Recreated"),
+    )
+    .expect("same preset id should be reusable after repair");
+    let recreated_workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should reload with preserved publication history");
+    assert_eq!(recreated_workspace.drafts.len(), 1);
+    assert_eq!(
+        recreated_workspace.drafts[0].publication_history.len(),
+        audit_history.len()
+    );
+    assert_eq!(
+        recreated_workspace.drafts[0].publication_history[0].action,
+        "rejected"
+    );
+    assert_eq!(
+        recreated_workspace.drafts[0].publication_history[0]
+            .review_note
+            .as_deref(),
+        Some("이전 거절 이력 보존")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn repairing_a_valid_draft_is_rejected() {
+    let base_dir = unique_test_root("repair-valid-draft");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+
+    let error = repair_invalid_draft_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RepairInvalidDraftInputDto {
+            draft_folder: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect_err("valid drafts should not be removable via invalid-draft repair");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("정상 draft"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn mismatched_folder_name_requires_manual_inspection_instead_of_auto_repair() {
+    let base_dir = unique_test_root("repair-folder-mismatch");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    let original_draft_dir = resolve_draft_authoring_root(&base_dir).join("preset_soft-glow-draft");
+    let draft_dir = resolve_draft_authoring_root(&base_dir).join("preset_folder-mismatch");
+    fs::rename(&original_draft_dir, &draft_dir).expect("draft directory should be renamed");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still load");
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert!(!workspace.invalid_drafts[0].can_repair);
+    assert!(workspace.invalid_drafts[0].guidance.contains("수동 점검"));
+
+    let error = repair_invalid_draft_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RepairInvalidDraftInputDto {
+            draft_folder: "preset_folder-mismatch".into(),
+        },
+    )
+    .expect_err("folder mismatch should require manual inspection");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("수동 점검"));
+    assert!(draft_dir.exists());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn malicious_preset_id_does_not_escape_publication_audit_root() {
+    let base_dir = unique_test_root("malicious-preset-id");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+
+    let draft_path = resolve_draft_authoring_root(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join("draft.json");
+    let mut persisted_draft: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&draft_path).expect("draft should exist"))
+            .expect("draft json should deserialize");
+    persisted_draft["presetId"] = serde_json::Value::String("../outside".into());
+    fs::write(
+        &draft_path,
+        serde_json::to_vec_pretty(&persisted_draft).expect("draft should serialize"),
+    )
+    .expect("draft should write");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still load");
+    assert_eq!(workspace.drafts.len(), 0);
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert!(!workspace.invalid_drafts[0].can_repair);
+
+    let error = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect_err("malicious preset id should be rejected before audit path lookup");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("손상") || error.message.contains("다시 저장"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn validated_draft_publishes_an_immutable_bundle_and_future_sessions_can_select_it() {
     let base_dir = unique_test_root("publish-success");
     let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
@@ -816,6 +1099,45 @@ fn default_catalog_bootstrap_does_not_overwrite_existing_published_presets() {
 
     assert_eq!(catalog.presets.len(), 1);
     assert_eq!(catalog.presets[0].preset_id, "preset_custom");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn default_catalog_bootstrap_upgrades_legacy_default_seed_bundles_for_runtime_rendering() {
+    let base_dir = unique_test_root("default-catalog-upgrade-legacy");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let bundle_dir = catalog_root.join("preset_daylight").join("2026.03.27");
+    fs::create_dir_all(&bundle_dir).expect("legacy bundle directory should exist");
+    fs::write(bundle_dir.join("preview.svg"), "<svg/>").expect("preview should exist");
+    fs::write(
+        bundle_dir.join("bundle.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "published-preset-bundle/v1",
+          "presetId": "preset_daylight",
+          "displayName": "Daylight",
+          "publishedVersion": "2026.03.27",
+          "lifecycleStatus": "published",
+          "boothStatus": "booth-safe",
+          "preview": {
+            "kind": "preview-tile",
+            "assetPath": "preview.svg",
+            "altText": "Daylight preview"
+          }
+        }))
+        .expect("legacy bundle should serialize"),
+    )
+    .expect("legacy bundle should be writable");
+
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("legacy default bundle should be upgraded for runtime rendering");
+
+    let runtime_bundle = load_published_preset_runtime_bundle(&bundle_dir)
+        .expect("upgraded default bundle should be runtime-loadable");
+
+    assert_eq!(runtime_bundle.preset_id, "preset_daylight");
+    assert_eq!(runtime_bundle.darktable_version, "5.4.1");
+    assert!(runtime_bundle.xmp_template_path.is_file());
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1498,6 +1820,35 @@ fn scaffold_invalid_render_assets(base_dir: &Path, preset_id: &str) {
     fs::write(
         draft_root.join("xmp/soft-glow.xmp"),
         "incompatible xmp payload",
+    )
+    .expect("xmp should write");
+    fs::write(draft_root.join("previews/soft-glow.jpg"), "preview").expect("preview should write");
+    fs::write(draft_root.join("samples/soft-glow-cut.jpg"), "sample").expect("sample should write");
+}
+
+fn scaffold_standard_darktable_sidecar_assets(base_dir: &Path, preset_id: &str) {
+    let draft_root = resolve_draft_authoring_root(base_dir).join(preset_id);
+
+    fs::create_dir_all(draft_root.join("darktable")).expect("darktable directory should exist");
+    fs::create_dir_all(draft_root.join("xmp")).expect("xmp directory should exist");
+    fs::create_dir_all(draft_root.join("previews")).expect("preview directory should exist");
+    fs::create_dir_all(draft_root.join("samples")).expect("sample directory should exist");
+    fs::write(draft_root.join("darktable/soft-glow.dtpreset"), "project")
+        .expect("project should write");
+    fs::write(
+        draft_root.join("xmp/soft-glow.xmp"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:darktable="http://darktable.sf.net/">
+      <darktable:history>
+        <rdf:Seq>
+          <rdf:li darktable:operation="exposure" />
+        </rdf:Seq>
+      </darktable:history>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"#,
     )
     .expect("xmp should write");
     fs::write(draft_root.join("previews/soft-glow.jpg"), "preview").expect("preview should write");

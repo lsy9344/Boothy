@@ -6,7 +6,10 @@ use std::{
 
 use boothy_lib::{
     contracts::dto::{LoadPresetCatalogInputDto, PresetSelectionInputDto, SessionStartInputDto},
-    preset::preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
+    preset::{
+        preset_bundle::load_published_preset_runtime_bundle,
+        preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
+    },
     session::{
         session_manifest::{
             build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
@@ -972,6 +975,83 @@ fn selecting_a_preset_for_a_missing_session_reports_session_not_found_first() {
 }
 
 #[test]
+fn published_runtime_bundle_loader_reads_render_critical_metadata() {
+    let base_dir = unique_test_root("published-runtime-bundle");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+
+    let bundle = load_published_preset_runtime_bundle(
+        &catalog_root.join("preset_soft-glow").join("2026.03.20"),
+    )
+    .expect("runtime bundle should load");
+
+    assert_eq!(bundle.preset_id, "preset_soft-glow");
+    assert_eq!(bundle.published_version, "2026.03.20");
+    assert_eq!(bundle.darktable_version, "5.4.1");
+    assert!(bundle.xmp_template_path.is_file());
+    assert_eq!(bundle.preview_profile.output_color_space, "sRGB");
+    assert_eq!(bundle.final_profile.output_color_space, "sRGB");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn published_runtime_bundle_loader_accepts_legacy_bundles_without_render_profiles() {
+    let base_dir = unique_test_root("published-runtime-bundle-legacy");
+    let bundle_dir = resolve_published_preset_catalog_dir(&base_dir)
+        .join("preset_test-look")
+        .join("2026.03.31");
+    fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should exist");
+    fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should write");
+    fs::write(bundle_dir.join("xmp").join("test-look.xmp"), b"<xmp/>")
+        .expect("xmp template should write");
+    fs::write(
+        bundle_dir.join("bundle.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "published-preset-bundle/v1",
+          "presetId": "preset_test-look",
+          "displayName": "Test Look",
+          "publishedVersion": "2026.03.31",
+          "lifecycleStatus": "published",
+          "boothStatus": "booth-safe",
+          "darktableVersion": "5.4.1",
+          "darktableProjectPath": "darktable/test-look.dtpreset",
+          "xmpTemplatePath": "xmp/test-look.xmp",
+          "preview": {
+            "kind": "preview-tile",
+            "assetPath": "preview.jpg",
+            "altText": "Test Look preview"
+          }
+        }))
+        .expect("legacy bundle should serialize"),
+    )
+    .expect("legacy bundle should write");
+
+    let bundle = load_published_preset_runtime_bundle(&bundle_dir)
+        .expect("legacy runtime bundle should load with default render profiles");
+
+    assert_eq!(
+        bundle.preview_profile.profile_id,
+        "preset_test-look-preview"
+    );
+    assert_eq!(bundle.final_profile.profile_id, "preset_test-look-final");
+    assert_eq!(bundle.preview_profile.output_color_space, "sRGB");
+    assert_eq!(bundle.final_profile.output_color_space, "sRGB");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn published_preset_catalog_skips_malformed_bundle_fields_without_failing_the_whole_catalog() {
     let base_dir = unique_test_root("preset-catalog-malformed-fields");
     let session = start_session_in_dir(
@@ -1257,10 +1337,26 @@ fn create_published_bundle(
 ) {
     let bundle_dir = catalog_root.join(preset_id).join(directory_version);
     fs::create_dir_all(&bundle_dir).expect("bundle directory should be creatable");
+    fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should be creatable");
 
     if with_preview {
         fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should be written");
     }
+    fs::write(
+        bundle_dir.join("xmp").join("template.xmp"),
+        format!(
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+                "<rdf:Description xmlns:darktable=\"http://darktable.sf.net/\">",
+                "<darktable:history><rdf:Seq><rdf:li><darktable:module>{preset_id}</darktable:module></rdf:li></rdf:Seq></darktable:history>",
+                "</rdf:Description></rdf:RDF></x:xmpmeta>"
+            ),
+            preset_id = preset_id
+        ),
+    )
+    .expect("xmp template should be written");
 
     let published_version = manifest_version_override.unwrap_or(directory_version);
     let preview_asset_path = preview_asset_path_override.unwrap_or("preview.jpg");
@@ -1271,6 +1367,18 @@ fn create_published_bundle(
       "publishedVersion": published_version,
       "lifecycleStatus": lifecycle_status,
       "boothStatus": "booth-safe",
+      "darktableVersion": "5.4.1",
+      "xmpTemplatePath": "xmp/template.xmp",
+      "previewProfile": {
+        "profileId": format!("{preset_id}-preview"),
+        "displayName": format!("{display_name} Preview"),
+        "outputColorSpace": "sRGB",
+      },
+      "finalProfile": {
+        "profileId": format!("{preset_id}-final"),
+        "displayName": format!("{display_name} Final"),
+        "outputColorSpace": "sRGB",
+      },
       "preview": {
         "kind": "preview-tile",
         "assetPath": preview_asset_path,

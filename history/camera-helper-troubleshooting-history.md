@@ -258,6 +258,69 @@
   - `Windows/Sample/VC/MultiCamCui/...`
 - 즉 현재 `Preparing` 현상은 "SDK 파일이 없어서 helper가 거짓 준비 상태가 된다" 쪽과는 분리해서 봐야 한다.
 
+### 11. 2026-03-31 추가 확인: 초점 실패성 셔터 오류가 `Phone Required`를 남긴 채 회복되는 사례
+
+- 최신 재현 세션 `session_000000000018a1f048a428ef78`에서 첫 촬영은 성공했고, 두 번째 촬영만 실패했다.
+- 해당 세션의 `camera-helper-events.jsonl`에는 아래 순서가 남아 있었다.
+  - 첫 요청: `capture-accepted -> file-arrived`
+  - 두 번째 요청: `capture-accepted -> recovery-status(detailCode=capture-trigger-failed) -> helper-error(detailCode=capture-trigger-failed, message=0x00008d01)`
+- Canon SDK vendor header 기준 `0x00008d01`은 `EDS_ERR_TAKE_PICTURE_AF_NG`로, 초점을 잡지 못해 셔터를 시작하지 못한 경우다.
+- 실패 직후 helper 최종 status는 다시 `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`로 회복했다.
+- 그런데 host manifest는 이미 `phone-required`로 저장돼 있었고, 이후 고객 화면도 계속 `Phone Required`에 머물렀다.
+
+해석:
+
+- 이번 남은 본문제는 `capture-start-timeout`이 아니라, **초점 실패성 `capture-trigger-failed`를 host가 치명 오류로 저장한 경로**였다.
+- 즉 helper live truth는 회복됐지만, 세션 lifecycle이 먼저 `phone-required`로 잠겨 화면이 풀리지 않았다.
+
+이번 회차 수정 원칙:
+
+- helper는 `AF_NG(0x00008d01)`를 `capture-focus-not-locked` 재시도 가능 오류로 내린다.
+- host는 `capture-focus-not-locked`, `camera-busy`, 그리고 legacy `capture-trigger-failed + 0x00008d01` 흔적을 `Phone Required`가 아닌 재시도 상태로 해석한다.
+- 이미 이전 버전이 남긴 `phone-required` manifest라도, 같은 세션 helper truth가 다시 `fresh/matched/ready/healthy`이면 촬영 가능 stage로 복구한다.
+
+### 12. 2026-03-31 추가 확인: 성공 촬영이 `현재 세션 사진`에 반영되지 않는 저장 경계
+
+- 최신 세션 `session_000000000018a1f147327c30ec`에서는 초점 실패 두 번 뒤 실제 성공 촬영이 두 번 있었다.
+- 같은 세션의 helper evidence는 정상이다.
+  - `capture-accepted -> file-arrived`가 두 번 이어졌다.
+  - `captures/originals/` 아래 실제 `.CR2` 파일도 두 개 생성됐다.
+- 그런데 같은 시점 `session.json`은 끝까지 `captures: []`, `lifecycle.stage: preset-selected`로 남았다.
+- customer 화면도 `Ready`를 계속 유지해, 사용자는 실제 촬영이 됐는데 현재 세션 사진에는 아무 결과가 안 올라오는 상태를 보게 됐다.
+
+해석:
+
+- 이번 남은 문제는 helper capture나 초점 상태가 아니라, **host가 성공 촬영을 session manifest에 반영하는 저장 경계**다.
+- 코드상 가장 의심되는 경로는 Windows에서 `session.json -> .bak/.tmp` 원자 교체를 하는 동안 readiness polling/read가 계속 붙어 manifest write가 깨지는 경우다.
+- 이 경우 helper와 RAW 파일은 정상이어도, 세션 결과와 화면 반영은 비게 된다.
+
+이번 회차 수정 원칙:
+
+- `write_session_manifest(...)`는 Windows sharing/rename race에 대해 짧은 retry budget을 둔다.
+- `file-arrived`까지 성공한 촬영은 retry budget 안에서 반드시 session manifest에 연결되게 한다.
+- 그래도 persist가 끝까지 실패하면, 고객 화면이 조용히 `Ready`로 남지 않게 명시적 보호 상태로 올린다.
+- capture command 로그에 `capture_request_saved`, `capture_persist_failed`, `capture_preview_ready` 같은 저장 경계 로그를 남긴다.
+
+### 13. 2026-03-31 추가 확인: 앱이 혼자 껐다 켜지는 것처럼 보인 현상은 `tauri dev` watcher 재실행이었다
+
+- 사용자 제보 기준으로는 "빌드 후 가만히 있었는데 앱이 스스로 껐다 켜졌다"처럼 보였다.
+- 실제 dev 로그를 보면 런타임 crash loop보다 아래 순서에 가까웠다.
+  - Rust compile error가 발생했다.
+  - 그 상태에서 `tauri dev`가 `src-tauri/tests/...`, `src-tauri/src/...` 파일 변경을 계속 감지했다.
+  - watcher가 매번 `cargo run`을 다시 호출하면서 `target/debug/boothy.exe`를 반복 재실행했다.
+- 즉 이번 현상은 고객용 앱 재시작 로직이 아니라, **개발 watcher가 repo 변경을 따라가며 앱을 다시 띄운 것**이다.
+
+이번 회차 보완:
+
+- Rust 코드는 현재 stable toolchain에서 바로 컴파일되도록 2024 전용 `let chain` 문법을 제거했다.
+- 개발 검증용으로 `pnpm run dev:desktop:stable` 스크립트를 추가했다.
+- 이 스크립트는 `pnpm tauri dev --no-watch`를 사용하므로, 테스트 파일이나 히스토리 문서 변경 때문에 앱이 재실행되지 않는다.
+
+운영 메모:
+
+- 런타임 behavior만 검증할 때는 `pnpm run dev:desktop:stable`를 우선 사용한다.
+- `pnpm tauri dev`는 코드 편집과 함께 볼 때만 쓰고, 테스트 실행/문서 수정과 병행하면 "앱이 스스로 재시작한다"처럼 보일 수 있다.
+
 ### 11. 2026-03-28 추가 확인: 프런트 계약 스키마가 helper `observedAt` offset 시간을 거부하고 있었다
 
 - 사용자가 제공한 최신 로그에서, host는 이미 같은 session에 대해 `customer_state=Ready reason_code=ready can_capture=true`를 반복 계산하고 있었다.
@@ -714,3 +777,85 @@ dotnet publish sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -c Releas
 6. 수정 후에는 Rust test, targeted vitest, helper publish까지 최소 세 축을 확인한다.
 
 이 순서를 건너뛰고 추정부터 시작하면 다시 같은 삽질을 반복할 가능성이 높다.
+
+## 2026-04-01 00:03 +09:00 후속 정정: 이번 `Phone Required`는 helper readiness가 아니라 preview render bundle 호환성 문제였다
+
+- 실제 최신 재현 session은 `%LOCALAPPDATA%\com.tauri.dev\booth-runtime`가 아니라
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1f4e305186810` 에 있었다.
+- 그 session의 helper 진단은 정상으로 닫혔다.
+  - `camera-helper-events.jsonl`: `capture-accepted` -> `file-arrived`
+  - `camera-helper-status.json`: `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`
+- 그런데 같은 session의 `session.json`은 `renderStatus=renderFailed`, `lifecycle.stage=phone-required`였고,
+  `diagnostics/timing-events.log`에는 `render-failed stage=preview reason=bundle-resolution-failed`가 남아 있었다.
+- 즉 고객 화면의 `Phone Required`는 카메라/초점/요청 상관관계 실패가 아니라,
+  촬영 성공 뒤 preview render가 현재 preset bundle을 runtime bundle로 해석하지 못해 올라간 보호 상태였다.
+
+원인:
+
+- 선택된 published preset `preset_test-look@2026.03.31`는 구형 bundle 형식이라
+  `previewProfile` / `finalProfile` 필드가 없었다.
+- 새 render loader가 이 두 필드를 사실상 필수처럼 다루면서 `bundle-resolution-failed`를 냈다.
+
+수정:
+
+- `preset_bundle.rs`에서 legacy published bundle에 render profile 필드가 없어도
+  안전한 기본 preview/final profile을 합성해서 runtime bundle로 로드하도록 호환 경로를 추가했다.
+- `ingest_pipeline.rs`에는
+  - `capture_preview_render_failed`
+  - `capture_final_render_failed`
+  로그를 추가해 다음에는 helper 실패와 render 실패를 바로 구분할 수 있게 했다.
+
+검증:
+
+- `cargo test --test session_manifest --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check`
+- `cargo test --test capture_readiness --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check`
+- 두 테스트 모두 통과했다.
+
+## 2026-04-01 01:18 +09:00 추가 정정: helper 정상인데도 `Phone Required`가 뜨면 기본 preset bundle 업그레이드 누락부터 본다
+
+- 이번 재발의 실제 session은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1f7a4fb1a8a7c` 였다.
+- helper 증거는 여전히 정상으로 닫혔다.
+  - `camera-helper-events.jsonl`: `capture-accepted`, `file-arrived`
+  - `camera-helper-status.json`: `camera-ready`, `healthy`
+- 반면 host 쪽은 `render-failed stage=preview reason=bundle-resolution-failed` 때문에
+  `phone-required`로 보호 상태를 올렸다.
+
+이번에 새로 확인한 핵심:
+
+- 문제 bundle은 custom preset이 아니라 오래된 기본 preset seed였다.
+- `ensure_default_preset_catalog_in_dir()`가
+  "이미 bundle이 있으면 seed bootstrap을 건너뛴다"는 이유로
+  구형 기본 bundle을 최신 runtime render bundle 형식으로 올려주지 못하고 있었다.
+- 따라서 helper 쪽을 아무리 봐도 원인이 안 나오는 케이스였다.
+
+운영 지침 업데이트:
+
+1. helper가 `capture-accepted -> file-arrived`까지 정상이고도 `Phone Required`가 뜨면 helper 디버깅을 더 깊게 파지 않는다.
+2. 같은 session의 `timing-events.log`에서 `render-failed` reason을 먼저 확인한다.
+3. 기본 preset 사용 중이면 `preset-catalog/published/<preset>/<version>/bundle.json`의 runtime render metadata 누락 여부를 먼저 본다.
+4. 누락 시 helper가 아니라 preset bootstrap/backfill 문제로 분류한다.
+
+## 2026-04-01 01:28 +09:00 추가 정정: helper가 정상이고 bundle도 정상인데 `render-cli-missing`이면 darktable PATH 가정 회귀다
+
+- 이번 추가 재발 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1f881d9d4cb74` 였다.
+- helper 관점에서는 여전히 정상으로 닫혔다.
+  - 실제 셔터 동작
+  - `capture-accepted -> file-arrived`
+  - helper truth `fresh:matched:ready:healthy`
+- 그런데 host 로그는 반복해서 아래를 남겼다.
+  - `reason_code=render-cli-missing`
+  - `binary=darktable-cli error=program not found`
+
+이번에 추가로 확인한 핵심:
+
+- 부스 PC에는 실제 `C:\Program Files\darktable\bin\darktable-cli.exe`가 설치돼 있었다.
+- 즉 darktable 자체가 없는 게 아니라, render worker가 PATH 상의 `darktable-cli`만 기대하고 표준 설치 경로를 직접 보지 않는 회귀였다.
+- 이 경우 helper를 계속 파도 답이 안 나온다.
+
+운영 지침 추가:
+
+1. helper evidence가 정상이고 `render-failed` reason이 `render-cli-missing`이면 helper 조사에서 바로 빠진다.
+2. 해당 PC에 darktable가 실제 설치돼 있는지 `Program Files\\darktable\\bin\\darktable-cli.exe`부터 확인한다.
+3. 설치돼 있는데도 실패하면 render worker의 binary resolution regressions로 분류한다.

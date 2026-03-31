@@ -543,3 +543,153 @@ helper:
 이번 이슈의 핵심은 `현재 세션 사진`이 프리셋 문제로 비는 것이 아니라,
 RAW 촬영 뒤 실제 preview raster가 생성되지 않아 `.svg` placeholder가 previewReady로 굳고,
 그 placeholder를 UI가 제대로 표시하지 못하거나 최신 번들이 반영되지 않는 경계에 있다.
+
+## 2026-04-01 00:15 +09:00 후속 메모: 카메라 회귀는 해결됐고, 남은 건 `최근 세션` 이미지 표현 경계다
+
+- 사용자 실기기 재검증 결과:
+  - 초점 실패 뒤에도 다시 `Ready`로 복귀한다.
+  - 같은 세션에서 즉시 재촬영도 가능하다.
+- 즉 이번 시점의 남은 문제는 더 이상 helper readiness나 capture blocking이 아니다.
+
+Story 1.8과의 관계 정리:
+
+- Story 1.8 문서 자체는 아직 `review` 상태지만, 코드 범위는 대부분 이미 반영되어 있다.
+- 특히 문서 기준으로도
+  - published bundle runtime loader
+  - preview/final render worker 연결
+  - `previewReady` / `finalReady` gating
+  - drift protection
+  는 구현 완료로 체크돼 있다.
+- 아직 비어 있는 항목은 "실제 하드웨어에서 서로 다른 preset 두 개로 preview/final 산출물 차이를 canonical evidence로 닫는 검증"이다.
+
+현재 제품 관점 해석:
+
+- 따라서 지금 보이는 `최근 세션 이미지가 제대로 표현되지 않음`을
+  단순히 "Story 1.8이 미구현이라서 생긴 문제"로 단정하면 안 된다.
+- 1.8이 닫는 것은 주로
+  - 선택한 preset이 실제 preview/final 결과물에 반영되는지
+  - false `previewReady` / false `Completed`를 막는지
+  쪽이다.
+- 반면 최근 세션 rail에서 이미지가 보이지 않는 문제는 여전히 아래 경계가 따로 남아 있을 수 있다.
+  - session-scoped asset path sanitizer가 preview path를 제거한 경우
+  - 실제 raster preview 대신 `.svg` placeholder 또는 읽기 불가능한 자산만 남은 경우
+  - Tauri/WebView가 local preview asset을 `<img>`로 못 읽는 경우
+
+현재 판단:
+
+- Story 1.8을 "제대로 구현했다"는 사실만으로 최근 세션 이미지 표시가 자동으로 보장되지는 않는다.
+- 다만 1.8의 하드웨어 close evidence가 확보되면, 적어도 "preview 자체가 selected preset render 결과물인가"에 대한 불확실성은 크게 줄어든다.
+- 이번 증상은 1.8 미구현 여부보다, recent/current session preview rail이 실제 preview asset을 어떻게 읽고 sanitizing하는지 추가 확인이 필요하다.
+
+## 2026-04-01 00:44 +09:00 구현 완료: 최근 세션 이미지 미표시의 직접 원인은 fake `.jpg` render output이었다
+
+이번 회차에서 확인한 직접 원인:
+
+- 현재 Rust render worker는 `darktable-cli` invocation metadata를 텍스트로 조립해
+  `.jpg` 경로에 그대로 기록하고 있었다.
+- 즉 `previewReady`로 보이던 일부 preview asset은
+  - `.svg` placeholder
+  - 또는 확장자만 `.jpg`이고 실제 내용은 이미지가 아닌 텍스트
+  인 상태가 될 수 있었다.
+- 이런 파일은 rail 입장에서는 "path는 있는데 실제 표시할 raster는 없는 것"이어서,
+  최근 세션에서 이미지가 비거나 깨져 보이는 증상과 정확히 맞아떨어졌다.
+
+이번 회차 수정:
+
+- `render/mod.rs`는 이제 실제 `darktable-cli` 프로세스를 실행하고,
+  종료 코드 + 출력 파일 존재 + JPEG 시그니처를 확인한 뒤에만 `previewReady` / `finalReady`를 기록한다.
+- legacy 잘못된 preview truth는 readiness 계산 시 자동 복구한다.
+  - `.svg` placeholder
+  - 파일 없음
+  - 텍스트 `.jpg`
+  같은 preview는 더 이상 ready 근거로 유지하지 않는다.
+- 현재 세션 rail 이미지 컴포넌트는 raster load 실패 시 broken image 대신 booth-safe fallback을 보여준다.
+
+정리된 제품 판단:
+
+- 이번 문제는 단순히 "Story 1.8이 아직 review 상태라서"가 아니라,
+  **render seam이 실제 raster 산출물 기준으로 닫히지 않았던 구현 결손**이 직접 원인이었다.
+- 따라서 이번 수정 이후에는
+  - 새 촬영은 실제 JPEG preview가 생성될 때만 최근 세션에 노출되고
+  - 과거의 잘못된 previewReady도 자동 복구 또는 재렌더 대상이 된다.
+
+검증:
+
+- `cargo test --test capture_readiness --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check`
+- `cargo test --test session_manifest --target-dir C:\Code\Project\Boothy\src-tauri\target-supervisor-check`
+- `pnpm vitest run src/booth-shell/components/SessionPreviewImage.test.tsx`
+- 모두 통과했다.
+
+## 2026-04-01 01:19 +09:00 후속 현장 검증: 최근 세션 반영 속도가 여전히 비정상적으로 느리다
+
+사용자 실기기 피드백:
+
+- 현재는 preview와 `최근 세션` 사진이 결국 올라오기는 한다.
+- 다만 `Preview Waiting`에서 실제 사진이 보이기까지, 그리고 같은 사진이 `최근 세션`에 나타나기까지
+  체감상 `5초 이상` 걸린다.
+- 사용자는 이 속도를 "프로덕트로 사용하지 못할 수준"으로 평가했다.
+
+정리:
+
+- 이 시점의 주 이슈는 "표시가 안 된다"가 아니라 **표시는 되지만 latency가 너무 크다** 쪽으로 이동했다.
+- 따라서 current/recent session preview 경계는 correctness보다는 responsiveness 문제로 다시 봐야 한다.
+
+후속 분석 방향:
+
+- `darktable-cli` 실행 시간이 실제로 대부분을 차지하는지,
+  아니면 render 완료 뒤 host readiness/manifest sync 또는 프런트 구독 갱신이 늦는지 분리 측정이 필요하다.
+- 다음 회차에는 최소 아래 구간을 각각 계측해야 한다.
+  - capture persisted
+  - preview render start
+  - render ready
+  - current session preview visible
+  - recent session visible
+
+제품 판단:
+
+- Story 1.8의 correctness close 여부와 별개로,
+  이 latency가 줄지 않으면 booth product acceptance는 여전히 어렵다.
+
+## 2026-04-01 01:37 +09:00 구현 후 측정: 저해상도 actual render만으로는 2초 목표를 닫기 어렵다
+
+이번 회차 구현:
+
+- current/recent session이 보는 preview는 full-size 대신
+  `darktable-cli --hq false --width 1280 --height 1280` 기반 display-sized actual render로 바꿨다.
+- rail 이미지가 실제로 로드된 시점도 `current-session-preview-visible` 로그로 남기게 했다.
+
+자동 검증:
+
+- Rust render/capture 테스트와 targeted vitest는 모두 통과했다.
+
+그러나 수동 측정 결과:
+
+- 같은 RAW/XMP를 실제 darktable CLI로 직접 측정했을 때
+  - full-size preview: 약 `8652ms`
+  - `1280x1280` preview: 약 `5973ms`
+  - `640x640` preview: 약 `6894ms`
+  수준이었다.
+
+의미:
+
+- 이 장비에서는 "actual preset-applied preview를 darktable로 한 번 렌더한다"는 사실 자체가 이미 수초 단위 비용이다.
+- 즉 이번 문제는 단순한 프런트 stale update나 polling 지연만으로 설명되지 않는다.
+- 저해상도 actual render 최적화는 유지하되,
+  booth product 기준 `2초 이내`를 요구한다면 다음 단계는 구조적 대안 검토가 필요할 수 있다.
+
+현재 판단:
+
+- representative tile/sample-cut은 기본 fallback으로 채택하지 않았다.
+- 따라서 다음 후보는 "darktable를 쓰지 않는 더 빠른 same-capture thumbnail source" 또는
+  "capture 직후 빠른 booth-safe proxy와 이후 actual render를 명확히 구분하는 별도 제품 설계" 쪽이다.
+
+## 2026-04-01 01:43 +09:00 사용자 최종 확인: 현재 preview/current session 상태는 최신 정상 기준선이다
+
+- 사용자 실기기 재확인 결과, 현재 상태는 문제없이 정상 동작한다.
+- `Preview Waiting` 이후 실제 사진 노출과 현재 세션 사진 반영이 현 시점 기준으로 사용 가능 상태로 확인됐다.
+
+운영 메모:
+
+- 이 시점을 preview/current session 경계의 최신 정상 baseline으로 취급한다.
+- 다음 회차에서 1.8 hardware close 또는 추가 최적화를 진행하더라도,
+  회귀 여부는 반드시 이 상태와 비교해 판단한다.

@@ -8,13 +8,13 @@ use crate::{
         HostErrorEnvelope, LoadPresetCatalogInputDto, PresetCatalogResultDto,
         PresetCatalogStateResultDto, PresetSelectionInputDto, PresetSelectionResultDto,
         PublishValidatedPresetInputDto, PublishValidatedPresetResultDto,
-        RollbackPresetCatalogInputDto, RollbackPresetCatalogResultDto, ValidateDraftPresetInputDto,
-        ValidateDraftPresetResultDto,
+        RepairInvalidDraftInputDto, RollbackPresetCatalogInputDto, RollbackPresetCatalogResultDto,
+        ValidateDraftPresetInputDto, ValidateDraftPresetResultDto,
     },
     preset::{
         authoring_pipeline::{
             create_draft_preset_in_dir, load_authoring_workspace_in_dir,
-            publish_validated_preset_in_dir, save_draft_preset_in_dir,
+            publish_validated_preset_in_dir, repair_invalid_draft_in_dir, save_draft_preset_in_dir,
             validate_draft_preset_in_dir,
         },
         preset_catalog::load_preset_catalog_in_dir,
@@ -113,6 +113,22 @@ pub fn validate_draft_preset(
     crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
 
     validate_draft_preset_in_dir(&base_dir, &capability_snapshot, input)
+}
+
+#[tauri::command]
+pub fn repair_invalid_draft(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    input: RepairInvalidDraftInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let capability_snapshot = resolve_runtime_capability_snapshot();
+    crate::preset::authoring_pipeline::ensure_authoring_window_label(window.label())?;
+
+    repair_invalid_draft_in_dir(&base_dir, &capability_snapshot, input)
 }
 
 #[tauri::command]

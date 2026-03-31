@@ -353,6 +353,9 @@ export function PresetLibraryScreen() {
     mode === 'edit' &&
     selectedDraft !== null &&
     !isSameDraftPayload(draftForm, mapDraftToForm(selectedDraft))
+  const hasPendingDraftChanges =
+    (mode === 'create' && !isSameDraftPayload(draftForm, EMPTY_DRAFT_FORM)) ||
+    hasUnsavedChanges
   const latestValidation = selectedDraft?.validation.latestReport ?? null
   const latestPublicationRecord = findLatestPublicationRecord(selectedDraft)
   const canEditSelectedDraft =
@@ -477,6 +480,15 @@ export function PresetLibraryScreen() {
       return
     }
 
+    if (hasPendingDraftChanges) {
+      setScreenState({
+        tone: 'error',
+        message:
+          '저장되지 않은 변경이 있어요. 먼저 draft를 저장하거나 변경을 되돌린 뒤 화면을 전환해 주세요.',
+      })
+      return
+    }
+
     startTransition(() => {
       setHostAccessDenied(false)
       setMode('create')
@@ -495,6 +507,15 @@ export function PresetLibraryScreen() {
       return
     }
 
+    if (hasPendingDraftChanges) {
+      setScreenState({
+        tone: 'error',
+        message:
+          '저장되지 않은 변경이 있어요. 먼저 draft를 저장하거나 변경을 되돌린 뒤 다른 draft를 열어 주세요.',
+      })
+      return
+    }
+
     startTransition(() => {
       setMode('edit')
       setSelectedDraftId(draft.presetId)
@@ -507,6 +528,78 @@ export function PresetLibraryScreen() {
           : `${draft.displayName} 기록은 다음 단계 상태라 이 화면에서는 읽기 전용으로 보여 드려요.`,
       })
     })
+  }
+
+  function handleRevertDraftChanges() {
+    if (isBusy || !hasPendingDraftChanges) {
+      return
+    }
+
+    if (mode === 'edit' && selectedDraft) {
+      startTransition(() => {
+        setDraftForm(mapDraftToForm(selectedDraft))
+        setScreenState({
+          tone: 'idle',
+          message:
+            '저장 전 변경을 되돌렸어요. 다른 draft를 열거나 현재 draft 검토를 이어갈 수 있어요.',
+        })
+      })
+      return
+    }
+
+    startTransition(() => {
+      setDraftForm(EMPTY_DRAFT_FORM)
+      setScreenState({
+        tone: 'idle',
+        message:
+          '새 draft 입력값을 되돌렸어요. 다른 draft를 열거나 새 baseline 작성을 다시 시작할 수 있어요.',
+      })
+    })
+  }
+
+  async function handleRepairInvalidDraft(draftFolder: string) {
+    if (isBusy) {
+      return
+    }
+
+    setScreenState({
+      tone: 'saving',
+      message: `${draftFolder} 손상 draft 기록을 정리하고 있어요.`,
+    })
+
+    try {
+      await presetAuthoringService.repairInvalidDraft({
+        draftFolder,
+      })
+      setWorkspace((current) =>
+        current
+          ? {
+              ...current,
+              invalidDrafts: current.invalidDrafts.filter(
+                (invalidDraft) => invalidDraft.draftFolder !== draftFolder,
+              ),
+            }
+          : current,
+      )
+      setHostAccessDenied(false)
+      setScreenState({
+        tone: 'success',
+        message: `${draftFolder} 손상 draft 기록을 정리했어요. 같은 presetId로 새 draft를 다시 만들 수 있어요.`,
+      })
+    } catch (error) {
+      const denied = isCapabilityDenied(error)
+      setHostAccessDenied(denied)
+      if (denied) {
+        setWorkspace(null)
+        setCatalogState(null)
+        setRollbackForms({})
+        setSelectedDraftId(null)
+      }
+      setScreenState({
+        tone: 'error',
+        message: normalizeHostMessage(error),
+      })
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -846,6 +939,33 @@ export function PresetLibraryScreen() {
                 authoring workspace에 저장된 draft와 approval 준비 완료 상태를 이어서 확인할 수
                 있어요.
               </p>
+
+              {workspace?.invalidDrafts.length ? (
+                <div className="authoring-stack">
+                  {workspace.invalidDrafts.map((invalidDraft) => (
+                    <div
+                      key={invalidDraft.draftFolder}
+                      className="authoring-validation__item authoring-validation__item--error"
+                    >
+                      <p className="authoring-validation__meta">
+                        복구 필요 · {invalidDraft.draftFolder}
+                      </p>
+                      <p className="authoring-validation__message">{invalidDraft.message}</p>
+                      <p className="authoring-validation__guidance">{invalidDraft.guidance}</p>
+                      {invalidDraft.canRepair ? (
+                        <button
+                          className="surface-card__action surface-card__action--secondary"
+                          type="button"
+                          onClick={() => void handleRepairInvalidDraft(invalidDraft.draftFolder)}
+                          disabled={isBusy}
+                        >
+                          손상 draft 정리
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               <div className="authoring-draft-list" role="list" aria-label="draft preset 목록">
                 {workspace?.drafts.length ? (
@@ -1314,6 +1434,16 @@ export function PresetLibraryScreen() {
                     </p>
 
                     <div className="authoring-form__actions">
+                      {canEditDraftForm ? (
+                        <button
+                          className="surface-card__action surface-card__action--secondary"
+                          type="button"
+                          onClick={handleRevertDraftChanges}
+                          disabled={isBusy || !hasPendingDraftChanges}
+                        >
+                          변경 되돌리기
+                        </button>
+                      ) : null}
                       {canRunValidation ? (
                         <button
                           className="surface-card__action surface-card__action--secondary"

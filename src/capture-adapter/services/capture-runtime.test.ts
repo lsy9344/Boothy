@@ -225,6 +225,45 @@ describe('capture runtime adapter', () => {
     })
   })
 
+  it('preserves retryable capture guidance from the host without promoting phone-required', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'request_capture') {
+        throw {
+          code: 'capture-not-ready',
+          message: '사진을 아직 찍지 못했어요.',
+          readiness: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            customerState: 'Preparing',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '사진을 아직 찍지 못했어요.',
+            supportMessage: '대상을 다시 맞춘 뒤 잠시 후 다시 시도해 주세요.',
+            reasonCode: 'capture-retry-required',
+          },
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.requestCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).rejects.toMatchObject({
+      code: 'capture-not-ready',
+      readiness: {
+        canCapture: false,
+        primaryAction: 'wait',
+        reasonCode: 'capture-retry-required',
+      },
+    })
+  })
+
   it('rejects readiness responses whose session id does not match the request', async () => {
     mockIPC((cmd) => {
       if (cmd === 'get_capture_readiness') {

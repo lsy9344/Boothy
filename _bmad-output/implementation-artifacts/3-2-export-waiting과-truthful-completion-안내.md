@@ -1,8 +1,15 @@
 # Story 3.2: Export Waiting과 truthful completion 안내
 
-Status: done
+Status: review
 
-Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다.
+Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다. Story 6.2 canonical ledger 기준으로 end-of-session hardware evidence가 아직 없으므로 Story 3.2는 `review`를 유지한다.
+
+### Hardware Gate Reference
+
+- Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+- Required HV checklist IDs: `HV-08`, `HV-11`
+- Current hardware gate: `No-Go`
+- Close policy: `automated pass` alone does not close this story; a ledger row with `Go` is required before `done`.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -243,7 +250,7 @@ GPT-5 Codex
 ### Change Log
 
 - 2026-03-26: Story 3.2 구현 완료 후 상태를 `review`로 변경하고, post-end truth 계약/호스트 평가/UI 안내/회귀 테스트 결과를 기록했다.
-- 2026-03-26: 코드 리뷰에서 확인된 handoff truth 강등, 3.3 범위 UI 조기 노출, handoff 제목 라벨 버그를 수정하고 상태를 `done`으로 반영했다.
+- 2026-03-26: 코드 리뷰에서 확인된 handoff truth 강등, 3.3 범위 UI 조기 노출, handoff 제목 라벨 버그를 수정했다. Story 6.2 canonical ledger 정렬 이후에는 end-of-session hardware evidence가 아직 없어 상태를 `review`로 유지한다.
 
 ### Review Findings
 

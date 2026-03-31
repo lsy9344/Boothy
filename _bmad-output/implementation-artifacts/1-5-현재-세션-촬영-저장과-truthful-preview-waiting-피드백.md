@@ -2,7 +2,14 @@
 
 Status: done
 
-Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 닫히기 전까지 제품 관점 완료로 보지 않는다. 2026-03-29 실장비 검증에서 HV-03/HV-04/HV-05 통과 보고를 반영해 Story 1.5를 `done`으로 정리한다. Story 1.7 분리 이후에는 HV-04 real round-trip closure ownership을 Story 1.7이 직접 소유하고, 이 문서의 HV-04/HV-05 기록은 Story 1.5 truthfulness regression의 historical reference로 유지한다.
+Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 canonical ledger 기준으로 닫혔다. 2026-03-31 실장비 검증에서 persisted RAW, preview artifact, 그리고 `session.json` capture timing metrics가 한 패키지로 확인되어 Story 1.5는 `done`으로 올린다. Story 1.7은 capture correlation supporting evidence를 공급하지만 canonical close ownership은 이 문서와 ledger가 소유한다.
+
+### Hardware Gate Reference
+
+- Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+- Required HV checklist IDs: `HV-04`, `HV-05`
+- Current hardware gate: `Go`
+- Close policy: `automated pass` alone does not close this story; canonical ledger row `Go`가 기록되어 `done` 기준을 충족했다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -211,17 +218,20 @@ GPT-5 Codex
 - host capture pipeline이 raw 파일 저장 후에만 `capture-saved` 응답을 반환하고, preview render enqueue/ready를 별도 상태로 추적하도록 구현했다.
 - booth UI에 `Preview Waiting` 보호 패널과 현재 세션 전용 최신 사진 레일을 추가해, 저장 사실과 preview 준비 중 상태를 분리해 안내하도록 만들었다.
 - Vitest 72개와 Cargo test 24개를 통과했고, Story 1.5용 contract/integration/UI/privacy 테스트를 추가했다.
-- 사용자 실장비 검증에서 HV-03, HV-04, HV-05를 모두 통과했다고 보고했고, Story 1.5 closure gate인 HV-04/HV-05를 닫는 것으로 반영했다.
+- 2026-03-31 실장비 회차에서 HV-04/HV-05 close package를 다시 확인했고, canonical ledger에 `Go` row를 기록해 현재 hardware gate를 닫았다.
 
 ### Hardware Validation Evidence
 
-- sessionId: `session_000000000018a1513fbc95fedc`
-- HV-04 RAW evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1513fbc95fedc\captures\originals\capture_20260329125801644_a32be2767a.CR2`
-- HV-05 preview evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1513fbc95fedc\renders\previews\capture_20260329125801644_a32be2767a.jpg`
-- session manifest evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1513fbc95fedc\session.json`
-- booth preview screen evidence: 사용자 첨부 이미지 1장으로 확인
-- timing log expected path: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1513fbc95fedc\diagnostics\timing-events.log`
-- timing log status at verification: 해당 세션 `diagnostics` 폴더에서 파일을 찾지 못해 추가 확인 필요
+- sessionId: `session_000000000018a1cccdd183a524`
+- HV-04 RAW evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\captures\originals\capture_20260331024159916_11d0256f05.CR2`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\captures\originals\capture_20260331024225748_68ebbd3c92.CR2`
+- HV-05 preview evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\renders\previews\capture_20260331024159916_11d0256f05.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\renders\previews\capture_20260331024225748_68ebbd3c92.jpg`
+- session manifest evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\session.json`
+- helper status evidence: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\diagnostics\camera-helper-status.json`
+- timing evidence: 같은 `session.json` 안의 `captureAcknowledgedAtMs`, `previewVisibleAtMs`, `previewBudgetState=withinBudget`가 두 capture 모두에 persisted 됨
 
 ### File List
 
@@ -258,4 +268,4 @@ GPT-5 Codex
 ### Change Log
 
 - 2026-03-21 01:13:25 +09:00 - Story 1.5 구현 완료: typed capture/session contract 확장, raw-first host capture persistence, truthful `Preview Waiting` UI, 현재 세션 전용 preview rail, contract/integration/UI/privacy 테스트 추가
-- 2026-03-29 22:09:58 +09:00 - 사용자 실장비 검증에서 HV-03/HV-04/HV-05 통과 보고를 반영해 Story 1.5 상태를 `done`으로 올리고 스프린트 추적 문서를 동기화했다.
+- 2026-03-31 21:25:38 +09:00 - 2026-03-31 실장비 재검증 패키지를 canonical ledger에 `Go`로 기록하고 Story 1.5 상태를 `done`으로 올렸다.

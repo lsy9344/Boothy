@@ -35,6 +35,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
       observedAt: '2026-03-26T00:10:01.000Z',
     },
+    cameraConnection: {
+      state: 'connected',
+      title: '카메라와 helper 연결이 확인됐어요.',
+      detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+      observedAt: '2026-03-26T00:10:00.000Z',
+    },
     captureBoundary: {
       status: 'clear',
       title: '캡처 경계 정상',
@@ -215,6 +221,13 @@ describe('OperatorSummaryScreen', () => {
     expect(screen.getAllByText(/Preview \/ Render 확인 필요/i)).not.toHaveLength(0)
     expect(screen.getByText('session_01hs6n1r8b8zc5v4ey2x7b9g1m')).toBeInTheDocument()
     expect(screen.getByText('Kim 4821')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /^카메라 연결 상태$/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/^연결됨$/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/카메라와 helper가 현재 세션 기준으로 연결된 상태예요\./i),
+    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Retry$/i })).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /^Approved Boundary Restart$/i }),
@@ -255,6 +268,12 @@ describe('OperatorSummaryScreen', () => {
         updatedAt: null,
         postEndState: null,
         recentFailure: null,
+        cameraConnection: {
+          state: 'disconnected',
+          title: '세션 없음',
+          detail: '진행 중인 세션이 없어 카메라 연결 상태를 아직 판단하지 않았어요.',
+          observedAt: null,
+        },
         captureBoundary: {
           status: 'clear',
           title: '현재 세션 없음',
@@ -287,6 +306,7 @@ describe('OperatorSummaryScreen', () => {
 
     expect(await screen.findByText(/진행 중인 세션이 아직 없어요/i)).toBeInTheDocument()
     expect(screen.getByText(/현재 세션 없음/i)).toBeInTheDocument()
+    expect(screen.getByText(/카메라 연결 상태를 아직 판단하지 않았어요\./i)).toBeInTheDocument()
     expect(screen.getByText(/후처리 경계 비어 있음/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Retry$/i })).not.toBeInTheDocument()
   })
@@ -459,5 +479,36 @@ describe('OperatorSummaryScreen', () => {
     expect(screen.getByText(/상태 이유: 최근 촬영본의 결과를 준비하는 중이에요\./i)).toBeInTheDocument()
     expect(screen.queryByText(/action-not-allowed/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/preview-waiting/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps camera connection connected while preview/render remains blocked', async () => {
+    const loadOperatorRecoverySummary = vi.fn().mockResolvedValue(
+      createOperatorRecoverySummary({
+        blockedStateCategory: 'preview-render-blocked',
+        cameraConnection: {
+          state: 'connected',
+          title: '카메라와 helper 연결이 확인됐어요.',
+          detail: '카메라와 helper는 정상 연결 상태이고 다른 경계 문제는 별도로 확인해 주세요.',
+          observedAt: '2026-03-26T00:10:00.000Z',
+        },
+      }),
+    )
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValue(createOperatorAuditHistory())
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    expect(await screen.findByText(/카메라 연결 상태/i)).toBeInTheDocument()
+    expect(screen.getByText(/^연결됨$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/Preview \/ Render 확인 필요/i)).not.toHaveLength(0)
+    expect(screen.getByText(/다른 경계 문제는 별도로 확인해 주세요\./i)).toBeInTheDocument()
   })
 })

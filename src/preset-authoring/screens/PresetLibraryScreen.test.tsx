@@ -152,6 +152,7 @@ function renderAuthoringScreen({
   createDraftPreset = vi.fn<PresetAuthoringGateway['createDraftPreset']>(),
   saveDraftPreset = vi.fn<PresetAuthoringGateway['saveDraftPreset']>(),
   validateDraftPreset = vi.fn<PresetAuthoringGateway['validateDraftPreset']>(),
+  repairInvalidDraft = vi.fn<PresetAuthoringGateway['repairInvalidDraft']>(),
   publishValidatedPreset = vi.fn<PresetAuthoringGateway['publishValidatedPreset']>(),
   loadPresetCatalogState = vi
     .fn<PresetAuthoringGateway['loadPresetCatalogState']>()
@@ -168,6 +169,7 @@ function renderAuthoringScreen({
       createDraftPreset,
       saveDraftPreset,
       validateDraftPreset,
+      repairInvalidDraft,
       publishValidatedPreset,
       loadPresetCatalogState,
       rollbackPresetCatalog,
@@ -194,6 +196,7 @@ function renderAuthoringScreen({
     createDraftPreset,
     saveDraftPreset,
     validateDraftPreset,
+    repairInvalidDraft,
     publishValidatedPreset,
     loadPresetCatalogState,
     rollbackPresetCatalog,
@@ -211,6 +214,7 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
       }),
       loadPresetCatalogState: vi.fn().mockResolvedValue({
         schemaVersion: 'preset-catalog-state-result/v1',
@@ -237,6 +241,7 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [],
+        invalidDrafts: [],
       })
       .mockResolvedValueOnce({
         schemaVersion: 'preset-authoring-workspace/v1',
@@ -258,6 +263,7 @@ describe('PresetLibraryScreen', () => {
             xmpTemplatePath: 'xmp/porcelain.xmp',
           }),
         ],
+        invalidDrafts: [],
       })
     const createDraftPreset = vi
       .fn<PresetAuthoringGateway['createDraftPreset']>()
@@ -309,13 +315,12 @@ describe('PresetLibraryScreen', () => {
     await user.click(screen.getByRole('button', { name: /draft 저장/i }))
 
     await waitFor(() => {
-      expect(createDraftPreset).toHaveBeenCalledWith(
-        expect.objectContaining({
-          presetId: 'preset_porcelain-draft',
-          displayName: 'Porcelain Draft',
-          lifecycleState: 'draft',
-        }),
-      )
+      expect(createDraftPreset).toHaveBeenCalledTimes(1)
+    })
+    expect(createDraftPreset.mock.calls[0]?.[0]).toMatchObject({
+      presetId: expect.stringContaining('preset_porcelain-draft'),
+      displayName: expect.stringContaining('Porcelain Draft'),
+      lifecycleState: 'draft',
     })
 
     expect(
@@ -332,6 +337,7 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
       })
       .mockResolvedValueOnce({
         schemaVersion: 'preset-authoring-workspace/v1',
@@ -346,6 +352,7 @@ describe('PresetLibraryScreen', () => {
             updatedAt: validationReport.checkedAt,
           }),
         ],
+        invalidDrafts: [],
       })
     const validateDraftPreset = vi
       .fn<PresetAuthoringGateway['validateDraftPreset']>()
@@ -393,6 +400,7 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
       }),
       validateDraftPreset,
     })
@@ -408,6 +416,123 @@ describe('PresetLibraryScreen', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /호환성 검증 실행/i })).toBeDisabled()
     expect(validateDraftPreset).not.toHaveBeenCalled()
+  })
+
+  it('prevents leaving a dirty existing draft before saving', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [
+          createAuthoringDraft(),
+          createAuthoringDraft({
+            presetId: 'preset_fresh-contrast-draft',
+            displayName: 'Fresh Contrast Draft',
+            draftVersion: 1,
+          }),
+        ],
+        invalidDrafts: [],
+      }),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('button', { name: /호환성 검증 실행/i })
+    await user.clear(screen.getByLabelText(/Draft name/i))
+    await user.type(screen.getByLabelText(/Draft name/i), 'Soft Glow Draft Updated')
+    await user.click(screen.getByRole('button', { name: /Fresh Contrast Draft/i }))
+
+    expect(
+      screen.getByText(/먼저 draft를 저장하거나 변경을 되돌린 뒤 다른 draft를 열어 주세요/i),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(/Preset ID/i)).not.toHaveValue('preset_fresh-contrast-draft')
+    expect(screen.getByLabelText(/Draft name/i)).not.toHaveValue('Fresh Contrast Draft')
+
+    await user.click(screen.getByRole('button', { name: /새 draft 만들기/i }))
+
+    expect(
+      screen.getByText(/먼저 draft를 저장하거나 변경을 되돌린 뒤 화면을 전환해 주세요/i),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(/Preset ID/i)).not.toHaveValue('preset_new-draft')
+  })
+
+  it('lets the operator revert dirty changes before switching drafts', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [
+          createAuthoringDraft(),
+          createAuthoringDraft({
+            presetId: 'preset_fresh-contrast-draft',
+            displayName: 'Fresh Contrast Draft',
+            draftVersion: 1,
+          }),
+        ],
+        invalidDrafts: [],
+      }),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('button', { name: /호환성 검증 실행/i })
+    await user.clear(screen.getByLabelText(/Draft name/i))
+    await user.type(screen.getByLabelText(/Draft name/i), 'Soft Glow Draft Updated')
+    await user.click(screen.getByRole('button', { name: /변경 되돌리기/i }))
+    expect(screen.getByDisplayValue('Soft Glow Draft')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Fresh Contrast Draft/i }))
+
+    expect(screen.getByDisplayValue('Fresh Contrast Draft')).toBeInTheDocument()
+  })
+
+  it('prevents leaving a dirty new draft before saving', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
+      }),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('button', { name: /새 draft 만들기/i })
+    await user.click(screen.getByRole('button', { name: /새 draft 만들기/i }))
+    await user.clear(screen.getByLabelText(/Preset ID/i))
+    await user.type(screen.getByLabelText(/Preset ID/i), 'preset_porcelain-draft')
+    await user.type(screen.getByLabelText(/Draft name/i), 'Porcelain Draft')
+    await user.click(screen.getByRole('button', { name: /Soft Glow Draft/i }))
+
+    expect(
+      screen.getByText(/먼저 draft를 저장하거나 변경을 되돌린 뒤 다른 draft를 열어 주세요/i),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(/Preset ID/i)).not.toHaveValue('preset_soft-glow-draft')
+    expect(screen.getByLabelText(/Draft name/i)).not.toHaveValue('Soft Glow Draft')
+  })
+
+  it('lets the operator revert a new draft baseline before opening an existing draft', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
+      }),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('button', { name: /새 draft 만들기/i })
+    await user.click(screen.getByRole('button', { name: /새 draft 만들기/i }))
+    await user.clear(screen.getByLabelText(/Preset ID/i))
+    await user.type(screen.getByLabelText(/Preset ID/i), 'preset_porcelain-draft')
+    await user.type(screen.getByLabelText(/Draft name/i), 'Porcelain Draft')
+    await user.click(screen.getByRole('button', { name: /변경 되돌리기/i }))
+    await user.click(screen.getByRole('button', { name: /Soft Glow Draft/i }))
+
+    expect(screen.getByDisplayValue('preset_soft-glow-draft')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Soft Glow Draft')).toBeInTheDocument()
   })
 
   it('marks the draft as approval-ready when validation passes without implying publication', async () => {
@@ -431,11 +556,13 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [createAuthoringDraft()],
+        invalidDrafts: [],
       })
       .mockResolvedValueOnce({
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [validatedDraft],
+        invalidDrafts: [],
       })
     const validateDraftPreset = vi
       .fn<PresetAuthoringGateway['validateDraftPreset']>()
@@ -483,6 +610,7 @@ describe('PresetLibraryScreen', () => {
         schemaVersion: 'preset-authoring-workspace/v1',
         supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
         drafts: [validatedDraft],
+        invalidDrafts: [],
       }),
     })
 
@@ -496,6 +624,100 @@ describe('PresetLibraryScreen', () => {
     expect(
       screen.getByText(/approval-ready draft를 게시하면 여기에서 승인과 게시 경계를 추적할 수 있어요/i),
     ).toBeInTheDocument()
+  })
+
+  it('surfaces corrupted draft entries as repair-needed items in the library', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [createAuthoringDraft()],
+        invalidDrafts: [
+          {
+            draftFolder: 'preset_broken-draft',
+            message: '저장된 draft JSON 형식이 손상되어 작업공간에서 열 수 없어요.',
+            guidance:
+              '목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요.',
+            canRepair: true,
+          },
+        ],
+      }),
+    })
+
+    expect(await screen.findByText(/복구 필요 · preset_broken-draft/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/저장된 draft JSON 형식이 손상되어 작업공간에서 열 수 없어요/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요/i,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('repairs a corrupted draft entry from the library without disturbing the current draft form', async () => {
+    const repairInvalidDraft = vi.fn<PresetAuthoringGateway['repairInvalidDraft']>().mockResolvedValue(
+      undefined,
+    )
+
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [createAuthoringDraft()],
+        invalidDrafts: [
+          {
+            draftFolder: 'preset_broken-draft',
+            message: '저장된 draft JSON 형식이 손상되어 작업공간에서 열 수 없어요.',
+            guidance:
+              '목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요.',
+            canRepair: true,
+          },
+        ],
+      }),
+      repairInvalidDraft,
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByText(/복구 필요 · preset_broken-draft/i)
+    await user.click(screen.getByRole('button', { name: /손상 draft 정리/i }))
+
+    expect(repairInvalidDraft).toHaveBeenCalledWith({
+      draftFolder: 'preset_broken-draft',
+    })
+    expect(screen.queryByText(/복구 필요 · preset_broken-draft/i)).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('Soft Glow Draft')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /preset_broken-draft 손상 draft 기록을 정리했어요\. 같은 presetId로 새 draft를 다시 만들 수 있어요\./i,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps manual-inspection drafts visible without exposing the destructive repair action', async () => {
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [createAuthoringDraft()],
+        invalidDrafts: [
+          {
+            draftFolder: 'preset_folder-mismatch',
+            message: 'draft 폴더 이름과 저장된 presetId가 서로 달라 자동 정리를 막았어요.',
+            guidance:
+              '자동 삭제 대신 작업공간을 수동 점검해 주세요. 폴더 이름과 presetId를 맞추면 기존 draft와 자산을 보존할 수 있어요.',
+            canRepair: false,
+          },
+        ],
+      }),
+    })
+
+    expect(await screen.findByText(/복구 필요 · preset_folder-mismatch/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/자동 삭제 대신 작업공간을 수동 점검해 주세요/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /손상 draft 정리/i })).not.toBeInTheDocument()
   })
 
   it('publishes a validated draft and surfaces approval and publication history', async () => {

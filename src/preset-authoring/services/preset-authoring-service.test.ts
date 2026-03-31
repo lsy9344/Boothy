@@ -76,6 +76,20 @@ describe('browser preset authoring gateway', () => {
     })
   })
 
+  it('keeps invalid draft repair host-owned instead of mutating browser preview storage', async () => {
+    const service = createPresetAuthoringService({
+      gateway: createBrowserPresetAuthoringGateway(),
+    })
+
+    await expect(
+      service.repairInvalidDraft({
+        draftFolder: 'preset_broken-draft',
+      }),
+    ).rejects.toMatchObject({
+      code: 'host-unavailable',
+    })
+  })
+
   it('keeps publication host-owned instead of mutating future-session catalog in the browser', async () => {
     const service = createPresetAuthoringService({
       gateway: createBrowserPresetAuthoringGateway(),

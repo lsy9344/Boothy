@@ -1,6 +1,6 @@
 # Story 5.4: 운영자용 카메라 연결 상태 전용 항목과 helper readiness 가시화
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -20,24 +20,24 @@ remote operator로서,
 
 ## Tasks / Subtasks
 
-- [ ] operator diagnostics shared contract에 dedicated camera connection projection을 추가한다. (AC: 1, 2, 3, 4)
-  - [ ] `src/shared-contracts/schemas/operator-diagnostics.ts`, `src/shared-contracts/schemas/operator-recovery.ts`, `src/shared-contracts/dto/operator.ts`, `src-tauri/src/contracts/dto.rs`에 `카메라 연결 상태`용 typed object를 추가한다.
-  - [ ] projection은 loose string 여러 개가 아니라 하나의 전용 summary object 또는 동등한 typed 구조로 정의하고, 최소 `state`, operator-safe `title`, `detail`, 필요 시 `observedAt`만 허용한다.
-  - [ ] machine enum은 `disconnected`, `connecting`, `connected`, `recovery-required` 또는 동등한 집합으로 고정하고, 한국어 라벨은 UI에서 별도 매핑하되 booth copy를 재사용하지 않는다.
-- [ ] host diagnostics/recovery read-model에 camera/helper truth projection을 추가한다. (AC: 2, 3, 4)
-  - [ ] `src-tauri/src/diagnostics/mod.rs`에서 `normalize_capture_readiness(...)`, 현재 lifecycle stage, 최근 diagnostics context를 입력으로 dedicated camera connection summary를 계산한다.
-  - [ ] `camera-preparing`과 `helper-preparing`은 동일한 blocked-state category로 뭉개지 말고, operator가 "연결 중"인지 "복구 필요"인지 구분할 수 있게 정규화한다.
-  - [ ] first-connect 대기와 degraded-after-ready를 구분할 신호가 현재 부족하면, 최소한의 host-owned read-only context를 추가하되 React에서 ad-hoc 추정하지 않는다.
-  - [ ] preview/render/post-end blockage 때문에 blocked-state category가 바뀌어도 camera/helper health projection은 독립적으로 유지한다.
-- [ ] operator recovery summary와 UI를 함께 확장한다. (AC: 1, 2, 4, 5)
-  - [ ] `OperatorRecoverySummary`가 `OperatorSessionSummary`를 확장하고 있으므로, recovery summary payload에서도 같은 camera connection projection을 노출한다.
-  - [ ] `src/operator-console/screens/OperatorSummaryScreen.tsx`에 `카메라 연결 상태` 전용 카드 또는 사실상 동등한 강조 영역을 추가하고, current session facts와 blocked-state hero 사이에서 빠르게 읽히도록 배치한다.
-  - [ ] `Capture Boundary` 카드와 혼동되지 않도록 시각 위계를 분리하고, `연결됨`이더라도 preview/render/post-end blockage는 별도로 계속 읽히게 유지한다.
-- [ ] 브라우저 fixture, typed service, 테스트를 갱신한다. (AC: 1, 2, 3, 4, 5)
-  - [ ] `src/operator-console/services/operator-diagnostics-service.ts`와 관련 테스트에서 schema 변경 후 fixture 파싱과 same-session guard가 계속 유효한지 검증한다.
-  - [ ] `src-tauri/tests/operator_diagnostics.rs`에 `미연결`, `연결 중`, `연결됨`, `복구 필요` 시나리오를 각각 추가한다.
-  - [ ] `src/operator-console/screens/OperatorSummaryScreen.test.tsx`에서 dedicated item 노출, operator-safe copy, 기존 blocked-state/경계 카드와의 공존을 검증한다.
-  - [ ] customer booth copy 테스트는 기존처럼 internal helper 용어 비노출을 유지해야 한다.
+- [x] operator diagnostics shared contract에 dedicated camera connection projection을 추가한다. (AC: 1, 2, 3, 4)
+  - [x] `src/shared-contracts/schemas/operator-diagnostics.ts`, `src/shared-contracts/schemas/operator-recovery.ts`, `src/shared-contracts/dto/operator.ts`, `src-tauri/src/contracts/dto.rs`에 `카메라 연결 상태`용 typed object를 추가한다.
+  - [x] projection은 loose string 여러 개가 아니라 하나의 전용 summary object 또는 동등한 typed 구조로 정의하고, 최소 `state`, operator-safe `title`, `detail`, 필요 시 `observedAt`만 허용한다.
+  - [x] machine enum은 `disconnected`, `connecting`, `connected`, `recovery-required` 또는 동등한 집합으로 고정하고, 한국어 라벨은 UI에서 별도 매핑하되 booth copy를 재사용하지 않는다.
+- [x] host diagnostics/recovery read-model에 camera/helper truth projection을 추가한다. (AC: 2, 3, 4)
+  - [x] `src-tauri/src/diagnostics/mod.rs`에서 `normalize_capture_readiness(...)`, 현재 lifecycle stage, 최근 diagnostics context를 입력으로 dedicated camera connection summary를 계산한다.
+  - [x] `camera-preparing`과 `helper-preparing`은 동일한 blocked-state category로 뭉개지 말고, operator가 "연결 중"인지 "복구 필요"인지 구분할 수 있게 정규화한다.
+  - [x] first-connect 대기와 degraded-after-ready를 구분할 신호가 현재 부족하면, 최소한의 host-owned read-only context를 추가하되 React에서 ad-hoc 추정하지 않는다.
+  - [x] preview/render/post-end blockage 때문에 blocked-state category가 바뀌어도 camera/helper health projection은 독립적으로 유지한다.
+- [x] operator recovery summary와 UI를 함께 확장한다. (AC: 1, 2, 4, 5)
+  - [x] `OperatorRecoverySummary`가 `OperatorSessionSummary`를 확장하고 있으므로, recovery summary payload에서도 같은 camera connection projection을 노출한다.
+  - [x] `src/operator-console/screens/OperatorSummaryScreen.tsx`에 `카메라 연결 상태` 전용 카드 또는 사실상 동등한 강조 영역을 추가하고, current session facts와 blocked-state hero 사이에서 빠르게 읽히도록 배치한다.
+  - [x] `Capture Boundary` 카드와 혼동되지 않도록 시각 위계를 분리하고, `연결됨`이더라도 preview/render/post-end blockage는 별도로 계속 읽히게 유지한다.
+- [x] 브라우저 fixture, typed service, 테스트를 갱신한다. (AC: 1, 2, 3, 4, 5)
+  - [x] `src/operator-console/services/operator-diagnostics-service.ts`와 관련 테스트에서 schema 변경 후 fixture 파싱과 same-session guard가 계속 유효한지 검증한다.
+  - [x] `src-tauri/tests/operator_diagnostics.rs`에 `미연결`, `연결 중`, `연결됨`, `복구 필요` 시나리오를 각각 추가한다.
+  - [x] `src/operator-console/screens/OperatorSummaryScreen.test.tsx`에서 dedicated item 노출, operator-safe copy, 기존 blocked-state/경계 카드와의 공존을 검증한다.
+  - [x] customer booth copy 테스트는 기존처럼 internal helper 용어 비노출을 유지해야 한다.
 
 ## Dev Notes
 
@@ -200,3 +200,41 @@ remote operator로서,
 - [Source: src/shared-contracts/schemas/operator-recovery.ts]
 - [Source: src-tauri/src/diagnostics/mod.rs]
 - [Source: src-tauri/src/capture/normalized_state.rs]
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- shared contract와 Rust DTO에 `cameraConnection` summary object를 추가해 TypeScript/Rust가 같은 상태 집합을 공유하도록 맞춘다.
+- host diagnostics에서 live capture truth, lifecycle, 최근 진단 시각을 조합해 `미연결 / 연결 중 / 연결됨 / 복구 필요`를 정규화한다.
+- recovery summary와 operator UI가 같은 projection을 그대로 재사용하도록 연결하고, 별도 카드로 blocked-state/boundary와 시각적으로 분리한다.
+- 브라우저 fixture, shared contract, operator screen, Rust diagnostics 테스트를 함께 갱신해 dedicated projection이 계약과 UI에 모두 반영되는지 검증한다.
+
+### Completion Notes
+
+- dedicated `cameraConnection` projection을 shared contract, Rust DTO, operator recovery payload에 추가했다.
+- host diagnostics가 live helper truth의 freshness/session match/camera/helper 상태와 lifecycle 문맥을 함께 보고 operator-safe camera connection 상태를 계산하도록 확장했다.
+- operator console에 `카메라 연결 상태` 전용 카드를 추가해 blocked-state hero 및 boundary 카드와 분리된 위계로 노출했다.
+- scoped validation은 통과했다: `pnpm test:run src/shared-contracts/contracts.test.ts src/operator-console/services/operator-diagnostics-service.test.ts src/operator-console/screens/OperatorSummaryScreen.test.tsx`, `cargo test --test operator_diagnostics`, `cargo test`.
+- 전체 `pnpm test:run`은 저장소의 기존 `src/governance/hardware-validation-governance.test.ts`가 현재 `sprint-status.yaml`의 다른 스토리 상태 기대값과 어긋나 실패했다.
+- 전체 `pnpm lint`는 이번 변경과 무관한 기존 파일(`src/booth-shell/components/SessionPreviewImage.tsx`, `src/session-domain/selectors/current-session-previews.ts`, `src/session-domain/state/session-provider.tsx`) 이슈로 실패했다.
+
+## File List
+
+- _bmad-output/implementation-artifacts/5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화.md
+- _bmad-output/implementation-artifacts/sprint-status.yaml
+- src/shared-contracts/schemas/operator-diagnostics.ts
+- src/shared-contracts/dto/operator.ts
+- src/shared-contracts/contracts.test.ts
+- src/operator-console/services/operator-diagnostics-service.test.ts
+- src/operator-console/screens/OperatorSummaryScreen.tsx
+- src/operator-console/screens/OperatorSummaryScreen.test.tsx
+- src/index.css
+- src-tauri/src/contracts/dto.rs
+- src-tauri/src/diagnostics/mod.rs
+- src-tauri/src/diagnostics/recovery.rs
+- src-tauri/tests/operator_diagnostics.rs
+
+## Change Log
+
+- 2026-03-31: operator diagnostics에 dedicated camera connection projection과 operator console 전용 카드/테스트를 추가했다.

@@ -13,7 +13,10 @@ use crate::{
 };
 
 use super::{
-    preset_bundle::load_published_preset_summary,
+    preset_bundle::{
+        load_published_preset_runtime_bundle, load_published_preset_summary,
+        PublishedPresetRuntimeBundle,
+    },
     preset_catalog_state::capture_live_catalog_snapshot,
 };
 
@@ -61,6 +64,18 @@ pub fn find_published_preset_summary(
     }
 
     load_published_preset_summary(&catalog_root.join(preset_id).join(published_version))
+}
+
+pub fn find_published_preset_runtime_bundle(
+    catalog_root: &Path,
+    preset_id: &str,
+    published_version: &str,
+) -> Option<PublishedPresetRuntimeBundle> {
+    if validate_preset_selection_input(preset_id, published_version).is_err() {
+        return None;
+    }
+
+    load_published_preset_runtime_bundle(&catalog_root.join(preset_id).join(published_version))
 }
 
 pub fn find_selectable_published_preset_summary(

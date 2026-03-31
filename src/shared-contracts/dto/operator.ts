@@ -11,6 +11,8 @@ import {
   operatorBlockedStateCategorySchema,
   operatorBoundaryStatusSchema,
   operatorBoundarySummarySchema,
+  operatorCameraConnectionStateSchema,
+  operatorCameraConnectionSummarySchema,
   operatorRecentFailureSummarySchema,
   operatorRecoveryActionRejectionReasonSchema,
   operatorRecoveryActionRequestSchema,
@@ -46,6 +48,12 @@ export type OperatorBlockedStateCategory = z.infer<
 export type OperatorSummaryState = z.infer<typeof operatorSummaryStateSchema>
 export type OperatorBoundaryStatus = z.infer<typeof operatorBoundaryStatusSchema>
 export type OperatorBoundarySummary = z.infer<typeof operatorBoundarySummarySchema>
+export type OperatorCameraConnectionState = z.infer<
+  typeof operatorCameraConnectionStateSchema
+>
+export type OperatorCameraConnectionSummary = z.infer<
+  typeof operatorCameraConnectionSummarySchema
+>
 export type OperatorRecentFailureSummary = z.infer<
   typeof operatorRecentFailureSummarySchema
 >

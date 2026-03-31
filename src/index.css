@@ -858,6 +858,42 @@ select {
   color: #ffd1c5;
 }
 
+.operator-console__camera-card {
+  border: 1px solid rgba(123, 180, 255, 0.22);
+  background:
+    linear-gradient(135deg, rgba(61, 114, 255, 0.14), rgba(255, 255, 255, 0.03)),
+    rgba(18, 20, 34, 0.92);
+}
+
+.operator-console__camera-badge {
+  width: fit-content;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.operator-console__camera-badge--disconnected {
+  background: rgba(255, 144, 112, 0.18);
+  color: #ffd1c5;
+}
+
+.operator-console__camera-badge--connecting {
+  background: rgba(123, 180, 255, 0.18);
+  color: #d7e7ff;
+}
+
+.operator-console__camera-badge--connected {
+  background: rgba(139, 206, 170, 0.18);
+  color: #dff6e9;
+}
+
+.operator-console__camera-badge--recovery-required {
+  background: rgba(243, 200, 142, 0.18);
+  color: #f7dcc0;
+}
+
 .operator-console__support,
 .operator-console__empty,
 .operator-console__meta,

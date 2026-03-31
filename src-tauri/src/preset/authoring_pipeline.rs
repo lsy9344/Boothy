@@ -7,13 +7,14 @@ use std::{
 use crate::{
     contracts::dto::{
         validate_draft_preset_edit_input, validate_draft_validation_input,
-        validate_publish_validated_preset_input, AuthoringWorkspaceResultDto,
-        CapabilitySnapshotDto, DraftNoisePolicyDto, DraftPresetEditPayloadDto,
-        DraftPresetPreviewReferenceDto, DraftPresetSummaryDto, DraftRenderProfileDto,
-        DraftValidationFindingDto, DraftValidationReportDto, DraftValidationSnapshotDto,
-        HostErrorEnvelope, PresetPublicationAuditRecordDto, PublishValidatedPresetInputDto,
-        PublishValidatedPresetResultDto, PublishedPresetSummaryDto, ValidateDraftPresetInputDto,
-        ValidateDraftPresetResultDto,
+        validate_publish_validated_preset_input, validate_repair_invalid_draft_input,
+        AuthoringWorkspaceResultDto, CapabilitySnapshotDto, DraftNoisePolicyDto,
+        DraftPresetEditPayloadDto, DraftPresetPreviewReferenceDto, DraftPresetSummaryDto,
+        DraftRenderProfileDto, DraftValidationFindingDto, DraftValidationReportDto,
+        DraftValidationSnapshotDto, HostErrorEnvelope, InvalidDraftArtifactDto,
+        PresetPublicationAuditRecordDto, PublishValidatedPresetInputDto,
+        PublishValidatedPresetResultDto, PublishedPresetSummaryDto, RepairInvalidDraftInputDto,
+        ValidateDraftPresetInputDto, ValidateDraftPresetResultDto,
     },
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     preset::{
@@ -53,6 +54,7 @@ pub fn load_authoring_workspace_in_dir(
         HostErrorEnvelope::persistence(format!("draft 작업공간을 읽지 못했어요: {error}"))
     })?;
     let mut drafts = Vec::new();
+    let mut invalid_drafts = Vec::new();
 
     for entry in draft_dirs {
         let draft_dir = match entry {
@@ -70,8 +72,11 @@ pub fn load_authoring_workspace_in_dir(
             Err(_) => continue,
         };
 
-        if let Some(summary) = load_draft_summary(base_dir, &draft_dir.join("draft.json")) {
-            drafts.push(summary);
+        let draft_path = draft_dir.join("draft.json");
+
+        match inspect_draft_artifact(base_dir, &draft_dir, &draft_path) {
+            DraftArtifactInspection::Valid(summary) => drafts.push(summary),
+            DraftArtifactInspection::Invalid(artifact) => invalid_drafts.push(artifact),
         }
     }
 
@@ -87,6 +92,7 @@ pub fn load_authoring_workspace_in_dir(
         schema_version: AUTHORING_WORKSPACE_SCHEMA_VERSION.into(),
         supported_lifecycle_states: supported_lifecycle_states(),
         drafts,
+        invalid_drafts,
     })
 }
 
@@ -116,6 +122,51 @@ pub fn create_draft_preset_in_dir(
     Ok(summary)
 }
 
+pub fn repair_invalid_draft_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: RepairInvalidDraftInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    ensure_authoring_access(capability_snapshot)?;
+    validate_repair_invalid_draft_input(&input)?;
+
+    let drafts_root = resolve_draft_authoring_root(base_dir);
+
+    if !drafts_root.exists() {
+        return Err(HostErrorEnvelope::validation_message(
+            "정리할 손상 draft를 찾지 못했어요.",
+        ));
+    }
+
+    let draft_path = resolve_draft_file_path(&drafts_root, &input.draft_folder);
+    ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
+    let draft_dir = draft_path
+        .parent()
+        .ok_or_else(|| HostErrorEnvelope::persistence("손상 draft 위치를 확인하지 못했어요."))?;
+
+    if !draft_dir.exists() {
+        return Err(HostErrorEnvelope::validation_message(
+            "정리할 손상 draft를 찾지 못했어요.",
+        ));
+    }
+
+    match inspect_draft_artifact(base_dir, draft_dir, &draft_path) {
+        DraftArtifactInspection::Valid(_) => {
+            return Err(HostErrorEnvelope::validation_message(
+                "정상 draft는 손상 정리 대상이 아니에요.",
+            ));
+        }
+        DraftArtifactInspection::Invalid(artifact) if !artifact.can_repair => {
+            return Err(HostErrorEnvelope::validation_message(artifact.guidance));
+        }
+        DraftArtifactInspection::Invalid(_) => {}
+    }
+
+    fs::remove_dir_all(draft_dir).map_err(map_fs_error)?;
+
+    Ok(())
+}
+
 pub fn save_draft_preset_in_dir(
     base_dir: &Path,
     capability_snapshot: &CapabilitySnapshotDto,
@@ -127,8 +178,12 @@ pub fn save_draft_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
-    let existing_draft = load_draft_summary(base_dir, &draft_path)
-        .ok_or_else(|| HostErrorEnvelope::validation_message("먼저 새 draft를 만들어 주세요."))?;
+    let existing_draft = load_required_draft_summary(
+        base_dir,
+        &draft_path,
+        "먼저 새 draft를 만들어 주세요.",
+        "저장된 draft 기록이 손상되어 다시 저장할 수 없어요. 새 draft를 만들어 필요한 내용을 다시 옮겨 주세요.",
+    )?;
     ensure_mutable_authoring_lifecycle(&existing_draft.lifecycle_state, "저장")?;
     let summary = build_draft_summary(
         &input,
@@ -153,8 +208,12 @@ pub fn validate_draft_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
-    let existing_draft = load_draft_summary(base_dir, &draft_path)
-        .ok_or_else(|| HostErrorEnvelope::validation_message("검증할 draft를 찾지 못했어요."))?;
+    let existing_draft = load_required_draft_summary(
+        base_dir,
+        &draft_path,
+        "검증할 draft를 찾지 못했어요.",
+        "저장된 draft 기록이 손상되어 검증을 이어갈 수 없어요. 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요.",
+    )?;
     ensure_mutable_authoring_lifecycle(&existing_draft.lifecycle_state, "검증")?;
     let checked_at = current_timestamp(SystemTime::now())?;
     let report = build_validation_report(&draft_path, &existing_draft, checked_at.clone());
@@ -197,8 +256,12 @@ pub fn publish_validated_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
-    let existing_draft = load_draft_summary(base_dir, &draft_path)
-        .ok_or_else(|| HostErrorEnvelope::validation_message("게시할 draft를 찾지 못했어요."))?;
+    let existing_draft = load_required_draft_summary(
+        base_dir,
+        &draft_path,
+        "게시할 draft를 찾지 못했어요.",
+        "저장된 draft 기록이 손상되어 게시를 이어갈 수 없어요. 새 draft를 만들고 다시 검증해 주세요.",
+    )?;
     let noted_at = current_timestamp(SystemTime::now())?;
 
     if input.scope != "future-sessions-only" {
@@ -842,6 +905,16 @@ fn create_published_bundle_from_draft(
             "actorId": input.actor_id,
             "actorLabel": input.actor_label,
         },
+        "previewProfile": {
+            "profileId": draft.preview_profile.profile_id,
+            "displayName": draft.preview_profile.display_name,
+            "outputColorSpace": draft.preview_profile.output_color_space,
+        },
+        "finalProfile": {
+            "profileId": draft.final_profile.profile_id,
+            "displayName": draft.final_profile.display_name,
+            "outputColorSpace": draft.final_profile.output_color_space,
+        },
         "preview": {
             "kind": "preview-tile",
             "assetPath": preview_relative,
@@ -925,6 +998,7 @@ fn empty_authoring_workspace() -> AuthoringWorkspaceResultDto {
         schema_version: AUTHORING_WORKSPACE_SCHEMA_VERSION.into(),
         supported_lifecycle_states: supported_lifecycle_states(),
         drafts: Vec::new(),
+        invalid_drafts: Vec::new(),
     }
 }
 
@@ -941,16 +1015,136 @@ fn resolve_draft_file_path(drafts_root: &Path, preset_id: &str) -> PathBuf {
     drafts_root.join(preset_id).join("draft.json")
 }
 
-fn load_draft_summary(base_dir: &Path, draft_path: &Path) -> Option<DraftPresetSummaryDto> {
-    let draft_bytes = fs::read_to_string(draft_path).ok()?;
-    let mut summary: DraftPresetSummaryDto = serde_json::from_str(&draft_bytes).ok()?;
-    summary.publication_history = load_publication_history(base_dir, &summary.preset_id);
+enum DraftArtifactInspection {
+    Valid(DraftPresetSummaryDto),
+    Invalid(InvalidDraftArtifactDto),
+}
 
-    if !is_valid_draft_summary(draft_path, &summary) {
-        return None;
+fn load_required_draft_summary(
+    base_dir: &Path,
+    draft_path: &Path,
+    missing_message: &str,
+    malformed_message: &str,
+) -> Result<DraftPresetSummaryDto, HostErrorEnvelope> {
+    if !draft_path.exists() {
+        return Err(HostErrorEnvelope::validation_message(missing_message));
     }
 
-    Some(summary)
+    let draft_bytes = fs::read_to_string(draft_path).map_err(map_fs_error)?;
+    let trusted_preset_id = trusted_draft_folder_name(draft_path)
+        .ok_or_else(|| HostErrorEnvelope::validation_message(malformed_message))?;
+    let mut summary: DraftPresetSummaryDto = serde_json::from_str(&draft_bytes)
+        .map_err(|_| HostErrorEnvelope::validation_message(malformed_message))?;
+
+    if summary.preset_id != trusted_preset_id {
+        return Err(HostErrorEnvelope::validation_message(malformed_message));
+    }
+
+    summary.publication_history = load_publication_history(base_dir, &trusted_preset_id);
+
+    if !is_valid_draft_summary(draft_path, &summary) {
+        return Err(HostErrorEnvelope::validation_message(malformed_message));
+    }
+
+    Ok(summary)
+}
+
+fn inspect_draft_artifact(
+    base_dir: &Path,
+    draft_dir: &Path,
+    draft_path: &Path,
+) -> DraftArtifactInspection {
+    let draft_folder = draft_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "unknown-draft".into());
+
+    if !draft_path.exists() {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "저장된 draft 기록 파일이 없어서 작업공간에서 다시 열 수 없어요.".into(),
+            guidance:
+                "목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 필요한 메타데이터와 자산 참조를 다시 저장해 주세요.".into(),
+            can_repair: true,
+        });
+    }
+
+    let Ok(draft_bytes) = fs::read_to_string(draft_path) else {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "저장된 draft 기록을 지금은 읽지 못하고 있어요.".into(),
+            guidance:
+                "파일 잠금이나 권한 문제일 수 있어 자동 정리는 막았어요. 잠시 후 다시 시도하거나 작업공간 접근 상태를 먼저 확인해 주세요."
+                    .into(),
+            can_repair: false,
+        });
+    };
+
+    let Ok(summary) = serde_json::from_str::<DraftPresetSummaryDto>(&draft_bytes) else {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "저장된 draft JSON 형식이 손상되어 작업공간에서 열 수 없어요.".into(),
+            guidance:
+                "목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 메타데이터와 자산 참조를 다시 저장해 주세요.".into(),
+            can_repair: true,
+        });
+    };
+
+    let Some(trusted_preset_id) = trusted_draft_folder_name(draft_path) else {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "draft 폴더 이름이 현재 authoring 규칙과 맞지 않아 자동 복구를 보류했어요."
+                .into(),
+            guidance:
+                "자동 삭제 대신 작업공간을 수동 점검해 주세요. 폴더 이름과 presetId를 맞춘 뒤 다시 불러오면 기록을 보존할 수 있어요."
+                    .into(),
+            can_repair: false,
+        });
+    };
+
+    if summary.preset_id != trusted_preset_id {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "draft 폴더 이름과 저장된 presetId가 서로 달라 자동 정리를 막았어요.".into(),
+            guidance:
+                "자동 삭제 대신 작업공간을 수동 점검해 주세요. 폴더 이름과 presetId를 맞추면 기존 draft와 자산을 보존할 수 있어요."
+                    .into(),
+            can_repair: false,
+        });
+    }
+
+    let mut summary = summary;
+    summary.publication_history = load_publication_history(base_dir, &trusted_preset_id);
+
+    if !is_valid_draft_summary(draft_path, &summary) {
+        return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+            draft_folder,
+            message: "저장된 draft metadata가 현재 authoring 계약과 맞지 않아 자동 정리를 막았어요."
+                .into(),
+            guidance:
+                "자동 삭제 대신 작업공간을 수동 점검해 주세요. 필요한 경우 metadata를 바로잡은 뒤 다시 불러오거나 새 draft로 이관해 주세요."
+                    .into(),
+            can_repair: false,
+        });
+    }
+
+    DraftArtifactInspection::Valid(summary)
+}
+
+fn trusted_draft_folder_name(draft_path: &Path) -> Option<String> {
+    let draft_folder = draft_path
+        .parent()?
+        .file_name()?
+        .to_str()?
+        .trim()
+        .to_string();
+
+    if crate::contracts::dto::is_valid_preset_id(&draft_folder) {
+        Some(draft_folder)
+    } else {
+        None
+    }
 }
 
 fn ensure_mutable_authoring_lifecycle(
@@ -1404,39 +1598,9 @@ fn is_render_compatible_xmp(path: &Path) -> bool {
         Err(_) => return false,
     };
     let lowercase = strip_xml_noise(&contents).to_ascii_lowercase();
-    let Some(root_open_start) = lowercase.find("<darktable") else {
+    let Some(history_body) = find_history_body(&lowercase) else {
         return false;
     };
-    let Some(root_open_end_offset) = lowercase[root_open_start..].find('>') else {
-        return false;
-    };
-    let root_open_end = root_open_start + root_open_end_offset;
-    let Some(root_close_start) = lowercase.rfind("</darktable>") else {
-        return false;
-    };
-
-    if root_close_start <= root_open_end {
-        return false;
-    }
-
-    let root_body = &lowercase[root_open_end + 1..root_close_start];
-    let Some(history_open_start) = root_body.find("<history") else {
-        return false;
-    };
-    let Some(history_open_end_offset) = root_body[history_open_start..].find('>') else {
-        return false;
-    };
-    let history_open_end = history_open_start + history_open_end_offset;
-    let Some(history_close_start) = root_body[history_open_end + 1..].find("</history>") else {
-        return false;
-    };
-    let history_close_start = history_open_end + 1 + history_close_start;
-
-    if history_close_start <= history_open_end {
-        return false;
-    }
-
-    let history_body = root_body[history_open_end + 1..history_close_start].trim();
 
     !history_body.is_empty() && has_supported_history_entry(history_body)
 }
@@ -1478,7 +1642,7 @@ fn strip_xml_noise(contents: &str) -> String {
 }
 
 fn has_supported_history_entry(history_body: &str) -> bool {
-    let supported_tags = ["item", "entry", "operation", "module"];
+    let supported_tags = ["item", "entry", "operation", "module", "li", "rdf:li"];
     let mut remaining = history_body;
 
     while let Some(tag_start) = remaining.find('<') {
@@ -1522,6 +1686,25 @@ fn has_supported_history_entry(history_body: &str) -> bool {
     }
 
     false
+}
+
+fn find_history_body(contents: &str) -> Option<&str> {
+    find_tag_body(contents, "<darktable:history", "</darktable:history>")
+        .or_else(|| find_tag_body(contents, "<history", "</history>"))
+}
+
+fn find_tag_body<'a>(contents: &'a str, open_tag_prefix: &str, close_tag: &str) -> Option<&'a str> {
+    let open_start = contents.find(open_tag_prefix)?;
+    let open_end_offset = contents[open_start..].find('>')?;
+    let open_end = open_start + open_end_offset;
+    let close_start = contents[open_end + 1..].find(close_tag)?;
+    let close_start = open_end + 1 + close_start;
+
+    if close_start <= open_end {
+        return None;
+    }
+
+    Some(contents[open_end + 1..close_start].trim())
 }
 
 fn validation_error(

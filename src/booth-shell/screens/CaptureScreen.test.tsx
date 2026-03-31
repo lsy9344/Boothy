@@ -349,7 +349,7 @@ describe('CaptureScreen', () => {
     expect(screen.queryByText(/darktable|sdk|helper/i)).not.toBeInTheDocument()
   })
 
-  it('keeps handoff-ready completion on generic completed guidance in story 3.2', async () => {
+  it('shows handoff-ready guidance with approved destination and booth alias in story 3.3', async () => {
     renderCaptureScreen(
       {},
       {
@@ -412,14 +412,26 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /부스 준비가 끝났어요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /안내 확인/i })).not.toBeInTheDocument()
-    expect(screen.queryByText(/인계 안내/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/front desk/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/인계 안내/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /승인된 수령 대상/i })).toBeInTheDocument()
+    expect(screen.getByText(/front desk/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /다음 행동/i })).toBeInTheDocument()
+    expect(screen.getByText(/안내된 직원에게 이름을 말씀해 주세요\./i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /확인할 이름/i })).toBeInTheDocument()
+    expect(screen.getAllByText(/kim 4821/i)).toHaveLength(2)
+    expect(
+      screen.getByText(/이번 세션에서 사용된 룩이 그대로 반영돼요\./i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요\./i),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/종료 시각이 고정되어 있어요\./i)).not.toBeInTheDocument()
     expect(
       screen.queryByRole('heading', { level: 1, name: /촬영 시간이 끝났어요/i }),
     ).not.toBeInTheDocument()
   })
 
-  it('keeps phone-required guidance generic while booth-loop actions stay blocked', async () => {
+  it('shows phone-required protection guidance while booth-loop actions stay blocked', async () => {
     renderCaptureScreen(
       {},
       {
@@ -508,10 +520,20 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /지금은 도움이 필요해요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /도움 요청/i })).not.toBeInTheDocument()
-    expect(screen.queryByText(/보호 안내/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/보호 안내/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /지금 해야 할 일/i })).toBeInTheDocument()
+    expect(screen.getAllByText(/가까운 직원에게 알려 주세요\./i)).toHaveLength(2)
+    expect(screen.getByText(/직원에게 도움을 요청해 주세요\./i)).toBeInTheDocument()
     expect(
-      screen.queryByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
+      screen.getByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/이번 세션에서 사용된 룩이 그대로 반영돼요\./i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요\./i),
     ).not.toBeInTheDocument()
+    expect(screen.queryByText(/종료 시각이 고정되어 있어요\./i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^사진 정리$/i })).not.toBeInTheDocument()
     expect(
       screen.getByText(/지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요\./i),
@@ -844,6 +866,44 @@ describe('CaptureScreen', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('keeps the timing panel visible during export-waiting until the session is actually ended', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'blocked',
+          customerState: 'Export Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '촬영은 끝났고 결과를 준비하고 있어요.',
+          supportMessage: '다음 안내가 나올 때까지 잠시만 기다려 주세요.',
+          reasonCode: 'export-waiting',
+          latestCapture: createCaptureRecord(),
+          postEnd: {
+            state: 'export-waiting',
+            evaluatedAt: '2026-03-20T00:14:00.000Z',
+          },
+          timing: createTimingSnapshot({
+            phase: 'warning',
+            captureAllowed: false,
+            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
+            endedTriggeredAt: null,
+          }),
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('heading', {
+        name: /촬영은 끝났고 결과를 준비하고 있어요/i,
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/^종료 시각$/)).toBeInTheDocument()
+    expect(screen.getByText(/^남은 시간$/)).toBeInTheDocument()
+  })
+
   it('shows completed guidance only after host post-end truth confirms completion', async () => {
     renderCaptureScreen(
       {},
@@ -935,6 +995,10 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /부스 준비가 끝났어요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /다음 촬영 룩 바꾸기/i })).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/이번 세션에서 사용된 룩이 그대로 반영돼요\./i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/종료 시각이 고정되어 있어요\./i)).not.toBeInTheDocument()
     expect(
       screen.getByText(/지금은 결과 안내가 우선이라 여기서 사진을 정리할 수 없어요\./i),
     ).toBeInTheDocument()

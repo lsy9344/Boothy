@@ -186,18 +186,15 @@ internal sealed class CanonSdkCamera : IDisposable
 
         if (err != EDSDK.EDS_ERR_OK)
         {
+            var captureTriggerException = BuildCaptureTriggerException(err);
             ClearCaptureContext(
                 captureContext,
-                err == EDSDK.EDS_ERR_DEVICE_BUSY ? "camera-busy" : "capture-trigger-failed",
-                err == EDSDK.EDS_ERR_DEVICE_BUSY ? "ready" : "recovering",
-                err != EDSDK.EDS_ERR_DEVICE_BUSY
+                captureTriggerException.DetailCode,
+                captureTriggerException.RecoveryRequired ? "recovering" : "ready",
+                captureTriggerException.RecoveryRequired
             );
 
-            throw new CanonCaptureException(
-                err == EDSDK.EDS_ERR_DEVICE_BUSY ? "camera-busy" : "capture-trigger-failed",
-                $"셔터 명령을 보낼 수 없었어요: 0x{err:x8}",
-                recoveryRequired: err != EDSDK.EDS_ERR_DEVICE_BUSY
-            );
+            throw captureTriggerException;
         }
 
         CaptureDownloadResult result;
@@ -216,7 +213,6 @@ internal sealed class CanonSdkCamera : IDisposable
                 "RAW handoff를 기다리다 시간이 초과되었어요.",
                 recoveryRequired: true
             );
-
             captureContext.Completion.TrySetException(timeoutException);
             ClearCaptureContext(
                 captureContext,
@@ -311,6 +307,28 @@ internal sealed class CanonSdkCamera : IDisposable
         return long.TryParse(configured, out var configuredTimeoutMs) && configuredTimeoutMs > 0
             ? TimeSpan.FromMilliseconds(configuredTimeoutMs)
             : DefaultCaptureCompletionTimeout;
+    }
+
+    private static CanonCaptureException BuildCaptureTriggerException(uint err)
+    {
+        return err switch
+        {
+            EDSDK.EDS_ERR_DEVICE_BUSY => new CanonCaptureException(
+                "camera-busy",
+                "카메라가 아직 직전 촬영을 정리하고 있어요. 잠시 후 다시 시도해 주세요.",
+                recoveryRequired: false
+            ),
+            EDSDK.EDS_ERR_TAKE_PICTURE_AF_NG => new CanonCaptureException(
+                "capture-focus-not-locked",
+                "카메라가 초점을 아직 잡지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
+                recoveryRequired: false
+            ),
+            _ => new CanonCaptureException(
+                "capture-trigger-failed",
+                $"셔터 명령을 보낼 수 없었어요: 0x{err:x8}",
+                recoveryRequired: true
+            ),
+        };
     }
 
     public static SelfCheckResult RunSelfCheck(string? sdkRoot)

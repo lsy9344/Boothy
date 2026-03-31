@@ -11,8 +11,9 @@ use std::{
 use crate::{
     capture::normalized_state::normalize_capture_readiness,
     contracts::dto::{
-        CapabilitySnapshotDto, HostErrorEnvelope, OperatorBoundarySummaryDto,
-        OperatorRecentFailureSummaryDto, OperatorSessionSummaryDto,
+        CapabilitySnapshotDto, HostErrorEnvelope, LiveCaptureTruthDto, OperatorBoundarySummaryDto,
+        OperatorCameraConnectionSummaryDto, OperatorRecentFailureSummaryDto,
+        OperatorSessionSummaryDto,
     },
     handoff::project_post_end_state_in_dir,
     session::{
@@ -74,6 +75,11 @@ pub fn load_operator_session_summary_in_dir(
         manifest.post_end.as_ref().map(|post_end| post_end.state()),
         manifest.timing.as_ref().map(|timing| timing.phase.as_str()),
     );
+    let camera_connection = build_camera_connection_summary(
+        &manifest,
+        readiness.reason_code.as_str(),
+        live_capture_truth.as_ref(),
+    );
     let blocked_state_category = derive_blocked_state_category(
         &capture_boundary,
         &preview_render_boundary,
@@ -108,6 +114,7 @@ pub fn load_operator_session_summary_in_dir(
             .as_ref()
             .map(|post_end| post_end.state().into()),
         recent_failure,
+        camera_connection,
         capture_boundary,
         preview_render_boundary,
         completion_boundary,
@@ -171,6 +178,12 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
         updated_at: None,
         post_end_state: None,
         recent_failure: None,
+        camera_connection: OperatorCameraConnectionSummaryDto {
+            state: "disconnected".into(),
+            title: "세션 없음".into(),
+            detail: "진행 중인 세션이 없어 카메라 연결 상태를 아직 판단하지 않았어요.".into(),
+            observed_at: None,
+        },
         capture_boundary: clear_boundary(
             "현재 세션 없음",
             "진행 중인 세션이 없어 capture 경계를 아직 판단하지 않았어요.",
@@ -185,6 +198,171 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
         ),
         live_capture_truth: None,
     }
+}
+
+fn build_camera_connection_summary(
+    manifest: &SessionManifest,
+    reason_code: &str,
+    live_capture_truth: Option<&LiveCaptureTruthDto>,
+) -> OperatorCameraConnectionSummaryDto {
+    let observed_at = live_capture_truth.and_then(|truth| truth.observed_at.clone());
+    let connection_state =
+        derive_camera_connection_state(manifest, reason_code, live_capture_truth);
+
+    match connection_state {
+        "disconnected" => OperatorCameraConnectionSummaryDto {
+            state: connection_state.into(),
+            title: "카메라 연결이 아직 확인되지 않았어요.".into(),
+            detail: "카메라 전원과 연결 상태를 먼저 점검해 주세요.".into(),
+            observed_at,
+        },
+        "connecting" => OperatorCameraConnectionSummaryDto {
+            state: connection_state.into(),
+            title: "카메라 연결을 확인하는 중이에요.".into(),
+            detail: "helper와 카메라 연결 상태를 정규화하는 동안 잠시만 기다려 주세요.".into(),
+            observed_at,
+        },
+        "connected" => OperatorCameraConnectionSummaryDto {
+            state: connection_state.into(),
+            title: "카메라와 helper 연결이 확인됐어요.".into(),
+            detail: "카메라와 helper가 현재 세션 기준으로 연결된 상태예요.".into(),
+            observed_at,
+        },
+        _ => {
+            let detail = match live_capture_truth {
+                Some(truth)
+                    if truth.freshness != "fresh" || truth.session_match != "matched" =>
+                {
+                    "최근 helper 상태가 현재 세션과 맞지 않거나 오래돼 연결 진실을 다시 확인해야 해요."
+                }
+                Some(truth)
+                    if matches!(
+                        truth.camera_state.as_str(),
+                        "recovering" | "degraded" | "error"
+                    ) || matches!(
+                        truth.helper_state.as_str(),
+                        "recovering" | "degraded" | "error"
+                    ) =>
+                {
+                    "카메라 또는 helper 연결이 흔들려 복구가 필요한 상태예요."
+                }
+                _ => "카메라 연결 신호가 기대한 준비 상태와 달라 복구 여부를 확인해 주세요.",
+            };
+
+            OperatorCameraConnectionSummaryDto {
+                state: "recovery-required".into(),
+                title: "카메라 연결 복구가 필요해요.".into(),
+                detail: detail.into(),
+                observed_at,
+            }
+        }
+    }
+}
+
+fn derive_camera_connection_state(
+    manifest: &SessionManifest,
+    reason_code: &str,
+    live_capture_truth: Option<&LiveCaptureTruthDto>,
+) -> &'static str {
+    let has_connected_context = has_connected_camera_context(manifest);
+    let Some(live_capture_truth) = live_capture_truth else {
+        return if has_connected_context {
+            "recovery-required"
+        } else {
+            "connecting"
+        };
+    };
+
+    if live_capture_truth.freshness != "fresh" || live_capture_truth.session_match != "matched" {
+        return if has_connected_context {
+            "recovery-required"
+        } else {
+            "connecting"
+        };
+    }
+
+    if let Some(connection_state) = live_capture_truth
+        .detail_code
+        .as_deref()
+        .and_then(map_camera_connection_state_from_detail_code)
+    {
+        return connection_state;
+    }
+
+    if matches!(
+        live_capture_truth.camera_state.as_str(),
+        "degraded" | "error" | "recovering"
+    ) || matches!(
+        live_capture_truth.helper_state.as_str(),
+        "degraded" | "error" | "recovering"
+    ) {
+        return "recovery-required";
+    }
+
+    if live_capture_truth.camera_state == "disconnected" {
+        return "disconnected";
+    }
+
+    if matches!(
+        (
+            live_capture_truth.camera_state.as_str(),
+            live_capture_truth.helper_state.as_str()
+        ),
+        ("ready", "healthy") | ("connected-idle", "healthy") | ("capturing", "healthy")
+    ) {
+        return "connected";
+    }
+
+    if reason_code == "phone-required" && has_connected_context {
+        return "recovery-required";
+    }
+
+    if matches!(reason_code, "camera-preparing" | "helper-preparing")
+        || matches!(
+            live_capture_truth.camera_state.as_str(),
+            "connecting" | "connected-idle" | "unknown"
+        )
+        || matches!(
+            live_capture_truth.helper_state.as_str(),
+            "starting" | "connecting" | "unknown"
+        )
+    {
+        return "connecting";
+    }
+
+    if has_connected_context {
+        "recovery-required"
+    } else {
+        "disconnected"
+    }
+}
+
+fn map_camera_connection_state_from_detail_code(detail_code: &str) -> Option<&'static str> {
+    match detail_code {
+        "camera-not-found" | "usb-disconnected" | "unsupported-camera" => Some("disconnected"),
+        "sdk-initializing" | "session-opening" => Some("connecting"),
+        "connected-idle" | "camera-ready" => Some("connected"),
+        "reconnect-pending" | "sdk-init-failed" => Some("recovery-required"),
+        _ => None,
+    }
+}
+
+fn has_connected_camera_context(manifest: &SessionManifest) -> bool {
+    if !manifest.captures.is_empty() {
+        return true;
+    }
+
+    matches!(
+        manifest.lifecycle.stage.as_str(),
+        "ready"
+            | "capture-ready"
+            | "preview-waiting"
+            | "warning"
+            | "ended"
+            | "export-waiting"
+            | "completed"
+            | "phone-required"
+    )
 }
 
 fn load_current_session_manifest(

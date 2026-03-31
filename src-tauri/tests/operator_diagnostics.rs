@@ -40,6 +40,7 @@ fn operator_diagnostics_returns_a_safe_no_session_summary() {
     assert_eq!(summary.state, "no-session");
     assert_eq!(summary.blocked_state_category, "not-blocked");
     assert_eq!(summary.session_id, None);
+    assert_eq!(summary.camera_connection.state, "disconnected");
     assert_eq!(summary.capture_boundary.status, "clear");
 
     let _ = fs::remove_dir_all(base_dir);
@@ -59,12 +60,21 @@ fn operator_diagnostics_classifies_capture_blocked_sessions() {
     };
 
     write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "disconnected",
+        "healthy",
+        Some("camera-not-found"),
+    );
 
     let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
         .expect("capture-blocked summary should load");
 
     assert_eq!(summary.state, "session-loaded");
     assert_eq!(summary.blocked_state_category, "capture-blocked");
+    assert_eq!(summary.camera_connection.state, "disconnected");
     assert_eq!(summary.capture_boundary.status, "blocked");
     assert_eq!(
         summary
@@ -99,11 +109,13 @@ fn operator_diagnostics_classifies_preview_render_blocked_sessions() {
     };
 
     write_manifest(&base_dir, &manifest);
+    write_ready_helper_status(&base_dir, session_id);
 
     let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
         .expect("preview/render-blocked summary should load");
 
     assert_eq!(summary.blocked_state_category, "preview-render-blocked");
+    assert_eq!(summary.camera_connection.state, "connected");
     assert_eq!(summary.preview_render_boundary.status, "blocked");
     assert_eq!(
         summary.active_preset_display_name.as_deref(),
@@ -192,6 +204,215 @@ fn operator_diagnostics_reuses_live_capture_truth_from_capture_readiness() {
     assert_eq!(live_truth.session_match, "matched");
     assert_eq!(live_truth.camera_state, "ready");
     assert_eq!(live_truth.helper_state, "healthy");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_projects_connecting_camera_connection_state() {
+    let base_dir = unique_test_root("camera-connection-connecting");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1w";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "helper-preparing".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "connecting",
+        "starting",
+        Some("session-opening"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("connecting summary should load");
+
+    assert_eq!(summary.camera_connection.state, "connecting");
+    assert_eq!(
+        summary.camera_connection.title,
+        "카메라 연결을 확인하는 중이에요."
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_projects_disconnected_camera_connection_state_from_detail_code() {
+    let base_dir = unique_test_root("camera-connection-disconnected-detail-code");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1d";
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "camera-preparing".into(),
+        },
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "connecting",
+        "healthy",
+        Some("unsupported-camera"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("disconnected summary should load");
+    let live_truth = summary
+        .live_capture_truth
+        .as_ref()
+        .expect("live capture truth should be present");
+
+    assert_eq!(live_truth.freshness, "fresh");
+    assert_eq!(live_truth.session_match, "matched");
+    assert_eq!(
+        live_truth.detail_code.as_deref(),
+        Some("unsupported-camera")
+    );
+    assert_eq!(summary.camera_connection.state, "disconnected");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_projects_recovery_required_camera_connection_state_from_detail_code() {
+    let base_dir = unique_test_root("camera-connection-recovery-detail-code");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1e";
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "helper-preparing".into(),
+        },
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "connecting",
+        "healthy",
+        Some("sdk-init-failed"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("recovery summary should load");
+    let live_truth = summary
+        .live_capture_truth
+        .as_ref()
+        .expect("live capture truth should be present");
+
+    assert_eq!(live_truth.freshness, "fresh");
+    assert_eq!(live_truth.session_match, "matched");
+    assert_eq!(live_truth.detail_code.as_deref(), Some("sdk-init-failed"));
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_projects_recovery_required_camera_connection_state() {
+    let base_dir = unique_test_root("camera-connection-recovery-required");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1x";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "capture-ready".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(60))
+                .expect("stale helper timestamp should be earlier than now"),
+        )
+        .expect("stale helper timestamp should serialize"),
+        "ready",
+        "healthy",
+        Some("camera-ready"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("recovery-required summary should load");
+
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+    assert_eq!(summary.blocked_state_category, "capture-blocked");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_camera_connection_observed_at_uses_only_live_capture_truth() {
+    let base_dir = unique_test_root("camera-connection-observed-at-source");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1f";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "export-waiting".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        captures: vec![preview_waiting_capture(session_id)],
+        post_end: Some(SessionPostEnd::ExportWaiting(ExportWaitingPostEnd {
+            state: SESSION_POST_END_EXPORT_WAITING.into(),
+            evaluated_at: "2026-03-26T00:12:00Z".into(),
+        })),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+
+    let paths = SessionPaths::new(&base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
+    fs::write(
+        paths.diagnostics_dir.join("timing-events.log"),
+        "2026-03-26T00:12:00Z\tsession=session_01hs6n1r8b8zc5v4ey2x7b9g1f\tevent=post-end-evaluated\tstate=export-waiting",
+    )
+    .expect("diagnostics log should write");
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("summary should load");
+
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+    assert_eq!(summary.camera_connection.observed_at, None);
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -501,7 +722,23 @@ fn create_published_bundle(
         .join(published_version);
 
     fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
+    fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should exist");
     fs::write(bundle_dir.join("preview.jpg"), "preview").expect("preview should write");
+    fs::write(
+        bundle_dir.join("xmp").join("template.xmp"),
+        format!(
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+                "<rdf:Description xmlns:darktable=\"http://darktable.sf.net/\">",
+                "<darktable:history><rdf:Seq><rdf:li><darktable:module>{preset_id}</darktable:module></rdf:li></rdf:Seq></darktable:history>",
+                "</rdf:Description></rdf:RDF></x:xmpmeta>"
+            ),
+            preset_id = preset_id
+        ),
+    )
+    .expect("xmp template should write");
     fs::write(
         bundle_dir.join("bundle.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -511,6 +748,18 @@ fn create_published_bundle(
             "publishedVersion": published_version,
             "lifecycleStatus": "published",
             "boothStatus": "booth-safe",
+            "darktableVersion": "5.4.1",
+            "xmpTemplatePath": "xmp/template.xmp",
+            "previewProfile": {
+                "profileId": format!("{preset_id}-preview"),
+                "displayName": format!("{display_name} Preview"),
+                "outputColorSpace": "sRGB",
+            },
+            "finalProfile": {
+                "profileId": format!("{preset_id}-final"),
+                "displayName": format!("{display_name} Final"),
+                "outputColorSpace": "sRGB",
+            },
             "preview": {
                 "kind": "preview-tile",
                 "assetPath": "preview.jpg",
@@ -523,6 +772,24 @@ fn create_published_bundle(
 }
 
 fn write_ready_helper_status(base_dir: &Path, session_id: &str) {
+    write_helper_status(
+        base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "ready",
+        "healthy",
+        Some("camera-ready"),
+    );
+}
+
+fn write_helper_status(
+    base_dir: &Path,
+    session_id: &str,
+    observed_at: &str,
+    camera_state: &str,
+    helper_state: &str,
+    detail_code: Option<&str>,
+) {
     let status_path = SessionPaths::new(base_dir, session_id)
         .diagnostics_dir
         .join("camera-helper-status.json");
@@ -538,9 +805,10 @@ fn write_ready_helper_status(base_dir: &Path, session_id: &str) {
           "schemaVersion": "canon-helper-status/v1",
           "sessionId": session_id,
           "sequence": 1,
-          "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
-          "cameraState": "ready",
-          "helperState": "healthy"
+          "observedAt": observed_at,
+          "cameraState": camera_state,
+          "helperState": helper_state,
+          "detailCode": detail_code
         }))
         .expect("helper status should serialize"),
     )

@@ -45,6 +45,8 @@ handoff가 준비됐는지 아니면 도움을 요청해야 하는지 명확히 
 - [x] [Review][Patch] `Phone Required`의 유일한 주요 연락 행동이 비활성 버튼으로 남아 있어 고객이 안내된 다음 행동을 실행할 수 없어요. [src/booth-shell/screens/ReadinessScreen.tsx:70]
 - [x] [Review][Patch] `handoff-ready` 계약이 승인된 수령 대상이나 이동 위치 없이도 통과돼 AC 1의 필수 안내가 비어 있을 수 있어요. [src/shared-contracts/schemas/session-manifest.ts:28]
 - [x] [Review][Patch] 확장된 `postEnd` 계약이 legacy manifest 역직렬화 전에 적용돼 기존 세션 manifest를 읽는 순간 실패할 수 있어요. [src-tauri/src/session/session_manifest.rs:84]
+- [x] [Review][Patch] finalized post-end 화면에서도 `현재 룩` 카드가 계속 "지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요."라고 말해, 이미 숨긴 booth-loop 행동을 다시 떠올리게 만들어요. [src/booth-shell/screens/ReadinessScreen.tsx:67]
+- [x] [Review][Patch] handoff-ready / phone-required 화면에서도 `timing.phase`가 `ended`가 아니면 상단에 `SessionTimingPanel`이 계속 떠서, 고객에게 세션이 아직 진행 중이라는 잘못된 인상을 줄 수 있어요. [src/booth-shell/screens/ReadinessScreen.tsx:55]
 
 ## Dev Notes
 
@@ -211,6 +213,8 @@ GPT-5 Codex
 
 - 2026-03-26 02:02:54 +09:00 - Story 3.3 context 생성: Epic 3 / FR-007 / post-end taxonomy, handoff UX, current capture-readiness/session-manifest baseline, current worktree timing changes, React/Tauri/Zod 공식 문서를 함께 분석했다.
 - 2026-03-26 02:46:07 +09:00 - handoff-ready / phone-required 계약 정리, host normalization, booth 보호 UI, provider fallback guard, 상태명 정리, contract/UI/Rust regression 및 production build 검증을 완료했다.
+- 2026-03-30 20:20:29 +09:00 - story artifact는 done이었지만 booth 화면이 아직 generic completed/phone-required 안내에 머물러 있는 불일치를 확인했고, `ReadinessScreen`에 handoff-ready / phone-required 전용 패널을 실제 연결한 뒤 Story 3.3 회귀 테스트와 Rust 회귀 테스트를 다시 통과시켰다.
+- 2026-03-30 20:39:54 +09:00 - 코드 리뷰에서 post-end finality를 흐리던 타이밍 패널/룩 안내 문구를 수정했고, finalized post-end 화면에서 진행 중 신호와 다음 촬영 암시가 재노출되지 않도록 회귀 테스트를 보강했다.
 
 ### Completion Notes List
 
@@ -219,6 +223,9 @@ GPT-5 Codex
 - booth 화면에 Handoff Ready 패널과 Phone Required 보호 카드, finalized post-end 액션 차단을 연결했다.
 - stale/foreign readiness가 post-end truth를 덮지 못하도록 provider와 계약 테스트를 잠갔다.
 - `pnpm build`, `pnpm vitest run src/shared-contracts/contracts.test.ts src/booth-shell/selectors/customerStatusCopy.test.ts src/booth-shell/screens/CaptureScreen.test.tsx src/session-domain/state/session-provider.test.tsx src/capture-adapter/services/capture-runtime.test.ts`, `cargo test --test capture_readiness`, `cargo test --test session_manifest`를 통과했다.
+- `ReadinessScreen`에 이미 존재하던 `HandoffReadyPanel`, `PhoneRequiredSupportCard`를 실제 product flow에 연결해 handoff destination, approved next action, booth alias, phone-required 보호 안내가 고객 화면에 노출되도록 정리했다.
+- `pnpm vitest run src/booth-shell/screens/CaptureScreen.test.tsx src/booth-shell/selectors/customerStatusCopy.test.ts src/session-domain/state/session-provider.test.tsx src/shared-contracts/contracts.test.ts`, `cargo test --test capture_readiness --test session_manifest`를 2026-03-30 기준으로 다시 통과시켰다.
+- 코드 리뷰에서 올라온 post-end finality 회귀 2건을 수정해, finalized handoff/phone-required 화면에서 진행 중 타이밍 패널과 다음 촬영 암시 문구가 더 이상 노출되지 않도록 정리했다.
 
 ### File List
 
@@ -238,6 +245,7 @@ GPT-5 Codex
 - src/booth-shell/components/PhoneRequiredSupportCard.tsx
 - src/booth-shell/screens/CaptureScreen.test.tsx
 - src/booth-shell/screens/CaptureScreen.tsx
+- src/booth-shell/screens/ReadinessScreen.tsx
 - src/booth-shell/selectors/customerStatusCopy.test.ts
 - src/booth-shell/selectors/customerStatusCopy.ts
 - src/session-domain/state/session-provider.test.tsx
@@ -250,3 +258,5 @@ GPT-5 Codex
 ### Change Log
 
 - 2026-03-26 02:46:07 +09:00 - handoff-ready / phone-required host-owned post-end guidance, 보호 UI, finalized action 차단, 세션 격리 guard, 상태명 정리, 계약/회귀 테스트를 추가했다.
+- 2026-03-30 20:20:29 +09:00 - story 상태와 달리 실제 booth 화면에 연결되지 않았던 handoff-ready / phone-required 전용 패널을 `ReadinessScreen`에 연결하고, Story 3.3 UI 기대값으로 회귀 테스트를 갱신했다.
+- 2026-03-30 20:39:54 +09:00 - 코드 리뷰 후 finalized post-end 화면에서 타이밍 패널과 다음 촬영 암시 문구를 숨기고, 관련 UI 회귀 테스트를 보강했다.
