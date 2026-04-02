@@ -339,6 +339,48 @@ So that the look I chose matches what I see and what is later delivered.
 **Then** the host preserves RAW and current-session assets, records bounded render failure truth, and avoids cross-session leakage
 **And** it does not hide the failure behind a raw-copy success or false `previewReady` / `Completed`
 
+Story 1.8 scope note:
+- 이 스토리는 preset-applied `previewReady` / `finalReady` truth의 소유자다.
+- first-visible same-capture preview latency 보정은 후속 Story 1.9가 맡되, Story 1.8의 render-backed ready 기준을 느슨하게 만들면 안 된다.
+
+### Story 1.9: fast preview handoff와 XMP preview 교체
+
+As a booth customer,
+I want my just-captured photo to appear in the current session as quickly as safely possible even before the preset-applied preview is fully ready,
+So that I do not experience a blank wait after the booth says my photo was saved.
+
+**Acceptance Criteria:**
+
+**Given** Story 1.7 has already confirmed RAW persistence for the active session
+**When** the helper or host can provide a same-capture fast preview path
+**Then** that handoff is optional and must not become a prerequisite for capture success
+**And** the absence of fast preview falls back to the existing truthful `Preview Waiting` path
+
+**Given** a fast preview handoff is available
+**When** the host validates same-session, same-capture, and allowed-path rules
+**Then** it may promote that asset into the canonical preview path under `renders/previews/`
+**And** it must keep `previewReady` and `readyAtMs` unset until the later preset-applied render actually finishes
+
+**Given** the booth is still in `Preview Waiting`
+**When** a valid same-capture fast preview has already been promoted
+**Then** the latest-photo rail and confirmation surface may show that pending image to reduce blank waiting
+**And** the booth must not imply that the preset-applied booth-safe preview is already ready
+
+**Given** the preset-applied preview later completes through the Story 1.8 render worker path
+**When** the runtime writes the real booth-safe preview output
+**Then** it replaces the pending image at the same canonical preview path
+**And** only that later render-backed output may set `previewReady` and `readyAtMs`
+
+**Given** a fast preview is missing, invalid, stale, cross-session, or otherwise unsafe
+**When** the host evaluates promotion
+**Then** the booth discards that fast preview without failing capture truth
+**And** it continues with truthful `Preview Waiting` and the normal render follow-up path
+
+**Given** approved booth hardware and timing instrumentation are available
+**When** the team validates this story
+**Then** telemetry separates fast-preview visibility from preset-applied preview readiness
+**And** hardware evidence confirms same-capture correctness, cross-session isolation, and safe behavior during burst capture queue delay
+
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 
 고객이 현재 세션 사진만 검토하고 정책 범위 내에서 삭제하며, 세션 중 언제든 프리셋을 바꾸고, 조정된 종료 시각과 경고 알림을 이해하면서 촬영을 이어갈 수 있게 한다.

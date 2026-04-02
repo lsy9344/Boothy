@@ -7,12 +7,34 @@ type SessionPreviewImageProps = {
   alt: string
   assetPath: string
   captureId: string
-  readyAtMs: number
+  readyAtMs: number | null
   isLatest: boolean
 }
 
 function isSvgAssetPath(assetPath: string) {
   return assetPath.toLowerCase().endsWith('.svg')
+}
+
+function isAbsoluteFilesystemPath(assetPath: string) {
+  return /^[a-zA-Z]:[\\/]/.test(assetPath) || assetPath.startsWith('/')
+}
+
+function withCacheBuster(
+  src: string,
+  assetPath: string,
+  readyAtMs: number | null,
+) {
+  if (
+    readyAtMs === null ||
+    src.startsWith('data:') ||
+    !isAbsoluteFilesystemPath(assetPath)
+  ) {
+    return src
+  }
+
+  const separator = src.includes('?') ? '&' : '?'
+
+  return `${src}${separator}v=${readyAtMs}`
 }
 
 export function SessionPreviewImage({
@@ -23,16 +45,12 @@ export function SessionPreviewImage({
   isLatest,
 }: SessionPreviewImageProps) {
   const directSrc = resolvePresetPreviewSrc(assetPath)
-  const [src, setSrc] = useState(directSrc)
+  const [svgSrc, setSvgSrc] = useState<string | null>(null)
   const [hasLoadError, setHasLoadError] = useState(false)
   const [hasReportedVisible, setHasReportedVisible] = useState(false)
 
   useEffect(() => {
     let isDisposed = false
-
-    setSrc(directSrc)
-    setHasLoadError(false)
-    setHasReportedVisible(false)
 
     if (!isSvgAssetPath(assetPath)) {
       return () => {
@@ -53,11 +71,11 @@ export function SessionPreviewImage({
           return
         }
 
-        setSrc(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`)
+        setSvgSrc(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`)
       })
       .catch(() => {
         if (!isDisposed) {
-          setSrc(directSrc)
+          setSvgSrc(null)
         }
       })
 
@@ -68,6 +86,8 @@ export function SessionPreviewImage({
     assetPath,
     directSrc,
   ])
+
+  const src = withCacheBuster(svgSrc ?? directSrc, assetPath, readyAtMs)
 
   if (hasLoadError) {
     return (
@@ -87,12 +107,16 @@ export function SessionPreviewImage({
         }
 
         setHasReportedVisible(true)
-        const uiLagMs = Math.max(0, Date.now() - readyAtMs)
+        const isPendingPreview = readyAtMs === null
+        const uiLagMs = isPendingPreview ? null : Math.max(0, Date.now() - readyAtMs)
         const sessionId =
           assetPath.match(/sessions[\\/](session_[^\\/]+)/i)?.[1] ?? undefined
+        const visibilityLabel = isPendingPreview
+          ? 'current-session-preview-pending-visible'
+          : 'current-session-preview-visible'
 
         if (typeof console !== 'undefined') {
-          console.info('[boothy][capture] current-session-preview-visible', {
+          console.info(`[boothy][capture] ${visibilityLabel}`, {
             sessionId,
             captureId,
             readyAtMs,
@@ -102,9 +126,9 @@ export function SessionPreviewImage({
         }
 
         void logCaptureClientState({
-          label: 'current-session-preview-visible',
+          label: visibilityLabel,
           sessionId,
-          message: `captureId=${captureId};uiLagMs=${uiLagMs};latest=${isLatest}`,
+          message: `captureId=${captureId};uiLagMs=${uiLagMs ?? 'pending'};latest=${isLatest}`,
         })
       }}
       onError={() => {

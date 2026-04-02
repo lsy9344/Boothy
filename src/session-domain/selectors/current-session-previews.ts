@@ -9,34 +9,8 @@ export type CurrentSessionPreview = {
   presetDisplayName: string | null
   isCurrentActivePreset: boolean
   postEndState: SessionManifest['captures'][number]['postEndState']
-  readyAtMs: number
+  readyAtMs: number | null
   isLatest: boolean
-}
-
-function compareCurrentSessionPreviewOrder(
-  left: NonNullable<SessionManifest['captures'][number]>,
-  right: NonNullable<SessionManifest['captures'][number]>,
-) {
-  const readyDelta = right.preview.readyAtMs! - left.preview.readyAtMs!
-
-  if (readyDelta !== 0) {
-    return readyDelta
-  }
-
-  const enqueuedDelta =
-    (right.preview.enqueuedAtMs ?? -1) - (left.preview.enqueuedAtMs ?? -1)
-
-  if (enqueuedDelta !== 0) {
-    return enqueuedDelta
-  }
-
-  const persistedDelta = right.raw.persistedAtMs - left.raw.persistedAtMs
-
-  if (persistedDelta !== 0) {
-    return persistedDelta
-  }
-
-  return right.captureId.localeCompare(left.captureId)
 }
 
 function compareCurrentSessionCaptureRecency(
@@ -66,6 +40,16 @@ function compareCurrentSessionCaptureRecency(
   return right.captureId.localeCompare(left.captureId)
 }
 
+function hasSessionScopedPreviewAsset(
+  sessionId: string,
+  capture: NonNullable<SessionManifest['captures'][number]>,
+) {
+  return (
+    capture.preview.assetPath !== null &&
+    isSessionScopedAssetPath(sessionId, capture.preview.assetPath)
+  )
+}
+
 function isVisibleCurrentSessionPreview(
   sessionId: string,
   capture: NonNullable<SessionManifest['captures'][number]>,
@@ -74,9 +58,20 @@ function isVisibleCurrentSessionPreview(
     capture.renderStatus === 'previewReady' ||
     capture.renderStatus === 'finalReady'
   ) &&
-    capture.preview.assetPath !== null &&
-    isSessionScopedAssetPath(sessionId, capture.preview.assetPath) &&
+    hasSessionScopedPreviewAsset(sessionId, capture) &&
     capture.preview.readyAtMs !== null
+}
+
+function isDisplayablePendingCurrentSessionPreview(
+  sessionId: string,
+  capture: NonNullable<SessionManifest['captures'][number]>,
+) {
+  return (
+    (capture.renderStatus === 'captureSaved' ||
+      capture.renderStatus === 'previewWaiting') &&
+    hasSessionScopedPreviewAsset(sessionId, capture) &&
+    capture.preview.readyAtMs === null
+  )
 }
 
 function isPendingCurrentSessionPreview(
@@ -111,15 +106,24 @@ export function selectCurrentSessionPreviews(
       break
     }
 
+    if (isDisplayablePendingCurrentSessionPreview(manifest.sessionId, capture)) {
+      latestVisibleCaptureId = capture.captureId
+      break
+    }
+
     if (isPendingCurrentSessionPreview(capture)) {
       break
     }
   }
 
   return currentSessionCaptures
-    .filter((capture) => isVisibleCurrentSessionPreview(manifest.sessionId, capture))
-    .toSorted(compareCurrentSessionPreviewOrder)
-    .map((capture, index) => ({
+    .filter(
+      (capture) =>
+        isVisibleCurrentSessionPreview(manifest.sessionId, capture) ||
+        isDisplayablePendingCurrentSessionPreview(manifest.sessionId, capture),
+    )
+    .toSorted(compareCurrentSessionCaptureRecency)
+    .map((capture) => ({
       captureId: capture.captureId,
       assetPath: capture.preview.assetPath!,
       activePresetId: capture.activePresetId ?? null,
@@ -140,7 +144,7 @@ export function selectCurrentSessionPreviews(
         manifest.activePreset?.presetId === capture.activePresetId &&
         manifest.activePreset.publishedVersion === capture.activePresetVersion,
       postEndState: capture.postEndState,
-      readyAtMs: capture.preview.readyAtMs!,
+      readyAtMs: capture.preview.readyAtMs ?? null,
       isLatest: capture.captureId === latestVisibleCaptureId,
     }))
 }

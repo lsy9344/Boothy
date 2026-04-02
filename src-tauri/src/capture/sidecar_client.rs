@@ -23,10 +23,11 @@ pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-reco
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
 
 const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
-// Real camera follow-up captures can exceed 5 seconds while still succeeding.
-// Keep the host budget longer than the helper budget so helper-side failures
-// can surface before the host prematurely locks the session.
-const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 20_000;
+// Real camera follow-up captures can take well past 15 seconds before the RAW
+// handoff closes. Keep the host budget longer than the helper budget so
+// helper-side failures surface first without the host prematurely locking the
+// session.
+const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 35_000;
 const CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME: &str = ".camera-helper-capture-timeout-ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +103,16 @@ pub struct CanonHelperFileArrivedMessage {
     pub capture_id: String,
     pub arrived_at: String,
     pub raw_path: String,
+    #[serde(default)]
+    pub fast_preview_path: Option<String>,
+    #[serde(default)]
+    pub fast_preview_kind: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletedCaptureFastPreview {
+    pub asset_path: String,
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +145,7 @@ pub struct CanonHelperErrorMessage {
 pub struct CompletedCaptureRoundTrip {
     pub capture_id: String,
     pub raw_path: String,
+    pub fast_preview: Option<CompletedCaptureFastPreview>,
     pub capture_accepted_at_ms: u64,
     pub persisted_at_ms: u64,
 }
@@ -291,12 +303,14 @@ pub fn wait_for_capture_round_trip(
                     let accepted_at_ms =
                         accepted_at_ms.ok_or(SidecarClientError::CaptureProtocolViolation)?;
                     let raw_path = validate_arrived_raw_path(base_dir, session_id, &message)?;
+                    let fast_preview = extract_fast_preview_metadata(&message);
                     let persisted_at_ms =
                         current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
 
                     return Ok(CompletedCaptureRoundTrip {
                         capture_id: message.capture_id,
                         raw_path,
+                        fast_preview,
                         capture_accepted_at_ms: accepted_at_ms,
                         persisted_at_ms,
                     });
@@ -484,6 +498,25 @@ fn validate_arrived_raw_path(
     }
 
     Ok(raw_path.to_string_lossy().into_owned())
+}
+
+fn extract_fast_preview_metadata(
+    message: &CanonHelperFileArrivedMessage,
+) -> Option<CompletedCaptureFastPreview> {
+    let asset_path = message
+        .fast_preview_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let kind = message
+        .fast_preview_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    Some(CompletedCaptureFastPreview { asset_path, kind })
 }
 
 fn append_json_line<T: Serialize>(path: &Path, value: &T) -> Result<(), std::io::Error> {

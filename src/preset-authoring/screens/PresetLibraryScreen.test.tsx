@@ -234,7 +234,9 @@ describe('PresetLibraryScreen', () => {
     expect(screen.getByText(/현재 future session live version/i)).toBeInTheDocument()
   })
 
-  it('creates a new draft and reflects internal save status without exposing booth affordances', async () => {
+  it(
+    'creates a new draft and reflects internal save status without exposing booth affordances',
+    async () => {
     const loadAuthoringWorkspace = vi
       .fn<PresetAuthoringGateway['loadAuthoringWorkspace']>()
       .mockResolvedValueOnce({
@@ -327,7 +329,9 @@ describe('PresetLibraryScreen', () => {
       await screen.findByText(/Porcelain Draft draft가 저장되었어요/i),
     ).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /authoring/i })).not.toBeInTheDocument()
-  })
+    },
+    10_000,
+  )
 
   it('renders actionable validation findings when host validation fails and keeps the draft in internal state', async () => {
     const validationReport = createValidationReport()

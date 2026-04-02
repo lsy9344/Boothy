@@ -146,7 +146,9 @@ internal sealed class CanonHelperService : IDisposable
                     result.RequestId,
                     result.CaptureId,
                     result.ArrivedAt.ToString("O"),
-                    result.RawPath
+                    result.RawPath,
+                    result.FastPreviewPath,
+                    result.FastPreviewKind
                 )
             );
         }

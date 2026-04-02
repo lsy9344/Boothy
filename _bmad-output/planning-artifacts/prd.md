@@ -248,6 +248,7 @@ The customer preset promise is locked to the following booth-facing behaviors. D
 - The booth customer sees only approved published presets.
 - The customer selects one active preset at a time from a bounded catalog of 1-6 options.
 - Each preset has a descriptive name and representative preview tile or sample cut that represents the approved published preset artifact.
+- Representative preset tiles or sample cuts help selection, but they do not replace the current session's own capture preview truth.
 - The active preset remains visible enough for the customer to understand the current look.
 - The customer can change the active preset at any point during the session. Each change applies from that moment forward and must not rewrite already captured assets.
 - The booth customer never opens a direct editing workspace or sees darktable terms, XMP terms, style or library terms, module names, masking tools, curve tools, or low-level color controls.
@@ -260,6 +261,7 @@ Each published booth preset is an approved artifact bundle, not just a display n
 - Each preset is tied to approved render compatibility for booth use.
 - Each preset includes the customer-facing look representation needed for booth selection.
 - Each preset includes the approved booth-safe preview behavior and final render behavior required for downstream use.
+- A same-capture fast preview may appear earlier to reduce blank waiting, but preset-applied preview truth still comes from the published artifact's render behavior.
 - Only approved published preset artifacts may appear in the customer booth catalog.
 
 ### Booth-Safe Runtime Boundary
@@ -516,6 +518,7 @@ This section records product decisions that later UX, architecture, epic, and st
 
 - Capture success means the new source photo is safely persisted to the active session.
 - Preview readiness and final completion are later booth-safe outcomes that must be communicated truthfully.
+- The booth may show a same-capture fast preview before preset-applied preview readiness, but it must stay in truthful waiting language until the render-backed preview is actually ready.
 - Later artifacts must not collapse these states into one ambiguous success message.
 
 ### Decision 3: Internal Craft Stays Behind a Publication Boundary
@@ -596,11 +599,12 @@ Users can understand whether the booth is preparing, ready, preview-waiting, exp
 
 ### FR-004 Current-Session Capture Persistence and Truthful Preview Confidence
 
-Users can capture photos into the active session and receive truthful current-session confidence when booth-safe preview feedback becomes ready.
+Users can capture photos into the active session and receive truthful current-session confidence while booth-safe preview feedback progresses from waiting to ready.
 
 **Acceptance Criteria**
 - A successful capture means the new source photo is associated with and safely persisted under the active session before booth success feedback is shown.
 - The booth can distinguish capture acceptance from preview readiness in customer-safe language when preview preparation is still in progress.
+- The booth may show a same-capture pending preview before `previewReady`, but it must not imply that the preset-applied booth-safe preview is already ready.
 - The latest customer-visible confirmation includes only current-session assets.
 - The active preset name remains visible on the capture surface and preview confirmation surface while that preset is active.
 
@@ -728,12 +732,13 @@ The system shall keep 100% of active branches on the same approved customer pres
 
 ### NFR-003 Booth Responsiveness and Preview Readiness
 
-The system shall acknowledge primary customer actions within 1 second and show current-session preview confirmation within 5 seconds for 95th-percentile successful captures after source-photo persistence on approved Windows hardware, as measured by performance benchmarking and pilot logs.
+The system shall acknowledge primary customer actions within 1 second, surface a truthful current-session image as early as safely possible after source-photo persistence, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking and pilot logs.
 
 **Acceptance Criteria**
 - Primary customer actions such as session start, preset selection, delete confirmation, and post-end state entry are acknowledged within 1 second.
-- 95th-percentile successful captures show current-session preview confirmation within 5 seconds after source-photo persistence.
-- If preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
+- When a same-capture fast preview is available, the booth may surface it before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied preview is actually ready.
+- 95th-percentile successful captures show preset-applied current-session preview confirmation within 5 seconds after source-photo persistence.
+- If preset-applied preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
 - Performance is measured on approved branch hardware.
 
 **Sources**

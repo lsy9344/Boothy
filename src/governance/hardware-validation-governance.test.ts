@@ -16,8 +16,8 @@ const storyFiles = [
   },
   {
     file: '_bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md',
-    status: 'review',
-    gate: 'No-Go',
+    status: 'done',
+    gate: 'Go',
   },
   {
     file: '_bmad-output/implementation-artifacts/1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md',
@@ -54,6 +54,8 @@ describe('hardware validation governance baseline', () => {
     expect(ledger).toContain('Story 1.5')
     expect(ledger).toContain('HV-04, HV-05')
     expect(ledger).toContain('Story 1.6')
+    expect(ledger).toContain('Story 1.8')
+    expect(ledger).toContain('HV-05/HV-07/HV-08/HV-11/HV-12')
     expect(ledger).toContain('Story 3.2')
     expect(ledger).toContain('HV-08, HV-11')
     expect(ledger).toContain('Story 4.2')
@@ -102,7 +104,7 @@ describe('hardware validation governance baseline', () => {
     expect(releaseBaseline).toContain('release hold')
   })
 
-  it('keeps gated stories in pre-close states until the ledger records a Go result', () => {
+  it('keeps sprint status aligned with the ledger-recorded close state', () => {
     const sprintStatus = readRepoFile(
       '_bmad-output',
       'implementation-artifacts',
@@ -111,11 +113,12 @@ describe('hardware validation governance baseline', () => {
 
     expect(sprintStatus).toContain('hardware_validation_ledger:')
     expect(sprintStatus).toContain('1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done')
-    expect(sprintStatus).toContain(
-      '1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: review',
-    )
+    expect(sprintStatus).toContain('1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done')
     expect(sprintStatus).toContain(
       '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: review',
+    )
+    expect(sprintStatus).toContain(
+      '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review',
     )
     expect(sprintStatus).toContain('3-2-export-waiting과-truthful-completion-안내: review')
     expect(sprintStatus).toContain('4-2-부스-호환성-검증과-승인-준비-상태-전환: review')
@@ -137,12 +140,27 @@ describe('hardware validation governance baseline', () => {
     }
   })
 
-  it('removes stale done-era notes from stories that are still under a No-Go hardware gate', () => {
-    const story15 = readRepoFile(
+  it('keeps Story 1.8 under the corrective hardware gate until canonical booth evidence is recorded', () => {
+    const story18 = readRepoFile(
       '_bmad-output',
       'implementation-artifacts',
-      '1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md',
+      '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결.md',
     )
+    const ledger = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      'hardware-validation-ledger.md',
+    )
+
+    expect(story18).toContain('Status: review')
+    expect(story18).toContain('### Validation Gate Reference')
+    expect(story18).toContain('Current hardware gate: `No-Go`')
+    expect(story18).toContain('Close policy: automated pass만으로 닫지 않는다.')
+    expect(ledger).toContain('### Story 1.8')
+    expect(ledger).toContain('Selected preset -> XMP apply -> preview/final differentiation package')
+  })
+
+  it('removes stale done-era notes from stories that are still under a No-Go hardware gate', () => {
     const story16 = readRepoFile(
       '_bmad-output',
       'implementation-artifacts',
@@ -154,8 +172,6 @@ describe('hardware validation governance baseline', () => {
       '3-2-export-waiting과-truthful-completion-안내.md',
     )
 
-    expect(story15).not.toContain('Story 1.5 closure gate인 HV-04/HV-05를 닫는 것으로 반영했다')
-    expect(story15).not.toContain('Story 1.5 상태를 `done`으로 올리고')
     expect(story16).not.toContain('Story 1.6을 `done`으로 정리했다')
     expect(story32).not.toContain('상태를 `done`으로 반영했다')
   })

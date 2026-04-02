@@ -21,6 +21,9 @@
 ## Preview 규칙
 
 - preview render는 `renders/previews/{captureId}.jpg`를 실제로 만든 뒤에만 `previewReady`를 기록한다.
+- 같은 capture의 pending fast preview가 이미 canonical preview path에 있어도, render worker는 그 경로를 그대로 재사용해 later preset-applied output으로 교체해야 한다.
+- fast preview가 먼저 보였더라도 render worker만이 truthful `previewReady`와 `preview.readyAtMs`를 올릴 수 있다.
+- same-path 교체가 실패하더라도 runtime은 기존 canonical preview를 먼저 잃어버리는 방식으로 downgrade하면 안 된다.
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
 - booth는 preview render가 닫히기 전까지 `Preview Waiting`을 유지해야 한다.
 
@@ -40,6 +43,12 @@
 
 - render failure는 customer surface에 darktable/XMP/filesystem 경로를 노출하지 않는다.
 - diagnostics에는 safe event만 남긴다.
-  - `render-ready`
-  - `render-failed`
+  - `preview-render-start`
+  - `preview-render-ready`
+  - `preview-render-failed`
+  - `preview-render-queue-saturated`
+  - `final-render-start`
+  - `final-render-ready`
+  - `final-render-failed`
+  - `final-render-queue-saturated`
 - preview/final failure는 저장된 RAW와 기존 session asset을 보존한 채 bounded failure truth로 기록한다.

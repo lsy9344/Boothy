@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-03-31 21:25 +09:00
+Last Updated: 2026-04-01 01:53 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -25,6 +25,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 Supporting regression / follow-up notes:
 
 - Story 1.7 supplies implementation-level capture correlation evidence for `HV-04` and `HV-05`, but it is not the canonical release close owner in this ledger.
+- Story 1.8 is the corrective follow-up that proves selected preset apply truth across preview/final boundaries, and it remains `review` until one hardware package ties `session.json` preset binding, `bundle.json` render metadata, preview/final outputs, and diagnostics together.
 - Story 2.3 is the supporting follow-up validation note for `HV-06`; Story 1.3 is not reopened as an independent close owner.
 
 ## Sprint Review Gateboard
@@ -34,6 +35,7 @@ Supporting regression / follow-up notes:
 | 1.4 | Pass | Pass | Go | Closed. HV-02/HV-03/HV-10 package confirmed complete for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
 | 1.5 | Pass | Pass | Go | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
 | 1.6 | Pass | Partial helper/readiness proof | No-Go | Reconnect-safe `HV-10` package and canonical helper metadata were not normalized into one close row. | Noah Lee | `history/camera-helper-troubleshooting-history.md` |
+| 1.8 | Pass | Missing canonical preset-apply package | No-Go | `HV-05/HV-07/HV-08/HV-11/HV-12` evidence tying selected preset binding, `xmpTemplatePath`, preview/final differentiation, and false-ready/false-complete protection is not yet recorded in one run. | Noah Lee | `TBD` |
 | 3.2 | Pass | Missing | No-Go | `HV-08/HV-11` execution and evidence package are not yet recorded. | Noah Lee | `TBD` |
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
@@ -111,6 +113,29 @@ Supporting regression / follow-up notes:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\session.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\diagnostics\camera-helper-status.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
+
+### Story 1.8
+
+- story key: `1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결`
+- HV checklist ID: `HV-05`, `HV-07`, `HV-08`, `HV-11`, `HV-12`
+- evidence package path: `TBD`
+- executedAt: `TBD`
+- validator: `TBD`
+- booth PC: `TBD`
+- camera model: `TBD`
+- darktable pin: `release-5.4.1 / c3f96ca`
+- helper identifier: `canon-helper-status/v1 + render diagnostics (TBD)`
+- Go / No-Go result: `No-Go`
+- release blocker: `Selected preset -> XMP apply -> preview/final differentiation package is not yet recorded as one canonical hardware run.`
+- follow-up owner: `Noah Lee`
+- rerun prerequisite: `Run at least two distinct published presets on approved booth hardware and capture preview/final outputs, session preset binding, bundle render metadata, and operator diagnostics in one linked evidence package.`
+- target rerun date: `TBD`
+- core evidence paths:
+  - `TBD/session.json`
+  - `TBD/renders/previews/`
+  - `TBD/renders/finals/`
+  - `TBD/published/bundle.json`
+  - `TBD/diagnostics/`
 
 ### Story 3.2
 

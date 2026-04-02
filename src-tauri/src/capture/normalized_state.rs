@@ -156,6 +156,7 @@ pub fn request_capture_in_dir(
         round_trip.capture_id,
         request_id.clone(),
         round_trip.raw_path,
+        round_trip.fast_preview,
         round_trip.capture_accepted_at_ms,
         round_trip.persisted_at_ms,
     )
@@ -1148,7 +1149,6 @@ fn sync_better_preview_assets_in_manifest(
 
 fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<String> {
     let preferred_extensions = ["jpg", "jpeg", "png", "webp", "gif", "bmp"];
-
     preferred_extensions
         .iter()
         .map(|extension| {

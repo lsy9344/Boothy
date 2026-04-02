@@ -93,6 +93,11 @@ booth customer로서,
   - [x] UI/provider contract 영향은 host DTO shape 유지로 흡수했다.
 - [ ] hardware validation: 같은 세션 또는 동일 검증 세트에서 서로 다른 published preset 두 개로 실제 촬영해 `renders/previews/`와 `renders/finals/` 산출물 차이, `session.json` preset binding, `bundle.json`의 `xmpTemplatePath`, operator diagnostics를 함께 남긴다. (AC: 6)
 
+### Review Findings
+
+- [x] [Review][Pass] blocking findings 없음. preview rail remount, helper-freshness regression fixture 정렬, governance status sync 변경이 이번 스토리 acceptance criteria와 충돌하지 않는다.
+- [x] [Review][Pass] code review는 clean이지만, AC 6과 hardware validation ledger 기준 canonical booth evidence가 아직 없으므로 Story 1.8 status는 계속 `review`, hardware gate는 계속 `No-Go`로 유지한다.
+
 ## Dev Notes
 
 ### 스토리 범위와 목적
@@ -260,4 +265,31 @@ GPT-5 Codex
 
 - published bundle runtime loader, preview render truth, post-end final gating, capture-bound drift protection을 실제 코드로 연결했다.
 - 계약 문서 `preset-bundle`, `session-manifest`, `render-worker`를 현재 구현 기준으로 보강했다.
-- automated regression은 통과했지만, hardware canonical evidence가 아직 없으므로 story 상태는 `review`에 유지한다.
+- helper freshness 기준이 강화된 뒤 깨지던 preview/recovery regression fixture를 현재 runtime truth에 맞게 정리해 automated proof를 다시 녹색으로 복구했다.
+- sprint-status와 hardware validation ledger를 현재 제품 truth에 맞게 맞춰, Story 1.8이 canonical hardware evidence 전까지 `review` / `No-Go`로 남도록 정렬했다.
+- `pnpm lint`, `pnpm test:run`, `cargo test --manifest-path src-tauri/Cargo.toml`를 다시 통과시켰지만, hardware canonical evidence가 아직 없으므로 story 상태는 `review`에 유지한다.
+
+### Implementation Plan
+
+- preview/final preset-apply truth를 깨지 않으면서 helper freshness가 stricter해진 현재 기준선에 맞춰 regression fixture를 우선 복구한다.
+- Story 1.8의 hardware gate가 sprint 운영 산출물에서도 같은 상태를 가리키도록 status/ledger 정합성을 맞춘다.
+- full lint/test/cargo validation을 다시 실행해 automated proof를 복원하되, hardware close는 별도 evidence package가 있을 때만 닫는다.
+
+## File List
+
+- _bmad-output/implementation-artifacts/1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결.md
+- _bmad-output/implementation-artifacts/hardware-validation-ledger.md
+- _bmad-output/implementation-artifacts/sprint-status.yaml
+- src-tauri/tests/capture_readiness.rs
+- src-tauri/tests/operator_recovery.rs
+- src/booth-shell/components/LatestPhotoRail.tsx
+- src/booth-shell/components/SessionPreviewImage.tsx
+- src/governance/hardware-validation-governance.test.ts
+- src/preset-authoring/screens/PresetLibraryScreen.test.tsx
+- src/session-domain/selectors/current-session-previews.ts
+- src/session-domain/state/session-provider.tsx
+
+## Change Log
+
+- 2026-04-01 01:53:48 +09:00 - Story 1.8 follow-up stabilization: helper freshness-aware regression fixture 보강, operator recovery runtime bundle fixture 정렬, sprint-status/ledger에서 Story 1.8 hardware gate 정합화, full lint/Vitest/Cargo validation 재통과
+- 2026-04-01 02:10:07 +09:00 - code review 재실행 결과 blocking findings 없음 확인; Story 1.8은 canonical hardware evidence 부재로 `review` / `No-Go` 상태를 유지

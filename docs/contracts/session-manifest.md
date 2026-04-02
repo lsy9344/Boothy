@@ -70,11 +70,15 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
   - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel? , nextLocationLabel?, supportActionLabel? }`
   - `phone-required`: `{ state, evaluatedAt, primaryActionLabel, unsafeActionWarning, showBoothAlias, supportActionLabel? }`
 - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 사용자 Pictures 경로 아래의 현재 세션 루트(`.../Pictures/dabi_shoot/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `pictures/dabi_shoot/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
+- `captures[*].preview.assetPath`: `renderStatus=previewWaiting` 중에도 same-capture fast preview가 canonical preview path에 안전하게 승격됐다면 채워질 수 있다. 이 경우에도 `preview.readyAtMs`가 `null`이면 아직 truthful `previewReady`가 아니다.
 - `captures[*].renderStatus`:
   - `previewWaiting`: RAW persistence는 끝났지만 preset-applied preview render가 아직 닫히지 않음
   - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 실제 preview file이 존재함
   - `finalReady`: published bundle의 `xmpTemplatePath + finalProfile`로 만든 실제 final file이 존재함
   - `renderFailed`: preview 또는 final render truth를 닫지 못해 bounded failure 상태로 잠김
+- `captures[*].timing.fastPreviewVisibleAtMs`: pending same-capture fast preview가 고객 rail에 처음 보일 수 있게 된 시점을 기록한다. fast preview가 없거나 승격되지 않았다면 `null`이다.
+- `captures[*].timing.xmpPreviewReadyAtMs`: later preset-applied render가 같은 canonical preview path를 교체하고 truthful `previewReady`를 기록한 시점을 남긴다.
+- `captures[*].timing.previewVisibleAtMs`: render-backed preview truth가 닫힌 시점을 유지하는 기존 비교 지표다. fast preview는 별도 `fastPreviewVisibleAtMs`로 분리해 기록한다.
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady`나 `finalReady`의 근거가 될 수 없다.
 
 ## 변경 규칙

@@ -20,8 +20,11 @@ internal sealed class CanonSdkCamera : IDisposable
     ];
     private const string CaptureCompletionTimeoutOverrideFileName =
         ".camera-helper-capture-timeout-ms";
+    // Real follow-up captures on EOS 700D hardware can take well beyond 15 seconds
+    // before the transfer boundary closes. Keep enough headroom to avoid treating
+    // slow but valid RAW handoffs as fatal helper failures.
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
-        15000
+        30000
     );
 
     private readonly object _sync = new();
@@ -244,12 +247,16 @@ internal sealed class CanonSdkCamera : IDisposable
     public void TryBackfillPreviewAssets(SessionPaths paths)
     {
         bool sdkInitialized;
+        bool captureInFlight;
         lock (_sync)
         {
             sdkInitialized = _sdkInitialized;
+            captureInFlight = _currentCapture is not null;
         }
 
-        if (!sdkInitialized || !Directory.Exists(paths.CapturesOriginalsDir))
+        // Missing previews are best-effort. Don't compete with an active capture
+        // for SDK time while the live RAW transfer boundary is still open.
+        if (!sdkInitialized || captureInFlight || !Directory.Exists(paths.CapturesOriginalsDir))
         {
             return;
         }
@@ -742,14 +749,23 @@ internal sealed class CanonSdkCamera : IDisposable
                 );
             }
 
-            TryMaterializePreviewAsset(context.Paths, directoryItem, captureId, finalPath);
+            // Keep the on-camera thumbnail fast path here, but defer any heavier
+            // RAW-based preview backfill to the normal helper loop so the RAW
+            // handoff can close without extra SDK work on the capture boundary.
+            var fastPreviewPath = TryDownloadPreviewThumbnail(
+                context.Paths,
+                directoryItem,
+                captureId
+            );
 
             context.Completion.TrySetResult(
                 new CaptureDownloadResult(
                     context.Request.RequestId,
                     captureId,
                     finalPath,
-                    DateTimeOffset.UtcNow
+                    DateTimeOffset.UtcNow,
+                    fastPreviewPath,
+                    fastPreviewPath is null ? null : "camera-thumbnail"
                 )
             );
         }
@@ -807,27 +823,7 @@ internal sealed class CanonSdkCamera : IDisposable
         }
     }
 
-    private void TryMaterializePreviewAsset(
-        SessionPaths paths,
-        IntPtr directoryItem,
-        string captureId,
-        string rawPath
-    )
-    {
-        TryDownloadPreviewThumbnail(paths, directoryItem, captureId);
-
-        if (!HasRasterPreviewAsset(paths, captureId))
-        {
-            TryRenderPreviewFromRaw(paths, rawPath, captureId);
-        }
-
-        if (!HasRasterPreviewAsset(paths, captureId))
-        {
-            TryExtractPreviewWithWindowsShell(paths, rawPath, captureId);
-        }
-    }
-
-    private void TryDownloadPreviewThumbnail(
+    private string? TryDownloadPreviewThumbnail(
         SessionPaths paths,
         IntPtr directoryItem,
         string captureId
@@ -858,13 +854,13 @@ internal sealed class CanonSdkCamera : IDisposable
 
             if (createStreamResult != EDSDK.EDS_ERR_OK)
             {
-                return;
+                return null;
             }
 
             var thumbnailResult = EDSDK.EdsDownloadThumbnail(directoryItem, thumbnailStream);
             if (thumbnailResult != EDSDK.EDS_ERR_OK)
             {
-                return;
+                return null;
             }
 
             EDSDK.EdsRelease(thumbnailStream);
@@ -873,14 +869,16 @@ internal sealed class CanonSdkCamera : IDisposable
             var previewFileInfo = new FileInfo(tempPreviewPath);
             if (!previewFileInfo.Exists || previewFileInfo.Length == 0)
             {
-                return;
+                return null;
             }
 
             File.Move(tempPreviewPath, previewPath, overwrite: true);
+            return previewPath;
         }
         catch
         {
             // Thumbnail extraction is best-effort. RAW persistence remains the source of truth.
+            return null;
         }
         finally
         {
@@ -1225,7 +1223,9 @@ internal sealed record CaptureDownloadResult(
     string RequestId,
     string CaptureId,
     string RawPath,
-    DateTimeOffset ArrivedAt
+    DateTimeOffset ArrivedAt,
+    string? FastPreviewPath,
+    string? FastPreviewKind
 );
 
 internal sealed class CanonCaptureException : Exception

@@ -883,3 +883,81 @@ Select-String -Path <camera-helper-events.jsonl 경로> -Pattern "<requestId>"
   - preview/current session 반영 여부
   - 최근 확인된 booth 체감 동작
   를 비교해야 한다.
+
+### 2026-04-01 18:40 +09:00 추가 재발: 1, 2번째 샷 뒤 3번째 샷이 `capture-download-timeout`으로 다시 `Phone Required`에 잠겼다
+
+사용자 최신 제보:
+
+1. 1번째 샷은 정상 저장됐다.
+2. 2번째 샷도 문제 없이 반영됐다.
+3. 3번째 샷에서 다시 `Phone Required`가 발생했다.
+
+이번 회차에서 실제 최신 세션 evidence를 다시 맞춰 보니,
+이번 재발은 render 회귀가 아니라 **follow-up capture boundary가 helper timeout 안에서 닫히지 못한 문제**로 보는 것이 맞았다.
+
+실제 확인 근거:
+
+- 실패 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a21cfdc4106a64` 였다.
+- `diagnostics/camera-helper-events.jsonl`에는 아래가 남아 있었다.
+  - 첫 번째 요청: `capture-accepted -> file-arrived`
+  - 두 번째 요청: `capture-accepted -> file-arrived`
+  - 세 번째 요청 `request_000000000018a21d06313e1b80`: `capture-accepted` 뒤
+    `2026-04-01T03:12:11Z`에 `recovery-status(detailCode=capture-download-timeout)`와
+    `helper-error(detailCode=capture-download-timeout)`가 기록됐다.
+- 같은 세션의 `camera-helper-status.json`은 이후 다시
+  `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`로 회복했다.
+- 반면 `session.json`은
+  - `lifecycle.stage = phone-required`
+  - `captures`가 2장만 존재
+  로 남아 있었고, 세 번째 샷은 세션 결과에 들어오지 못했다.
+- `diagnostics/timing-events.log`에는 첫 두 장의 `render-ready`만 있었고,
+  세 번째 샷의 render failure 흔적은 없었다.
+
+정리:
+
+- 이번 `Phone Required`는 preview render 실패가 아니라,
+  **helper가 세 번째 촬영의 RAW handoff 완료를 timeout 안에 닫지 못해 host가 세션을 보호 상태로 잠근 케이스**였다.
+- 특히 helper의 capture completion 경계 안에 촬영 직후 preview 보강 작업이 일부 함께 들어가 있었기 때문에,
+  연속 촬영에서는 실제 RAW 저장보다 completion 종료가 더 늦어질 수 있었다.
+- 기존 기본 budget인 `helper 15초 / host 20초`는 이 장비의 follow-up capture에 다시 부족하다고 판단했다.
+
+이번 회차 수정:
+
+- Canon helper의 기본 capture completion timeout을 `15초 -> 30초`로 늘렸다.
+- host의 capture round-trip timeout도 `20초 -> 35초`로 맞춰,
+  helper보다 host가 먼저 세션을 `Phone Required`로 잠그지 않게 했다.
+- active capture 중에는 helper의 preview backfill이 끼어들지 않게 막아,
+  live capture 경계에서 SDK 경합 가능성을 줄였다.
+- 촬영 완료 경계에서는 on-camera thumbnail fast path만 유지하고,
+  더 무거운 RAW 기반 preview backfill은 촬영 후 일반 helper loop에서 보강하도록 분리했다.
+
+검증:
+
+- `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness`
+- 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 같은 조건으로 최소 5장 이상 연속 촬영해 `3번째 샷` 이후에도 `Phone Required`가 다시 뜨는지 본다.
+2. 재발 시에는 같은 세션의 `camera-helper-events.jsonl`, `camera-helper-status.json`, `session.json`을 먼저 한 세트로 확인한다.
+
+### 2026-04-01 18:42 +09:00 사용자 후속 확인: 방금 수정한 동일 증상은 더 이상 재현되지 않았다
+
+사용자 후속 확인 결과:
+
+- 방금까지 재현되던 "1, 2번째 샷은 성공하지만 3번째 샷에서 `Phone Required`" 패턴이
+  더 이상 나타나지 않았다.
+
+이번 시점의 판단:
+
+- 직전 회차에서 보정한 follow-up capture timeout / helper completion boundary 조정이
+  현재 실기기 조건에서는 유효하게 작동한 것으로 본다.
+- 따라서 최신 워크스페이스 상태는
+  **연속 촬영 중 3번째 샷 `capture-download-timeout` 재발이 없는 최신 정상 기준선**으로 기록한다.
+
+운영 메모:
+
+1. 이후 다시 같은 패턴이 나오기 전까지는 `2026-04-01 18:40 +09:00` 항목의 원인/수정 조합을 현행 정상 해법으로 본다.
+2. 다음 회귀가 생기면 새 session evidence를 다시 분리해서, 같은 root cause의 재발인지 다른 경계의 새 실패인지부터 구분한다.

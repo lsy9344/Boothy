@@ -39,6 +39,10 @@ export function LatestPhotoRail({
   onDeleteConfirm,
   onDeleteIntent,
 }: LatestPhotoRailProps) {
+  function isRenderPending(preview: CurrentSessionPreview) {
+    return preview.readyAtMs === null
+  }
+
   function isPostEndLocked(preview: CurrentSessionPreview) {
     return isExplicitPostEnd || preview.postEndState !== 'activeSession'
   }
@@ -49,6 +53,10 @@ export function LatestPhotoRail({
       : isFinalizedCapturePostEndState(preview.postEndState)
         ? '마무리된 사진은 여기서 정리할 수 없어요.'
         : '지금은 사진 정리를 잠시 멈춰 주세요.'
+  }
+
+  function buildRenderPendingHint() {
+    return '방금 찍은 사진을 현재 룩으로 마무리하고 있어요.'
   }
 
   function handleRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -77,7 +85,9 @@ export function LatestPhotoRail({
         <p>
           {isPreviewWaiting && previews.length === 0
             ? '지금은 아직 비어 있어도 괜찮아요. 방금 저장한 사진이 확인용 보기로 준비되면 여기에 나타나요.'
-            : '현재 세션에서 준비된 확인용 사진만 보여줘요.'}
+            : isPreviewWaiting
+              ? '방금 찍은 사진을 먼저 보여 주고, 현재 룩 반영이 끝나면 자연스럽게 바뀌어요.'
+              : '현재 세션에서 준비된 확인용 사진만 보여줘요.'}
         </p>
       </div>
 
@@ -107,6 +117,7 @@ export function LatestPhotoRail({
                 <span className="latest-photo-rail__badge">최신 사진</span>
               ) : null}
               <SessionPreviewImage
+                key={`${preview.captureId}:${preview.assetPath}:${preview.readyAtMs ?? 'pending'}`}
                 assetPath={preview.assetPath}
                 alt={buildPreviewAltText(preview, index + 1)}
                 captureId={preview.captureId}
@@ -124,7 +135,9 @@ export function LatestPhotoRail({
                   ? '현재 룩과 같은 바인딩으로 유지돼요.'
                   : '이 사진은 이전 룩으로 찍혔고 그대로 유지돼요.'}
               </p>
-              {isPostEndLocked(preview) ? (
+              {isRenderPending(preview) ? (
+                <p className="latest-photo-rail__hint">{buildRenderPendingHint()}</p>
+              ) : isPostEndLocked(preview) ? (
                 <p className="latest-photo-rail__hint">
                   {buildPostEndHint(preview)}
                 </p>

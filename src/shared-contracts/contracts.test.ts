@@ -1251,6 +1251,48 @@ describe('shared contracts baseline', () => {
     )
   })
 
+  it('parses pending same-capture fast preview timing without treating it as preview ready', () => {
+    const capture = sessionCaptureRecordSchema.parse({
+      schemaVersion: 'session-capture/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      boothAlias: 'Kim 4821',
+      activePresetId: 'preset_soft-glow',
+      activePresetVersion: '2026.03.20',
+      activePresetDisplayName: 'Soft Glow',
+      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      raw: {
+        assetPath: 'C:/boothy/sessions/session_01/captures/originals/capture.cr3',
+        persistedAtMs: 100,
+      },
+      preview: {
+        assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: null,
+      },
+      final: {
+        assetPath: null,
+        readyAtMs: null,
+      },
+      renderStatus: 'previewWaiting',
+      postEndState: 'activeSession',
+      timing: {
+        captureAcknowledgedAtMs: 100,
+        previewVisibleAtMs: null,
+        fastPreviewVisibleAtMs: 180,
+        xmpPreviewReadyAtMs: null,
+        captureBudgetMs: 1000,
+        previewBudgetMs: 5000,
+        previewBudgetState: 'pending',
+      },
+    })
+
+    expect(capture.renderStatus).toBe('previewWaiting')
+    expect(capture.preview.readyAtMs).toBeNull()
+    expect(capture.timing.fastPreviewVisibleAtMs).toBe(180)
+    expect(capture.timing.xmpPreviewReadyAtMs).toBeNull()
+  })
+
   it('accepts live capture truth timestamps that use an explicit UTC offset', () => {
     const readiness = captureReadinessSnapshotSchema.parse({
       schemaVersion: 'capture-readiness/v1',

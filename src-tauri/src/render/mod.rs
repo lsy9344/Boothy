@@ -88,18 +88,13 @@ pub fn render_capture_asset_in_dir(
     }
 
     let paths = SessionPaths::new(base_dir, session_id);
-    let output_path = match intent {
-        RenderIntent::Preview => paths
-            .renders_previews_dir
-            .join(format!("{}.jpg", capture.capture_id)),
-        RenderIntent::Final => paths
-            .renders_finals_dir
-            .join(format!("{}.jpg", capture.capture_id)),
-    };
+    let output_path = canonical_render_output_path(&paths, &capture.capture_id, intent);
     let output_root = match intent {
         RenderIntent::Preview => &paths.renders_previews_dir,
         RenderIntent::Final => &paths.renders_finals_dir,
     };
+    let staging_output_path =
+        build_staging_render_output_path(output_root, &capture.capture_id, intent);
 
     fs::create_dir_all(output_root).map_err(|error| RenderWorkerError {
         reason_code: "render-output-dir-unavailable",
@@ -115,12 +110,14 @@ pub fn render_capture_asset_in_dir(
         });
     }
 
+    let _ = fs::remove_file(&staging_output_path);
+
     let invocation = build_darktable_invocation(
         base_dir,
         &bundle.darktable_version,
         &bundle.xmp_template_path,
         &capture.raw.asset_path,
-        &output_path,
+        &staging_output_path,
         intent,
     );
     log::info!(
@@ -134,7 +131,14 @@ pub fn render_capture_asset_in_dir(
     );
     let render_started = Instant::now();
     let invocation_result = run_darktable_invocation(&invocation, intent)?;
-    validate_render_output(&output_path, intent)?;
+    if let Err(error) = validate_render_output(&staging_output_path, intent) {
+        let _ = fs::remove_file(&staging_output_path);
+        return Err(error);
+    }
+    if let Err(error) = promote_render_output(&staging_output_path, &output_path, intent) {
+        let _ = fs::remove_file(&staging_output_path);
+        return Err(error);
+    }
     let render_elapsed_ms = render_started.elapsed().as_millis();
 
     let ready_at_ms = current_time_ms().map_err(|error| RenderWorkerError {
@@ -147,7 +151,7 @@ pub fn render_capture_asset_in_dir(
         &paths,
         &capture.capture_id,
         intent,
-        "ready",
+        render_ready_event_name(intent),
         Some(match intent {
             RenderIntent::Preview => "preview-ready",
             RenderIntent::Final => "final-ready",
@@ -179,12 +183,34 @@ pub fn log_render_failure_in_dir(
     reason_code: &str,
 ) {
     let paths = SessionPaths::new(base_dir, session_id);
+    let event_name = if reason_code == "render-queue-saturated" {
+        render_queue_saturated_event_name(intent)
+    } else {
+        render_failed_event_name(intent)
+    };
     append_render_event(
         &paths,
         capture_id,
         intent,
-        "failed",
+        event_name,
         Some(reason_code),
+        None,
+    );
+}
+
+pub fn log_render_start_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    intent: RenderIntent,
+) {
+    let paths = SessionPaths::new(base_dir, session_id);
+    append_render_event(
+        &paths,
+        capture_id,
+        intent,
+        render_start_event_name(intent),
+        Some("render-start"),
         None,
     );
 }
@@ -232,6 +258,128 @@ fn render_invocation_detail(intent: RenderIntent) -> String {
         }
         RenderIntent::Final => "widthCap=full;heightCap=full;hq=true".into(),
     }
+}
+
+fn render_start_event_name(intent: RenderIntent) -> &'static str {
+    match intent {
+        RenderIntent::Preview => "preview-render-start",
+        RenderIntent::Final => "final-render-start",
+    }
+}
+
+fn render_ready_event_name(intent: RenderIntent) -> &'static str {
+    match intent {
+        RenderIntent::Preview => "preview-render-ready",
+        RenderIntent::Final => "final-render-ready",
+    }
+}
+
+fn render_failed_event_name(intent: RenderIntent) -> &'static str {
+    match intent {
+        RenderIntent::Preview => "preview-render-failed",
+        RenderIntent::Final => "final-render-failed",
+    }
+}
+
+fn render_queue_saturated_event_name(intent: RenderIntent) -> &'static str {
+    match intent {
+        RenderIntent::Preview => "preview-render-queue-saturated",
+        RenderIntent::Final => "final-render-queue-saturated",
+    }
+}
+
+fn canonical_render_output_path(
+    paths: &SessionPaths,
+    capture_id: &str,
+    intent: RenderIntent,
+) -> PathBuf {
+    match intent {
+        RenderIntent::Preview => paths.renders_previews_dir.join(format!("{capture_id}.jpg")),
+        RenderIntent::Final => paths.renders_finals_dir.join(format!("{capture_id}.jpg")),
+    }
+}
+
+fn build_staging_render_output_path(
+    output_root: &Path,
+    capture_id: &str,
+    intent: RenderIntent,
+) -> PathBuf {
+    let stage_label = match intent {
+        RenderIntent::Preview => "preview-rendering",
+        RenderIntent::Final => "final-rendering",
+    };
+
+    output_root.join(format!("{capture_id}.{stage_label}.jpg"))
+}
+
+fn promote_render_output(
+    staging_output_path: &Path,
+    output_path: &Path,
+    intent: RenderIntent,
+) -> Result<(), RenderWorkerError> {
+    let backup_path = if output_path.exists() {
+        let backup_path = build_replacement_backup_path(output_path, intent);
+        fs::rename(output_path, &backup_path).map_err(|error| RenderWorkerError {
+            reason_code: "render-output-overwrite-failed",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!(
+                "기존 render output을 백업하지 못했어요: path={} backup={} error={error}",
+                output_path.to_string_lossy(),
+                backup_path.to_string_lossy()
+            ),
+        })?;
+        Some(backup_path)
+    } else {
+        None
+    };
+
+    if let Err(error) = fs::rename(staging_output_path, output_path) {
+        if let Some(backup_path) = backup_path.as_ref() {
+            let _ = restore_replaced_output(backup_path, output_path);
+        }
+
+        return Err(RenderWorkerError {
+            reason_code: "render-output-promote-failed",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!(
+                "staging render output을 최종 경로로 승격하지 못했어요: from={} to={} error={error}",
+                staging_output_path.to_string_lossy(),
+                output_path.to_string_lossy()
+            ),
+        });
+    }
+
+    if let Some(backup_path) = backup_path.as_ref() {
+        let _ = fs::remove_file(backup_path);
+    }
+
+    Ok(())
+}
+
+fn build_replacement_backup_path(output_path: &Path, intent: RenderIntent) -> PathBuf {
+    let stage_label = match intent {
+        RenderIntent::Preview => "preview-backup",
+        RenderIntent::Final => "final-backup",
+    };
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("render-output");
+    let extension = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("jpg");
+
+    parent.join(format!("{stem}.{stage_label}.{extension}"))
+}
+
+fn restore_replaced_output(backup_path: &Path, output_path: &Path) -> Result<(), std::io::Error> {
+    if output_path.exists() {
+        fs::remove_file(output_path)?;
+    }
+
+    fs::rename(backup_path, output_path)
 }
 
 fn acquire_render_queue_slot() -> Result<RenderQueueGuard, RenderWorkerError> {
@@ -290,7 +438,7 @@ fn append_render_event(
     let detail = detail.unwrap_or("none");
     let _ = writeln!(
         file,
-        "{occurred_at}\tsession={}\tcapture={capture_id}\tevent=render-{event}\tstage={stage}\treason={reason_code}\tdetail={detail}",
+        "{occurred_at}\tsession={}\tcapture={capture_id}\tevent={event}\tstage={stage}\treason={reason_code}\tdetail={detail}",
         paths
             .session_root
             .file_name()
@@ -741,5 +889,53 @@ mod tests {
             .arguments
             .windows(2)
             .any(|pair| { pair[0] == "--hq" && pair[1] == "true" }));
+    }
+
+    #[test]
+    fn staging_render_output_path_stays_separate_from_the_canonical_preview_asset() {
+        let temp_dir = unique_temp_dir("staging-path");
+        let paths = SessionPaths::new(&temp_dir, "session_test");
+        let canonical = canonical_render_output_path(&paths, "capture_test", RenderIntent::Preview);
+        let staging = build_staging_render_output_path(
+            &paths.renders_previews_dir,
+            "capture_test",
+            RenderIntent::Preview,
+        );
+
+        assert_ne!(canonical, staging);
+        assert_eq!(
+            canonical.file_name().and_then(|value| value.to_str()),
+            Some("capture_test.jpg")
+        );
+        assert_eq!(
+            staging.file_name().and_then(|value| value.to_str()),
+            Some("capture_test.preview-rendering.jpg")
+        );
+    }
+
+    #[test]
+    fn failed_output_promotion_restores_the_existing_preview_asset() {
+        let temp_dir = unique_temp_dir("promote-restore");
+        let output_root = temp_dir.join("renders").join("previews");
+        fs::create_dir_all(&output_root).expect("output root should exist");
+
+        let canonical = output_root.join("capture_test.jpg");
+        fs::write(&canonical, b"existing-preview").expect("existing preview should be writable");
+        let missing_staging = output_root.join("capture_test.preview-rendering.jpg");
+
+        let error = promote_render_output(&missing_staging, &canonical, RenderIntent::Preview)
+            .expect_err("missing staging output should fail promotion");
+
+        assert_eq!(error.reason_code, "render-output-promote-failed");
+        assert_eq!(
+            fs::read(&canonical).expect("existing preview should be restored"),
+            b"existing-preview"
+        );
+        assert!(
+            !output_root.join("capture_test.preview-backup.jpg").exists(),
+            "temporary backup should be cleaned up after restore"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }

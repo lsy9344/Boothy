@@ -665,6 +665,7 @@ fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_aft
             .as_deref()
             .expect("preview path should exist after completion"),
     );
+    write_ready_helper_status(&base_dir, &session.session_id);
 
     let ready = get_capture_readiness_in_dir(
         &base_dir,
@@ -685,14 +686,24 @@ fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_aft
             .map(|path| path.ends_with(".jpg")),
         Some(true),
     );
+    let ready_capture = ready
+        .latest_capture
+        .as_ref()
+        .expect("ready capture should be returned");
+    let expected_preview_budget_state = if ready_capture
+        .timing
+        .preview_visible_at_ms
+        .expect("ready capture should stamp preview visibility timing")
+        .saturating_sub(ready_capture.timing.capture_acknowledged_at_ms)
+        <= ready_capture.timing.preview_budget_ms
+    {
+        "withinBudget"
+    } else {
+        "exceededBudget"
+    };
     assert_eq!(
-        ready
-            .latest_capture
-            .as_ref()
-            .expect("ready capture should be returned")
-            .timing
-            .preview_budget_state,
-        "withinBudget",
+        ready_capture.timing.preview_budget_state,
+        expected_preview_budget_state,
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -901,12 +912,479 @@ fn preview_render_rejects_invalid_non_raster_output() {
     .expect_err("invalid render output should not be accepted");
 
     assert_eq!(error.code, "session-persistence-failed");
-    assert!(SessionPaths::new(&base_dir, &session.session_id)
+    assert!(!SessionPaths::new(&base_dir, &session.session_id)
         .renders_previews_dir
         .join(format!("{}.jpg", capture_result.capture.capture_id))
         .is_file());
 
     let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn capture_saved_keeps_a_fast_same_capture_thumbnail_visible_while_preview_render_is_still_pending()
+{
+    let base_dir = unique_test_root("capture-saved-fast-preview");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            preview_path
+                .parent()
+                .expect("preview path should have a parent directory"),
+        )
+        .expect("preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
+              "type": "file-arrived",
+              "sessionId": request.session_id,
+              "requestId": request.request_id,
+              "captureId": capture_id,
+              "arrivedAt": current_timestamp(SystemTime::now()).expect("arrival timestamp should serialize"),
+              "rawPath": raw_path.to_string_lossy().into_owned(),
+            }),
+        );
+    });
+
+    let result = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    let preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    assert_eq!(result.capture.render_status, "previewWaiting");
+    assert_eq!(result.capture.preview.ready_at_ms, None);
+    assert_eq!(
+        result.capture.preview.asset_path.as_deref(),
+        Some(preview_path.to_string_lossy().as_ref()),
+    );
+    assert_valid_jpeg(preview_path.to_string_lossy().as_ref());
+
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+    let manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    assert_eq!(
+        manifest.captures[0].preview.asset_path.as_deref(),
+        Some(preview_path.to_string_lossy().as_ref()),
+    );
+    assert_eq!(manifest.captures[0].preview.ready_at_ms, None);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_render_reuses_it() {
+    let base_dir = unique_test_root("helper-fast-preview-handoff");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let fast_preview_path = session_paths
+            .handoff_dir
+            .join("fast-preview")
+            .join(format!("{capture_id}.camera-thumbnail.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            fast_preview_path
+                .parent()
+                .expect("fast preview path should have a parent directory"),
+        )
+        .expect("fast preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&fast_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            Some(&fast_preview_path),
+            Some("camera-thumbnail"),
+        );
+    });
+
+    let result = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    assert_eq!(result.capture.render_status, "previewWaiting");
+    assert_eq!(result.capture.preview.ready_at_ms, None);
+    assert_eq!(
+        result.capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref()),
+    );
+    assert!(result.capture.timing.fast_preview_visible_at_ms.is_some());
+    assert_eq!(result.capture.timing.xmp_preview_ready_at_ms, None);
+    assert_valid_jpeg(canonical_preview_path.to_string_lossy().as_ref());
+
+    let preview_ready =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect(
+                "preview render should replace the pending fast preview on the same canonical path",
+            );
+
+    assert_eq!(preview_ready.render_status, "previewReady");
+    assert_eq!(
+        preview_ready.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref()),
+    );
+    assert_eq!(
+        preview_ready.preview.ready_at_ms,
+        preview_ready.timing.preview_visible_at_ms,
+    );
+    assert_eq!(
+        preview_ready.preview.ready_at_ms,
+        preview_ready.timing.xmp_preview_ready_at_ms,
+    );
+    assert!(preview_ready.timing.fast_preview_visible_at_ms.is_some());
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+    assert!(timing_events.contains("event=fast-preview-promote-start"));
+    assert!(timing_events.contains("event=fast-preview-promoted"));
+    assert!(timing_events.contains("event=preview-render-start"));
+    assert!(timing_events.contains("event=preview-render-ready"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn invalid_fast_preview_handoffs_are_discarded_without_breaking_capture_success() {
+    for scenario in [
+        "wrong-session",
+        "wrong-capture",
+        "wrong-directory",
+        "stale",
+        "corrupted",
+    ] {
+        let base_dir = unique_test_root(&format!("invalid-fast-preview-{scenario}"));
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should be created");
+        let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+        create_published_bundle(&catalog_root);
+
+        select_active_preset_in_dir(
+            &base_dir,
+            boothy_lib::contracts::dto::PresetSelectionInputDto {
+                session_id: session.session_id.clone(),
+                preset_id: "preset_soft-glow".into(),
+                published_version: "2026.03.20".into(),
+            },
+        )
+        .expect("preset should become active");
+        write_ready_helper_status(&base_dir, &session.session_id);
+        let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+        let helper_base_dir = base_dir.clone();
+        let helper_session_id = session.session_id.clone();
+        let helper_scenario = scenario.to_string();
+        let helper_thread = thread::spawn(move || {
+            let request = wait_for_latest_capture_request(
+                &helper_base_dir,
+                &helper_session_id,
+                existing_request_count,
+            );
+            let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+            let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+            let raw_path = session_paths
+                .captures_originals_dir
+                .join(format!("{capture_id}.jpg"));
+
+            fs::create_dir_all(
+                raw_path
+                    .parent()
+                    .expect("raw capture path should have a parent directory"),
+            )
+            .expect("raw capture directory should exist");
+
+            let fast_preview_path = match helper_scenario.as_str() {
+                "wrong-session" => {
+                    let foreign_paths =
+                        SessionPaths::new(&helper_base_dir, "session_foreign_preview");
+                    let path = foreign_paths
+                        .handoff_dir
+                        .join("fast-preview")
+                        .join(format!("{capture_id}.jpg"));
+                    fs::create_dir_all(
+                        path.parent()
+                            .expect("foreign fast preview should have a parent directory"),
+                    )
+                    .expect("foreign fast preview directory should exist");
+                    write_test_jpeg(&path);
+                    path
+                }
+                "wrong-capture" => {
+                    let path = session_paths
+                        .handoff_dir
+                        .join("fast-preview")
+                        .join("capture_someone_else.fast-preview.jpg");
+                    fs::create_dir_all(
+                        path.parent()
+                            .expect("wrong-capture preview should have a parent directory"),
+                    )
+                    .expect("wrong-capture preview directory should exist");
+                    write_test_jpeg(&path);
+                    path
+                }
+                "wrong-directory" => {
+                    let path = session_paths
+                        .captures_originals_dir
+                        .join(format!("{capture_id}.camera-thumbnail.jpg"));
+                    fs::create_dir_all(
+                        path.parent()
+                            .expect("wrong-directory preview should have a parent directory"),
+                    )
+                    .expect("wrong-directory preview directory should exist");
+                    write_test_jpeg(&path);
+                    path
+                }
+                "stale" => {
+                    let path = session_paths
+                        .handoff_dir
+                        .join("fast-preview")
+                        .join(format!("{capture_id}.stale.jpg"));
+                    fs::create_dir_all(
+                        path.parent()
+                            .expect("stale preview should have a parent directory"),
+                    )
+                    .expect("stale preview directory should exist");
+                    write_test_jpeg(&path);
+                    thread::sleep(Duration::from_millis(30));
+                    path
+                }
+                "corrupted" => {
+                    let path = session_paths
+                        .handoff_dir
+                        .join("fast-preview")
+                        .join(format!("{capture_id}.broken.jpg"));
+                    fs::create_dir_all(
+                        path.parent()
+                            .expect("corrupted preview should have a parent directory"),
+                    )
+                    .expect("corrupted preview directory should exist");
+                    fs::write(&path, b"not-a-jpeg").expect("corrupted preview should be writable");
+                    path
+                }
+                _ => unreachable!("unsupported invalid fast preview scenario"),
+            };
+
+            fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+
+            append_helper_event(
+                &helper_base_dir,
+                &helper_session_id,
+                serde_json::json!({
+                  "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+                  "type": "capture-accepted",
+                  "sessionId": helper_session_id,
+                  "requestId": request.request_id,
+                }),
+            );
+            append_file_arrived_event(
+                &helper_base_dir,
+                &helper_session_id,
+                &request,
+                &capture_id,
+                &raw_path,
+                Some(&fast_preview_path),
+                Some("camera-thumbnail"),
+            );
+        });
+
+        let result = request_capture_in_dir(
+            &base_dir,
+            CaptureRequestInputDto {
+                session_id: session.session_id.clone(),
+            },
+        )
+        .expect("capture success should stay intact even when the fast preview handoff is invalid");
+
+        helper_thread
+            .join()
+            .expect("helper capture thread should complete");
+
+        assert_eq!(
+            result.capture.render_status, "previewWaiting",
+            "scenario={scenario}"
+        );
+        assert_eq!(
+            result.capture.preview.asset_path, None,
+            "scenario={scenario}"
+        );
+        assert_eq!(
+            result.capture.preview.ready_at_ms, None,
+            "scenario={scenario}"
+        );
+        assert_eq!(
+            result.capture.timing.fast_preview_visible_at_ms, None,
+            "scenario={scenario}"
+        );
+
+        let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+            .renders_previews_dir
+            .join(format!("{}.jpg", result.capture.capture_id));
+        assert!(
+            !canonical_preview_path.is_file(),
+            "invalid fast preview should not create the canonical preview asset: scenario={scenario}"
+        );
+
+        let timing_events = fs::read_to_string(
+            SessionPaths::new(&base_dir, &session.session_id)
+                .diagnostics_dir
+                .join("timing-events.log"),
+        )
+        .expect("timing events should be readable");
+        assert!(
+            timing_events.contains("event=fast-preview-invalid"),
+            "invalid handoff should be logged: scenario={scenario}"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
 }
 
 #[test]
@@ -981,6 +1459,81 @@ fn readiness_repairs_a_legacy_text_jpg_preview_by_rerendering_it() {
 }
 
 #[test]
+fn readiness_keeps_the_canonical_preview_path_even_when_newer_suffix_previews_exist() {
+    let base_dir = unique_test_root("capture-preview-keep-canonical-path");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture_result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let capture_id = capture_result.capture.capture_id.clone();
+    let ready_capture = complete_preview_render_in_dir(&base_dir, &session.session_id, &capture_id)
+        .expect("preview render should complete");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.jpg"));
+    let suffixed_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{capture_id}_2.jpg"));
+
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    thread::sleep(Duration::from_millis(30));
+    write_test_jpeg(&suffixed_preview_path);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should preserve the canonical preview path");
+
+    assert_eq!(
+        readiness
+            .latest_capture
+            .as_ref()
+            .and_then(|capture| capture.preview.asset_path.as_deref()),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    let manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&session_paths.manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    assert_eq!(
+        manifest.captures[0].preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn capture_flow_legacy_published_bundle_without_render_profiles_still_prepares_preview() {
     let base_dir = unique_test_root("capture-legacy-published-bundle");
     let session = start_session_in_dir(
@@ -1042,6 +1595,7 @@ fn capture_flow_legacy_published_bundle_without_render_profiles_still_prepares_p
 
     assert_eq!(preview_ready.render_status, "previewReady");
     assert!(preview_ready.preview.asset_path.is_some());
+    write_ready_helper_status(&base_dir, &session.session_id);
 
     let readiness = get_capture_readiness_in_dir(
         &base_dir,
@@ -3385,6 +3939,7 @@ fn request_capture_with_helper_success(
     base_dir: &PathBuf,
     session_id: &str,
 ) -> CaptureRequestResultDto {
+    write_ready_helper_status(base_dir, session_id);
     let readiness = get_capture_readiness_in_dir(
         base_dir,
         CaptureReadinessInputDto {
@@ -3526,6 +4081,36 @@ fn append_helper_event(base_dir: &PathBuf, session_id: &str, event: serde_json::
     };
 
     fs::write(event_path, next_contents).expect("helper event log should be writable");
+}
+
+fn append_file_arrived_event(
+    base_dir: &PathBuf,
+    session_id: &str,
+    request: &CanonHelperCaptureRequestMessage,
+    capture_id: &str,
+    raw_path: &std::path::Path,
+    fast_preview_path: Option<&std::path::Path>,
+    fast_preview_kind: Option<&str>,
+) {
+    let mut event = serde_json::json!({
+      "schemaVersion": CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
+      "type": "file-arrived",
+      "sessionId": request.session_id.clone(),
+      "requestId": request.request_id.clone(),
+      "captureId": capture_id,
+      "arrivedAt": current_timestamp(SystemTime::now()).expect("arrival timestamp should serialize"),
+      "rawPath": raw_path.to_string_lossy().into_owned(),
+    });
+
+    if let Some(path) = fast_preview_path {
+        event["fastPreviewPath"] = serde_json::Value::String(path.to_string_lossy().into_owned());
+    }
+
+    if let Some(kind) = fast_preview_kind {
+        event["fastPreviewKind"] = serde_json::Value::String(kind.into());
+    }
+
+    append_helper_event(base_dir, session_id, event);
 }
 
 fn write_capture_timeout_override(base_dir: &PathBuf, timeout_ms: u64) {

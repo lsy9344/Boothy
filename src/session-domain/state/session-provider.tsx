@@ -10,6 +10,7 @@ import type {
   SessionStartInput,
 } from '../../shared-contracts'
 import {
+  CAPTURE_READINESS_POLL_MS,
   buildLocalCaptureReadiness,
   createCaptureRuntimeService,
   type CaptureRuntimeService,
@@ -46,7 +47,7 @@ type SessionProviderProps = {
 
 const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
 const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
-const CAPTURE_READINESS_RETRY_MS = 1500
+const CAPTURE_READINESS_RETRY_MS = CAPTURE_READINESS_POLL_MS
 type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
 type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
 
@@ -1616,7 +1617,6 @@ export function SessionProvider({
       window.clearInterval(intervalId)
     }
   }, [
-    applyCaptureReadiness,
     sessionDraft.flowStep,
     sessionDraft.sessionId,
   ])

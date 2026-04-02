@@ -83,4 +83,28 @@ describe('SessionPreviewImage', () => {
       )
     })
   })
+
+  it('logs a pending visibility event when a fast thumbnail appears before the final preview is ready', async () => {
+    render(
+      <SessionPreviewImage
+        assetPath="C:/boothy/sessions/session_01/renders/previews/capture.jpg"
+        alt="현재 세션 최신 사진"
+        captureId="capture_01"
+        readyAtMs={null}
+        isLatest
+      />,
+    )
+
+    screen.getByAltText('현재 세션 최신 사진').dispatchEvent(new Event('load'))
+
+    await waitFor(() => {
+      expect(logCaptureClientState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          label: 'current-session-preview-pending-visible',
+          sessionId: 'session_01',
+          message: expect.stringContaining('uiLagMs=pending'),
+        }),
+      )
+    })
+  })
 })

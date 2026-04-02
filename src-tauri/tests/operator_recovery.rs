@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::Once,
     thread,
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
@@ -29,12 +30,25 @@ use boothy_lib::{
 };
 
 fn unique_test_root(test_name: &str) -> PathBuf {
+    ensure_fake_darktable_cli();
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
     std::env::temp_dir().join(format!("boothy-operator-recovery-{test_name}-{stamp}"))
+}
+
+static FAKE_DARKTABLE_SETUP: Once = Once::new();
+
+fn ensure_fake_darktable_cli() {
+    FAKE_DARKTABLE_SETUP.call_once(|| {
+        let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("support")
+            .join("fake-darktable-cli.cmd");
+        std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", script_path);
+    });
 }
 
 #[test]
@@ -515,7 +529,23 @@ fn create_named_published_bundle(
 ) {
     let bundle_dir = catalog_root.join(preset_id).join(published_version);
     fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
+    fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should exist");
     fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should exist");
+    fs::write(
+        bundle_dir.join("xmp").join("template.xmp"),
+        format!(
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+                "<rdf:Description xmlns:darktable=\"http://darktable.sf.net/\">",
+                "<darktable:history><rdf:Seq><rdf:li><darktable:module>{preset_id}</darktable:module></rdf:li></rdf:Seq></darktable:history>",
+                "</rdf:Description></rdf:RDF></x:xmpmeta>"
+            ),
+            preset_id = preset_id
+        ),
+    )
+    .expect("xmp template should exist");
 
     let bundle = serde_json::json!({
       "schemaVersion": "published-preset-bundle/v1",
@@ -524,6 +554,18 @@ fn create_named_published_bundle(
       "publishedVersion": published_version,
       "lifecycleStatus": "published",
       "boothStatus": "booth-safe",
+      "darktableVersion": "5.4.1",
+      "xmpTemplatePath": "xmp/template.xmp",
+      "previewProfile": {
+        "profileId": format!("{preset_id}-preview"),
+        "displayName": format!("{display_name} Preview"),
+        "outputColorSpace": "sRGB",
+      },
+      "finalProfile": {
+        "profileId": format!("{preset_id}-final"),
+        "displayName": format!("{display_name} Final"),
+        "outputColorSpace": "sRGB",
+      },
       "preview": {
         "kind": "preview-tile",
         "assetPath": "preview.jpg",

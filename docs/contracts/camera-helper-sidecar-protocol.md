@@ -145,6 +145,7 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
   - helper가 host-owned `requestId`를 수락했음을 알림
 - `file-arrived`
   - helper-owned `captureId`, host-owned `requestId`, session-scoped RAW 경로를 함께 보냄
+  - optional `fastPreviewPath`, `fastPreviewKind`를 같이 보낼 수 있지만, host는 이를 capture success의 필수 조건으로 취급하지 않는다
 - `recovery-status`
   - restart/recovery 진행 상태
 - `helper-error`
@@ -177,7 +178,9 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
   "requestId": "capture_req_20260327_001",
   "captureId": "capture_20260327_001",
   "arrivedAt": "2026-03-27T10:15:33Z",
-  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr3"
+  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr3",
+  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260327_001.jpg",
+  "fastPreviewKind": "embedded-jpeg"
 }
 ```
 
@@ -194,6 +197,10 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
 - host는 `file-arrived` correlation과 실제 파일 존재를 함께 확인한다.
 - host는 `captures/originals/` 아래 active session root에 들어온 파일만 capture success 후보로 인정한다.
 - capture success는 helper가 "촬영 버튼을 받았다"가 아니라 host가 파일 도착과 저장 경계를 닫았을 때 확정된다.
+- helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path, 파일 유효성 검증을 다시 통과한 경우에만 이를 pending preview 후보로 승격할 수 있다.
+- 현재 구현 기준 allowed fast preview path는 designated handoff 경로(`handoff/fast-preview/...`) 또는 canonical preview path(`renders/previews/{captureId}.jpg`와 동등 경로)로 제한한다.
+- `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다. 이 경우 host는 RAW handoff만으로 기존 `Preview Waiting` 경로를 계속 유지한다.
+- `fastPreviewKind`는 helper가 어떤 후보를 보냈는지 설명하는 optional 진단 힌트일 뿐이며, host preview truth를 직접 결정하지 않는다.
 - helper는 partial file이나 아직 close되지 않은 파일을 `file-arrived`로 알리면 안 된다.
 - 같은 원칙으로 helper는 partial request line이나 restart 이전의 stale request line을 새 촬영으로 재해석하면 안 된다.
 - 카메라 본체 셔터 직접 입력처럼 active `requestId` 없이 발생한 out-of-band 촬영은 현재 host가 active session success로 승격하는 canonical path가 아니다.

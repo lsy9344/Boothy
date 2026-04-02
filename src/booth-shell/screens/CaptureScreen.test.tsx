@@ -1145,7 +1145,7 @@ describe('CaptureScreen', () => {
     expect(playTimingCueMock).toHaveBeenCalledWith('ended')
   })
 
-  it('shows only preview-ready captures from the active session in the latest photo rail', async () => {
+  it('shows current-session thumbnails and keeps pending captures visible when a fast preview already exists', async () => {
     renderCaptureScreen(
       {},
       {
@@ -1202,6 +1202,26 @@ describe('CaptureScreen', () => {
               },
               renderStatus: 'previewReady',
             }),
+            createCaptureRecord({
+              captureId: 'capture_waiting_same_session',
+              raw: {
+                assetPath: 'fixtures/current-session-waiting-raw.jpg',
+                persistedAtMs: 80,
+              },
+              preview: {
+                assetPath: 'fixtures/current-session-waiting.jpg',
+                enqueuedAtMs: 80,
+                readyAtMs: null,
+              },
+              timing: {
+                captureAcknowledgedAtMs: 80,
+                previewVisibleAtMs: null,
+                captureBudgetMs: 1000,
+                previewBudgetMs: 5000,
+                previewBudgetState: 'pending',
+              },
+              renderStatus: 'previewWaiting',
+            }),
           ],
           postEnd: null,
         },
@@ -1219,7 +1239,7 @@ describe('CaptureScreen', () => {
 
     expect(rail).toBeInTheDocument()
     expect(rail).toHaveAttribute('tabindex', '0')
-    expect(images).toHaveLength(2)
+    expect(images).toHaveLength(3)
     expect(
       screen.getByRole('img', {
         name: /현재 세션 최신 사진,\s*1번째,\s*soft glow 룩/i,
@@ -1233,11 +1253,22 @@ describe('CaptureScreen', () => {
       'src',
       'fixtures/current-session-older.jpg',
     )
+    expect(
+      screen.getByRole('img', {
+        name: /현재 세션 사진,\s*3번째,\s*soft glow 룩/i,
+      }),
+    ).toHaveAttribute(
+      'src',
+      'fixtures/current-session-waiting.jpg',
+    )
     expect(screen.getByText('최신 사진')).toBeInTheDocument()
-    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(2)
+    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(3)
     expect(
       screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
-    ).toHaveLength(2)
+    ).toHaveLength(3)
+    expect(
+      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+    ).toBeInTheDocument()
     expect(screen.queryByText(/filesystem|render|diagnostic/i)).not.toBeInTheDocument()
 
     fireEvent.keyDown(rail, { key: 'ArrowRight' })

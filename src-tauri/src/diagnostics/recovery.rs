@@ -261,6 +261,8 @@ fn execute_boundary_restart(
             latest_capture.render_status = "previewWaiting".into();
             latest_capture.post_end_state = "activeSession".into();
             latest_capture.timing.preview_visible_at_ms = None;
+            latest_capture.timing.fast_preview_visible_at_ms = None;
+            latest_capture.timing.xmp_preview_ready_at_ms = None;
             latest_capture.timing.preview_budget_state = "pending".into();
             manifest.post_end = None;
             manifest.lifecycle.stage = "preview-waiting".into();

@@ -859,3 +859,61 @@ dotnet publish sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -c Releas
 1. helper evidence가 정상이고 `render-failed` reason이 `render-cli-missing`이면 helper 조사에서 바로 빠진다.
 2. 해당 PC에 darktable가 실제 설치돼 있는지 `Program Files\\darktable\\bin\\darktable-cli.exe`부터 확인한다.
 3. 설치돼 있는데도 실패하면 render worker의 binary resolution regressions로 분류한다.
+
+## 2026-04-01 18:40 +09:00 추가 재발: 1, 2번째 샷은 성공하고 3번째 샷만 `capture-download-timeout`이면 render가 아니라 helper completion boundary를 먼저 본다
+
+- 실제 재발 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a21cfdc4106a64` 였다.
+- 이 세션의 helper evidence는 아래처럼 갈렸다.
+  - 첫 번째 요청: `capture-accepted -> file-arrived`
+  - 두 번째 요청: `capture-accepted -> file-arrived`
+  - 세 번째 요청 `request_000000000018a21d06313e1b80`:
+    `capture-accepted` 뒤 `recovery-status(detailCode=capture-download-timeout)`와
+    `helper-error(detailCode=capture-download-timeout)`로 종료
+- 이후 `camera-helper-status.json`은 다시
+  `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`로 회복했다.
+- 그런데 `session.json`은 이미 `lifecycle.stage=phone-required`로 잠겨 있었고,
+  세 번째 샷은 `captures`에 추가되지 못했다.
+- 같은 세션의 `timing-events.log`에는 첫 두 장의 `render-ready`만 있었고,
+  세 번째 샷의 `render-failed`는 없었다.
+
+이번에 정리한 핵심:
+
+- 이 패턴은 `render-failed`가 아니라,
+  **helper가 `file-arrived`를 끝내 내보내지 못한 capture boundary failure**다.
+- 특히 helper의 capture completion 경계 안에 촬영 직후 preview 보강 작업이 일부 같이 묶여 있으면,
+  실제 RAW 저장이 늦지 않아도 연속 촬영에서 timeout이 다시 날 수 있다.
+- 따라서 "1, 2번째는 성공하고 3번째만 `Phone Required`" 패턴이면,
+  render보다 먼저 helper completion / timeout budget을 본다.
+
+이번 회차 운영/구현 정리:
+
+1. helper 기본 timeout을 `15초 -> 30초`로 늘렸다.
+2. host round-trip timeout도 `20초 -> 35초`로 늘려 helper보다 먼저 세션을 잠그지 않게 맞췄다.
+3. active capture 중에는 helper preview backfill이 끼어들지 않게 막았다.
+4. capture 완료 경계에서는 on-camera thumbnail fast path만 남기고,
+   더 무거운 RAW 기반 preview backfill은 capture 이후 일반 helper loop에서 처리하게 옮겼다.
+
+다음에 같은 증상이 오면 바로 확인할 것:
+
+1. 같은 session의 `camera-helper-events.jsonl`, `camera-helper-status.json`, `session.json`을 같이 본다.
+2. `capture-accepted` 뒤 `capture-download-timeout`이고 status가 다시 `ready/healthy`면
+   helper completion boundary / timeout budget 이슈로 바로 분류한다.
+3. 이 경우 `timing-events.log`에 세 번째 샷 `render-failed`가 없으면 render 조사로 먼저 가지 않는다.
+
+## 2026-04-01 18:42 +09:00 후속 확인: 같은 3번째 샷 `Phone Required` 패턴은 현재 재현되지 않는다
+
+- 사용자 후속 확인 결과, 방금 수정 뒤에는
+  "1, 2번째 샷 성공 후 3번째 샷에서 `Phone Required`" 패턴이 더 이상 나타나지 않았다.
+- 따라서 현재 상태에서는
+  - helper timeout 확대
+  - host round-trip budget 확대
+  - active capture 중 preview backfill 차단
+  - capture boundary에서 무거운 preview 보강 제거
+  조합이 실제 재발을 막는 유효한 완화책으로 본다.
+
+운영 메모:
+
+1. 같은 패턴이 다시 나오기 전까지는 이 조합을 기본 해법으로 유지한다.
+2. 재발 시에는 먼저 새 session evidence가 정말 `capture-download-timeout` 재발인지 확인하고,
+   이전과 같은 경로가 아니면 helper completion 원인으로 바로 단정하지 않는다.

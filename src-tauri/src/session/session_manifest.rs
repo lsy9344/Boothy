@@ -219,6 +219,10 @@ pub struct FinalCaptureAsset {
 pub struct CaptureTimingMetrics {
     pub capture_acknowledged_at_ms: u64,
     pub preview_visible_at_ms: Option<u64>,
+    #[serde(default)]
+    pub fast_preview_visible_at_ms: Option<u64>,
+    #[serde(default)]
+    pub xmp_preview_ready_at_ms: Option<u64>,
     pub capture_budget_ms: u64,
     pub preview_budget_ms: u64,
     pub preview_budget_state: String,

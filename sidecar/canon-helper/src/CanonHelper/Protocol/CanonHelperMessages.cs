@@ -61,7 +61,9 @@ internal sealed record FileArrivedMessage(
     string RequestId,
     string CaptureId,
     string ArrivedAt,
-    string RawPath
+    string RawPath,
+    string? FastPreviewPath,
+    string? FastPreviewKind
 );
 
 internal sealed record RecoveryStatusMessage(
