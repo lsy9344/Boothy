@@ -39,7 +39,10 @@ use crate::{
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
     },
-    timing::{sync_session_timing_in_dir, TimingPhase},
+    timing::{
+        append_session_timing_event_in_dir, sync_session_timing_in_dir, SessionTimingEventInput,
+        TimingPhase,
+    },
 };
 
 const CAMERA_HELPER_STATUS_MAX_AGE_SECONDS: u64 = 5;
@@ -143,6 +146,19 @@ where
 
     write_capture_request_message(base_dir, &request_message)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
+    let _ = append_session_timing_event_in_dir(
+        base_dir,
+        SessionTimingEventInput {
+            session_id: &input.session_id,
+            event: "request-capture",
+            capture_id: None,
+            request_id: Some(&request_id),
+            detail: Some(&format!(
+                "activePresetId={};activePresetVersion={}",
+                active_preset.preset_id, active_preset.published_version
+            )),
+        },
+    );
 
     let round_trip = match wait_for_capture_round_trip(
         base_dir,
@@ -206,6 +222,31 @@ where
             ));
         }
     };
+    let file_arrived_detail = format!(
+        "rawPath={};persistedAtMs={};fastPreview={};fastPreviewKind={}",
+        round_trip.raw_path,
+        round_trip.persisted_at_ms,
+        round_trip
+            .fast_preview
+            .as_ref()
+            .map(|preview| preview.asset_path.as_str())
+            .unwrap_or("none"),
+        round_trip
+            .fast_preview
+            .as_ref()
+            .and_then(|preview| preview.kind.as_deref())
+            .unwrap_or("none")
+    );
+    let _ = append_session_timing_event_in_dir(
+        base_dir,
+        SessionTimingEventInput {
+            session_id: &input.session_id,
+            event: "file-arrived",
+            capture_id: Some(&round_trip.capture_id),
+            request_id: Some(&request_id),
+            detail: Some(&file_arrived_detail),
+        },
+    );
     let (manifest, capture, fast_preview_update) = persist_capture_in_dir(
         base_dir,
         &input,

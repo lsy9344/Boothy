@@ -28,7 +28,9 @@ use crate::{
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
     },
-    timing::sync_session_timing_in_dir,
+    timing::{
+        append_session_timing_event_in_dir, sync_session_timing_in_dir, SessionTimingEventInput,
+    },
 };
 
 const FAST_PREVIEW_ALLOWED_EXTENSIONS: [&str; 2] = ["jpg", "jpeg"];
@@ -449,6 +451,12 @@ fn complete_speculative_preview_render_in_dir(
             manifest.updated_at = current_timestamp(SystemTime::now())?;
             manifest.lifecycle.stage = derive_capture_lifecycle_stage(manifest);
             write_session_manifest(&paths.manifest_path, manifest)?;
+            append_capture_preview_ready_event(
+                base_dir,
+                &capture_snapshot.session_id,
+                &capture,
+                preview_visible_at_ms,
+            );
 
             let _ = fs::remove_file(speculative_preview_detail_path(
                 paths,
@@ -614,7 +622,7 @@ fn render_refined_preview_when_queue_allows(
 }
 
 fn finish_preview_render_in_dir(
-    _base_dir: &Path,
+    base_dir: &Path,
     paths: &SessionPaths,
     session_id: &str,
     capture_id: &str,
@@ -669,6 +677,9 @@ fn finish_preview_render_in_dir(
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     manifest.lifecycle.stage = derive_capture_lifecycle_stage(&manifest);
     write_session_manifest(&paths.manifest_path, &manifest)?;
+    if !preserve_first_visible_at_ms {
+        append_capture_preview_ready_event(base_dir, session_id, &capture, preview_ready_at_ms);
+    }
 
     if preserve_first_visible_at_ms {
         log::info!(
@@ -1123,6 +1134,14 @@ fn promote_fast_preview_asset(
         handoff.kind.as_deref(),
         Some(&format!("assetPath={asset_path}")),
     );
+    log_fast_preview_event(
+        paths,
+        capture_id,
+        request_id,
+        "fast-preview-visible",
+        handoff.kind.as_deref(),
+        Some(&format!("assetPath={asset_path}")),
+    );
 
     Some(FastPreviewPromotionResult {
         asset_path,
@@ -1335,6 +1354,30 @@ fn speculative_preview_detail_path(
 
 fn current_time_ms() -> Result<u64, std::time::SystemTimeError> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+}
+
+fn append_capture_preview_ready_event(
+    base_dir: &Path,
+    session_id: &str,
+    capture: &SessionCaptureRecord,
+    preview_ready_at_ms: u64,
+) {
+    let detail = format!(
+        "elapsedMs={};budgetState={};renderStatus={}",
+        preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms),
+        capture.timing.preview_budget_state,
+        capture.render_status
+    );
+    let _ = append_session_timing_event_in_dir(
+        base_dir,
+        SessionTimingEventInput {
+            session_id,
+            event: "capture_preview_ready",
+            capture_id: Some(&capture.capture_id),
+            request_id: Some(&capture.request_id),
+            detail: Some(&detail),
+        },
+    );
 }
 
 fn system_time_to_ms(value: SystemTime) -> Option<u64> {

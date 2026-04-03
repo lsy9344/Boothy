@@ -25,6 +25,9 @@ use boothy_lib::{
             CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
         },
     },
+    commands::runtime_commands::{
+        append_capture_client_timing_event_in_dir, CaptureClientDebugLogInputDto,
+    },
     contracts::dto::{
         CaptureDeleteInputDto, CaptureReadinessInputDto, CaptureRequestInputDto,
         CaptureRequestResultDto, SessionStartInputDto,
@@ -1187,11 +1190,58 @@ fn helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_
             .join("timing-events.log"),
     )
     .expect("timing events should be readable");
+    assert!(timing_events.contains("event=request-capture"));
+    assert!(timing_events.contains("event=file-arrived"));
     assert!(timing_events.contains("event=fast-preview-promote-start"));
     assert!(timing_events.contains("event=fast-preview-promoted"));
+    assert!(timing_events.contains("event=fast-preview-visible"));
     assert!(timing_events.contains("event=preview-render-start"));
     assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("event=capture_preview_ready"));
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn client_recent_session_visibility_events_are_mirrored_into_session_timing_logs() {
+    let base_dir = unique_test_root("recent-session-visible-timing-log");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+
+    append_capture_client_timing_event_in_dir(
+        &base_dir,
+        &CaptureClientDebugLogInputDto {
+            label: "recent-session-visible".into(),
+            session_id: Some(session.session_id.clone()),
+            runtime_mode: Some("tauri".into()),
+            customer_state: None,
+            reason_code: None,
+            can_capture: None,
+            message: Some(
+                "captureId=capture_recent_01;requestId=request_recent_01;previewKind=preset-applied-preview;surface=recent-session;uiLagMs=23;readyAtMs=123;latest=true"
+                    .into(),
+            ),
+        },
+    );
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+
+    assert!(timing_events.contains("event=recent-session-visible"));
+    assert!(timing_events.contains("capture=capture_recent_01"));
+    assert!(timing_events.contains("request=request_recent_01"));
+    assert!(timing_events.contains("previewKind=preset-applied-preview"));
 
     let _ = fs::remove_dir_all(base_dir);
 }

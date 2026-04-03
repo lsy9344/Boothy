@@ -19,6 +19,15 @@ pub enum TimingPhase {
     Ended,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTimingEventInput<'a> {
+    pub session_id: &'a str,
+    pub event: &'a str,
+    pub capture_id: Option<&'a str>,
+    pub request_id: Option<&'a str>,
+    pub detail: Option<&'a str>,
+}
+
 impl TimingPhase {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -190,6 +199,39 @@ pub fn evaluate_phase(
     }
 
     Ok(TimingPhase::Active)
+}
+
+pub fn append_session_timing_event_in_dir(
+    base_dir: &Path,
+    input: SessionTimingEventInput<'_>,
+) -> Result<(), HostErrorEnvelope> {
+    let diagnostics_dir = SessionPaths::try_new(base_dir, input.session_id)?.diagnostics_dir;
+    std::fs::create_dir_all(&diagnostics_dir).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
+    })?;
+    let log_path = diagnostics_dir.join("timing-events.log");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|error| {
+            HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
+        })?;
+    let occurred_at = current_timestamp(SystemTime::now())?;
+    let capture_id = input.capture_id.unwrap_or("none");
+    let request_id = input.request_id.unwrap_or("none");
+    let detail = input.detail.unwrap_or("none");
+
+    writeln!(
+        file,
+        "{occurred_at}\tsession={}\tcapture={capture_id}\trequest={request_id}\tevent={}\tdetail={detail}",
+        input.session_id, input.event
+    )
+    .map_err(|error| {
+        HostErrorEnvelope::persistence(format!("진단 로그를 남기지 못했어요: {error}"))
+    })?;
+
+    Ok(())
 }
 
 fn derive_lifecycle_stage(current_stage: &str, phase: TimingPhase) -> String {
