@@ -166,6 +166,27 @@ export function CaptureScreen() {
     reasonCode: readiness.reasonCode,
     supportMessage: copy.detail,
   })
+  const inFlightCaptureCopy = isRequestingCapture
+    ? {
+        ...copy,
+        stateLabel: '촬영 처리 중',
+        headline: '방금 찍은 사진을 불러오는 중이에요.',
+        detail:
+          '카메라에서 같은 촬영의 원본 파일을 전송 중이에요. 잠시만 기다려 주세요.',
+        actionLabel: '잠시 기다리기',
+        canCapture: false,
+        isPreviewWaiting: false,
+        helperText: null,
+        nextActionText: null,
+      }
+    : copy
+  const inFlightCameraStatus = isRequestingCapture
+    ? {
+        label: '촬영 처리 중',
+        detail: '원본 파일이 도착하면 바로 다음 표시 단계로 이어져요.',
+        tone: 'neutral' as const,
+      }
+    : cameraStatus
   const timing = readiness.timing ?? sessionDraft.manifest?.timing ?? null
 
   const selectedPresetName =
@@ -308,14 +329,16 @@ export function CaptureScreen() {
 
   return (
     <SurfaceLayout
-      eyebrow={copy.stateLabel}
-      title={copy.headline}
-      description={copy.detail}
+      eyebrow={inFlightCaptureCopy.stateLabel}
+      title={inFlightCaptureCopy.headline}
+      description={inFlightCaptureCopy.detail}
     >
-      {copy.isPreviewWaiting && copy.helperText !== null && copy.nextActionText !== null ? (
+      {inFlightCaptureCopy.isPreviewWaiting &&
+      inFlightCaptureCopy.helperText !== null &&
+      inFlightCaptureCopy.nextActionText !== null ? (
         <PreviewWaitingPanel
-          helperText={copy.helperText}
-          nextActionText={copy.nextActionText}
+          helperText={inFlightCaptureCopy.helperText}
+          nextActionText={inFlightCaptureCopy.nextActionText}
         />
       ) : null}
 
@@ -324,17 +347,19 @@ export function CaptureScreen() {
         selectedPresetName={selectedPresetName}
         postEndGuidance={copy.postEnd ?? null}
         timing={timing}
-        stateLabel={copy.stateLabel}
-        cameraStatusLabel={cameraStatus.label}
-        cameraStatusDetail={cameraStatus.detail}
-        cameraStatusTone={cameraStatus.tone}
-        actionLabel={copy.actionLabel}
-        canCapture={copy.canCapture}
+        stateLabel={inFlightCaptureCopy.stateLabel}
+        cameraStatusLabel={inFlightCameraStatus.label}
+        cameraStatusDetail={inFlightCameraStatus.detail}
+        cameraStatusTone={inFlightCameraStatus.tone}
+        actionLabel={inFlightCaptureCopy.actionLabel}
+        canCapture={inFlightCaptureCopy.canCapture}
         isBusy={isRequestingCapture || isDeletingCapture}
-        isExplicitPostEnd={copy.isExportWaiting || copy.isPostEndFinalized}
+        isExplicitPostEnd={
+          inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
+        }
         isChangePresetDisabled={
-          copy.isExportWaiting ||
-          copy.isPostEndFinalized ||
+          inFlightCaptureCopy.isExportWaiting ||
+          inFlightCaptureCopy.isPostEndFinalized ||
           sessionDraft.sessionId === null ||
           sessionDraft.selectedPreset === null ||
           isLoadingPresetCatalog ||
@@ -351,8 +376,10 @@ export function CaptureScreen() {
 
       <LatestPhotoRail
         previews={currentSessionPreviews}
-        isPreviewWaiting={copy.isPreviewWaiting}
-        isExplicitPostEnd={copy.isExportWaiting || copy.isPostEndFinalized}
+        isPreviewWaiting={inFlightCaptureCopy.isPreviewWaiting}
+        isExplicitPostEnd={
+          inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
+        }
         deletingCaptureId={isDeletingCapture ? activePendingDeleteCaptureId : null}
         pendingDeleteCaptureId={activePendingDeleteCaptureId}
         onDeleteCancel={() => {

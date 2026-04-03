@@ -356,12 +356,16 @@ pub fn read_latest_helper_error_message(
     }))
 }
 
-pub fn wait_for_capture_round_trip(
+pub fn wait_for_capture_round_trip<F>(
     base_dir: &Path,
     session_id: &str,
     request_id: &str,
     starting_event_count: usize,
-) -> Result<CompletedCaptureRoundTrip, SidecarClientError> {
+    mut on_fast_preview_ready: F,
+) -> Result<CompletedCaptureRoundTrip, SidecarClientError>
+where
+    F: FnMut(&CanonHelperFastPreviewReadyMessage),
+{
     let timeout_ms = capture_round_trip_timeout_ms(base_dir);
     let timeout_deadline = current_time_ms()
         .map_err(|_| SidecarClientError::CaptureTimedOut)?
@@ -399,6 +403,8 @@ pub fn wait_for_capture_round_trip(
                     if message.session_id != session_id {
                         continue;
                     }
+
+                    on_fast_preview_ready(message);
                 }
                 CanonHelperEvent::FastThumbnailAttempted(message) => {
                     if message.request_id != request_id {

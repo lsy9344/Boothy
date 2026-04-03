@@ -39,7 +39,7 @@ internal sealed class CanonSdkCamera : IDisposable
     private CameraSnapshot _snapshot =
         new("connecting", "starting", "helper-starting", null, null);
     private CurrentCaptureContext? _currentCapture;
-    private PendingFastPreviewDownload? _pendingFastPreviewDownload;
+    private readonly Queue<PendingFastPreviewDownload> _pendingFastPreviewDownloads = new();
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
 
@@ -298,19 +298,18 @@ internal sealed class CanonSdkCamera : IDisposable
         PendingFastPreviewDownload? pendingDownload;
         lock (_sync)
         {
-            if (_currentCapture is not null || _pendingFastPreviewDownload is null)
+            if (_currentCapture is not null || _pendingFastPreviewDownloads.Count == 0)
             {
                 return;
             }
 
             if (!_sessionOpen)
             {
-                ReleasePendingFastPreviewDownloadLocked();
+                ReleasePendingFastPreviewDownloadsLocked();
                 return;
             }
 
-            pendingDownload = _pendingFastPreviewDownload;
-            _pendingFastPreviewDownload = null;
+            pendingDownload = _pendingFastPreviewDownloads.Dequeue();
         }
 
         if (pendingDownload is null)
@@ -320,37 +319,23 @@ internal sealed class CanonSdkCamera : IDisposable
 
         try
         {
-            try
-            {
-                pendingDownload.Context.OnFastPreviewAttempted?.Invoke(
-                    new CaptureFastPreviewAttemptedResult(
-                        pendingDownload.Context.Request.RequestId,
-                        pendingDownload.CaptureId,
-                        "camera-thumbnail",
-                        DateTimeOffset.UtcNow
-                    )
-                );
-            }
-            catch
-            {
-                // Attempt telemetry is best-effort and must not break RAW persistence.
-            }
-
-            var fastPreviewDownload = TryDownloadPreviewThumbnail(
-                pendingDownload.Context.Paths,
-                pendingDownload.DirectoryItem,
-                pendingDownload.CaptureId
+            var fastPreviewDownload = new CaptureFastPreviewDownloadResult(
+                null,
+                "raw-fallback-preview",
+                "fast-preview-pending-missing-raw"
             );
-            if (
-                string.IsNullOrWhiteSpace(fastPreviewDownload.FastPreviewPath)
-                && !string.IsNullOrWhiteSpace(pendingDownload.RawPath)
-            )
+            if (!string.IsNullOrWhiteSpace(pendingDownload.RawPath))
             {
+                EmitFastPreviewAttempted(
+                    pendingDownload.Context,
+                    pendingDownload.CaptureId,
+                    "raw-fallback-preview"
+                );
                 fastPreviewDownload = TryGenerateFastPreviewFromRaw(
                     pendingDownload.Context.Paths,
                     pendingDownload.RawPath,
                     pendingDownload.CaptureId,
-                    fastPreviewDownload.FailureDetailCode
+                    null
                 );
             }
             if (!string.IsNullOrWhiteSpace(fastPreviewDownload.FastPreviewPath))
@@ -817,6 +802,16 @@ internal sealed class CanonSdkCamera : IDisposable
             );
             var finalPath = Path.Combine(context.Paths.CapturesOriginalsDir, $"{captureId}{extension}");
 
+            // Try the same-capture camera thumbnail before the full RAW transfer.
+            // If the SDK can provide it here, the host can overlap preview work
+            // with the still-in-flight RAW download instead of waiting for RAW
+            // persistence to finish first.
+            var immediateFastPreview = TryCaptureImmediateFastPreview(
+                context,
+                directoryItem,
+                captureId
+            );
+
             var streamResult = EDSDK.EdsCreateFileStream(
                 tempPath,
                 EDSDK.EdsFileCreateDisposition.CreateAlways,
@@ -873,8 +868,11 @@ internal sealed class CanonSdkCamera : IDisposable
                 );
             }
 
-            QueuePendingFastPreviewDownload(context, directoryItem, captureId, finalPath);
-            directoryItem = IntPtr.Zero;
+            if (string.IsNullOrWhiteSpace(immediateFastPreview.FastPreviewPath))
+            {
+                QueuePendingFastPreviewDownload(context, directoryItem, captureId, finalPath);
+                directoryItem = IntPtr.Zero;
+            }
 
             context.Completion.TrySetResult(
                 new CaptureDownloadResult(
@@ -882,8 +880,8 @@ internal sealed class CanonSdkCamera : IDisposable
                     captureId,
                     finalPath,
                     DateTimeOffset.UtcNow,
-                    null,
-                    null
+                    immediateFastPreview.FastPreviewPath,
+                    immediateFastPreview.FastPreviewKind
                 )
             );
         }
@@ -1035,6 +1033,71 @@ internal sealed class CanonSdkCamera : IDisposable
                 {
                 }
             }
+        }
+    }
+
+    private CaptureFastPreviewDownloadResult TryCaptureImmediateFastPreview(
+        CurrentCaptureContext context,
+        IntPtr directoryItem,
+        string captureId
+    )
+    {
+        EmitFastPreviewAttempted(context, captureId, "camera-thumbnail");
+        var fastPreviewDownload = TryDownloadPreviewThumbnail(context.Paths, directoryItem, captureId);
+        if (string.IsNullOrWhiteSpace(fastPreviewDownload.FastPreviewPath))
+        {
+            return fastPreviewDownload;
+        }
+
+        EmitFastPreviewReady(context, captureId, fastPreviewDownload);
+        return fastPreviewDownload;
+    }
+
+    private void EmitFastPreviewAttempted(
+        CurrentCaptureContext context,
+        string captureId,
+        string fastPreviewKind
+    )
+    {
+        try
+        {
+            context.OnFastPreviewAttempted?.Invoke(
+                new CaptureFastPreviewAttemptedResult(
+                    context.Request.RequestId,
+                    captureId,
+                    fastPreviewKind,
+                    DateTimeOffset.UtcNow
+                )
+            );
+        }
+        catch
+        {
+            // Attempt telemetry is best-effort and must not block RAW persistence.
+        }
+    }
+
+    private void EmitFastPreviewReady(
+        CurrentCaptureContext context,
+        string captureId,
+        CaptureFastPreviewDownloadResult fastPreviewDownload
+    )
+    {
+        try
+        {
+            context.OnFastPreviewReady?.Invoke(
+                new CaptureFastPreviewReadyResult(
+                    context.Request.RequestId,
+                    captureId,
+                    fastPreviewDownload.FastPreviewPath!,
+                    fastPreviewDownload.FastPreviewKind,
+                    DateTimeOffset.UtcNow
+                )
+            );
+        }
+        catch
+        {
+            // Fast-preview notifications are best-effort. The RAW handoff
+            // remains the only correctness boundary for capture success.
         }
     }
 
@@ -1326,7 +1389,7 @@ internal sealed class CanonSdkCamera : IDisposable
     {
         lock (_sync)
         {
-            ReleasePendingFastPreviewDownloadLocked();
+            ReleasePendingFastPreviewDownloadsLocked();
             if (_sessionOpen && _camera != IntPtr.Zero)
             {
                 EDSDK.EdsCloseSession(_camera);
@@ -1394,29 +1457,32 @@ internal sealed class CanonSdkCamera : IDisposable
     {
         lock (_sync)
         {
-            ReleasePendingFastPreviewDownloadLocked();
-            _pendingFastPreviewDownload = new PendingFastPreviewDownload(
+            if (directoryItem != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(directoryItem);
+                directoryItem = IntPtr.Zero;
+            }
+            _pendingFastPreviewDownloads.Enqueue(
+                new PendingFastPreviewDownload(
                 context,
                 directoryItem,
                 captureId,
                 rawPath
+                )
             );
         }
     }
 
-    private void ReleasePendingFastPreviewDownloadLocked()
+    private void ReleasePendingFastPreviewDownloadsLocked()
     {
-        if (_pendingFastPreviewDownload is null)
+        while (_pendingFastPreviewDownloads.Count > 0)
         {
-            return;
+            var pendingDownload = _pendingFastPreviewDownloads.Dequeue();
+            if (pendingDownload.DirectoryItem != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(pendingDownload.DirectoryItem);
+            }
         }
-
-        if (_pendingFastPreviewDownload.DirectoryItem != IntPtr.Zero)
-        {
-            EDSDK.EdsRelease(_pendingFastPreviewDownload.DirectoryItem);
-        }
-
-        _pendingFastPreviewDownload = null;
     }
 }
 

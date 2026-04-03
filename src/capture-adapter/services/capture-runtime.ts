@@ -25,9 +25,27 @@ import {
 import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 import { logCaptureClientState } from '../../shared/runtime/log-capture-client-state'
 
-export const CAPTURE_READINESS_POLL_MS = 300
+export const CAPTURE_READINESS_POLL_MS = 180
+export const CAPTURE_READY_IDLE_POLL_MS = 1200
 const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
 let captureRequestCounter = 0
+
+function nextCaptureReadinessPollDelay(
+  readiness: CaptureReadinessSnapshot | null,
+) {
+  if (
+    readiness !== null &&
+    readiness.canCapture &&
+    readiness.reasonCode === 'ready' &&
+    (readiness.latestCapture === null ||
+      readiness.latestCapture.renderStatus === 'previewReady' ||
+      readiness.latestCapture.renderStatus === 'finalReady')
+  ) {
+    return CAPTURE_READY_IDLE_POLL_MS
+  }
+
+  return CAPTURE_READINESS_POLL_MS
+}
 
 export function generateCaptureRequestId() {
   captureRequestCounter = (captureRequestCounter + 1) & 0xffff
@@ -355,6 +373,7 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
       sessionId: input.sessionId,
     })
     let latestReadinessKey: string | null = null
+    let latestReadiness: CaptureReadinessSnapshot | null = null
     let isDisposed = false
     let isPolling = false
     let pollId: ReturnType<typeof globalThis.setTimeout> | null = null
@@ -367,10 +386,11 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
       }
 
       latestReadinessKey = nextKey
+      latestReadiness = readiness
       input.onReadiness(readiness)
     }
 
-    const schedulePoll = (delayMs = CAPTURE_READINESS_POLL_MS) => {
+    const schedulePoll = (delayMs = nextCaptureReadinessPollDelay(latestReadiness)) => {
       if (isDisposed) {
         return
       }

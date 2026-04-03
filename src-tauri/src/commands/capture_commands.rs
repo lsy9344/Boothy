@@ -21,6 +21,8 @@ use crate::{
 
 const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
 const CAPTURE_FAST_PREVIEW_UPDATE_EVENT: &str = "capture-fast-preview-update";
+const PREVIEW_REFINEMENT_WAIT_MS: u64 = 2000;
+const PREVIEW_REFINEMENT_POLL_MS: u64 = 40;
 
 #[tauri::command]
 pub fn get_capture_readiness(
@@ -136,8 +138,7 @@ pub fn request_capture(
     let preview_app = app.clone();
 
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(120));
-        let readiness = match complete_preview_render_in_dir(
+        let initial_capture = match complete_preview_render_in_dir(
             &preview_base_dir,
             &preview_session_id,
             &preview_capture_id,
@@ -155,10 +156,7 @@ pub fn request_capture(
                     preview_elapsed_ms,
                     capture.timing.preview_budget_state
                 );
-                read_current_capture_readiness(&preview_base_dir, &preview_session_id)
-                    .unwrap_or_else(|| {
-                        CaptureReadinessDto::preview_ready(preview_session_id.clone(), capture)
-                    })
+                capture
             }
             Err(_) => {
                 log::warn!(
@@ -171,17 +169,43 @@ pub fn request_capture(
                     &preview_session_id,
                     &preview_capture_id,
                 );
-                read_current_capture_readiness(&preview_base_dir, &preview_session_id)
-                    .unwrap_or_else(|| {
-                        CaptureReadinessDto::phone_required(preview_session_id.clone())
-                    })
+                let readiness =
+                    read_current_capture_readiness(&preview_base_dir, &preview_session_id)
+                        .unwrap_or_else(|| {
+                            CaptureReadinessDto::phone_required(preview_session_id.clone())
+                        });
+                let _ = preview_app.emit(
+                    CAPTURE_READINESS_UPDATE_EVENT,
+                    CaptureReadinessUpdateDto::new(preview_session_id, readiness),
+                );
+                return;
             }
         };
+        let readiness = read_current_capture_readiness(&preview_base_dir, &preview_session_id)
+            .unwrap_or_else(|| {
+                CaptureReadinessDto::preview_ready(
+                    preview_session_id.clone(),
+                    initial_capture.clone(),
+                )
+            });
 
         let _ = preview_app.emit(
             CAPTURE_READINESS_UPDATE_EVENT,
-            CaptureReadinessUpdateDto::new(preview_session_id, readiness),
+            CaptureReadinessUpdateDto::new(preview_session_id.clone(), readiness),
         );
+
+        if initial_capture.timing.xmp_preview_ready_at_ms.is_none() {
+            emit_refined_preview_readiness_when_available(
+                &preview_app,
+                &preview_base_dir,
+                &preview_session_id,
+                &preview_capture_id,
+                initial_capture
+                    .timing
+                    .preview_visible_at_ms
+                    .unwrap_or(initial_capture.raw.persisted_at_ms),
+            );
+        }
     });
 
     Ok(result)
@@ -198,4 +222,45 @@ fn read_current_capture_readiness(
         },
     )
     .ok()
+}
+
+fn emit_refined_preview_readiness_when_available(
+    app: &tauri::AppHandle,
+    base_dir: &std::path::Path,
+    session_id: &str,
+    capture_id: &str,
+    first_visible_at_ms: u64,
+) {
+    let wait_cycles = (PREVIEW_REFINEMENT_WAIT_MS / PREVIEW_REFINEMENT_POLL_MS).max(1);
+
+    for _ in 0..=wait_cycles {
+        let Some(readiness) = read_current_capture_readiness(base_dir, session_id) else {
+            thread::sleep(Duration::from_millis(PREVIEW_REFINEMENT_POLL_MS));
+            continue;
+        };
+
+        let refinement_ready = readiness
+            .latest_capture
+            .as_ref()
+            .filter(|capture| capture.capture_id == capture_id)
+            .and_then(|capture| capture.timing.xmp_preview_ready_at_ms)
+            .filter(|ready_at_ms| *ready_at_ms >= first_visible_at_ms);
+
+        if let Some(refined_ready_at_ms) = refinement_ready {
+            let refined_elapsed_ms = refined_ready_at_ms.saturating_sub(first_visible_at_ms);
+            log::info!(
+                "capture_preview_refinement_ready session={} capture_id={} refinement_elapsed_ms={}",
+                session_id,
+                capture_id,
+                refined_elapsed_ms
+            );
+            let _ = app.emit(
+                CAPTURE_READINESS_UPDATE_EVENT,
+                CaptureReadinessUpdateDto::new(session_id.to_string(), readiness),
+            );
+            return;
+        }
+
+        thread::sleep(Duration::from_millis(PREVIEW_REFINEMENT_POLL_MS));
+    }
 }

@@ -1913,6 +1913,130 @@ describe('SessionProvider', () => {
     })
   })
 
+  it('keeps capture-ready surface state when a visible same-capture fast preview exists before final preview-ready', async () => {
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    let latestState: SessionStateContextValue | null = null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const captureId = 'capture_fast_resume'
+    const requestId = 'request_000000000000064e897e16ffe8'
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        },
+      })
+    const captureRuntimeService: CaptureRuntimeService = {
+      getCaptureReadiness: vi
+        .fn<CaptureRuntimeService['getCaptureReadiness']>()
+        .mockResolvedValue(
+          createReadinessSnapshot({
+            sessionId,
+            surfaceState: 'captureSaved',
+            customerState: 'Preview Waiting',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '사진이 안전하게 저장되었어요.',
+            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+            reasonCode: 'preview-waiting',
+            latestCapture: createCaptureRecord({
+              sessionId,
+              captureId,
+              requestId,
+              renderStatus: 'previewWaiting',
+              preview: {
+                assetPath: null,
+                enqueuedAtMs: 100,
+                readyAtMs: null,
+              },
+            }),
+          }),
+        ),
+      requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+      subscribeToCaptureReadiness: vi
+        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+        .mockImplementation(async ({ onReadiness }) => {
+          emitReadiness = onReadiness as typeof emitReadiness
+          return () => {
+            emitReadiness = null
+          }
+        }),
+    }
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    await act(async () => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'captureReady',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '버튼을 누르면 바로 시작돼요.',
+          reasonCode: 'ready',
+          latestCapture: createCaptureRecord({
+            sessionId,
+            captureId,
+            requestId,
+            renderStatus: 'previewWaiting',
+            preview: {
+              assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${captureId}.jpg`,
+              enqueuedAtMs: 100,
+              readyAtMs: null,
+            },
+          }),
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        surfaceState: 'captureReady',
+        reasonCode: 'ready',
+        canCapture: true,
+      })
+    })
+  })
+
   it('keeps an in-flight capture request valid when subscribed readiness stays capture-ready', async () => {
     let resolveCapture!: (value: CaptureRequestResult) => void
     let emitReadiness:

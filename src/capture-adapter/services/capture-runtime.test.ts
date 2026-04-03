@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionCaptureRecord } from '../../shared-contracts'
 import {
   CAPTURE_READINESS_POLL_MS,
+  CAPTURE_READY_IDLE_POLL_MS,
   createBrowserCaptureRuntimeGateway,
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
@@ -755,6 +756,54 @@ describe('capture runtime adapter', () => {
     await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
 
     expect(onReadiness).toHaveBeenCalledTimes(2)
+  })
+
+  it('backs off readiness polling while the session is idle and ready', async () => {
+    vi.useFakeTimers()
+    let pollCount = 0
+
+    mockIPC((cmd) => {
+      if (cmd === 'get_capture_readiness') {
+        pollCount += 1
+
+        return {
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '버튼을 누르면 바로 시작돼요.',
+          reasonCode: 'ready',
+          latestCapture: null,
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+    const onReadiness = vi.fn()
+
+    const unlisten = await service.subscribeToCaptureReadiness({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      onReadiness,
+    })
+
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
+    expect(onReadiness).toHaveBeenCalledTimes(1)
+    expect(pollCount).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(CAPTURE_READINESS_POLL_MS)
+    expect(pollCount).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(
+      CAPTURE_READY_IDLE_POLL_MS - CAPTURE_READINESS_POLL_MS,
+    )
+    expect(pollCount).toBe(2)
+
+    unlisten()
   })
 
   it('emits customer-safe readiness when polling hits a normalized host error', async () => {

@@ -343,6 +343,25 @@ describe('CaptureScreen', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows capture-in-flight guidance while waiting for the camera handoff', async () => {
+    renderCaptureScreen({
+      isRequestingCapture: true,
+    })
+
+    expect(
+      await screen.findByRole('heading', {
+        name: /방금 찍은 사진을 불러오는 중이에요\./i,
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getAllByText(/^촬영 처리 중$/)).toHaveLength(2)
+    expect(
+      screen.getByText(
+        /^카메라에서 같은 촬영의 원본 파일을 전송 중이에요\. 잠시만 기다려 주세요\.$/,
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
+  })
+
   it('blocks capture during preparing states and shows wait guidance', async () => {
     renderCaptureScreen(
       {},

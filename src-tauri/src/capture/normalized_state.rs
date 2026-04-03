@@ -7,7 +7,10 @@ use std::{
 
 use crate::{
     capture::{
-        ingest_pipeline::{complete_preview_render_in_dir, persist_capture_in_dir},
+        ingest_pipeline::{
+            complete_preview_render_in_dir, persist_capture_in_dir,
+            promote_pending_fast_preview_in_dir, start_speculative_preview_render_in_dir,
+        },
         sidecar_client::{
             is_retryable_capture_helper_error, map_capture_round_trip_error,
             read_capture_event_count, read_capture_request_messages,
@@ -30,8 +33,8 @@ use crate::{
     render::is_valid_render_preview_asset,
     session::{
         session_manifest::{
-            current_timestamp, rfc3339_to_unix_seconds, ActivePresetBinding, SessionManifest,
-            SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
+            current_timestamp, rfc3339_to_unix_seconds, ActivePresetBinding, SessionCaptureRecord,
+            SessionManifest, SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -129,6 +132,14 @@ where
     };
     let starting_event_count = read_capture_event_count(base_dir, &input.session_id)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
+    let speculative_base_dir = base_dir.to_path_buf();
+    let speculative_session_id = input.session_id.clone();
+    let speculative_request_id = request_id.clone();
+    let speculative_preset = active_preset.clone();
+    let fast_preview_base_dir = base_dir.to_path_buf();
+    let fast_preview_session_id = input.session_id.clone();
+    let fast_preview_request_id = request_id.clone();
+    let mut early_fast_preview_update = None;
 
     write_capture_request_message(base_dir, &request_message)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
@@ -138,6 +149,31 @@ where
         &input.session_id,
         &request_id,
         starting_event_count,
+        |fast_preview| {
+            start_speculative_preview_render_in_dir(
+                &speculative_base_dir,
+                &speculative_session_id,
+                &speculative_request_id,
+                &fast_preview.capture_id,
+                &speculative_preset.preset_id,
+                &speculative_preset.published_version,
+                &fast_preview.fast_preview_path,
+            );
+
+            if early_fast_preview_update.is_none() {
+                if let Some(update) = promote_pending_fast_preview_in_dir(
+                    &fast_preview_base_dir,
+                    &fast_preview_session_id,
+                    &fast_preview_request_id,
+                    &fast_preview.capture_id,
+                    &fast_preview.fast_preview_path,
+                    fast_preview.fast_preview_kind.as_deref(),
+                ) {
+                    on_fast_preview_ready(update.clone());
+                    early_fast_preview_update = Some(update);
+                }
+            }
+        },
     ) {
         Ok(round_trip) => round_trip,
         Err(error) => {
@@ -197,7 +233,17 @@ where
         )
     })?;
     if let Some(update) = fast_preview_update {
-        on_fast_preview_ready(update);
+        let should_emit = early_fast_preview_update
+            .as_ref()
+            .map(|early_update: &FastPreviewReadyUpdate| {
+                early_update.request_id != update.request_id
+                    || early_update.capture_id != update.capture_id
+                    || early_update.asset_path != update.asset_path
+            })
+            .unwrap_or(true);
+        if should_emit {
+            on_fast_preview_ready(update);
+        }
     }
 
     Ok(CaptureRequestResultDto {
@@ -655,14 +701,38 @@ pub fn normalize_capture_readiness(
                 if capture.render_status == "previewWaiting"
                     || capture.render_status == "captureSaved" =>
             {
-                with_projected_live_capture_truth(
-                    CaptureReadinessDto::preview_waiting(
-                        manifest.session_id.clone(),
-                        Some(capture),
+                if capture_has_resumable_fast_preview(&capture) {
+                    match live_camera_gate {
+                        LiveCameraGate::Ready => with_projected_live_capture_truth(
+                            CaptureReadinessDto::ready(
+                                manifest.session_id.clone(),
+                                "captureReady",
+                                Some(capture),
+                            )
+                            .with_timing(timing),
+                            &live_capture_truth,
+                        ),
+                        _ => with_projected_live_capture_truth(
+                            build_blocked_readiness_from_live_camera_gate(
+                                manifest.session_id.clone(),
+                                live_camera_gate,
+                                &live_capture_truth,
+                                Some(capture),
+                            )
+                            .with_timing(timing),
+                            &live_capture_truth,
+                        ),
+                    }
+                } else {
+                    with_projected_live_capture_truth(
+                        CaptureReadinessDto::preview_waiting(
+                            manifest.session_id.clone(),
+                            Some(capture),
+                        )
+                        .with_timing(timing),
+                        &live_capture_truth,
                     )
-                    .with_timing(timing),
-                    &live_capture_truth,
-                )
+                }
             }
             Some(capture) if capture.render_status == "renderFailed" => {
                 with_projected_live_capture_truth(
@@ -738,11 +808,44 @@ pub fn normalize_capture_readiness(
                 .with_timing(timing),
             &live_capture_truth,
         ),
-        "preview-waiting" => with_projected_live_capture_truth(
-            CaptureReadinessDto::preview_waiting(manifest.session_id.clone(), latest_capture)
-                .with_timing(timing),
-            &live_capture_truth,
-        ),
+        "preview-waiting" => {
+            let resumable_capture = latest_capture
+                .as_ref()
+                .filter(|capture| capture_has_resumable_fast_preview(capture))
+                .cloned();
+            if let Some(capture) = resumable_capture {
+                match live_camera_gate {
+                    LiveCameraGate::Ready => with_projected_live_capture_truth(
+                        CaptureReadinessDto::ready(
+                            manifest.session_id.clone(),
+                            "captureReady",
+                            Some(capture),
+                        )
+                        .with_timing(timing),
+                        &live_capture_truth,
+                    ),
+                    _ => with_projected_live_capture_truth(
+                        build_blocked_readiness_from_live_camera_gate(
+                            manifest.session_id.clone(),
+                            live_camera_gate,
+                            &live_capture_truth,
+                            Some(capture),
+                        )
+                        .with_timing(timing),
+                        &live_capture_truth,
+                    ),
+                }
+            } else {
+                with_projected_live_capture_truth(
+                    CaptureReadinessDto::preview_waiting(
+                        manifest.session_id.clone(),
+                        latest_capture,
+                    )
+                    .with_timing(timing),
+                    &live_capture_truth,
+                )
+            }
+        }
         "export-waiting" => with_projected_live_capture_truth(
             CaptureReadinessDto::export_waiting(manifest.session_id.clone(), latest_capture)
                 .with_timing(timing),
@@ -1232,6 +1335,15 @@ fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> 
         })
         .find(|path| is_valid_render_preview_asset(path))
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn capture_has_resumable_fast_preview(capture: &SessionCaptureRecord) -> bool {
+    matches!(
+        capture.render_status.as_str(),
+        "captureSaved" | "previewWaiting"
+    ) && capture.preview.asset_path.is_some()
+        && capture.preview.ready_at_ms.is_none()
+        && capture.timing.fast_preview_visible_at_ms.is_some()
 }
 
 fn preview_asset_visible_at_ms(path: &Path) -> Option<u64> {

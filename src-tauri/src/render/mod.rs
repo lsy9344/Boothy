@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -9,6 +10,7 @@ use std::{
 };
 
 use crate::{
+    preset::preset_bundle::PublishedPresetRuntimeBundle,
     preset::preset_catalog::{
         find_published_preset_runtime_bundle, resolve_published_preset_catalog_dir,
     },
@@ -19,10 +21,22 @@ const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 const MAX_IN_FLIGHT_RENDER_JOBS: usize = 2;
 const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
-const PREVIEW_MAX_WIDTH_PX: u32 = 1280;
-const PREVIEW_MAX_HEIGHT_PX: u32 = 1280;
+const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 512;
+const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 512;
+const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 384;
+const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 384;
+const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
+const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
 
 static RENDER_QUEUE_DEPTH: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
+static PREVIEW_RENDER_WARMUP_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderIntent {
@@ -43,14 +57,48 @@ pub struct RenderWorkerError {
     pub operator_detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewRenderSourceKind {
+    RawOriginal,
+    FastPreviewRaster,
+}
+
+pub struct PreparedPreviewRender {
+    pub detail: String,
+}
+
 pub fn render_capture_asset_in_dir(
     base_dir: &Path,
     session_id: &str,
     capture: &SessionCaptureRecord,
     intent: RenderIntent,
 ) -> Result<RenderedCaptureAsset, RenderWorkerError> {
+    render_capture_asset_with_forced_source_in_dir(base_dir, session_id, capture, intent, None)
+}
+
+pub fn render_capture_asset_from_raw_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture: &SessionCaptureRecord,
+    intent: RenderIntent,
+) -> Result<RenderedCaptureAsset, RenderWorkerError> {
+    render_capture_asset_with_forced_source_in_dir(
+        base_dir,
+        session_id,
+        capture,
+        intent,
+        Some(PreviewRenderSourceKind::RawOriginal),
+    )
+}
+
+fn render_capture_asset_with_forced_source_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture: &SessionCaptureRecord,
+    intent: RenderIntent,
+    forced_source_kind: Option<PreviewRenderSourceKind>,
+) -> Result<RenderedCaptureAsset, RenderWorkerError> {
     let _queue_guard = acquire_render_queue_slot()?;
-    let catalog_root = resolve_published_preset_catalog_dir(base_dir);
     let preset_id =
         capture
             .active_preset_id
@@ -62,30 +110,8 @@ pub fn render_capture_asset_in_dir(
                     "capture record에 activePresetId가 없어 published bundle을 고정할 수 없어요."
                         .into(),
             })?;
-    let bundle = find_published_preset_runtime_bundle(
-        &catalog_root,
-        preset_id,
-        &capture.active_preset_version,
-    )
-    .ok_or_else(|| RenderWorkerError {
-        reason_code: "bundle-resolution-failed",
-        customer_message: safe_render_failure_message(intent),
-        operator_detail: format!(
-            "capture-bound bundle을 찾지 못했어요: presetId={preset_id}, publishedVersion={}",
-            capture.active_preset_version
-        ),
-    })?;
-
-    if bundle.darktable_version != PINNED_DARKTABLE_VERSION {
-        return Err(RenderWorkerError {
-            reason_code: "darktable-version-mismatch",
-            customer_message: safe_render_failure_message(intent),
-            operator_detail: format!(
-                "pinned darktable version과 bundle metadata가 다릅니다: expected={PINNED_DARKTABLE_VERSION}, actual={}",
-                bundle.darktable_version
-            ),
-        });
-    }
+    let bundle =
+        resolve_runtime_bundle_in_dir(base_dir, preset_id, &capture.active_preset_version, intent)?;
 
     let paths = SessionPaths::new(base_dir, session_id);
     let output_path = canonical_render_output_path(&paths, &capture.capture_id, intent);
@@ -116,9 +142,11 @@ pub fn render_capture_asset_in_dir(
         base_dir,
         &bundle.darktable_version,
         &bundle.xmp_template_path,
-        &capture.raw.asset_path,
+        capture,
+        &paths,
         &staging_output_path,
         intent,
+        forced_source_kind,
     );
     log::info!(
         "render_job_started session={} capture_id={} stage={} binary={} source={} detail={}",
@@ -127,7 +155,7 @@ pub fn render_capture_asset_in_dir(
         render_stage_label(intent),
         invocation.binary,
         invocation.binary_source,
-        render_invocation_detail(intent)
+        render_invocation_detail_with_source(intent, Some(invocation.render_source_kind))
     );
     let render_started = Instant::now();
     let invocation_result = run_darktable_invocation(&invocation, intent)?;
@@ -150,6 +178,7 @@ pub fn render_capture_asset_in_dir(
     append_render_event(
         &paths,
         &capture.capture_id,
+        Some(&capture.request_id),
         intent,
         render_ready_event_name(intent),
         Some(match intent {
@@ -163,7 +192,7 @@ pub fn render_capture_asset_in_dir(
             invocation.binary,
             invocation.binary_source,
             render_elapsed_ms,
-            render_invocation_detail(intent),
+            render_invocation_detail_with_source(intent, Some(invocation.render_source_kind)),
             invocation.arguments.join(" "),
             invocation_result.exit_code
         )),
@@ -175,10 +204,122 @@ pub fn render_capture_asset_in_dir(
     })
 }
 
+pub fn render_preview_asset_to_path_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    source_asset_path: &Path,
+    output_path: &Path,
+) -> Result<PreparedPreviewRender, RenderWorkerError> {
+    let _queue_guard = acquire_render_queue_slot()?;
+    let bundle =
+        resolve_runtime_bundle_in_dir(base_dir, preset_id, preset_version, RenderIntent::Preview)?;
+
+    if !is_valid_render_preview_asset(source_asset_path) {
+        return Err(RenderWorkerError {
+            reason_code: "invalid-preview-source",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!(
+                "speculative preview source가 displayable raster가 아니에요: {}",
+                source_asset_path.to_string_lossy()
+            ),
+        });
+    }
+
+    let output_root = output_path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(output_root).map_err(|error| RenderWorkerError {
+        reason_code: "render-output-dir-unavailable",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!(
+            "speculative render output directory를 준비하지 못했어요: {error}"
+        ),
+    })?;
+    let _ = fs::remove_file(output_path);
+
+    let invocation = build_darktable_invocation_from_source(
+        base_dir,
+        &bundle.darktable_version,
+        &bundle.xmp_template_path,
+        source_asset_path,
+        output_path,
+        RenderIntent::Preview,
+        PreviewRenderSourceKind::FastPreviewRaster,
+    );
+    let render_detail = render_invocation_detail_with_source(
+        RenderIntent::Preview,
+        Some(invocation.render_source_kind),
+    );
+    log::info!(
+        "speculative_preview_render_started session={} capture_id={} request_id={} binary={} source={} detail={}",
+        session_id,
+        capture_id,
+        request_id,
+        invocation.binary,
+        invocation.binary_source,
+        render_detail
+    );
+
+    let render_started = Instant::now();
+    let invocation_result = run_darktable_invocation(&invocation, RenderIntent::Preview)?;
+    validate_render_output(output_path, RenderIntent::Preview)?;
+    let render_elapsed_ms = render_started.elapsed().as_millis();
+
+    Ok(PreparedPreviewRender {
+        detail: format!(
+            "presetId={};publishedVersion={};binary={};source={};elapsedMs={};detail={};args={};status={}",
+            bundle.preset_id,
+            bundle.published_version,
+            invocation.binary,
+            invocation.binary_source,
+            render_elapsed_ms,
+            render_detail,
+            invocation.arguments.join(" "),
+            invocation_result.exit_code
+        ),
+    })
+}
+
+pub fn schedule_preview_renderer_warmup_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+) {
+    let warmup_key = build_preview_render_warmup_key(session_id, preset_id, preset_version);
+    if !try_mark_preview_render_warmup_in_flight(&warmup_key) {
+        return;
+    }
+
+    let base_dir = base_dir.to_path_buf();
+    let session_id = session_id.to_string();
+    let preset_id = preset_id.to_string();
+    let preset_version = preset_version.to_string();
+
+    thread::spawn(move || {
+        let result =
+            run_preview_renderer_warmup_in_dir(&base_dir, &session_id, &preset_id, &preset_version);
+        if let Err(error) = result {
+            log::warn!(
+                "preview_renderer_warmup_failed session={} preset_id={} published_version={} code={} detail={}",
+                session_id,
+                preset_id,
+                preset_version,
+                error.reason_code,
+                error.operator_detail
+            );
+        }
+        clear_preview_render_warmup_in_flight(&warmup_key);
+    });
+}
+
 pub fn log_render_failure_in_dir(
     base_dir: &Path,
     session_id: &str,
     capture_id: &str,
+    request_id: Option<&str>,
     intent: RenderIntent,
     reason_code: &str,
 ) {
@@ -191,6 +332,7 @@ pub fn log_render_failure_in_dir(
     append_render_event(
         &paths,
         capture_id,
+        request_id,
         intent,
         event_name,
         Some(reason_code),
@@ -202,16 +344,41 @@ pub fn log_render_start_in_dir(
     base_dir: &Path,
     session_id: &str,
     capture_id: &str,
+    request_id: &str,
     intent: RenderIntent,
 ) {
     let paths = SessionPaths::new(base_dir, session_id);
     append_render_event(
         &paths,
         capture_id,
+        Some(request_id),
         intent,
         render_start_event_name(intent),
         Some("render-start"),
         None,
+    );
+}
+
+pub fn log_render_ready_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+    intent: RenderIntent,
+    detail: &str,
+) {
+    let paths = SessionPaths::new(base_dir, session_id);
+    append_render_event(
+        &paths,
+        capture_id,
+        Some(request_id),
+        intent,
+        render_ready_event_name(intent),
+        Some(match intent {
+            RenderIntent::Preview => "preview-ready",
+            RenderIntent::Final => "final-ready",
+        }),
+        Some(detail),
     );
 }
 
@@ -251,13 +418,155 @@ fn render_stage_label(intent: RenderIntent) -> &'static str {
     }
 }
 
-fn render_invocation_detail(intent: RenderIntent) -> String {
+fn render_invocation_detail_with_source(
+    intent: RenderIntent,
+    source_kind: Option<PreviewRenderSourceKind>,
+) -> String {
     match intent {
         RenderIntent::Preview => {
-            format!("widthCap={PREVIEW_MAX_WIDTH_PX};heightCap={PREVIEW_MAX_HEIGHT_PX};hq=false")
+            let source_kind = source_kind.unwrap_or(PreviewRenderSourceKind::RawOriginal);
+            let source_asset = match source_kind {
+                PreviewRenderSourceKind::RawOriginal => "raw-original",
+                PreviewRenderSourceKind::FastPreviewRaster => "fast-preview-raster",
+            };
+            let (width_cap, height_cap) = preview_render_dimensions(source_kind);
+
+            format!(
+                "widthCap={width_cap};heightCap={height_cap};hq=false;sourceAsset={source_asset}"
+            )
         }
-        RenderIntent::Final => "widthCap=full;heightCap=full;hq=true".into(),
+        RenderIntent::Final => {
+            "widthCap=full;heightCap=full;hq=true;sourceAsset=raw-original".into()
+        }
     }
+}
+
+fn build_preview_render_warmup_key(
+    session_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+) -> String {
+    format!("{session_id}:{preset_id}:{preset_version}")
+}
+
+fn try_mark_preview_render_warmup_in_flight(key: &str) -> bool {
+    let Ok(mut in_flight) = PREVIEW_RENDER_WARMUP_IN_FLIGHT.lock() else {
+        return false;
+    };
+
+    in_flight.insert(key.to_string())
+}
+
+fn clear_preview_render_warmup_in_flight(key: &str) {
+    if let Ok(mut in_flight) = PREVIEW_RENDER_WARMUP_IN_FLIGHT.lock() {
+        in_flight.remove(key);
+    }
+}
+
+fn run_preview_renderer_warmup_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+) -> Result<(), RenderWorkerError> {
+    let Some(_queue_guard) = try_acquire_background_render_queue_slot() else {
+        log::info!(
+            "preview_renderer_warmup_skipped session={} preset_id={} published_version={} reason=render-queue-busy",
+            session_id,
+            preset_id,
+            preset_version
+        );
+        return Ok(());
+    };
+
+    let bundle =
+        resolve_runtime_bundle_in_dir(base_dir, preset_id, preset_version, RenderIntent::Preview)?;
+    let warmup_source_path = ensure_preview_renderer_warmup_source(base_dir)?;
+    let warmup_output_path = base_dir
+        .join(".boothy-darktable")
+        .join("preview")
+        .join("warmup")
+        .join("preview-renderer-warmup.jpg");
+
+    if let Some(parent) = warmup_output_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| RenderWorkerError {
+            reason_code: "render-warmup-dir-unavailable",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!(
+                "preview renderer warm-up output dir를 준비하지 못했어요: {error}"
+            ),
+        })?;
+    }
+
+    let _ = fs::remove_file(&warmup_output_path);
+    let invocation = build_darktable_invocation_from_source(
+        base_dir,
+        &bundle.darktable_version,
+        &bundle.xmp_template_path,
+        &warmup_source_path,
+        &warmup_output_path,
+        RenderIntent::Preview,
+        PreviewRenderSourceKind::FastPreviewRaster,
+    );
+    log::info!(
+        "preview_renderer_warmup_started session={} preset_id={} published_version={} binary={} source={}",
+        session_id,
+        preset_id,
+        preset_version,
+        invocation.binary,
+        invocation.binary_source
+    );
+
+    let result = run_darktable_invocation(&invocation, RenderIntent::Preview);
+    match result {
+        Ok(_) => {
+            let _ = validate_render_output(&warmup_output_path, RenderIntent::Preview);
+            let _ = fs::remove_file(&warmup_output_path);
+            log::info!(
+                "preview_renderer_warmup_completed session={} preset_id={} published_version={}",
+                session_id,
+                preset_id,
+                preset_version
+            );
+            Ok(())
+        }
+        Err(error) => Err(RenderWorkerError {
+            reason_code: error.reason_code,
+            customer_message: error.customer_message,
+            operator_detail: format!("preview renderer warm-up failed: {}", error.operator_detail),
+        }),
+    }
+}
+
+fn ensure_preview_renderer_warmup_source(base_dir: &Path) -> Result<PathBuf, RenderWorkerError> {
+    let warmup_source_path = base_dir
+        .join(".boothy-darktable")
+        .join("preview")
+        .join("warmup")
+        .join("preview-renderer-warmup-source.png");
+    if warmup_source_path.is_file() {
+        return Ok(warmup_source_path);
+    }
+
+    if let Some(parent) = warmup_source_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| RenderWorkerError {
+            reason_code: "render-warmup-dir-unavailable",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!(
+                "preview renderer warm-up source dir를 준비하지 못했어요: {error}"
+            ),
+        })?;
+    }
+
+    fs::write(&warmup_source_path, PREVIEW_RENDER_WARMUP_INPUT_PNG).map_err(|error| {
+        RenderWorkerError {
+            reason_code: "render-warmup-source-write-failed",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!("preview renderer warm-up source를 쓰지 못했어요: {error}"),
+        }
+    })?;
+
+    Ok(warmup_source_path)
 }
 
 fn render_start_event_name(intent: RenderIntent) -> &'static str {
@@ -356,6 +665,13 @@ fn promote_render_output(
     Ok(())
 }
 
+pub fn promote_preview_render_output(
+    staging_output_path: &Path,
+    output_path: &Path,
+) -> Result<(), RenderWorkerError> {
+    promote_render_output(staging_output_path, output_path, RenderIntent::Preview)
+}
+
 fn build_replacement_backup_path(output_path: &Path, intent: RenderIntent) -> PathBuf {
     let stage_label = match intent {
         RenderIntent::Preview => "preview-backup",
@@ -405,6 +721,19 @@ fn acquire_render_queue_slot() -> Result<RenderQueueGuard, RenderWorkerError> {
     Ok(RenderQueueGuard {})
 }
 
+fn try_acquire_background_render_queue_slot() -> Option<RenderQueueGuard> {
+    let Ok(mut depth) = RENDER_QUEUE_DEPTH.lock() else {
+        return None;
+    };
+
+    if *depth != 0 {
+        return None;
+    }
+
+    *depth += 1;
+    Some(RenderQueueGuard {})
+}
+
 fn current_time_ms() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -415,6 +744,7 @@ fn current_time_ms() -> Result<u64, String> {
 fn append_render_event(
     paths: &SessionPaths,
     capture_id: &str,
+    request_id: Option<&str>,
     intent: RenderIntent,
     event: &str,
     reason_code: Option<&str>,
@@ -434,11 +764,12 @@ fn append_render_event(
         RenderIntent::Preview => "preview",
         RenderIntent::Final => "final",
     };
+    let request_id = request_id.unwrap_or("none");
     let reason_code = reason_code.unwrap_or("none");
     let detail = detail.unwrap_or("none");
     let _ = writeln!(
         file,
-        "{occurred_at}\tsession={}\tcapture={capture_id}\tevent={event}\tstage={stage}\treason={reason_code}\tdetail={detail}",
+        "{occurred_at}\tsession={}\tcapture={capture_id}\trequest={request_id}\tevent={event}\tstage={stage}\treason={reason_code}\tdetail={detail}",
         paths
             .session_root
             .file_name()
@@ -460,6 +791,7 @@ impl Drop for RenderQueueGuard {
 struct DarktableInvocation {
     binary: String,
     binary_source: &'static str,
+    render_source_kind: PreviewRenderSourceKind,
     arguments: Vec<String>,
     working_directory: PathBuf,
 }
@@ -474,13 +806,66 @@ struct DarktableBinaryResolution {
     source: &'static str,
 }
 
+fn resolve_runtime_bundle_in_dir(
+    base_dir: &Path,
+    preset_id: &str,
+    preset_version: &str,
+    intent: RenderIntent,
+) -> Result<PublishedPresetRuntimeBundle, RenderWorkerError> {
+    let catalog_root = resolve_published_preset_catalog_dir(base_dir);
+    let bundle = find_published_preset_runtime_bundle(&catalog_root, preset_id, preset_version)
+        .ok_or_else(|| RenderWorkerError {
+            reason_code: "bundle-resolution-failed",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!(
+                "capture-bound bundle을 찾지 못했어요: presetId={preset_id}, publishedVersion={preset_version}"
+            ),
+        })?;
+
+    if bundle.darktable_version != PINNED_DARKTABLE_VERSION {
+        return Err(RenderWorkerError {
+            reason_code: "darktable-version-mismatch",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!(
+                "pinned darktable version과 bundle metadata가 다릅니다: expected={PINNED_DARKTABLE_VERSION}, actual={}",
+                bundle.darktable_version
+            ),
+        });
+    }
+
+    Ok(bundle)
+}
+
 fn build_darktable_invocation(
     base_dir: &Path,
     _darktable_version: &str,
     xmp_template_path: &Path,
-    raw_asset_path: &str,
+    capture: &SessionCaptureRecord,
+    paths: &SessionPaths,
     output_path: &Path,
     intent: RenderIntent,
+    forced_source_kind: Option<PreviewRenderSourceKind>,
+) -> DarktableInvocation {
+    let render_source = resolve_preview_render_source(capture, paths, intent, forced_source_kind);
+    build_darktable_invocation_from_source(
+        base_dir,
+        _darktable_version,
+        xmp_template_path,
+        Path::new(&render_source.asset_path),
+        output_path,
+        intent,
+        render_source.kind,
+    )
+}
+
+fn build_darktable_invocation_from_source(
+    base_dir: &Path,
+    _darktable_version: &str,
+    xmp_template_path: &Path,
+    source_asset_path: &Path,
+    output_path: &Path,
+    intent: RenderIntent,
+    render_source_kind: PreviewRenderSourceKind,
 ) -> DarktableInvocation {
     let mode = match intent {
         RenderIntent::Preview => "preview",
@@ -495,7 +880,7 @@ fn build_darktable_invocation(
     };
     let binary_resolution = resolve_darktable_cli_binary();
     let mut arguments = vec![
-        raw_asset_path.replace('\\', "/"),
+        source_asset_path.to_string_lossy().replace('\\', "/"),
         xmp_template_path.to_string_lossy().replace('\\', "/"),
         output_path.to_string_lossy().replace('\\', "/"),
         "--hq".into(),
@@ -503,10 +888,14 @@ fn build_darktable_invocation(
     ];
 
     if matches!(intent, RenderIntent::Preview) {
+        arguments.push("--apply-custom-presets".into());
+        arguments.push(DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED.into());
+        arguments.push("--disable-opencl".into());
+        let (width_cap, height_cap) = preview_render_dimensions(render_source_kind);
         arguments.push("--width".into());
-        arguments.push(PREVIEW_MAX_WIDTH_PX.to_string());
+        arguments.push(width_cap.to_string());
         arguments.push("--height".into());
-        arguments.push(PREVIEW_MAX_HEIGHT_PX.to_string());
+        arguments.push(height_cap.to_string());
     }
 
     arguments.extend([
@@ -520,9 +909,100 @@ fn build_darktable_invocation(
     DarktableInvocation {
         binary: binary_resolution.binary,
         binary_source: binary_resolution.source,
+        render_source_kind,
         arguments,
         working_directory: base_dir.to_path_buf(),
     }
+}
+
+fn preview_render_dimensions(source_kind: PreviewRenderSourceKind) -> (u32, u32) {
+    match source_kind {
+        PreviewRenderSourceKind::RawOriginal => {
+            (RAW_PREVIEW_MAX_WIDTH_PX, RAW_PREVIEW_MAX_HEIGHT_PX)
+        }
+        PreviewRenderSourceKind::FastPreviewRaster => (
+            FAST_PREVIEW_RENDER_MAX_WIDTH_PX,
+            FAST_PREVIEW_RENDER_MAX_HEIGHT_PX,
+        ),
+    }
+}
+
+struct PreviewRenderSource {
+    asset_path: String,
+    kind: PreviewRenderSourceKind,
+}
+
+fn resolve_preview_render_source(
+    capture: &SessionCaptureRecord,
+    paths: &SessionPaths,
+    intent: RenderIntent,
+    forced_source_kind: Option<PreviewRenderSourceKind>,
+) -> PreviewRenderSource {
+    if matches!(
+        forced_source_kind,
+        Some(PreviewRenderSourceKind::RawOriginal)
+    ) || matches!(intent, RenderIntent::Final)
+    {
+        return PreviewRenderSource {
+            asset_path: capture.raw.asset_path.clone(),
+            kind: PreviewRenderSourceKind::RawOriginal,
+        };
+    }
+
+    if matches!(intent, RenderIntent::Preview) {
+        if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
+            let preview_asset = Path::new(preview_asset_path);
+
+            if is_session_scoped_asset_path(&paths.session_root, preview_asset)
+                && is_valid_render_preview_asset(preview_asset)
+            {
+                return PreviewRenderSource {
+                    asset_path: preview_asset_path.to_string(),
+                    kind: PreviewRenderSourceKind::FastPreviewRaster,
+                };
+            }
+        }
+
+        let canonical_preview_asset = paths
+            .renders_previews_dir
+            .join(format!("{}.jpg", capture.capture_id));
+        if is_valid_render_preview_asset(&canonical_preview_asset) {
+            return PreviewRenderSource {
+                asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
+                kind: PreviewRenderSourceKind::FastPreviewRaster,
+            };
+        }
+    }
+
+    PreviewRenderSource {
+        asset_path: capture.raw.asset_path.clone(),
+        kind: PreviewRenderSourceKind::RawOriginal,
+    }
+}
+
+fn is_session_scoped_asset_path(session_root: &Path, candidate_path: &Path) -> bool {
+    let normalized_candidate = normalize_path(candidate_path);
+    let Some(normalized_session_root) = canonicalize_existing_root(session_root) else {
+        return false;
+    };
+
+    normalized_candidate == normalized_session_root
+        || normalized_candidate.starts_with(&(normalized_session_root + "/"))
+}
+
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+        .trim_start_matches("//?/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn canonicalize_existing_root(path: &Path) -> Option<String> {
+    fs::canonicalize(path)
+        .ok()
+        .map(|resolved| normalize_path(&resolved))
 }
 
 fn resolve_darktable_cli_binary() -> DarktableBinaryResolution {
@@ -620,12 +1100,15 @@ fn run_darktable_invocation(
     invocation: &DarktableInvocation,
     intent: RenderIntent,
 ) -> Result<DarktableInvocationResult, RenderWorkerError> {
+    let stderr_log_path =
+        build_darktable_stderr_log_path(&invocation.working_directory, render_stage_label(intent));
+    let stderr_log = open_darktable_stderr_log(&stderr_log_path, intent)?;
     let mut child = Command::new(&invocation.binary)
         .args(&invocation.arguments)
         .current_dir(&invocation.working_directory)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr_log))
         .spawn()
         .map_err(|error| {
             let reason_code = if error.kind() == std::io::ErrorKind::NotFound {
@@ -648,17 +1131,14 @@ fn run_darktable_invocation(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| RenderWorkerError {
-                        reason_code: "render-process-wait-failed",
-                        customer_message: safe_render_failure_message(intent),
-                        operator_detail: format!(
-                            "render 프로세스 출력을 회수하지 못했어요: {error}"
-                        ),
-                    })?;
+                child.wait().map_err(|error| RenderWorkerError {
+                    reason_code: "render-process-wait-failed",
+                    customer_message: safe_render_failure_message(intent),
+                    operator_detail: format!("render 프로세스 종료를 회수하지 못했어요: {error}"),
+                })?;
 
                 if status.success() {
+                    let _ = fs::remove_file(&stderr_log_path);
                     return Ok(DarktableInvocationResult {
                         exit_code: status.code().unwrap_or(0),
                     });
@@ -668,26 +1148,25 @@ fn run_darktable_invocation(
                     reason_code: "render-process-failed",
                     customer_message: safe_render_failure_message(intent),
                     operator_detail: format!(
-                        "darktable-cli가 실패했어요: exitCode={} stderr={}",
+                        "darktable-cli가 실패했어요: exitCode={} stderr={} logPath={}",
                         status.code().unwrap_or(-1),
-                        sanitize_process_output(&output.stderr)
+                        read_darktable_stderr_log(&stderr_log_path),
+                        stderr_log_path.to_string_lossy()
                     ),
                 });
             }
             Ok(None) => {
                 if started_at.elapsed() >= DEFAULT_RENDER_TIMEOUT {
                     let _ = child.kill();
-                    let output = child.wait_with_output().ok();
+                    let _ = child.wait();
                     return Err(RenderWorkerError {
                         reason_code: "render-process-timeout",
                         customer_message: safe_render_failure_message(intent),
                         operator_detail: format!(
-                            "darktable-cli가 제한 시간 안에 끝나지 않았어요: timeoutMs={} stderr={}",
+                            "darktable-cli가 제한 시간 안에 끝나지 않았어요: timeoutMs={} stderr={} logPath={}",
                             DEFAULT_RENDER_TIMEOUT.as_millis(),
-                            output
-                                .as_ref()
-                                .map(|value| sanitize_process_output(&value.stderr))
-                                .unwrap_or_else(|| "none".into())
+                            read_darktable_stderr_log(&stderr_log_path),
+                            stderr_log_path.to_string_lossy()
                         ),
                     });
                 }
@@ -704,6 +1183,50 @@ fn run_darktable_invocation(
             }
         }
     }
+}
+
+fn build_darktable_stderr_log_path(working_directory: &Path, stage_label: &str) -> PathBuf {
+    let unique_suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    working_directory
+        .join(".boothy-darktable")
+        .join(stage_label)
+        .join("logs")
+        .join(format!("{stage_label}-stderr-{unique_suffix}.log"))
+}
+
+fn open_darktable_stderr_log(
+    log_path: &Path,
+    intent: RenderIntent,
+) -> Result<fs::File, RenderWorkerError> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| RenderWorkerError {
+            reason_code: "render-log-dir-unavailable",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!("render stderr log dir를 준비하지 못했어요: {error}"),
+        })?;
+    }
+
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(log_path)
+        .map_err(|error| RenderWorkerError {
+            reason_code: "render-log-open-failed",
+            customer_message: safe_render_failure_message(intent),
+            operator_detail: format!("render stderr log file을 열지 못했어요: {error}"),
+        })
+}
+
+fn read_darktable_stderr_log(log_path: &Path) -> String {
+    fs::read(log_path)
+        .ok()
+        .map(|bytes| sanitize_process_output(&bytes))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "none".into())
 }
 
 fn validate_render_output(
@@ -845,42 +1368,126 @@ mod tests {
     #[test]
     fn preview_invocation_uses_display_sized_render_arguments() {
         let temp_dir = unique_temp_dir("preview-invocation");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        fs::create_dir_all(&paths.session_root).expect("session root should exist");
         let invocation = build_darktable_invocation(
             &temp_dir,
             PINNED_DARKTABLE_VERSION,
             &temp_dir.join("bundle").join("preview.xmp"),
-            "C:/captures/originals/capture.cr2",
+            &SessionCaptureRecord {
+                schema_version: "session-capture/v1".into(),
+                session_id: session_id.into(),
+                booth_alias: "Booth".into(),
+                active_preset_id: Some("preset_test".into()),
+                active_preset_version: "2026.03.31".into(),
+                active_preset_display_name: Some("Test".into()),
+                capture_id: "capture_test".into(),
+                request_id: "request_test".into(),
+                raw: crate::session::session_manifest::RawCaptureAsset {
+                    asset_path: "C:/captures/originals/capture.cr2".into(),
+                    persisted_at_ms: 100,
+                },
+                preview: crate::session::session_manifest::PreviewCaptureAsset {
+                    asset_path: None,
+                    enqueued_at_ms: Some(100),
+                    ready_at_ms: None,
+                },
+                final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                    asset_path: None,
+                    ready_at_ms: None,
+                },
+                render_status: "previewWaiting".into(),
+                post_end_state: "activeSession".into(),
+                timing: crate::session::session_manifest::CaptureTimingMetrics {
+                    capture_acknowledged_at_ms: 100,
+                    preview_visible_at_ms: None,
+                    fast_preview_visible_at_ms: None,
+                    xmp_preview_ready_at_ms: None,
+                    capture_budget_ms: 1000,
+                    preview_budget_ms: 5000,
+                    preview_budget_state: "pending".into(),
+                },
+            },
+            &paths,
             &temp_dir
                 .join("renders")
                 .join("previews")
                 .join("capture.jpg"),
             RenderIntent::Preview,
+            None,
         );
 
         assert!(invocation.arguments.contains(&"--width".to_string()));
         assert!(invocation
             .arguments
-            .contains(&PREVIEW_MAX_WIDTH_PX.to_string()));
+            .contains(&RAW_PREVIEW_MAX_WIDTH_PX.to_string()));
         assert!(invocation.arguments.contains(&"--height".to_string()));
         assert!(invocation
             .arguments
-            .contains(&PREVIEW_MAX_HEIGHT_PX.to_string()));
+            .contains(&RAW_PREVIEW_MAX_HEIGHT_PX.to_string()));
         assert!(invocation
             .arguments
             .windows(2)
             .any(|pair| { pair[0] == "--hq" && pair[1] == "false" }));
+        assert!(invocation.arguments.windows(2).any(|pair| {
+            pair[0] == "--apply-custom-presets"
+                && pair[1] == DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED
+        }));
+        assert_eq!(
+            invocation.render_source_kind,
+            PreviewRenderSourceKind::RawOriginal
+        );
     }
 
     #[test]
     fn final_invocation_keeps_full_resolution_render_arguments() {
         let temp_dir = unique_temp_dir("final-invocation");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        fs::create_dir_all(&paths.session_root).expect("session root should exist");
         let invocation = build_darktable_invocation(
             &temp_dir,
             PINNED_DARKTABLE_VERSION,
             &temp_dir.join("bundle").join("final.xmp"),
-            "C:/captures/originals/capture.cr2",
+            &SessionCaptureRecord {
+                schema_version: "session-capture/v1".into(),
+                session_id: session_id.into(),
+                booth_alias: "Booth".into(),
+                active_preset_id: Some("preset_test".into()),
+                active_preset_version: "2026.03.31".into(),
+                active_preset_display_name: Some("Test".into()),
+                capture_id: "capture_test".into(),
+                request_id: "request_test".into(),
+                raw: crate::session::session_manifest::RawCaptureAsset {
+                    asset_path: "C:/captures/originals/capture.cr2".into(),
+                    persisted_at_ms: 100,
+                },
+                preview: crate::session::session_manifest::PreviewCaptureAsset {
+                    asset_path: None,
+                    enqueued_at_ms: Some(100),
+                    ready_at_ms: None,
+                },
+                final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                    asset_path: None,
+                    ready_at_ms: None,
+                },
+                render_status: "previewWaiting".into(),
+                post_end_state: "activeSession".into(),
+                timing: crate::session::session_manifest::CaptureTimingMetrics {
+                    capture_acknowledged_at_ms: 100,
+                    preview_visible_at_ms: None,
+                    fast_preview_visible_at_ms: None,
+                    xmp_preview_ready_at_ms: None,
+                    capture_budget_ms: 1000,
+                    preview_budget_ms: 5000,
+                    preview_budget_state: "pending".into(),
+                },
+            },
+            &paths,
             &temp_dir.join("renders").join("finals").join("capture.jpg"),
             RenderIntent::Final,
+            None,
         );
 
         assert!(!invocation.arguments.contains(&"--width".to_string()));
@@ -889,6 +1496,191 @@ mod tests {
             .arguments
             .windows(2)
             .any(|pair| { pair[0] == "--hq" && pair[1] == "true" }));
+        assert!(!invocation
+            .arguments
+            .contains(&"--apply-custom-presets".to_string()));
+    }
+
+    #[test]
+    fn preview_renderer_warmup_source_is_written_as_png() {
+        let temp_dir = unique_temp_dir("preview-warmup-source");
+        let warmup_source = ensure_preview_renderer_warmup_source(&temp_dir)
+            .expect("warmup source should be creatable");
+        let bytes = fs::read(&warmup_source).expect("warmup source should be readable");
+
+        assert!(bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn preview_invocation_prefers_same_capture_fast_preview_raster_when_available() {
+        let temp_dir = unique_temp_dir("preview-fast-source");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+        fs::create_dir_all(&paths.captures_originals_dir).expect("raw dir should exist");
+        let fast_preview_path = paths.renders_previews_dir.join("capture_test.jpg");
+        fs::write(&fast_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+            .expect("jpeg preview should exist");
+
+        let invocation = build_darktable_invocation(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &temp_dir.join("bundle").join("preview.xmp"),
+            &SessionCaptureRecord {
+                schema_version: "session-capture/v1".into(),
+                session_id: session_id.into(),
+                booth_alias: "Booth".into(),
+                active_preset_id: Some("preset_test".into()),
+                active_preset_version: "2026.03.31".into(),
+                active_preset_display_name: Some("Test".into()),
+                capture_id: "capture_test".into(),
+                request_id: "request_test".into(),
+                raw: crate::session::session_manifest::RawCaptureAsset {
+                    asset_path: paths
+                        .captures_originals_dir
+                        .join("capture_test.cr2")
+                        .to_string_lossy()
+                        .into_owned(),
+                    persisted_at_ms: 100,
+                },
+                preview: crate::session::session_manifest::PreviewCaptureAsset {
+                    asset_path: Some(fast_preview_path.to_string_lossy().into_owned()),
+                    enqueued_at_ms: Some(100),
+                    ready_at_ms: None,
+                },
+                final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                    asset_path: None,
+                    ready_at_ms: None,
+                },
+                render_status: "previewWaiting".into(),
+                post_end_state: "activeSession".into(),
+                timing: crate::session::session_manifest::CaptureTimingMetrics {
+                    capture_acknowledged_at_ms: 100,
+                    preview_visible_at_ms: None,
+                    fast_preview_visible_at_ms: None,
+                    xmp_preview_ready_at_ms: None,
+                    capture_budget_ms: 1000,
+                    preview_budget_ms: 5000,
+                    preview_budget_state: "pending".into(),
+                },
+            },
+            &paths,
+            &temp_dir
+                .join("renders")
+                .join("previews")
+                .join("capture_test.rendered.jpg"),
+            RenderIntent::Preview,
+            None,
+        );
+
+        assert_eq!(
+            invocation.render_source_kind,
+            PreviewRenderSourceKind::FastPreviewRaster
+        );
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert_eq!(
+            invocation.arguments.first().map(String::as_str),
+            Some(
+                fast_preview_path
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .as_str()
+            )
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn preview_invocation_uses_canonical_preview_asset_even_when_manifest_preview_is_empty() {
+        let temp_dir = unique_temp_dir("preview-canonical-fallback");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+        fs::create_dir_all(&paths.captures_originals_dir).expect("raw dir should exist");
+        let canonical_preview_path = paths.renders_previews_dir.join("capture_test.jpg");
+        fs::write(&canonical_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+            .expect("jpeg preview should exist");
+
+        let invocation = build_darktable_invocation(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &temp_dir.join("bundle").join("preview.xmp"),
+            &SessionCaptureRecord {
+                schema_version: "session-capture/v1".into(),
+                session_id: session_id.into(),
+                booth_alias: "Booth".into(),
+                active_preset_id: Some("preset_test".into()),
+                active_preset_version: "2026.03.31".into(),
+                active_preset_display_name: Some("Test".into()),
+                capture_id: "capture_test".into(),
+                request_id: "request_test".into(),
+                raw: crate::session::session_manifest::RawCaptureAsset {
+                    asset_path: paths
+                        .captures_originals_dir
+                        .join("capture_test.cr2")
+                        .to_string_lossy()
+                        .into_owned(),
+                    persisted_at_ms: 100,
+                },
+                preview: crate::session::session_manifest::PreviewCaptureAsset {
+                    asset_path: None,
+                    enqueued_at_ms: Some(100),
+                    ready_at_ms: None,
+                },
+                final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                    asset_path: None,
+                    ready_at_ms: None,
+                },
+                render_status: "previewWaiting".into(),
+                post_end_state: "activeSession".into(),
+                timing: crate::session::session_manifest::CaptureTimingMetrics {
+                    capture_acknowledged_at_ms: 100,
+                    preview_visible_at_ms: None,
+                    fast_preview_visible_at_ms: None,
+                    xmp_preview_ready_at_ms: None,
+                    capture_budget_ms: 1000,
+                    preview_budget_ms: 5000,
+                    preview_budget_state: "pending".into(),
+                },
+            },
+            &paths,
+            &temp_dir
+                .join("renders")
+                .join("previews")
+                .join("capture_test.rendered.jpg"),
+            RenderIntent::Preview,
+            None,
+        );
+
+        assert_eq!(
+            invocation.render_source_kind,
+            PreviewRenderSourceKind::FastPreviewRaster
+        );
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert_eq!(
+            invocation.arguments.first().map(String::as_str),
+            Some(
+                canonical_preview_path
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .as_str()
+            )
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]

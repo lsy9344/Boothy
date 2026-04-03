@@ -281,7 +281,11 @@ function inferSurfaceStateFromSanitizedCapture(
   }
 
   if (latestCapture?.renderStatus === 'previewWaiting') {
-    return 'previewWaiting'
+    return readiness.reasonCode === 'preview-waiting'
+      ? 'previewWaiting'
+      : readiness.canCapture
+        ? 'captureReady'
+        : 'blocked'
   }
 
   if (latestCapture?.renderStatus === 'captureSaved') {

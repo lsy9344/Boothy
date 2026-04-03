@@ -20,6 +20,7 @@ use crate::{
         preset_catalog::load_preset_catalog_in_dir,
         preset_catalog_state::{load_preset_catalog_state_in_dir, rollback_preset_catalog_in_dir},
     },
+    render::schedule_preview_renderer_warmup_in_dir,
     session::session_repository::{resolve_app_session_base_dir, select_active_preset_in_dir},
 };
 
@@ -47,6 +48,12 @@ pub fn select_active_preset(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     let session_id = input.session_id.clone();
     let result = select_active_preset_in_dir(&base_dir, input)?;
+    schedule_preview_renderer_warmup_in_dir(
+        &base_dir,
+        &session_id,
+        &result.active_preset.preset_id,
+        &result.active_preset.published_version,
+    );
     try_ensure_helper_running(&base_dir, &session_id);
 
     Ok(result)

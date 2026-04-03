@@ -78,7 +78,7 @@ describe('SessionPreviewImage', () => {
         expect.objectContaining({
           label: 'current-session-preview-visible',
           sessionId: 'session_01',
-          message: expect.stringContaining('captureId=capture_01'),
+          message: expect.stringContaining('previewKind=preset-applied-preview'),
         }),
       )
     })
@@ -102,7 +102,7 @@ describe('SessionPreviewImage', () => {
         expect.objectContaining({
           label: 'current-session-preview-pending-visible',
           sessionId: 'session_01',
-          message: expect.stringContaining('uiLagMs=pending'),
+          message: expect.stringContaining('previewKind=pending-fast-preview'),
         }),
       )
     })
