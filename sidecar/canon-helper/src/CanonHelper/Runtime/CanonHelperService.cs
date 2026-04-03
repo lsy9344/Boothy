@@ -52,8 +52,9 @@ internal sealed class CanonHelperService : IDisposable
 
             _camera.PumpEvents();
             await _camera.EnsureConnectedAsync(cancellationToken);
-            _camera.TryBackfillPreviewAssets(_paths);
             await CompleteCaptureIfFinishedAsync();
+            _camera.TryCompletePendingFastPreviewDownload();
+            _camera.TryBackfillPreviewAssets(_paths);
 
             if (_activeCaptureTask is null)
             {
@@ -108,7 +109,55 @@ internal sealed class CanonHelperService : IDisposable
                             "capture-in-flight"
                         )
                     );
-                    _activeCaptureTask = _camera.CaptureAsync(_paths, request, cancellationToken);
+                    _activeCaptureTask = _camera.CaptureAsync(
+                        _paths,
+                        request,
+                        fastPreviewAttempted =>
+                        {
+                            _protocol.AppendEvent(
+                                new FastThumbnailAttemptedMessage(
+                                    CanonHelperSchemas.FastThumbnailAttempted,
+                                    "fast-thumbnail-attempted",
+                                    _paths.SessionId,
+                                    fastPreviewAttempted.RequestId,
+                                    fastPreviewAttempted.CaptureId,
+                                    fastPreviewAttempted.ObservedAt.ToString("O"),
+                                    fastPreviewAttempted.FastPreviewKind
+                                )
+                            );
+                        },
+                        fastPreview =>
+                        {
+                            _protocol.AppendEvent(
+                                new FastPreviewReadyMessage(
+                                    CanonHelperSchemas.FastPreviewReady,
+                                    "fast-preview-ready",
+                                    _paths.SessionId,
+                                    fastPreview.RequestId,
+                                    fastPreview.CaptureId,
+                                    fastPreview.ObservedAt.ToString("O"),
+                                    fastPreview.FastPreviewPath,
+                                    fastPreview.FastPreviewKind
+                                )
+                            );
+                        },
+                        fastPreviewFailed =>
+                        {
+                            _protocol.AppendEvent(
+                                new FastThumbnailFailedMessage(
+                                    CanonHelperSchemas.FastThumbnailFailed,
+                                    "fast-thumbnail-failed",
+                                    _paths.SessionId,
+                                    fastPreviewFailed.RequestId,
+                                    fastPreviewFailed.CaptureId,
+                                    fastPreviewFailed.ObservedAt.ToString("O"),
+                                    fastPreviewFailed.DetailCode,
+                                    fastPreviewFailed.FastPreviewKind
+                                )
+                            );
+                        },
+                        cancellationToken
+                    );
                     break;
                 }
             }

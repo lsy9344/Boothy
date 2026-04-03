@@ -13,11 +13,19 @@ use crate::{contracts::dto::HostErrorEnvelope, session::session_paths::SessionPa
 pub const CANON_HELPER_BUNDLE_DIR: &str = "sidecar/canon-helper";
 pub const CAMERA_HELPER_STATUS_FILE_NAME: &str = "camera-helper-status.json";
 pub const CAMERA_HELPER_REQUESTS_FILE_NAME: &str = "camera-helper-requests.jsonl";
+pub const CAMERA_HELPER_PROCESSED_REQUEST_IDS_FILE_NAME: &str =
+    "camera-helper-processed-request-ids.txt";
 pub const CAMERA_HELPER_EVENTS_FILE_NAME: &str = "camera-helper-events.jsonl";
 pub const CANON_HELPER_STATUS_SCHEMA_VERSION: &str = "canon-helper-status/v1";
 pub const CANON_HELPER_READY_SCHEMA_VERSION: &str = "canon-helper-ready/v1";
 pub const CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION: &str = "canon-helper-request-capture/v1";
 pub const CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION: &str = "canon-helper-capture-accepted/v1";
+pub const CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION: &str =
+    "canon-helper-fast-preview-ready/v1";
+pub const CANON_HELPER_FAST_THUMBNAIL_ATTEMPTED_SCHEMA_VERSION: &str =
+    "canon-helper-fast-thumbnail-attempted/v1";
+pub const CANON_HELPER_FAST_THUMBNAIL_FAILED_SCHEMA_VERSION: &str =
+    "canon-helper-fast-thumbnail-failed/v1";
 pub const CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION: &str = "canon-helper-file-arrived/v1";
 pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-recovery-status/v1";
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
@@ -93,6 +101,53 @@ pub struct CanonHelperCaptureAcceptedMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CanonHelperFastPreviewReadyMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub observed_at: String,
+    pub fast_preview_path: String,
+    #[serde(default)]
+    pub fast_preview_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperFastThumbnailAttemptedMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub observed_at: String,
+    #[serde(default)]
+    pub fast_preview_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperFastThumbnailFailedMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub observed_at: String,
+    pub detail_code: String,
+    #[serde(default)]
+    pub fast_preview_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanonHelperFileArrivedMessage {
     #[serde(default)]
     pub schema_version: String,
@@ -113,6 +168,15 @@ pub struct CanonHelperFileArrivedMessage {
 pub struct CompletedCaptureFastPreview {
     pub asset_path: String,
     pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FastPreviewReadyUpdate {
+    pub request_id: String,
+    pub capture_id: String,
+    pub asset_path: String,
+    pub kind: Option<String>,
+    pub visible_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +235,9 @@ pub enum SidecarClientError {
 #[derive(Debug, Clone)]
 enum CanonHelperEvent {
     CaptureAccepted(CanonHelperCaptureAcceptedMessage),
+    FastThumbnailAttempted(CanonHelperFastThumbnailAttemptedMessage),
+    FastPreviewReady(CanonHelperFastPreviewReadyMessage),
+    FastThumbnailFailed(CanonHelperFastThumbnailFailedMessage),
     FileArrived(CanonHelperFileArrivedMessage),
     RecoveryStatus(CanonHelperRecoveryStatusMessage),
     HelperError(CanonHelperErrorMessage),
@@ -234,6 +301,34 @@ pub fn read_capture_request_messages(
         .map_err(|_| SidecarClientError::InvalidEvents)
 }
 
+pub fn read_processed_capture_request_ids(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<Vec<String>, SidecarClientError> {
+    let processed_path = SessionPaths::try_new(base_dir, session_id)
+        .map(|paths| {
+            paths
+                .diagnostics_dir
+                .join(CAMERA_HELPER_PROCESSED_REQUEST_IDS_FILE_NAME)
+        })
+        .map_err(|_| SidecarClientError::EventsUnreadable)?;
+
+    if !processed_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let contents =
+        fs::read_to_string(processed_path).map_err(|_| SidecarClientError::EventsUnreadable)?;
+
+    Ok(contents
+        .lines()
+        .map(strip_utf8_bom_prefix)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 pub fn read_capture_event_count(
     base_dir: &Path,
     session_id: &str,
@@ -272,11 +367,13 @@ pub fn wait_for_capture_round_trip(
         .map_err(|_| SidecarClientError::CaptureTimedOut)?
         .saturating_add(timeout_ms);
     let mut accepted_at_ms: Option<u64> = None;
+    let mut latest_event_count = starting_event_count;
 
     loop {
         let events = read_capture_event_messages(base_dir, session_id)?;
+        let latest_events_len = events.len();
 
-        for event in events.into_iter().skip(starting_event_count) {
+        for event in events.iter().skip(latest_event_count) {
             match event {
                 CanonHelperEvent::CaptureAccepted(message) => {
                     if message.request_id != request_id {
@@ -291,6 +388,38 @@ pub fn wait_for_capture_round_trip(
                         current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?,
                     );
                 }
+                CanonHelperEvent::FastPreviewReady(message) => {
+                    if message.request_id != request_id {
+                        continue;
+                    }
+
+                    // Fast preview telemetry is advisory. The host only surfaces a
+                    // pending preview after RAW persistence succeeds and the preview
+                    // has been promoted to the canonical path.
+                    if message.session_id != session_id {
+                        continue;
+                    }
+                }
+                CanonHelperEvent::FastThumbnailAttempted(message) => {
+                    if message.request_id != request_id {
+                        continue;
+                    }
+
+                    // Diagnostic thumbnail events must never fail the capture round trip.
+                    if message.session_id != session_id {
+                        continue;
+                    }
+                }
+                CanonHelperEvent::FastThumbnailFailed(message) => {
+                    if message.request_id != request_id {
+                        continue;
+                    }
+
+                    // Diagnostic thumbnail events must never fail the capture round trip.
+                    if message.session_id != session_id {
+                        continue;
+                    }
+                }
                 CanonHelperEvent::FileArrived(message) => {
                     if message.request_id != request_id {
                         continue;
@@ -302,13 +431,13 @@ pub fn wait_for_capture_round_trip(
 
                     let accepted_at_ms =
                         accepted_at_ms.ok_or(SidecarClientError::CaptureProtocolViolation)?;
-                    let raw_path = validate_arrived_raw_path(base_dir, session_id, &message)?;
-                    let fast_preview = extract_fast_preview_metadata(&message);
+                    let raw_path = validate_arrived_raw_path(base_dir, session_id, message)?;
+                    let fast_preview = extract_fast_preview_metadata(message);
                     let persisted_at_ms =
                         current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
 
                     return Ok(CompletedCaptureRoundTrip {
-                        capture_id: message.capture_id,
+                        capture_id: message.capture_id.clone(),
                         raw_path,
                         fast_preview,
                         capture_accepted_at_ms: accepted_at_ms,
@@ -334,7 +463,7 @@ pub fn wait_for_capture_round_trip(
                         continue;
                     }
 
-                    return if is_retryable_capture_helper_error(&message) {
+                    return if is_retryable_capture_helper_error(message) {
                         Err(SidecarClientError::CaptureTriggerRetryRequired)
                     } else {
                         Err(SidecarClientError::CaptureRejected)
@@ -342,6 +471,8 @@ pub fn wait_for_capture_round_trip(
                 }
             }
         }
+
+        latest_event_count = latest_events_len;
 
         let now_ms = current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
 
@@ -447,6 +578,19 @@ fn parse_capture_event(line: &str) -> Result<CanonHelperEvent, SidecarClientErro
         "capture-accepted" => serde_json::from_value::<CanonHelperCaptureAcceptedMessage>(value)
             .map(CanonHelperEvent::CaptureAccepted)
             .map_err(|_| SidecarClientError::InvalidEvents),
+        "fast-thumbnail-attempted" => {
+            serde_json::from_value::<CanonHelperFastThumbnailAttemptedMessage>(value)
+                .map(CanonHelperEvent::FastThumbnailAttempted)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        "fast-preview-ready" => serde_json::from_value::<CanonHelperFastPreviewReadyMessage>(value)
+            .map(CanonHelperEvent::FastPreviewReady)
+            .map_err(|_| SidecarClientError::InvalidEvents),
+        "fast-thumbnail-failed" => {
+            serde_json::from_value::<CanonHelperFastThumbnailFailedMessage>(value)
+                .map(CanonHelperEvent::FastThumbnailFailed)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
         "file-arrived" => serde_json::from_value::<CanonHelperFileArrivedMessage>(value)
             .map(CanonHelperEvent::FileArrived)
             .map_err(|_| SidecarClientError::InvalidEvents),

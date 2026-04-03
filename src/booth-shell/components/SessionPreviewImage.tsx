@@ -7,8 +7,11 @@ type SessionPreviewImageProps = {
   alt: string
   assetPath: string
   captureId: string
+  requestId?: string
   readyAtMs: number | null
   isLatest: boolean
+  prioritizeLoading?: boolean
+  visibilityLabelBase?: string
 }
 
 function isSvgAssetPath(assetPath: string) {
@@ -41,8 +44,11 @@ export function SessionPreviewImage({
   alt,
   assetPath,
   captureId,
+  requestId,
   readyAtMs,
   isLatest,
+  prioritizeLoading = false,
+  visibilityLabelBase = 'current-session-preview',
 }: SessionPreviewImageProps) {
   const directSrc = resolvePresetPreviewSrc(assetPath)
   const [svgSrc, setSvgSrc] = useState<string | null>(null)
@@ -101,6 +107,9 @@ export function SessionPreviewImage({
     <img
       src={src}
       alt={alt}
+      loading={prioritizeLoading ? 'eager' : 'lazy'}
+      decoding={prioritizeLoading ? 'sync' : 'async'}
+      fetchPriority={prioritizeLoading ? 'high' : 'auto'}
       onLoad={() => {
         if (hasReportedVisible) {
           return
@@ -112,13 +121,14 @@ export function SessionPreviewImage({
         const sessionId =
           assetPath.match(/sessions[\\/](session_[^\\/]+)/i)?.[1] ?? undefined
         const visibilityLabel = isPendingPreview
-          ? 'current-session-preview-pending-visible'
-          : 'current-session-preview-visible'
+          ? `${visibilityLabelBase}-pending-visible`
+          : `${visibilityLabelBase}-visible`
 
         if (typeof console !== 'undefined') {
           console.info(`[boothy][capture] ${visibilityLabel}`, {
             sessionId,
             captureId,
+            requestId: requestId ?? null,
             readyAtMs,
             uiLagMs,
             isLatest,
@@ -128,7 +138,7 @@ export function SessionPreviewImage({
         void logCaptureClientState({
           label: visibilityLabel,
           sessionId,
-          message: `captureId=${captureId};uiLagMs=${uiLagMs ?? 'pending'};latest=${isLatest}`,
+          message: `captureId=${captureId};requestId=${requestId ?? 'unknown'};uiLagMs=${uiLagMs ?? 'pending'};latest=${isLatest}`,
         })
       }}
       onError={() => {

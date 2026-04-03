@@ -121,8 +121,11 @@ export function LatestPhotoRail({
                 assetPath={preview.assetPath}
                 alt={buildPreviewAltText(preview, index + 1)}
                 captureId={preview.captureId}
+                requestId={preview.requestId}
                 readyAtMs={preview.readyAtMs}
                 isLatest={preview.isLatest}
+                prioritizeLoading={preview.isLatest || preview.readyAtMs === null}
+                visibilityLabelBase="recent-session"
               />
               <figcaption>
                 촬영 당시{' '}

@@ -7,6 +7,7 @@ import {
   captureReadinessSnapshotSchema,
   liveCaptureTruthSchema,
   captureReadinessUpdateSchema,
+  captureFastPreviewUpdateSchema,
   captureRequestInputSchema,
   captureRequestResultSchema,
   sessionCaptureRecordSchema,
@@ -18,6 +19,9 @@ export type CaptureReadinessSnapshot = z.infer<
 export type LiveCaptureTruth = z.infer<typeof liveCaptureTruthSchema>
 export type CaptureReadinessInput = z.infer<typeof captureReadinessInputSchema>
 export type CaptureReadinessUpdate = z.infer<typeof captureReadinessUpdateSchema>
+export type CaptureFastPreviewUpdate = z.infer<
+  typeof captureFastPreviewUpdateSchema
+>
 export type CaptureDeleteInput = z.infer<typeof captureDeleteInputSchema>
 export type CaptureDeleteResult = z.infer<typeof captureDeleteResultSchema>
 export type CaptureRequestInput = z.infer<typeof captureRequestInputSchema>

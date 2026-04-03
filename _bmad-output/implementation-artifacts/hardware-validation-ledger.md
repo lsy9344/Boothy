@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-04-01 01:53 +09:00
+Last Updated: 2026-04-03 08:26 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -35,7 +35,7 @@ Supporting regression / follow-up notes:
 | 1.4 | Pass | Pass | Go | Closed. HV-02/HV-03/HV-10 package confirmed complete for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
 | 1.5 | Pass | Pass | Go | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
 | 1.6 | Pass | Partial helper/readiness proof | No-Go | Reconnect-safe `HV-10` package and canonical helper metadata were not normalized into one close row. | Noah Lee | `history/camera-helper-troubleshooting-history.md` |
-| 1.8 | Pass | Missing canonical preset-apply package | No-Go | `HV-05/HV-07/HV-08/HV-11/HV-12` evidence tying selected preset binding, `xmpTemplatePath`, preview/final differentiation, and false-ready/false-complete protection is not yet recorded in one run. | Noah Lee | `TBD` |
+| 1.8 | Pass | User field observation recorded; canonical package still missing | No-Go | 2026-04-03 최신 재현 세션에서 `Preview Waiting`은 즉시 보였지만 fast preview는 여전히 비어 있었고, 약 `3.3초 ~ 3.4초` 뒤 render-backed preset preview만 나타났다. `file-arrived`는 fast thumbnail 시도보다 먼저 닫혔으나 helper가 `fast-thumbnail-download-failed` 뒤 customer-visible fast preview를 만들지 못했다. `HV-05/HV-07/HV-08/HV-11/HV-12` canonical evidence는 아직 한 회차로 묶이지 않았다. | Noah Lee | `_bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md` |
 | 3.2 | Pass | Missing | No-Go | `HV-08/HV-11` execution and evidence package are not yet recorded. | Noah Lee | `TBD` |
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
@@ -118,24 +118,26 @@ Supporting regression / follow-up notes:
 
 - story key: `1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결`
 - HV checklist ID: `HV-05`, `HV-07`, `HV-08`, `HV-11`, `HV-12`
-- evidence package path: `TBD`
-- executedAt: `TBD`
-- validator: `TBD`
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a2aa911a1263d8\ ; _bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md`
+- executedAt: `2026-04-03T08:17:41+09:00`
+- validator: `user field observation + Codex artifact inspection`
 - booth PC: `TBD`
 - camera model: `TBD`
 - darktable pin: `release-5.4.1 / c3f96ca`
-- helper identifier: `canon-helper-status/v1 + render diagnostics (TBD)`
+- helper identifier: `camera-helper-events.jsonl + timing-events.log (file-arrived before thumbnail attempt, then fast-thumbnail-download-failed / no fast-preview-ready)`
 - Go / No-Go result: `No-Go`
-- release blocker: `Selected preset -> XMP apply -> preview/final differentiation package is not yet recorded as one canonical hardware run.`
+- release blocker: `2026-04-03 직접 점검한 세션 session_000000000018a2aa911a1263d8에서 helper는 file-arrived를 먼저 기록해 저장 완료 경계를 닫았지만, 이어진 fast preview 단계에서는 fast-thumbnail-download-failed 뒤 fast-preview-ready를 만들지 못했다. host fast-preview-promoted와 session timing fastPreviewVisibleAtMs도 비어 있었고 고객 화면에는 약 3.3초 ~ 3.4초 뒤 render-backed preset-applied preview만 도달했다. selected preset -> first-visible fast preview -> same-slot replacement -> preview/final differentiation package는 여전히 one-run canonical evidence로 기록되지 않았다.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Run at least two distinct published presets on approved booth hardware and capture preview/final outputs, session preset binding, bundle render metadata, and operator diagnostics in one linked evidence package.`
+- rerun prerequisite: `적용한 helper fallback 보강 뒤 approved booth hardware에서 재실행해 camera-helper-events.jsonl에 fast-preview-ready 또는 fast-preview-fallback-failed가 어떻게 남는지 확인하고, same-slot fast preview first-visible 여부와 later preset replacement 여부를 session.json / timing-events.log / bundle evidence와 함께 한 패키지로 다시 수집할 것.`
 - target rerun date: `TBD`
 - core evidence paths:
-  - `TBD/session.json`
-  - `TBD/renders/previews/`
-  - `TBD/renders/finals/`
-  - `TBD/published/bundle.json`
-  - `TBD/diagnostics/`
+  - `_bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a2aa911a1263d8\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a2aa911a1263d8\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a2aa911a1263d8\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_daylight\2026.03.27\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_test-look\2026.03.31\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
 
 ### Story 3.2
 

@@ -2,9 +2,13 @@ import { z } from 'zod'
 
 import { sessionIdSchema } from './ids'
 import {
+  captureEventTimeMsSchema,
+  captureFastPreviewUpdateSchemaVersion,
+  captureIdSchema,
   captureDeleteResultSchemaVersion,
   captureReadinessSchemaVersion,
   captureReadinessUpdateSchemaVersion,
+  captureRequestIdSchema,
   captureRequestResultSchemaVersion,
   captureSurfaceStateSchema,
   sessionCaptureRecordSchema,
@@ -205,8 +209,21 @@ export const captureReadinessUpdateSchema = z.object({
   readiness: captureReadinessSnapshotSchema,
 })
 
+export const captureFastPreviewUpdateSchema = z.object({
+  schemaVersion: z.literal(captureFastPreviewUpdateSchemaVersion).default(
+    captureFastPreviewUpdateSchemaVersion,
+  ),
+  sessionId: sessionIdSchema,
+  requestId: captureRequestIdSchema,
+  captureId: captureIdSchema,
+  assetPath: z.string().trim().min(1),
+  visibleAtMs: captureEventTimeMsSchema,
+  kind: z.string().trim().min(1).max(80).nullable().optional(),
+})
+
 export const captureRequestInputSchema = z.object({
   sessionId: sessionIdSchema,
+  requestId: captureRequestIdSchema.optional(),
 })
 
 export const captureDeleteInputSchema = z.object({

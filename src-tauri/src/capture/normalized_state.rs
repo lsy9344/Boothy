@@ -10,9 +10,11 @@ use crate::{
         ingest_pipeline::{complete_preview_render_in_dir, persist_capture_in_dir},
         sidecar_client::{
             is_retryable_capture_helper_error, map_capture_round_trip_error,
-            read_capture_event_count, read_latest_helper_error_message, read_latest_status_message,
-            wait_for_capture_round_trip, write_capture_request_message,
-            CanonHelperCaptureRequestMessage, CanonHelperStatusMessage, SidecarClientError,
+            read_capture_event_count, read_capture_request_messages,
+            read_latest_helper_error_message, read_latest_status_message,
+            read_processed_capture_request_ids, wait_for_capture_round_trip,
+            write_capture_request_message, CanonHelperCaptureRequestMessage,
+            CanonHelperStatusMessage, FastPreviewReadyUpdate, SidecarClientError,
             CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION,
         },
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
@@ -77,6 +79,17 @@ pub fn request_capture_in_dir(
     base_dir: &Path,
     input: CaptureRequestInputDto,
 ) -> Result<CaptureRequestResultDto, HostErrorEnvelope> {
+    request_capture_in_dir_with_fast_preview(base_dir, input, |_| {})
+}
+
+pub fn request_capture_in_dir_with_fast_preview<F>(
+    base_dir: &Path,
+    input: CaptureRequestInputDto,
+    mut on_fast_preview_ready: F,
+) -> Result<CaptureRequestResultDto, HostErrorEnvelope>
+where
+    F: FnMut(FastPreviewReadyUpdate),
+{
     let readiness = get_capture_readiness_in_dir(
         base_dir,
         CaptureReadinessInputDto {
@@ -96,7 +109,14 @@ pub fn request_capture_in_dir(
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
-    let request_id = generate_capture_request_id();
+    let request_id = input
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(generate_capture_request_id);
+    ensure_capture_request_id_is_fresh(base_dir, &input.session_id, &request_id, &readiness)?;
     let requested_at = current_timestamp(SystemTime::now())?;
     let request_message = CanonHelperCaptureRequestMessage {
         schema_version: CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION.into(),
@@ -150,7 +170,7 @@ pub fn request_capture_in_dir(
             ));
         }
     };
-    let (manifest, capture) = persist_capture_in_dir(
+    let (manifest, capture, fast_preview_update) = persist_capture_in_dir(
         base_dir,
         &input,
         round_trip.capture_id,
@@ -176,6 +196,9 @@ pub fn request_capture_in_dir(
                 .with_live_capture_truth(project_live_capture_truth(base_dir, &manifest).dto),
         )
     })?;
+    if let Some(update) = fast_preview_update {
+        on_fast_preview_ready(update);
+    }
 
     Ok(CaptureRequestResultDto {
         schema_version: "capture-request-result/v1".into(),
@@ -200,6 +223,40 @@ fn should_persist_capture_round_trip_failure(error: &SidecarClientError) -> bool
             | SidecarClientError::CaptureFileUnscoped
             | SidecarClientError::CaptureProtocolViolation
     )
+}
+
+fn ensure_capture_request_id_is_fresh(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    readiness: &CaptureReadinessDto,
+) -> Result<(), HostErrorEnvelope> {
+    let existing_requests = read_capture_request_messages(base_dir, session_id).map_err(|_| {
+        HostErrorEnvelope::persistence(
+            "촬영 요청 기록을 확인하지 못했어요. 가까운 직원에게 알려 주세요.",
+        )
+    })?;
+    let processed_request_ids =
+        read_processed_capture_request_ids(base_dir, session_id).map_err(|_| {
+            HostErrorEnvelope::persistence(
+                "촬영 요청 기록을 확인하지 못했어요. 가까운 직원에게 알려 주세요.",
+            )
+        })?;
+
+    if existing_requests
+        .iter()
+        .any(|request| request.request_id == request_id)
+        || processed_request_ids
+            .iter()
+            .any(|processed| processed == request_id)
+    {
+        return Err(HostErrorEnvelope::capture_not_ready(
+            "촬영 요청을 다시 보내 주세요.",
+            readiness.clone(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static str {
@@ -1110,33 +1167,50 @@ fn sync_better_preview_assets_in_manifest(
     let mut updated = false;
 
     for capture in &mut manifest.captures {
-        if !matches!(
-            capture.render_status.as_str(),
-            "previewReady" | "finalReady"
-        ) {
-            continue;
-        }
-
-        let Some(current_preview_path) = capture.preview.asset_path.as_deref() else {
-            continue;
-        };
-
-        if !is_session_scoped_asset_path(&paths, current_preview_path) {
-            continue;
-        }
-
         let Some(better_preview_path) =
             find_better_session_preview_asset(&paths, &capture.capture_id)
         else {
             continue;
         };
 
-        if better_preview_path == current_preview_path {
-            continue;
-        }
+        match capture.render_status.as_str() {
+            "previewReady" | "finalReady" => {
+                let Some(current_preview_path) = capture.preview.asset_path.as_deref() else {
+                    continue;
+                };
 
-        capture.preview.asset_path = Some(better_preview_path);
-        updated = true;
+                if !is_session_scoped_asset_path(&paths, current_preview_path) {
+                    continue;
+                }
+
+                if better_preview_path == current_preview_path {
+                    continue;
+                }
+
+                capture.preview.asset_path = Some(better_preview_path);
+                updated = true;
+            }
+            "captureSaved" | "previewWaiting" => {
+                let current_preview_matches = capture
+                    .preview
+                    .asset_path
+                    .as_deref()
+                    .map(|asset_path| asset_path == better_preview_path.as_str())
+                    .unwrap_or(false);
+                if current_preview_matches {
+                    continue;
+                }
+
+                capture.preview.asset_path = Some(better_preview_path.clone());
+                if capture.timing.fast_preview_visible_at_ms.is_none() {
+                    capture.timing.fast_preview_visible_at_ms =
+                        preview_asset_visible_at_ms(Path::new(&better_preview_path))
+                            .or_else(|| system_time_to_ms(SystemTime::now()));
+                }
+                updated = true;
+            }
+            _ => continue,
+        }
     }
 
     if updated {
@@ -1158,6 +1232,20 @@ fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> 
         })
         .find(|path| is_valid_render_preview_asset(path))
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn preview_asset_visible_at_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_to_ms)
+}
+
+fn system_time_to_ms(value: SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
 }
 
 fn sync_invalid_preview_truth_in_manifest(

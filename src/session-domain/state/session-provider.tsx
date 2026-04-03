@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type {
   CaptureDeleteResult,
+  CaptureRequestInput,
   CaptureRequestResult,
   HostErrorEnvelope,
   SessionManifest,
@@ -10,9 +11,9 @@ import type {
   SessionStartInput,
 } from '../../shared-contracts'
 import {
-  CAPTURE_READINESS_POLL_MS,
   buildLocalCaptureReadiness,
   createCaptureRuntimeService,
+  generateCaptureRequestId,
   type CaptureRuntimeService,
 } from '../../capture-adapter/services/capture-runtime'
 import {
@@ -47,9 +48,49 @@ type SessionProviderProps = {
 
 const CAPTURE_PRESET_CATALOG_RETRY_MS = 1500
 const CAPTURE_PRESET_CATALOG_MAX_RETRIES = 1
-const CAPTURE_READINESS_RETRY_MS = CAPTURE_READINESS_POLL_MS
 type SessionScopedReadiness = NonNullable<SessionDraft['captureReadiness']>
 type SessionScopedCapture = NonNullable<SessionScopedReadiness['latestCapture']>
+type PendingFastPreview = NonNullable<SessionDraft['pendingFastPreview']>
+
+function sanitizePendingFastPreviewForSession(
+  sessionId: string | null,
+  pendingFastPreview: SessionDraft['pendingFastPreview'],
+): PendingFastPreview | null {
+  if (
+    sessionId === null ||
+    pendingFastPreview === null ||
+    pendingFastPreview.sessionId !== sessionId ||
+    !isSessionScopedAssetPath(sessionId, pendingFastPreview.assetPath)
+  ) {
+    return null
+  }
+
+  return pendingFastPreview
+}
+
+function matchesPendingFastPreviewCapture(
+  pendingFastPreview: PendingFastPreview | null,
+  capture: SessionScopedCapture | null,
+) {
+  return (
+    pendingFastPreview !== null &&
+    capture !== null &&
+    pendingFastPreview.captureId === capture.captureId &&
+    pendingFastPreview.requestId === capture.requestId
+  )
+}
+
+function hasDisplayablePreviewAsset(
+  sessionId: string | null,
+  capture: SessionScopedCapture | null,
+) {
+  return (
+    sessionId !== null &&
+    capture !== null &&
+    capture.preview.assetPath !== null &&
+    isSessionScopedAssetPath(sessionId, capture.preview.assetPath)
+  )
+}
 
 function mergePreservedPostEndReadiness(
   current: SessionScopedReadiness | null,
@@ -672,6 +713,8 @@ export function SessionProvider({
   const deleteCaptureRequestVersionRef = useRef(0)
   const requestCaptureRequestVersionRef = useRef(0)
   const deletedCaptureIdsRef = useRef<Set<string>>(new Set())
+  const activeCaptureRequestIdRef = useRef<string | null>(null)
+  const activeCaptureIdRef = useRef<string | null>(null)
   const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
   const capturePresetCatalogRetryCountRef = useRef(0)
   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(DEFAULT_SESSION_DRAFT)
@@ -703,11 +746,44 @@ export function SessionProvider({
     captureReadinessRequestVersionRef.current += 1
     deleteCaptureRequestVersionRef.current += 1
     requestCaptureRequestVersionRef.current += 1
+    activeCaptureRequestIdRef.current = null
+    activeCaptureIdRef.current = null
     isDeletingCaptureRef.current = false
     isRequestingCaptureRef.current = false
     setIsLoadingCaptureReadiness(false)
     setIsDeletingCapture(false)
     setIsRequestingCapture(false)
+  }
+
+  function prunePendingFastPreview(
+    sessionId: string | null,
+    pendingFastPreview: SessionDraft['pendingFastPreview'],
+    latestCapture: SessionScopedCapture | null,
+  ) {
+    const safePendingFastPreview = sanitizePendingFastPreviewForSession(
+      sessionId,
+      pendingFastPreview,
+    )
+
+    if (safePendingFastPreview === null) {
+      return null
+    }
+
+    if (deletedCaptureIdsRef.current.has(safePendingFastPreview.captureId)) {
+      return null
+    }
+
+    if (latestCapture === null) {
+      return safePendingFastPreview
+    }
+
+    if (!matchesPendingFastPreviewCapture(safePendingFastPreview, latestCapture)) {
+      return null
+    }
+
+    return hasDisplayablePreviewAsset(sessionId, latestCapture)
+      ? null
+      : safePendingFastPreview
   }
 
   function clearTransientSessionActivity() {
@@ -736,6 +812,7 @@ export function SessionProvider({
       presetCatalog: [],
       presetCatalogState: 'idle',
       captureReadiness: null,
+      pendingFastPreview: null,
       manifest:
             current.manifest === null
               ? null
@@ -834,6 +911,10 @@ export function SessionProvider({
     setSessionDraft((current) => ({
       ...current,
       ...(() => {
+        const safePendingFastPreview = sanitizePendingFastPreviewForSession(
+          current.manifest?.sessionId ?? current.sessionId,
+          current.pendingFastPreview,
+        )
         const safeReadiness = suppressDeletedLatestCapture(
           lockStablePostEndReadiness(
             current.captureReadiness,
@@ -847,6 +928,11 @@ export function SessionProvider({
 
         return {
           captureReadiness: safeReadiness,
+          pendingFastPreview: prunePendingFastPreview(
+            current.manifest?.sessionId ?? current.sessionId,
+            safePendingFastPreview,
+            latestCapture,
+          ),
           manifest:
             current.manifest === null
               ? null
@@ -942,6 +1028,7 @@ export function SessionProvider({
           hasSession: true,
           hasPreset,
         }),
+        pendingFastPreview: null,
         manifest: result.manifest,
       })
 
@@ -1067,6 +1154,7 @@ export function SessionProvider({
         flowStep: 'capture',
         selectedPreset: result.activePreset,
         presetSelectionMode: 'initial-selection',
+        pendingFastPreview: null,
         captureReadiness:
           wasInSessionSwitch && current.captureReadiness !== null
             ? current.captureReadiness
@@ -1218,7 +1306,7 @@ export function SessionProvider({
     }
   }
 
-  async function requestCapture(input: { sessionId: string }) {
+  async function requestCapture(input: CaptureRequestInput) {
     if (isRequestingCaptureRef.current) {
       throw {
         code: 'host-unavailable',
@@ -1227,13 +1315,23 @@ export function SessionProvider({
     }
 
     const requestVersion = requestCaptureRequestVersionRef.current + 1
+    const requestId = input.requestId ?? generateCaptureRequestId()
 
     requestCaptureRequestVersionRef.current = requestVersion
+    activeCaptureRequestIdRef.current = requestId
+    activeCaptureIdRef.current = null
     isRequestingCaptureRef.current = true
     setIsRequestingCapture(true)
+    setSessionDraft((current) => ({
+      ...current,
+      pendingFastPreview: null,
+    }))
 
     try {
-      const result = await captureRuntimeServiceRef.current.requestCapture(input)
+      const result = await captureRuntimeServiceRef.current.requestCapture({
+        ...input,
+        requestId,
+      })
       const hasMatchingActiveSession = hasActiveSession(input.sessionId)
       const staleReadiness = hasMatchingActiveSession
         ? buildCurrentCaptureFallbackReadiness()
@@ -1264,9 +1362,16 @@ export function SessionProvider({
         )
       }
 
+      activeCaptureRequestIdRef.current = safeResult.capture.requestId
+      activeCaptureIdRef.current = safeResult.capture.captureId
+
       setSessionDraft((current) => ({
         ...current,
         ...(() => {
+          const safePendingFastPreview = sanitizePendingFastPreviewForSession(
+            current.manifest?.sessionId ?? current.sessionId,
+            current.pendingFastPreview,
+          )
           const safeReadiness = lockStablePostEndReadiness(
             current.captureReadiness,
             sanitizeCaptureReadinessForSession(
@@ -1297,6 +1402,11 @@ export function SessionProvider({
 
           return {
             captureReadiness: safeReadiness,
+            pendingFastPreview: prunePendingFastPreview(
+              current.manifest?.sessionId ?? current.sessionId,
+              safePendingFastPreview,
+              safeReadiness.latestCapture ?? safeResult.capture,
+            ),
             manifest:
               manifestWithPostEnd === null
                 ? null
@@ -1346,6 +1456,15 @@ export function SessionProvider({
       ) {
         resetToPresetSelection()
       }
+
+      if (activeCaptureRequestIdRef.current === requestId) {
+        activeCaptureRequestIdRef.current = null
+        activeCaptureIdRef.current = null
+      }
+      setSessionDraft((current) => ({
+        ...current,
+        pendingFastPreview: null,
+      }))
 
       throw hostError
     } finally {
@@ -1414,6 +1533,10 @@ export function SessionProvider({
       }
 
       deletedCaptureIdsRef.current.add(input.captureId)
+      if (activeCaptureIdRef.current === input.captureId) {
+        activeCaptureRequestIdRef.current = null
+        activeCaptureIdRef.current = null
+      }
 
       setSessionDraft((current) => {
         const safeReadiness = lockStablePostEndReadiness(
@@ -1440,6 +1563,11 @@ export function SessionProvider({
         return {
           ...current,
           captureReadiness: safeReadiness,
+          pendingFastPreview: prunePendingFastPreview(
+            current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
+            current.pendingFastPreview,
+            safeReadiness.latestCapture ?? null,
+          ),
           manifest: {
             ...(manifestWithPostEnd ?? safeManifest),
             lifecycle: {
@@ -1499,6 +1627,99 @@ export function SessionProvider({
     void getCaptureReadiness({ sessionId }).catch(() => undefined)
   })
 
+  const syncFastPreview = useEffectEvent((pendingFastPreview: SessionDraft['pendingFastPreview']) => {
+    if (
+      pendingFastPreview === null ||
+      sessionDraftRef.current.flowStep !== 'capture'
+    ) {
+      return
+    }
+
+    const sanitizedFastPreview = sanitizePendingFastPreviewForSession(
+      sessionDraftRef.current.manifest?.sessionId ?? sessionDraftRef.current.sessionId,
+      pendingFastPreview,
+    )
+
+    if (sanitizedFastPreview === null) {
+      return
+    }
+
+    logCaptureDebug('apply-fast-preview-update', {
+      sessionId: sanitizedFastPreview.sessionId,
+      captureId: sanitizedFastPreview.captureId,
+      requestId: sanitizedFastPreview.requestId,
+      kind: sanitizedFastPreview.kind ?? 'none',
+    })
+    void logCaptureClientState({
+      label: 'fast-preview-ready',
+      sessionId: sanitizedFastPreview.sessionId,
+      message: `captureId=${sanitizedFastPreview.captureId};requestId=${sanitizedFastPreview.requestId};kind=${sanitizedFastPreview.kind ?? 'none'}`,
+    })
+
+    setSessionDraft((current) => {
+      const safeFastPreview = sanitizePendingFastPreviewForSession(
+        current.manifest?.sessionId ?? current.sessionId,
+        sanitizedFastPreview,
+      )
+
+      if (safeFastPreview === null) {
+        return current
+      }
+
+      if (deletedCaptureIdsRef.current.has(safeFastPreview.captureId)) {
+        return current
+      }
+
+      const currentLatestCapture = current.captureReadiness?.latestCapture ?? null
+      const matchesCurrentLatestCapture = matchesPendingFastPreviewCapture(
+        safeFastPreview,
+        currentLatestCapture,
+      )
+      const matchesActiveCaptureRequest =
+        activeCaptureRequestIdRef.current !== null &&
+        safeFastPreview.requestId === activeCaptureRequestIdRef.current &&
+        (activeCaptureIdRef.current === null ||
+          safeFastPreview.captureId === activeCaptureIdRef.current)
+
+      if (!matchesCurrentLatestCapture && !matchesActiveCaptureRequest) {
+        return current
+      }
+
+      const manifestOwnedCapture =
+        current.manifest?.captures.find(
+          (capture) =>
+            capture.captureId === safeFastPreview.captureId &&
+            capture.requestId === safeFastPreview.requestId,
+        ) ?? null
+      const manifestOwnsDisplayablePreview = hasDisplayablePreviewAsset(
+        current.manifest?.sessionId ?? current.sessionId,
+        manifestOwnedCapture,
+      )
+
+      if (manifestOwnsDisplayablePreview) {
+        return current.pendingFastPreview === null
+          ? current
+          : {
+              ...current,
+              pendingFastPreview: null,
+            }
+      }
+
+      if (
+        current.pendingFastPreview?.captureId === safeFastPreview.captureId &&
+        current.pendingFastPreview.assetPath === safeFastPreview.assetPath &&
+        current.pendingFastPreview.visibleAtMs === safeFastPreview.visibleAtMs
+      ) {
+        return current
+      }
+
+      return {
+        ...current,
+        pendingFastPreview: safeFastPreview,
+      }
+    })
+  })
+
   const syncSubscribedReadiness = useEffectEvent((readiness: SessionDraft['captureReadiness']) => {
     if (
       readiness === null ||
@@ -1525,6 +1746,10 @@ export function SessionProvider({
       requestCaptureRequestVersionRef.current += 1
       isRequestingCaptureRef.current = false
       setIsRequestingCapture(false)
+      setSessionDraft((current) => ({
+        ...current,
+        pendingFastPreview: null,
+      }))
     }
 
     applyReadinessState(sanitizedReadiness)
@@ -1569,6 +1794,7 @@ export function SessionProvider({
 
     let isDisposed = false
     let stopListening: (() => void) | undefined
+    let stopFastPreviewListening: (() => void) | undefined
 
     applyCaptureReadiness(sessionDraft.sessionId)
 
@@ -1591,30 +1817,39 @@ export function SessionProvider({
       })
       .catch(() => undefined)
 
+    const subscribeToCaptureFastPreview =
+      captureRuntimeServiceRef.current.subscribeToCaptureFastPreview
+
+    if (subscribeToCaptureFastPreview !== undefined) {
+      void subscribeToCaptureFastPreview({
+        sessionId: sessionDraft.sessionId,
+        onFastPreview(fastPreview) {
+          if (!isDisposed) {
+            syncFastPreview(fastPreview)
+          }
+        },
+      })
+        .then((unlisten) => {
+          if (isDisposed) {
+            unlisten()
+            return
+          }
+
+          stopFastPreviewListening = unlisten
+        })
+        .catch(() => undefined)
+    }
+
     return () => {
       isDisposed = true
 
       if (stopListening) {
         stopListening()
       }
-    }
-  }, [
-    sessionDraft.flowStep,
-    sessionDraft.sessionId,
-  ])
 
-  useEffect(() => {
-    if (sessionDraft.flowStep !== 'capture' || sessionDraft.sessionId === null) {
-      return
-    }
-
-    const sessionId = sessionDraft.sessionId
-    const intervalId = window.setInterval(() => {
-      applyCaptureReadiness(sessionId)
-    }, CAPTURE_READINESS_RETRY_MS)
-
-    return () => {
-      window.clearInterval(intervalId)
+      if (stopFastPreviewListening) {
+        stopFastPreviewListening()
+      }
     }
   }, [
     sessionDraft.flowStep,

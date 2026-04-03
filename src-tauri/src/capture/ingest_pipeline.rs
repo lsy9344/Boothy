@@ -6,7 +6,10 @@ use std::{
 };
 
 use crate::{
-    capture::{sidecar_client::CompletedCaptureFastPreview, CAPTURE_PIPELINE_LOCK},
+    capture::{
+        sidecar_client::{CompletedCaptureFastPreview, FastPreviewReadyUpdate},
+        CAPTURE_PIPELINE_LOCK,
+    },
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     render::{
         is_valid_render_preview_asset, log_render_failure_in_dir, log_render_start_in_dir,
@@ -40,7 +43,14 @@ pub fn persist_capture_in_dir(
     fast_preview: Option<CompletedCaptureFastPreview>,
     acknowledged_at_ms: u64,
     persisted_at_ms: u64,
-) -> Result<(SessionManifest, SessionCaptureRecord), HostErrorEnvelope> {
+) -> Result<
+    (
+        SessionManifest,
+        SessionCaptureRecord,
+        Option<FastPreviewReadyUpdate>,
+    ),
+    HostErrorEnvelope,
+> {
     let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
     let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
@@ -61,22 +71,37 @@ pub fn persist_capture_in_dir(
         acknowledged_at_ms,
         persisted_at_ms,
     );
-    if let Some(promoted_fast_preview) = fast_preview.as_ref().and_then(|handoff| {
+    let promoted_fast_preview = fast_preview.as_ref().and_then(|handoff| {
         promote_fast_preview_asset(
             &paths,
             &capture.capture_id,
             &capture.raw.asset_path,
             handoff,
         )
-    }) {
-        capture.preview.asset_path = Some(promoted_fast_preview.asset_path);
+    });
+
+    if let Some(ref promoted_fast_preview) = promoted_fast_preview {
+        capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
         capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
-    } else if fast_preview.is_none() {
-        if let Some(seed_result) = seed_pending_preview_asset_path(&paths, &capture.capture_id) {
-            capture.preview.asset_path = Some(seed_result.asset_path);
-            capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
-        }
+    } else if let Some(seed_result) = seed_pending_preview_asset_path(&paths, &capture.capture_id) {
+        // If helper handoff metadata is missing or invalid but the same-capture
+        // preview file already exists on disk, keep the fast-path alive.
+        capture.preview.asset_path = Some(seed_result.asset_path);
+        capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
     }
+
+    let fast_preview_update =
+        promoted_fast_preview
+            .as_ref()
+            .map(|promoted| FastPreviewReadyUpdate {
+                request_id: capture.request_id.clone(),
+                capture_id: capture.capture_id.clone(),
+                asset_path: promoted.asset_path.clone(),
+                kind: fast_preview
+                    .as_ref()
+                    .and_then(|preview| preview.kind.clone()),
+                visible_at_ms: promoted.visible_at_ms.unwrap_or(persisted_at_ms),
+            });
 
     manifest.captures.push(capture.clone());
     manifest.updated_at = current_timestamp(SystemTime::now())?;
@@ -84,7 +109,7 @@ pub fn persist_capture_in_dir(
 
     write_session_manifest(&paths.manifest_path, &manifest)?;
 
-    Ok((manifest, capture))
+    Ok((manifest, capture, fast_preview_update))
 }
 
 pub fn complete_preview_render_in_dir(
@@ -572,11 +597,12 @@ fn validate_fast_preview_candidate(
         return Err("not-absolute");
     }
 
-    if !is_session_scoped_asset_path(paths, &candidate_path) {
+    let canonical_candidate_path = fs::canonicalize(&candidate_path).map_err(|_| "missing")?;
+    if !is_session_scoped_asset_path(paths, &canonical_candidate_path) {
         return Err("unscoped");
     }
 
-    let extension = candidate_path
+    let extension = canonical_candidate_path
         .extension()
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
@@ -588,21 +614,28 @@ fn validate_fast_preview_candidate(
         return Err("unsupported-extension");
     }
 
-    let stem = candidate_path
+    let stem = canonical_candidate_path
         .file_stem()
         .and_then(|value| value.to_str())
         .ok_or("missing-filename")?;
-    let normalized_candidate = normalize_path(&candidate_path);
-    let handoff_fast_preview_root = normalize_path(&paths.handoff_dir.join("fast-preview"))
-        .trim_end_matches('/')
-        .to_string();
-    let canonical_preview_root = normalize_path(&paths.renders_previews_dir)
-        .trim_end_matches('/')
-        .to_string();
-    let in_handoff_root =
-        normalized_candidate.starts_with(&(handoff_fast_preview_root.clone() + "/"));
-    let in_canonical_preview_root =
-        normalized_candidate.starts_with(&(canonical_preview_root.clone() + "/"));
+    let normalized_candidate = normalize_path(&canonical_candidate_path);
+    let handoff_fast_preview_root =
+        canonicalize_existing_root(&paths.handoff_dir.join("fast-preview"));
+    let canonical_preview_root = canonicalize_existing_root(&paths.renders_previews_dir);
+    let in_handoff_root = handoff_fast_preview_root
+        .as_deref()
+        .map(|root| {
+            normalized_candidate == root
+                || normalized_candidate.starts_with(&(root.to_string() + "/"))
+        })
+        .unwrap_or(false);
+    let in_canonical_preview_root = canonical_preview_root
+        .as_deref()
+        .map(|root| {
+            normalized_candidate == root
+                || normalized_candidate.starts_with(&(root.to_string() + "/"))
+        })
+        .unwrap_or(false);
 
     if !in_handoff_root && !in_canonical_preview_root {
         return Err("disallowed-directory");
@@ -620,14 +653,14 @@ fn validate_fast_preview_candidate(
         return Err("wrong-capture");
     }
 
-    let preview_metadata = fs::metadata(&candidate_path).map_err(|_| "missing")?;
+    let preview_metadata = fs::metadata(&canonical_candidate_path).map_err(|_| "missing")?;
     if !preview_metadata.is_file() {
         return Err("missing");
     }
     if preview_metadata.len() == 0 {
         return Err("empty");
     }
-    if !is_valid_render_preview_asset(&candidate_path) {
+    if !is_valid_render_preview_asset(&canonical_candidate_path) {
         return Err("invalid-raster");
     }
 
@@ -640,32 +673,17 @@ fn validate_fast_preview_candidate(
         }
     }
 
-    Ok(candidate_path)
+    Ok(canonical_candidate_path)
 }
 
 fn is_session_scoped_asset_path(paths: &SessionPaths, candidate_path: &Path) -> bool {
     let normalized_candidate = normalize_path(candidate_path);
-    let normalized_session_root = format!(
-        "{}/",
-        paths
-            .session_root
-            .to_string_lossy()
-            .replace('\\', "/")
-            .to_lowercase()
-    );
-
-    if normalized_candidate.starts_with("//") {
+    let Some(normalized_session_root) = canonicalize_existing_root(&paths.session_root) else {
         return false;
-    }
+    };
 
-    if normalized_candidate
-        .split('/')
-        .any(|segment| segment == "..")
-    {
-        return false;
-    }
-
-    normalized_candidate.starts_with(&normalized_session_root)
+    normalized_candidate == normalized_session_root
+        || normalized_candidate.starts_with(&(normalized_session_root + "/"))
 }
 
 fn log_fast_preview_event(
@@ -699,7 +717,17 @@ fn log_fast_preview_event(
 }
 
 fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/").to_lowercase()
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+        .trim_start_matches("//?/")
+        .to_string()
+}
+
+fn canonicalize_existing_root(path: &Path) -> Option<String> {
+    fs::canonicalize(path)
+        .ok()
+        .map(|resolved| normalize_path(&resolved).trim_end_matches('/').to_string())
 }
 
 fn build_fast_preview_backup_path(canonical_path: &Path, kind: Option<&str>) -> PathBuf {

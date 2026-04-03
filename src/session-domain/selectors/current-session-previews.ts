@@ -3,6 +3,7 @@ import { isSessionScopedAssetPath } from '../utils/session-scoped-asset-path'
 
 export type CurrentSessionPreview = {
   captureId: string
+  requestId: string
   assetPath: string
   activePresetId: string | null
   activePresetVersion: string
@@ -125,6 +126,7 @@ export function selectCurrentSessionPreviews(
     .toSorted(compareCurrentSessionCaptureRecency)
     .map((capture) => ({
       captureId: capture.captureId,
+      requestId: capture.requestId,
       assetPath: capture.preview.assetPath!,
       activePresetId: capture.activePresetId ?? null,
       activePresetVersion: capture.activePresetVersion,

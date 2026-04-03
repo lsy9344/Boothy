@@ -8,6 +8,9 @@ internal static class CanonHelperSchemas
     public const string CameraStatus = "canon-helper-status/v1";
     public const string CaptureRequest = "canon-helper-request-capture/v1";
     public const string CaptureAccepted = "canon-helper-capture-accepted/v1";
+    public const string FastPreviewReady = "canon-helper-fast-preview-ready/v1";
+    public const string FastThumbnailAttempted = "canon-helper-fast-thumbnail-attempted/v1";
+    public const string FastThumbnailFailed = "canon-helper-fast-thumbnail-failed/v1";
     public const string FileArrived = "canon-helper-file-arrived/v1";
     public const string RecoveryStatus = "canon-helper-recovery-status/v1";
     public const string HelperError = "canon-helper-error/v1";
@@ -52,6 +55,38 @@ internal sealed record CaptureAcceptedMessage(
     string SessionId,
     string RequestId,
     string? DetailCode
+);
+
+internal sealed record FastPreviewReadyMessage(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("type")] string Type,
+    string SessionId,
+    string RequestId,
+    string CaptureId,
+    string ObservedAt,
+    string FastPreviewPath,
+    string? FastPreviewKind
+);
+
+internal sealed record FastThumbnailAttemptedMessage(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("type")] string Type,
+    string SessionId,
+    string RequestId,
+    string CaptureId,
+    string ObservedAt,
+    string? FastPreviewKind
+);
+
+internal sealed record FastThumbnailFailedMessage(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("type")] string Type,
+    string SessionId,
+    string RequestId,
+    string CaptureId,
+    string ObservedAt,
+    string DetailCode,
+    string? FastPreviewKind
 );
 
 internal sealed record FileArrivedMessage(

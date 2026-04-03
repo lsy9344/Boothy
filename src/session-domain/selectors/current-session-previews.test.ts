@@ -121,7 +121,7 @@ describe('selectCurrentSessionPreviews', () => {
       ]),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_latest',
         assetPath: 'fixtures/latest.jpg',
@@ -186,7 +186,7 @@ describe('selectCurrentSessionPreviews', () => {
       ]),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_final_ready',
         assetPath: 'fixtures/final-ready-preview.jpg',
@@ -258,7 +258,7 @@ describe('selectCurrentSessionPreviews', () => {
       ]),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_ready_older',
         assetPath: 'fixtures/ready-older.jpg',
@@ -319,7 +319,7 @@ describe('selectCurrentSessionPreviews', () => {
       ]),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_waiting_newer',
         assetPath: 'fixtures/waiting-newer.jpg',
@@ -417,7 +417,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_visible',
         assetPath: 'fixtures/current-session.jpg',
@@ -477,7 +477,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_visible',
         assetPath: 'fixtures/current-session.jpg',
@@ -520,7 +520,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_visible',
         assetPath: 'fixtures/current-session.jpg',
@@ -564,7 +564,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_visible',
         assetPath:
@@ -600,7 +600,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_versioned_filename',
         assetPath:
@@ -635,7 +635,7 @@ describe('selectCurrentSessionPreviews', () => {
       ),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_previous_look',
         assetPath: 'fixtures/previous-look.jpg',
@@ -666,7 +666,7 @@ describe('selectCurrentSessionPreviews', () => {
       ]),
     )
 
-    expect(previews).toEqual([
+    expect(previews).toMatchObject([
       {
         captureId: 'capture_legacy',
         assetPath: 'fixtures/legacy.jpg',

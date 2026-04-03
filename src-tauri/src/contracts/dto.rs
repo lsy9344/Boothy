@@ -1167,6 +1167,8 @@ pub struct CaptureReadinessInputDto {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureRequestInputDto {
     pub session_id: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1529,6 +1531,40 @@ impl CaptureReadinessUpdateDto {
             schema_version: "capture-readiness-update/v1".into(),
             session_id: session_id.into(),
             readiness,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureFastPreviewUpdateDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub asset_path: String,
+    pub visible_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+impl CaptureFastPreviewUpdateDto {
+    pub fn new(
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        capture_id: impl Into<String>,
+        asset_path: impl Into<String>,
+        visible_at_ms: u64,
+        kind: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: "capture-fast-preview-update/v1".into(),
+            session_id: session_id.into(),
+            request_id: request_id.into(),
+            capture_id: capture_id.into(),
+            asset_path: asset_path.into(),
+            visible_at_ms,
+            kind,
         }
     }
 }

@@ -1,5 +1,6 @@
 import type {
   ActivePresetBinding,
+  CaptureFastPreviewUpdate,
   CaptureReadinessSnapshot,
   PublishedPresetSummary,
   SessionManifest,
@@ -18,6 +19,7 @@ export type SessionDraft = {
   presetCatalog: PublishedPresetSummary[]
   presetCatalogState: PresetCatalogState
   captureReadiness: CaptureReadinessSnapshot | null
+  pendingFastPreview: CaptureFastPreviewUpdate | null
   manifest: SessionManifest | null
 }
 
@@ -30,5 +32,6 @@ export const DEFAULT_SESSION_DRAFT: SessionDraft = {
   presetCatalog: [],
   presetCatalogState: 'idle',
   captureReadiness: null,
+  pendingFastPreview: null,
   manifest: null,
 }

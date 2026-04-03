@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event'
 import {
   captureDeleteInputSchema,
   captureDeleteResultSchema,
+  captureFastPreviewUpdateEvent,
+  captureFastPreviewUpdateSchema,
   captureReadinessUpdateEvent,
   captureReadinessInputSchema,
   captureReadinessSnapshotSchema,
@@ -13,6 +15,7 @@ import {
   hostErrorEnvelopeSchema,
   type CaptureDeleteInput,
   type CaptureDeleteResult,
+  type CaptureFastPreviewUpdate,
   type CaptureReadinessInput,
   type CaptureReadinessSnapshot,
   type CaptureRequestInput,
@@ -24,6 +27,15 @@ import { logCaptureClientState } from '../../shared/runtime/log-capture-client-s
 
 export const CAPTURE_READINESS_POLL_MS = 300
 const BROWSER_SESSION_FIXTURE_ID = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+let captureRequestCounter = 0
+
+export function generateCaptureRequestId() {
+  captureRequestCounter = (captureRequestCounter + 1) & 0xffff
+  const value =
+    (BigInt(Date.now()) * 1000n) ^ (BigInt(captureRequestCounter) << 16n)
+
+  return `request_${value.toString(16).padStart(26, '0')}`
+}
 
 function logCaptureRuntimeDebug(
   label: string,
@@ -64,6 +76,9 @@ export interface CaptureRuntimeGateway {
   subscribeToCaptureReadiness(
     onEvent: (payload: unknown) => void,
   ): Promise<() => void>
+  subscribeToCaptureFastPreview?(
+    onEvent: (payload: unknown) => void,
+  ): Promise<() => void>
 }
 
 export interface CaptureRuntimeService {
@@ -75,6 +90,10 @@ export interface CaptureRuntimeService {
   subscribeToCaptureReadiness(input: {
     sessionId: string
     onReadiness(readiness: CaptureReadinessSnapshot): void
+  }): Promise<() => void>
+  subscribeToCaptureFastPreview?(input: {
+    sessionId: string
+    onFastPreview(update: CaptureFastPreviewUpdate): void
   }): Promise<() => void>
 }
 
@@ -295,20 +314,32 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
   async requestCapture(input: CaptureRequestInput) {
     const parsedInput = captureRequestInputSchema.parse(input)
+    const requestId = parsedInput.requestId ?? generateCaptureRequestId()
+    const requestInput = {
+      ...parsedInput,
+      requestId,
+    }
+
+    logCaptureRuntimeDebug('button-pressed', {
+      sessionId: requestInput.sessionId,
+      mode: getCaptureRuntimeMode(),
+      message: `requestId=${requestId}`,
+    })
+
     const parsedResponse = await (async () => {
       try {
-        const response = await this.gateway.requestCapture(parsedInput)
+        const response = await this.gateway.requestCapture(requestInput)
 
         return captureRequestResultSchema.parse(response)
       } catch (error) {
-        throw normalizeHostError(error, parsedInput.sessionId, 'request-capture')
+        throw normalizeHostError(error, requestInput.sessionId, 'request-capture')
       }
     })()
 
     if (
-      parsedResponse.sessionId !== parsedInput.sessionId ||
-      parsedResponse.capture.sessionId !== parsedInput.sessionId ||
-      parsedResponse.readiness.sessionId !== parsedInput.sessionId
+      parsedResponse.sessionId !== requestInput.sessionId ||
+      parsedResponse.capture.sessionId !== requestInput.sessionId ||
+      parsedResponse.readiness.sessionId !== requestInput.sessionId
     ) {
       throw buildSessionMismatchHostError()
     }
@@ -398,6 +429,28 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 
       unlisten()
     }
+  }
+
+  async subscribeToCaptureFastPreview(input: {
+    sessionId: string
+    onFastPreview(update: CaptureFastPreviewUpdate): void
+  }) {
+    const subscribeToCaptureFastPreview = this.gateway.subscribeToCaptureFastPreview
+
+    if (subscribeToCaptureFastPreview === undefined) {
+      return () => undefined
+    }
+
+    return subscribeToCaptureFastPreview((payload) => {
+      const parsedPayload = captureFastPreviewUpdateSchema.safeParse(payload)
+
+      if (
+        parsedPayload.success &&
+        parsedPayload.data.sessionId === input.sessionId
+      ) {
+        input.onFastPreview(parsedPayload.data)
+      }
+    })
   }
 }
 
@@ -610,6 +663,9 @@ export function createBrowserCaptureRuntimeGateway(): CaptureRuntimeGateway {
     async subscribeToCaptureReadiness() {
       return () => undefined
     },
+    async subscribeToCaptureFastPreview() {
+      return () => undefined
+    },
   }
 }
 
@@ -627,6 +683,15 @@ export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
     async subscribeToCaptureReadiness(onEvent) {
       try {
         return await listen(captureReadinessUpdateEvent, (event) => {
+          onEvent(event.payload)
+        })
+      } catch {
+        return () => undefined
+      }
+    },
+    async subscribeToCaptureFastPreview(onEvent) {
+      try {
+        return await listen(captureFastPreviewUpdateEvent, (event) => {
           onEvent(event.payload)
         })
       } catch {
@@ -685,6 +750,10 @@ export function createDefaultCaptureRuntimeGateway(): CaptureRuntimeGateway {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
       logCaptureRuntimeDebug('gateway-request-capture', {
         sessionId: input.sessionId,
+        message:
+          typeof input.requestId === 'string'
+            ? `requestId=${input.requestId}`
+            : undefined,
         mode,
       })
       return gateway.requestCapture(input)
@@ -695,6 +764,18 @@ export function createDefaultCaptureRuntimeGateway(): CaptureRuntimeGateway {
         mode,
       })
       return gateway.subscribeToCaptureReadiness(onEvent)
+    },
+    async subscribeToCaptureFastPreview(onEvent: (payload: unknown) => void) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-subscribe-fast-preview', {
+        mode,
+      })
+
+      if (gateway.subscribeToCaptureFastPreview === undefined) {
+        return () => undefined
+      }
+
+      return gateway.subscribeToCaptureFastPreview(onEvent)
     },
   }
 }

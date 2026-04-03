@@ -15,8 +15,17 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
   - pending fast preview가 보여도 booth state가 계속 truthful `Preview Waiting`으로 남는다는 증거
   - later XMP preview가 같은 canonical path를 교체하고 그때만 `previewReady`가 올라간다는 증거
   - burst capture와 cross-session 상황에서도 잘못된 이미지가 섞이지 않는다는 증거
-- Current hardware gate: `Not run`
+- Current hardware gate: `No-Go`
 - Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview, later XMP replacement, timing split, cross-session isolation을 한 패키지로 묶어야 한다.
+- Latest observed booth behavior (2026-04-03, user field observation):
+  - `사진 찍기` 직후 booth state는 바로 `Preview Waiting`으로 진입했다.
+  - `최근 세션`에는 촬영 직후 약 1초 안팎에 아무 pending fast preview도 보이지 않았다.
+  - 약 `3.3초 ~ 3.4초` 뒤 preset-applied preview 1장만 `최근 세션`에 나타났고, 먼저 보인 same-slot pending preview가 later XMP preview로 교체되는 흐름은 관찰되지 않았다.
+  - 직접 점검한 최신 실장비 세션 `session_000000000018a2aa911a1263d8`의 `camera-helper-events.jsonl`에서는 첫 capture `capture_20260402222550109_2db8dc1859` 기준 `file-arrived`가 `2026-04-02T22:25:50.7081291+00:00`, `fast-thumbnail-attempted`가 `2026-04-02T22:25:50.9757227+00:00`, `fast-thumbnail-failed`가 `2026-04-02T22:25:51.0186748+00:00`으로 기록됐다.
+  - 같은 세션의 helper `file-arrived` 이벤트에는 `fastPreviewPath: null`만 남았고, `fast-preview-ready` 이벤트는 관찰되지 않았다. 즉 RAW 저장 완료 경계는 이미 fast preview 시도와 분리됐지만, helper가 camera thumbnail 실패 뒤 customer-visible fast preview를 만들지 못했다.
+  - 같은 세션의 `timing-events.log`에는 `fast-preview-promoted`가 없었고, 첫 capture `preview-render-ready`만 `2026-04-02T22:25:54Z`, 두 번째 capture `preview-render-ready`만 `2026-04-02T22:26:02Z`에 기록됐다.
+  - 같은 세션의 `session.json`에는 각 capture의 `timing.fastPreviewVisibleAtMs`가 비어 있었고 `timing.xmpPreviewReadyAtMs`만 각각 `1775168754531`, `1775168762126`으로 채워져 있었다.
+  - 따라서 이번 실장비 증거는 "저장 완료 경계 분리"는 확인했지만 Story 1.9의 핵심 목표인 blank waiting 완화와 same-slot replacement는 아직 미달이며, 남은 병목은 host/UI 이전 helper fast preview 생성 경로다. 하드웨어 판정은 계속 `No-Go`다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -73,6 +82,17 @@ booth customer로서,
 - [x] [Review][Patch] Existing canonical preview can be deleted before replacement is safely promoted [src-tauri/src/render/mod.rs:315]
 - [x] [Review][Patch] Fast preview allowed-path validation trusts any session-scoped JPEG instead of a narrow handoff path [src-tauri/src/capture/ingest_pipeline.rs:547]
 - [x] [Review][Patch] Preview repair sync can replace canonical `captureId.jpg` with newer suffixed siblings and break same-path truth [src-tauri/src/capture/normalized_state.rs:1150]
+- [x] [Review][Patch] Invalid `fast-preview-ready` events still fail the whole capture round trip instead of being discarded [src-tauri/src/capture/sidecar_client.rs:381]
+- [x] [Review][Patch] Fast preview update is emitted before capture success and canonical promotion [src-tauri/src/capture/sidecar_client.rs:381]
+- [x] [Review][Patch] Fast preview path validation can be bypassed with non-canonical absolute paths or symlinks [src-tauri/src/capture/sidecar_client.rs:628]
+- [x] [Review][Patch] Caller-controlled `requestId` is accepted without duplicate safety [src-tauri/src/capture/normalized_state.rs:110]
+- [x] [Review][Patch] Thumbnail extraction now sits on the RAW save critical path [sidecar/canon-helper/src/CanonHelper/Runtime/CanonSdkCamera.cs:721]
+- [x] [Review][Patch] Diagnostic-only thumbnail telemetry can still fail the capture round trip [src-tauri/src/capture/sidecar_client.rs:426]
+- [x] [Review][Patch] Preview render starts immediately instead of preserving the approved `120ms` separation [src-tauri/src/commands/capture_commands.rs:138]
+- [x] [Review][Patch] Same-session delayed fast preview can overwrite the latest photo slot even when it belongs to a deleted or older capture [src/session-domain/state/session-provider.tsx:1539]
+- [x] [Review][Patch] Pending fast preview is cleared before manifest-owned preview becomes visible, reopening the blank waiting gap this story is meant to close [src/session-domain/state/session-provider.tsx:850]
+- [x] [Review][Patch] Helper thumbnail extraction still blocks `file-arrived` completion, so fast-preview diagnostics remain on the RAW save critical path [sidecar/canon-helper/src/CanonHelper/Runtime/CanonSdkCamera.cs:777]
+- [x] [Review][Patch] Pending fast preview inherits the current active preset label, so switching looks during `Preview Waiting` can mislabel the just-shot image with the wrong look [src/booth-shell/screens/CaptureScreen.tsx:167]
 
 ## Dev Notes
 
@@ -234,6 +254,15 @@ GPT-5 Codex
 - 2026-04-02 10:44:31 +09:00 - helper `file-arrived` optional fast preview handoff, host validate/promote seam, same-path render replacement, split timing/logging 경계를 구현했다.
 - 2026-04-02 11:05:22 +09:00 - `cargo fmt`, `dotnet test`, `pnpm lint`, `pnpm test:run`, `cargo test --manifest-path src-tauri/Cargo.toml`를 다시 실행해 자동화 proof를 복구했다.
 - 2026-04-02 11:28:56 +09:00 - code review patch 3건을 반영해 canonical preview 교체 실패 시 복구, fast preview allowed-path 축소, preview repair canonical path 고정을 다시 검증했다.
+- 2026-04-02 16:06:16 +09:00 - recent-session thumbnail speed brief 후속으로 client `button-pressed`/`requestId` correlation, helper `fast-thumbnail-attempted`/`fast-thumbnail-failed`, pending recent-session visible `requestId` join, Rust/UI/helper targeted validation을 추가했다.
+- 2026-04-03 00:54:00 +09:00 - follow-up code review patch 6건을 반영해 fast preview emit 경계를 capture save 이후 canonical promotion으로 재고정하고, canonical path 검증/duplicate `requestId` 방어/diagnostic telemetry 격리/thumbnail ordering/`120ms` render separation 회귀를 targeted Rust/.NET 검증으로 다시 잠갔다.
+- 2026-04-03 05:28:41 +09:00 - frontend/session-state 청크 code review를 이어서 수행해 delayed same-session fast preview 최신 슬롯 오염과 pending fast preview 조기 해제에 따른 blank waiting 회귀 2건을 분리 확인했다.
+- 2026-04-03 05:35:14 +09:00 - frontend/session-state patch 2건을 반영해 fast preview를 현재 in-flight/request-correlated capture에만 허용하고, host preview asset이 실제로 붙을 때까지 pending fast preview를 유지하도록 보정한 뒤 targeted Vitest와 ESLint를 재통과했다.
+- 2026-04-03 05:44:47 +09:00 - tests/docs/generated 청크를 추가 점검해 helper schema/DTO/test 보강과 생성물 노이즈를 분리 확인했고, 새로운 제품 회귀 finding은 없다고 정리했다.
+- 2026-04-03 06:48:40 +09:00 - 사용자 실장비 관찰을 반영해 Story 1.9 hardware gate를 `No-Go`로 갱신했다. 관찰 결과 `Preview Waiting`은 즉시 진입했지만 약 1초 안팎 first-visible fast preview와 same-slot replacement는 보이지 않았고, 첫 촬영/연속 촬영/5분 유휴 후 재촬영 모두 약 5초 뒤 preset-applied preview 1장만 나타났다.
+- 2026-04-03 06:58:03 +09:00 - 최신 실장비 세션 `session_000000000018a2a7d557983b38`, `session_000000000018a2a8507e3f366c`를 직접 점검해 helper가 매번 `fast-thumbnail-attempted` 후 `fast-thumbnail-download-failed`로 종료되고, `fast-preview-ready`, host `fast-preview-promoted`, `timing.fastPreviewVisibleAtMs`가 모두 비어 있음을 확인했다. 현재 고객 화면에는 helper fast preview가 아니라 render-backed preset-applied preview만 도달한다.
+- 2026-04-03 08:17:41 +09:00 - 최신 재현 세션 `session_000000000018a2aa911a1263d8`를 다시 점검해 `file-arrived`가 fast thumbnail 시도보다 먼저 기록되는 것을 확인했다. 저장 완료 경계 분리는 이미 적용되어 있었고, 남은 현상은 `fast-thumbnail-download-failed` 뒤 RAW 기반 fast preview fallback이 customer-visible 자산으로 이어지지 않는 점이었다.
+- 2026-04-03 08:26:54 +09:00 - helper fast preview 경로를 보강해 camera thumbnail 실패 뒤에도 Windows shell thumbnail -> EDSDK RAW preview 순서로 canonical preview를 다시 만들도록 정리했고, fallback까지 실패하면 로그가 `fast-preview-fallback-failed`로 남도록 구분했다. host readiness sync는 late canonical preview를 계속 흡수하므로 다음 실장비 재검증에서는 first-visible pending preview 재출현 여부를 바로 판별할 수 있다.
 
 ### Completion Notes List
 
@@ -243,6 +272,11 @@ GPT-5 Codex
 - Rust integration, frontend contract/UI regression, helper test, lint/full Vitest/full Cargo validation은 통과했다.
 - approved booth hardware evidence와 burst queue canonical proof는 아직 없으므로 Story 1.9 상태는 `review`로 유지한다.
 - code review에서 나온 3개 patch finding을 모두 수정했고, 기존 canonical preview 보존/allowed-path 축소/canonical same-path 유지 회귀를 테스트로 잠갔다.
+- capture 요청 시작점을 frontend가 생성한 `requestId`로 고정하고 `button-pressed`와 `recent-session-pending-visible`을 같은 상관키로 잇도록 정리했다.
+- helper는 `fast-thumbnail-ready`뿐 아니라 `fast-thumbnail-attempted`와 `fast-thumbnail-failed`도 남기고, host는 이 진단 이벤트를 받아도 capture success를 깨지 않도록 유지했다.
+- 이번 follow-up 변경 후 `pnpm vitest run ...`, `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness --test operator_audit --test operator_recovery`, `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`를 재통과했다.
+- 최신 실장비 세션 `session_000000000018a2aa911a1263d8` 증거로 `file-arrived -> fast-thumbnail-attempted -> fast-thumbnail-failed -> preview-render-ready` 순서를 확인했고, 남은 원인을 helper fast preview 생성 실패로 좁혔다.
+- helper는 이제 camera thumbnail이 실패해도 RAW 파일에서 fast preview를 다시 만들도록 시도하고, fallback까지 실패하면 `fast-preview-fallback-failed`로 남겨 다음 하드웨어 검증에서 root cause를 더 빠르게 구분할 수 있게 했다.
 
 ### File List
 
@@ -254,15 +288,25 @@ GPT-5 Codex
 - src-tauri/src/capture/sidecar_client.rs
 - src-tauri/src/capture/ingest_pipeline.rs
 - src-tauri/src/capture/normalized_state.rs
+- src-tauri/src/contracts/dto.rs
 - src-tauri/src/diagnostics/recovery.rs
 - src-tauri/src/render/mod.rs
 - src-tauri/src/session/session_manifest.rs
+- src-tauri/tests/capture_readiness.rs
+- src-tauri/tests/operator_audit.rs
+- src-tauri/tests/operator_recovery.rs
+- src/capture-adapter/services/capture-runtime.ts
+- src/capture-adapter/services/capture-runtime.test.ts
+- src/booth-shell/components/LatestPhotoRail.tsx
+- src/booth-shell/components/SessionPreviewImage.test.tsx
+- src/booth-shell/components/SessionPreviewImage.tsx
+- src/booth-shell/screens/CaptureScreen.tsx
+- src/session-domain/selectors/current-session-previews.test.ts
+- src/session-domain/selectors/current-session-previews.ts
+- src/shared-contracts/schemas/capture-readiness.ts
 - src-tauri/tests/operator_diagnostics.rs
 - src/shared-contracts/contracts.test.ts
 - src/shared-contracts/schemas/session-capture.ts
-- src/session-domain/selectors/current-session-previews.ts
-- src/booth-shell/components/SessionPreviewImage.tsx
-- src-tauri/tests/capture_readiness.rs
 - docs/contracts/camera-helper-sidecar-protocol.md
 - docs/contracts/session-manifest.md
 - docs/contracts/render-worker.md
@@ -272,3 +316,6 @@ GPT-5 Codex
 - 2026-04-02 10:38:12 +09:00 - Story 1.9 ready-for-dev 문서 생성: fast preview handoff, canonical preview promotion, same-path XMP replacement, split telemetry, hardware validation guardrail을 구현 기준으로 정리
 - 2026-04-02 11:05:22 +09:00 - Story 1.9 구현 완료: helper optional fast preview handoff, host validate/promote, same-path XMP replacement, split timing/diagnostics, frontend contract regression을 연결하고 lint/Vitest/Cargo/.NET 자동화 검증을 재통과시킴. hardware evidence와 burst queue canonical proof는 미수집 상태라 `review` 유지
 - 2026-04-02 11:28:56 +09:00 - Story 1.9 code review patch 적용: canonical preview 교체 실패 시 기존 자산 복구, fast preview 허용 경로를 designated handoff/canonical path로 축소, preview repair가 suffixed sibling으로 canonical path를 갈아끼우지 않도록 고정. lint/Vitest/Cargo 전체 검증 재통과
+- 2026-04-02 16:06:16 +09:00 - recent-session thumbnail speed brief 후속 반영: client-generated `requestId`와 `button-pressed` correlation, helper `fast-thumbnail-attempted`/`fast-thumbnail-failed`, pending recent-session visible `requestId` join, 관련 Rust/UI/helper 회귀 테스트를 추가하고 targeted 검증을 재통과시킴
+- 2026-04-03 00:54:00 +09:00 - Story 1.9 follow-up review patch 적용: fast preview customer-visible update를 capture success 이후 canonical preview path로 제한하고, canonicalized path 검증/duplicate `requestId` 거부/diagnostic telemetry 무해화/thumbnail RAW ordering 복구/`120ms` preview render separation을 수정했다. `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness --test operator_audit --test operator_recovery`와 `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj` 재통과, hardware evidence 미수집으로 상태는 계속 `review`
+- 2026-04-03 08:26:54 +09:00 - 실장비 재현 세션 `session_000000000018a2aa911a1263d8` 로그/데이터를 스토리 증거에 추가했다. `file-arrived`는 fast preview 시도보다 먼저 닫혔지만 customer-visible fast preview는 여전히 비어 있었고, 원인을 helper camera thumbnail 실패 뒤 RAW fallback 부재로 확정했다. helper는 이제 Windows shell thumbnail -> EDSDK RAW preview fallback을 시도하고, 실패 시 `fast-preview-fallback-failed`로 남기도록 보강했다. 자동화 검증은 다시 통과했지만 hardware gate는 재실행 전까지 계속 `No-Go`다.

@@ -107,4 +107,80 @@ describe('SessionPreviewImage', () => {
       )
     })
   })
+
+  it('uses the provided visibility label base for recent-session telemetry', async () => {
+    render(
+      <SessionPreviewImage
+        assetPath="C:/boothy/sessions/session_01/renders/previews/capture.jpg"
+        alt="현재 세션 최신 사진"
+        captureId="capture_01"
+        requestId="request_recent_01"
+        readyAtMs={null}
+        isLatest
+        visibilityLabelBase="recent-session"
+      />,
+    )
+
+    screen.getByAltText('현재 세션 최신 사진').dispatchEvent(new Event('load'))
+
+    await waitFor(() => {
+        expect(logCaptureClientState).toHaveBeenCalledWith(
+          expect.objectContaining({
+            label: 'recent-session-pending-visible',
+            sessionId: 'session_01',
+            message: expect.stringContaining('requestId=request_recent_01'),
+          }),
+        )
+      })
+  })
+
+  it('uses the recent-session visibility label base when the rail tracks thumbnail visibility', async () => {
+    render(
+      <SessionPreviewImage
+        assetPath="C:/boothy/sessions/session_01/renders/previews/capture.jpg"
+        alt="현재 세션 최신 사진"
+        captureId="capture_01"
+        readyAtMs={null}
+        isLatest
+        visibilityLabelBase="recent-session"
+      />,
+    )
+
+    screen.getByAltText('현재 세션 최신 사진').dispatchEvent(new Event('load'))
+
+    await waitFor(() => {
+      expect(logCaptureClientState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          label: 'recent-session-pending-visible',
+          sessionId: 'session_01',
+        }),
+      )
+    })
+  })
+
+  it('prioritizes loading when the rail marks a thumbnail as urgent', () => {
+    render(
+      <SessionPreviewImage
+        assetPath="C:/boothy/sessions/session_01/renders/previews/capture.jpg"
+        alt="현재 세션 최신 사진"
+        captureId="capture_01"
+        readyAtMs={null}
+        isLatest
+        prioritizeLoading
+      />,
+    )
+
+    expect(screen.getByAltText('현재 세션 최신 사진')).toHaveAttribute(
+      'loading',
+      'eager',
+    )
+    expect(screen.getByAltText('현재 세션 최신 사진')).toHaveAttribute(
+      'decoding',
+      'sync',
+    )
+    expect(screen.getByAltText('현재 세션 최신 사진')).toHaveAttribute(
+      'fetchpriority',
+      'high',
+    )
+  })
 })

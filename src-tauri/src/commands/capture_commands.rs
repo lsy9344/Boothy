@@ -7,18 +7,20 @@ use crate::{
         helper_supervisor::try_ensure_helper_running,
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
-            delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
+            delete_capture_in_dir, get_capture_readiness_in_dir,
+            request_capture_in_dir_with_fast_preview,
         },
     },
     contracts::dto::{
-        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureReadinessDto,
-        CaptureReadinessInputDto, CaptureReadinessUpdateDto, CaptureRequestInputDto,
-        CaptureRequestResultDto, HostErrorEnvelope,
+        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureFastPreviewUpdateDto,
+        CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
+        CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
     },
     session::session_repository::resolve_app_session_base_dir,
 };
 
 const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
+const CAPTURE_FAST_PREVIEW_UPDATE_EVENT: &str = "capture-fast-preview-update";
 
 #[tauri::command]
 pub fn get_capture_readiness(
@@ -93,7 +95,21 @@ pub fn request_capture(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     try_ensure_helper_running(&base_dir, &input.session_id);
     let session_id = input.session_id.clone();
-    let result = match request_capture_in_dir(&base_dir, input) {
+    let preview_session_id = session_id.clone();
+    let preview_app = app.clone();
+    let result = match request_capture_in_dir_with_fast_preview(&base_dir, input, move |update| {
+        let _ = preview_app.emit(
+            CAPTURE_FAST_PREVIEW_UPDATE_EVENT,
+            CaptureFastPreviewUpdateDto::new(
+                preview_session_id.clone(),
+                update.request_id,
+                update.capture_id,
+                update.asset_path,
+                update.visible_at_ms,
+                update.kind,
+            ),
+        );
+    }) {
         Ok(result) => {
             log::info!(
                 "capture_request_saved session={} capture_id={} request_id={} readiness={}",

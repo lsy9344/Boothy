@@ -650,6 +650,7 @@ fn request_capture_with_helper_success(
         base_dir,
         boothy_lib::contracts::dto::CaptureRequestInputDto {
             session_id: session_id.into(),
+            request_id: None,
         },
     )
     .expect("capture should save");

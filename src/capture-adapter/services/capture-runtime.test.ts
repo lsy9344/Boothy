@@ -78,6 +78,13 @@ describe('capture runtime adapter', () => {
       }
 
       if (cmd === 'request_capture') {
+        expect(payload).toMatchObject({
+          input: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            requestId: expect.stringMatching(/^request_[0-9a-f]+$/),
+          },
+        })
+
         return {
           schemaVersion: 'capture-request-result/v1',
           sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -184,6 +191,59 @@ describe('capture runtime adapter', () => {
       status: 'capture-deleted',
       manifest: {
         captures: [],
+      },
+    })
+  })
+
+  it('preserves a caller-supplied capture request id when invoking tauri IPC', async () => {
+    mockIPC((cmd, payload) => {
+      if (cmd === 'request_capture') {
+        expect(payload).toEqual({
+          input: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            requestId: 'request_client_supplied',
+          },
+        })
+
+        return {
+          schemaVersion: 'capture-request-result/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          status: 'capture-saved',
+          capture: createCaptureRecord({
+            requestId: 'request_client_supplied',
+          }),
+          readiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'captureSaved',
+            customerState: 'Preview Waiting',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '사진이 안전하게 저장되었어요.',
+            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+            reasonCode: 'preview-waiting',
+            latestCapture: createCaptureRecord({
+              requestId: 'request_client_supplied',
+            }),
+          },
+        }
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.requestCapture({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        requestId: 'request_client_supplied',
+      }),
+    ).resolves.toMatchObject({
+      capture: {
+        requestId: 'request_client_supplied',
       },
     })
   })
@@ -727,6 +787,116 @@ describe('capture runtime adapter', () => {
       expect.objectContaining({
         primaryAction: 'start-session',
         customerState: 'Preparing',
+      }),
+    )
+
+    unlisten()
+  })
+
+  it('filters fast-preview updates by session before notifying the consumer', async () => {
+    let emitFastPreview: ((payload: unknown) => void) | null = null
+
+    const gateway: CaptureRuntimeGateway = {
+      getCaptureReadiness: vi.fn(),
+      requestCapture: vi.fn(),
+      subscribeToCaptureReadiness: vi.fn().mockResolvedValue(() => undefined),
+      subscribeToCaptureFastPreview: vi.fn().mockImplementation(async (onEvent) => {
+        emitFastPreview = onEvent
+        return () => {
+          emitFastPreview = null
+        }
+      }),
+    }
+    const service = createCaptureRuntimeService({
+      gateway,
+    })
+    const onFastPreview = vi.fn()
+
+    const unlisten = await service.subscribeToCaptureFastPreview!({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      onFastPreview,
+    })
+
+    emitFastPreview?.({
+      schemaVersion: 'capture-fast-preview-update/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+      requestId: 'request_foreign',
+      captureId: 'capture_foreign',
+      assetPath:
+        'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1n/renders/previews/capture_foreign.jpg',
+      visibleAtMs: 320,
+      kind: 'camera-thumbnail',
+    })
+    emitFastPreview?.({
+      schemaVersion: 'capture-fast-preview-update/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      requestId: 'request_local',
+      captureId: 'capture_local',
+      assetPath:
+        'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_local.jpg',
+      visibleAtMs: 360,
+      kind: 'camera-thumbnail',
+    })
+
+    expect(onFastPreview).toHaveBeenCalledTimes(1)
+    expect(onFastPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        captureId: 'capture_local',
+        requestId: 'request_local',
+      }),
+    )
+
+    unlisten()
+  })
+
+  it('forwards fast preview updates only for the active session subscription', async () => {
+    let emitFastPreview: ((payload: unknown) => void) | null = null
+    const onFastPreview = vi.fn()
+
+    const service = createCaptureRuntimeService({
+      gateway: {
+        getCaptureReadiness: vi.fn(),
+        requestCapture: vi.fn(),
+        subscribeToCaptureReadiness: vi.fn(async () => () => undefined),
+        subscribeToCaptureFastPreview: vi.fn(async (onEvent) => {
+          emitFastPreview = onEvent
+          return () => {
+            emitFastPreview = null
+          }
+        }),
+      },
+    })
+
+    const unlisten = await service.subscribeToCaptureFastPreview!({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      onFastPreview,
+    })
+
+    emitFastPreview?.({
+      schemaVersion: 'capture-fast-preview-update/v1',
+      sessionId: 'session_other',
+      requestId: 'request_other',
+      captureId: 'capture_other',
+      assetPath: 'C:/boothy/sessions/session_other/renders/previews/capture.jpg',
+      visibleAtMs: 120,
+      kind: 'camera-thumbnail',
+    })
+    emitFastPreview?.({
+      schemaVersion: 'capture-fast-preview-update/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      assetPath:
+        'C:/boothy/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_01hs6n1r8b8zc5v4ey2x7b9g1m.jpg',
+      visibleAtMs: 140,
+      kind: 'camera-thumbnail',
+    })
+
+    expect(onFastPreview).toHaveBeenCalledTimes(1)
+    expect(onFastPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        kind: 'camera-thumbnail',
       }),
     )
 

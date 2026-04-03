@@ -288,6 +288,51 @@ describe('CaptureScreen', () => {
     })
   })
 
+  it('keeps capture enabled during readiness refreshes when capture is otherwise allowed', async () => {
+    const user = userEvent.setup()
+    const value = renderCaptureScreen({
+      isLoadingCaptureReadiness: true,
+    })
+
+    const button = await screen.findByRole('button', { name: /사진 찍기/i })
+
+    expect(button).toBeEnabled()
+
+    await user.click(button)
+
+    expect(value.requestCapture).toHaveBeenCalledWith({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+    })
+  })
+
+  it('shows a pending fast thumbnail as the latest recent-session photo before the manifest capture arrives', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        pendingFastPreview: {
+          schemaVersion: 'capture-fast-preview-update/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          captureId: 'capture_pending_fast',
+          assetPath:
+            'C:/boothy/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_pending_fast.jpg',
+          visibleAtMs: 150,
+          kind: 'camera-thumbnail',
+        },
+      },
+    )
+
+    expect(
+      await screen.findByAltText('현재 세션 최신 사진, 1번째, Soft Glow 룩'),
+    ).toHaveAttribute(
+      'src',
+      expect.stringContaining('capture_pending_fast.jpg'),
+    )
+    expect(
+      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+    ).toBeInTheDocument()
+  })
+
   it('shows a camera status card that explains browser preview cannot verify a real camera connection', async () => {
     renderCaptureScreen()
 
@@ -1391,6 +1436,223 @@ describe('CaptureScreen', () => {
       }),
     ).not.toBeInTheDocument()
     expect(screen.queryByText('최신 사진')).not.toBeInTheDocument()
+  })
+
+  it('shows a same-capture fast thumbnail in the latest slot before the manifest preview is ready', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'captureSaved',
+          customerState: 'Preview Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '사진이 안전하게 저장되었어요.',
+          supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+          reasonCode: 'preview-waiting',
+          latestCapture: createCaptureRecord({
+            captureId: 'capture_fast_pending',
+            preview: {
+              assetPath: null,
+              enqueuedAtMs: 220,
+              readyAtMs: null,
+            },
+          }),
+        },
+        pendingFastPreview: {
+          schemaVersion: 'capture-fast-preview-update/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          requestId: 'request_fast_pending',
+          captureId: 'capture_fast_pending',
+          assetPath:
+            'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_fast_pending.jpg',
+          visibleAtMs: 250,
+          kind: 'camera-thumbnail',
+        },
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'preview-waiting',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetDisplayName: 'Soft Glow',
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_fast_pending',
+              raw: {
+                assetPath: 'fixtures/fast-pending-raw.jpg',
+                persistedAtMs: 220,
+              },
+              preview: {
+                assetPath: null,
+                enqueuedAtMs: 220,
+                readyAtMs: null,
+              },
+              timing: {
+                captureAcknowledgedAtMs: 220,
+                previewVisibleAtMs: null,
+                captureBudgetMs: 1000,
+                previewBudgetMs: 5000,
+                previewBudgetState: 'pending',
+              },
+              renderStatus: 'previewWaiting',
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('img', {
+        name: /현재 세션 최신 사진,\s*1번째,\s*soft glow 룩/i,
+      }),
+    ).toHaveAttribute(
+      'src',
+      'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_fast_pending.jpg',
+    )
+    expect(screen.getByText('최신 사진')).toBeInTheDocument()
+    expect(
+      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('labels a pending fast thumbnail with the capture-bound look even after the active look changes', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        selectedPreset: {
+          presetId: 'preset_mono-pop',
+          publishedVersion: '2026.03.21',
+        },
+        presetCatalog: [
+          {
+            presetId: 'preset_soft-glow',
+            displayName: 'Soft Glow',
+            publishedVersion: '2026.03.20',
+            boothStatus: 'booth-safe',
+            preview: {
+              kind: 'preview-tile',
+              assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
+              altText: 'Soft Glow preview',
+            },
+          },
+          {
+            presetId: 'preset_mono-pop',
+            displayName: 'Mono Pop',
+            publishedVersion: '2026.03.21',
+            boothStatus: 'booth-safe',
+            preview: {
+              kind: 'preview-tile',
+              assetPath: 'published/preset_mono-pop/2026.03.21/preview.jpg',
+              altText: 'Mono Pop preview',
+            },
+          },
+        ],
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'captureSaved',
+          customerState: 'Preview Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '사진이 안전하게 저장되었어요.',
+          supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+          reasonCode: 'preview-waiting',
+          latestCapture: createCaptureRecord({
+            captureId: 'capture_old_look_pending',
+            requestId: 'request_old_look_pending',
+            activePresetId: 'preset_soft-glow',
+            activePresetVersion: '2026.03.20',
+            activePresetDisplayName: 'Soft Glow',
+            preview: {
+              assetPath: null,
+              enqueuedAtMs: 320,
+              readyAtMs: null,
+            },
+          }),
+        },
+        pendingFastPreview: {
+          schemaVersion: 'capture-fast-preview-update/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          requestId: 'request_old_look_pending',
+          captureId: 'capture_old_look_pending',
+          assetPath:
+            'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_old_look_pending.jpg',
+          visibleAtMs: 360,
+          kind: 'camera-thumbnail',
+        },
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-21T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'preview-waiting',
+          },
+          activePreset: {
+            presetId: 'preset_mono-pop',
+            publishedVersion: '2026.03.21',
+          },
+          activePresetDisplayName: 'Mono Pop',
+          activePresetId: 'preset_mono-pop',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_old_look_pending',
+              requestId: 'request_old_look_pending',
+              activePresetId: 'preset_soft-glow',
+              activePresetVersion: '2026.03.20',
+              activePresetDisplayName: 'Soft Glow',
+              preview: {
+                assetPath: null,
+                enqueuedAtMs: 320,
+                readyAtMs: null,
+              },
+              timing: {
+                captureAcknowledgedAtMs: 320,
+                previewVisibleAtMs: null,
+                captureBudgetMs: 1000,
+                previewBudgetMs: 5000,
+                previewBudgetState: 'pending',
+              },
+              renderStatus: 'previewWaiting',
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('img', {
+        name: /현재 세션 최신 사진,\s*1번째,\s*soft glow 룩/i,
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('촬영 당시 Soft Glow 룩')).toBeInTheDocument()
+    expect(
+      screen.getByText('이 사진은 이전 룩으로 찍혔고 그대로 유지돼요.'),
+    ).toBeInTheDocument()
   })
 
   it('keeps earlier captures labeled with their original look after the active preset changes', async () => {

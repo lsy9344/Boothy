@@ -11,6 +11,8 @@ export const sessionCaptureSchemaVersion = 'session-capture/v1' as const
 export const captureReadinessSchemaVersion = 'capture-readiness/v1' as const
 export const captureReadinessUpdateSchemaVersion =
   'capture-readiness-update/v1' as const
+export const captureFastPreviewUpdateSchemaVersion =
+  'capture-fast-preview-update/v1' as const
 export const captureRequestResultSchemaVersion =
   'capture-request-result/v1' as const
 export const captureDeleteResultSchemaVersion =
