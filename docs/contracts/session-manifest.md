@@ -73,12 +73,12 @@ Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최
 - `captures[*].preview.assetPath`: `renderStatus=previewWaiting` 중에도 same-capture fast preview가 canonical preview path에 안전하게 승격됐다면 채워질 수 있다. 이 경우에도 `preview.readyAtMs`가 `null`이면 아직 truthful `previewReady`가 아니다.
 - `captures[*].renderStatus`:
   - `previewWaiting`: RAW persistence는 끝났지만 preset-applied preview render가 아직 닫히지 않음
-  - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 실제 preview file이 존재함
+  - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 실제 preview file이 존재함. source는 RAW 원본이거나 approved same-capture raster worker output일 수 있다.
   - `finalReady`: published bundle의 `xmpTemplatePath + finalProfile`로 만든 실제 final file이 존재함
   - `renderFailed`: preview 또는 final render truth를 닫지 못해 bounded failure 상태로 잠김
-- `captures[*].timing.fastPreviewVisibleAtMs`: pending same-capture fast preview가 고객 rail에 처음 보일 수 있게 된 시점을 기록한다. fast preview가 없거나 승격되지 않았다면 `null`이다.
-- `captures[*].timing.xmpPreviewReadyAtMs`: later preset-applied render가 같은 canonical preview path를 교체하고 truthful `previewReady`를 기록한 시점을 남긴다.
-- `captures[*].timing.previewVisibleAtMs`: render-backed preview truth가 닫힌 시점을 유지하는 기존 비교 지표다. fast preview는 별도 `fastPreviewVisibleAtMs`로 분리해 기록한다.
+- `captures[*].timing.fastPreviewVisibleAtMs`: pending same-capture first-visible source가 고객 rail에 처음 보일 수 있게 된 시점을 기록한다. source는 fast preview, camera thumbnail, resident first-visible worker output 중 approved same-capture 자산이어야 하며, 아직 truthful `previewReady`를 의미하지 않는다.
+- `captures[*].timing.xmpPreviewReadyAtMs`: render worker가 처음 truthful `previewReady`를 기록한 시점을 남긴다. later quality refresh가 있더라도 최초 close 시각은 덮어쓰지 않는다.
+- `captures[*].timing.previewVisibleAtMs`: render-backed preview truth가 처음 닫힌 시점을 유지하는 비교 지표다. first-visible lane은 별도 `fastPreviewVisibleAtMs`로 분리해 기록한다.
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady`나 `finalReady`의 근거가 될 수 없다.
 
 ## 변경 규칙

@@ -37,7 +37,7 @@
 # - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-02 11:05:22 +09:00"
+last_updated: "2026-04-04 02:08:56 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -55,6 +55,7 @@ development_status:
   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
   1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
   1-9-fast-preview-handoff와-xmp-preview-교체: review
+  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: in-progress
   epic-1-retrospective: optional
 
   epic-2: in-progress

@@ -3,6 +3,7 @@ use tauri::Manager;
 use crate::{
     capture::helper_supervisor::try_ensure_helper_running,
     contracts::dto::{HostErrorEnvelope, SessionStartInputDto},
+    render::prime_preview_worker_runtime_in_dir,
     session::session_repository::{
         resolve_app_session_base_dir, start_session_in_dir, SessionStartResultDto,
     },
@@ -19,6 +20,7 @@ pub fn start_session(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
 
     let result = start_session_in_dir(&base_dir, input)?;
+    prime_preview_worker_runtime_in_dir(&base_dir, &result.session_id);
     try_ensure_helper_running(&base_dir, &result.session_id);
 
     Ok(result)

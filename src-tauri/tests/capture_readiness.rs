@@ -1,10 +1,9 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::Once,
+    sync::{LazyLock, Mutex, Once},
     thread,
-    time::Duration,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use boothy_lib::{
@@ -45,6 +44,8 @@ use boothy_lib::{
 };
 
 static FAKE_DARKTABLE_SETUP: Once = Once::new();
+static SPECULATIVE_PREVIEW_TEST_MUTEX: LazyLock<Mutex<()>> =
+    LazyLock::new(|| Mutex::new(()));
 
 fn unique_test_root(test_name: &str) -> PathBuf {
     ensure_fake_darktable_cli();
@@ -1163,26 +1164,86 @@ fn helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_
     assert_eq!(result.capture.timing.xmp_preview_ready_at_ms, None);
     assert_valid_jpeg(canonical_preview_path.to_string_lossy().as_ref());
 
-    let preview_ready =
+    let initial_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
             .expect(
                 "preview render should replace the pending fast preview on the same canonical path",
             );
 
-    assert_eq!(preview_ready.render_status, "previewReady");
     assert_eq!(
-        preview_ready.preview.asset_path.as_deref(),
+        initial_capture.preview.asset_path.as_deref(),
         Some(canonical_preview_path.to_string_lossy().as_ref()),
     );
-    assert_eq!(
-        preview_ready.preview.ready_at_ms,
-        preview_ready.timing.preview_visible_at_ms,
+    assert!(initial_capture.timing.fast_preview_visible_at_ms.is_some());
+
+    let preview_ready = if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
+        assert_eq!(initial_capture.render_status, "previewReady");
+        assert_eq!(
+            initial_capture.preview.ready_at_ms,
+            initial_capture.timing.preview_visible_at_ms,
+        );
+        assert_eq!(
+            initial_capture.preview.ready_at_ms,
+            initial_capture.timing.xmp_preview_ready_at_ms,
+        );
+        initial_capture
+    } else {
+        assert_eq!(initial_capture.render_status, "previewWaiting");
+        assert_eq!(initial_capture.preview.ready_at_ms, None);
+
+        let mut ready = None;
+        for _ in 0..40 {
+            let manifest = read_manifest(&base_dir, &session.session_id);
+            let latest_capture = manifest
+                .captures
+                .iter()
+                .find(|capture| capture.capture_id == result.capture.capture_id)
+                .cloned()
+                .expect("capture should stay in manifest");
+
+            if latest_capture.timing.xmp_preview_ready_at_ms.is_some() {
+                ready = Some(latest_capture);
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let refined_capture = ready.expect("raw refinement should eventually finish");
+        assert_eq!(refined_capture.render_status, "previewReady");
+        assert_eq!(
+            refined_capture.preview.asset_path.as_deref(),
+            Some(canonical_preview_path.to_string_lossy().as_ref()),
+        );
+        assert_eq!(
+            refined_capture.preview.ready_at_ms,
+            refined_capture.timing.xmp_preview_ready_at_ms
+        );
+        refined_capture
+    };
+
+    append_capture_client_timing_event_in_dir(
+        &base_dir,
+        &CaptureClientDebugLogInputDto {
+            label: "recent-session-visible".into(),
+            session_id: Some(session.session_id.clone()),
+            runtime_mode: Some("tauri".into()),
+            customer_state: None,
+            reason_code: None,
+            can_capture: None,
+            message: Some(
+                format!(
+                    "captureId={};requestId={};previewKind=preset-applied-preview;surface=recent-session;uiLagMs=23;readyAtMs={};latest=true",
+                    preview_ready.capture_id,
+                    preview_ready.request_id,
+                    preview_ready
+                        .timing
+                        .xmp_preview_ready_at_ms
+                        .expect("preview ready timing should be present"),
+                ),
+            ),
+        },
     );
-    assert_eq!(
-        preview_ready.preview.ready_at_ms,
-        preview_ready.timing.xmp_preview_ready_at_ms,
-    );
-    assert!(preview_ready.timing.fast_preview_visible_at_ms.is_some());
 
     let timing_events = fs::read_to_string(
         SessionPaths::new(&base_dir, &session.session_id)
@@ -1198,6 +1259,7 @@ fn helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_
     assert!(timing_events.contains("event=preview-render-start"));
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("event=capture_preview_ready"));
+    assert!(timing_events.contains("event=recent-session-visible"));
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1391,6 +1453,9 @@ fn fast_preview_updates_are_emitted_from_the_canonical_preview_path_before_captu
 
 #[test]
 fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
     let base_dir = unique_test_root("speculative-preview-render");
     let session = start_session_in_dir(
         &base_dir,
@@ -1493,16 +1558,21 @@ fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
         .join()
         .expect("helper capture thread should complete");
 
-    let preview_ready =
+    let initial_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
             .expect("speculative preview render should promote after capture save");
 
-    assert_eq!(preview_ready.render_status, "previewReady");
-    assert_eq!(
-        preview_ready.preview.ready_at_ms,
-        preview_ready.timing.preview_visible_at_ms
-    );
-    if preview_ready.timing.xmp_preview_ready_at_ms.is_none() {
+    let preview_ready = if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
+        assert_eq!(initial_capture.render_status, "previewReady");
+        assert_eq!(
+            initial_capture.preview.ready_at_ms,
+            initial_capture.timing.preview_visible_at_ms
+        );
+        initial_capture.clone()
+    } else {
+        assert_eq!(initial_capture.render_status, "previewWaiting");
+        assert_eq!(initial_capture.preview.ready_at_ms, None);
+
         let manifest_after_refinement = {
             let mut refined_manifest = None;
             for _ in 0..40 {
@@ -1530,31 +1600,40 @@ fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
             .find(|capture| capture.capture_id == result.capture.capture_id)
             .expect("refined capture should exist");
         assert_eq!(refined_capture.render_status, "previewReady");
-        assert_eq!(
-            refined_capture.timing.preview_visible_at_ms,
-            preview_ready.timing.preview_visible_at_ms
+        assert!(
+            refined_capture
+                .timing
+                .preview_visible_at_ms
+                .expect("refined preview visibility should exist")
+                >= initial_capture
+                    .timing
+                    .fast_preview_visible_at_ms
+                    .expect("first-visible timing should exist")
         );
         assert!(
             refined_capture
                 .timing
                 .xmp_preview_ready_at_ms
                 .expect("refinement timestamp should exist")
-                >= preview_ready
-                    .preview
-                    .ready_at_ms
-                    .expect("initial speculative preview should have a ready timestamp")
+                >= initial_capture
+                    .timing
+                    .fast_preview_visible_at_ms
+                    .expect("first-visible timing should exist")
         );
         assert!(
             refined_capture
                 .preview
                 .ready_at_ms
                 .expect("refined preview timestamp should exist")
-                >= preview_ready
-                    .preview
-                    .ready_at_ms
-                    .expect("initial speculative preview should have a ready timestamp")
+                >= initial_capture
+                    .timing
+                    .fast_preview_visible_at_ms
+                    .expect("first-visible timing should exist")
         );
-    } else {
+        refined_capture.clone()
+    };
+
+    if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
         assert_eq!(
             preview_ready.preview.ready_at_ms,
             preview_ready.timing.xmp_preview_ready_at_ms
@@ -1569,10 +1648,7 @@ fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=preview-render-start"));
     assert!(timing_events.contains("event=preview-render-ready"));
-    assert!(timing_events.contains("sourceAsset=raw-original"));
-    if preview_ready.timing.xmp_preview_ready_at_ms.is_none() {
-        assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
-    }
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1749,6 +1825,449 @@ fn readiness_promotes_a_late_canonical_fast_preview_without_marking_preview_read
         latest_capture.timing.fast_preview_visible_at_ms.is_some(),
         "late canonical preview should populate fast-preview timing"
     );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallback() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("late-canonical-fast-preview-resident");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+    fs::create_dir_all(
+        canonical_preview_path
+            .parent()
+            .expect("preview path should have a parent directory"),
+    )
+    .expect("preview directory should exist");
+    write_test_jpeg(&canonical_preview_path);
+
+    let initial_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("late same-capture preview should be reused before raw fallback");
+
+    assert!(initial_capture.timing.fast_preview_visible_at_ms.is_some());
+    assert_eq!(
+        initial_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    let refined_capture = if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
+        initial_capture
+    } else {
+        assert_eq!(initial_capture.render_status, "previewWaiting");
+        assert_eq!(initial_capture.preview.ready_at_ms, None);
+        assert_eq!(initial_capture.timing.preview_visible_at_ms, None);
+
+        let mut ready = None;
+        for _ in 0..40 {
+            let manifest = read_manifest(&base_dir, &session.session_id);
+            let latest_capture = manifest
+                .captures
+                .iter()
+                .find(|capture| capture.capture_id == result.capture.capture_id)
+                .cloned()
+                .expect("capture should stay in manifest");
+
+            if latest_capture.timing.xmp_preview_ready_at_ms.is_some() {
+                ready = Some(latest_capture);
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        ready.expect("raw refinement should eventually close truthful preview")
+    };
+
+    assert_eq!(refined_capture.render_status, "previewReady");
+    assert_eq!(
+        refined_capture.preview.ready_at_ms,
+        refined_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+    assert!(timing_events.contains("event=fast-preview-promoted"));
+    assert!(
+        timing_events.contains("event=preview-render-failed")
+            || timing_events.contains("sourceAsset=fast-preview-raster"),
+        "late same-capture preview should restart the speculative fast path before raw fallback"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_ready() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("finished-speculative-preview-ready");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+    let speculative_output_path = paths
+        .renders_previews_dir
+        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&speculative_output_path);
+    fs::write(
+        &speculative_detail_path,
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=120;detail=widthCap=384;heightCap=384;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+    )
+    .expect("speculative render detail should be writable");
+
+    let initial_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("finished speculative output should close the preview immediately");
+
+    assert_eq!(initial_capture.render_status, "previewReady");
+    assert_eq!(
+        initial_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        initial_capture.preview.ready_at_ms,
+        initial_capture.timing.preview_visible_at_ms
+    );
+    assert_eq!(
+        initial_capture.preview.ready_at_ms,
+        initial_capture.timing.xmp_preview_ready_at_ms
+    );
+    assert!(
+        initial_capture
+            .timing
+            .fast_preview_visible_at_ms
+            .is_some(),
+        "speculative close should preserve first-visible timing"
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fallback() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("wait-for-speculative-close");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let output_path = paths
+        .renders_previews_dir
+        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    fs::write(&result.capture.raw.asset_path, b"force-process-fail")
+        .expect("raw fallback marker should be writable");
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    fs::write(&lock_path, &result.capture.request_id).expect("speculative lock should be writable");
+
+    let delayed_output_path = output_path.clone();
+    let delayed_detail_path = detail_path.clone();
+    let delayed_lock_path = lock_path.clone();
+    let delayed_writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1500));
+        write_test_jpeg(&delayed_output_path);
+        fs::write(
+            &delayed_detail_path,
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=1500;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        )
+        .expect("speculative detail should be writable");
+        fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
+    });
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("healthy speculative close should win before raw fallback");
+
+    delayed_writer
+        .join()
+        .expect("delayed speculative writer should complete");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        completed_capture.preview.ready_at_ms,
+        completed_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(
+        !timing_events.contains("sourceAsset=raw-original"),
+        "raw fallback should not win when speculative close arrives inside the healthy wait window"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_close_is_active() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("no-duplicate-render-while-speculative-active");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let output_path = paths
+        .renders_previews_dir
+        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&canonical_preview_path);
+    fs::write(&lock_path, &result.capture.request_id).expect("speculative lock should be writable");
+
+    let delayed_output_path = output_path.clone();
+    let delayed_detail_path = detail_path.clone();
+    let delayed_lock_path = lock_path.clone();
+    let delayed_writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(4300));
+        write_test_jpeg(&delayed_output_path);
+        fs::write(
+            &delayed_detail_path,
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=4300;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        )
+        .expect("speculative detail should be writable");
+        fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
+    });
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("in-flight speculative close should finish before a duplicate render starts");
+
+    delayed_writer
+        .join()
+        .expect("delayed speculative writer should complete");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        completed_capture.preview.ready_at_ms,
+        completed_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert_eq!(
+        timing_events.matches("event=preview-render-start").count(),
+        0,
+        "the booth should keep waiting for the externally active speculative close instead of starting its own duplicate preview render"
+    );
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(
+        !timing_events.contains("sourceAsset=raw-original"),
+        "duplicate raw fallback should stay out of the way while the same capture close is still active"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn speculative_preview_wait_does_not_hold_the_capture_pipeline_lock() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("speculative-preview-wait-nonblocking");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        first_capture.capture.capture_id, first_capture.capture.request_id
+    ));
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    fs::write(&speculative_lock_path, &first_capture.capture.request_id)
+        .expect("speculative lock should be writable");
+
+    let preview_base_dir = base_dir.clone();
+    let preview_session_id = session.session_id.clone();
+    let preview_capture_id = first_capture.capture.capture_id.clone();
+    let preview_thread = thread::spawn(move || {
+        complete_preview_render_in_dir(&preview_base_dir, &preview_session_id, &preview_capture_id)
+    });
+
+    thread::sleep(Duration::from_millis(80));
+
+    let lock_contender_started = Instant::now();
+    mark_preview_render_failed_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("lock contender should complete even while speculative wait is pending");
+    let lock_contender_elapsed = lock_contender_started.elapsed();
+
+    assert!(
+        lock_contender_elapsed < Duration::from_millis(800),
+        "speculative preview wait should not hold the capture pipeline lock: {lock_contender_elapsed:?}"
+    );
+
+    fs::remove_file(&speculative_lock_path).expect("speculative lock should be removable");
+
+    preview_thread
+        .join()
+        .expect("preview completion thread should join")
+        .expect("preview completion should fall back to the normal render path");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -3056,6 +3575,62 @@ fn readiness_releases_phone_required_after_retryable_focus_failure_recovers() {
         },
     )
     .expect("retryable focus failure should recover from phone-required");
+
+    assert_eq!(readiness.reason_code, "ready");
+    assert!(readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_releases_phone_required_after_capture_download_timeout_recovers() {
+    let base_dir = unique_test_root("capture-download-timeout-unlocks");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_helper_event(
+        &base_dir,
+        &session.session_id,
+        serde_json::json!({
+          "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+          "type": "helper-error",
+          "sessionId": session.session_id,
+          "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+          "detailCode": "capture-download-timeout",
+          "message": "RAW handoff를 기다리다 시간이 초과되었어요.",
+        }),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("capture-download-timeout should recover from phone-required once helper is ready");
 
     assert_eq!(readiness.reason_code, "ready");
     assert!(readiness.can_capture);

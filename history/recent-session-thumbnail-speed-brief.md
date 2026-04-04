@@ -10,9 +10,1255 @@
 
 관련 기존 문서:
 
-- [photo-button-latency-history.md](/C:/Code/Project/Boothy/history/photo-button-latency-history.md)
-- [current-session-photo-troubleshooting-history.md](/C:/Code/Project/Boothy/history/current-session-photo-troubleshooting-history.md)
-- [_bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md](/C:/Code/Project/Boothy/_bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md)
+- [photo-button-latency-history.md](/C:/Code/Project/Boothy_thumbnail-latency-seam-reinstrumentation/history/photo-button-latency-history.md)
+- [current-session-photo-troubleshooting-history.md](/C:/Code/Project/Boothy_thumbnail-latency-seam-reinstrumentation/history/current-session-photo-troubleshooting-history.md)
+- [_bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md](/C:/Code/Project/Boothy_thumbnail-latency-seam-reinstrumentation/_bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md)
+
+## 2026-04-04 최신 실로그 재확인 4: 사용자가 느낀 3초대는 same-capture first-visible 기준으로는 맞지만, preset-applied close는 아직 평균 약 7.7초이고 첫 컷은 여전히 10.4초였다
+
+이번 회차는 사용자가
+`3초대 까지 내려온것 같네요. 하지만 더 줄여야합니다. 일단 문서에 기록만 하세요`
+라고 한 최신 체감을 실제 latest 로그와 세션 artifact 기준으로 기록하기 위한 회차다.
+
+기준 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a31080f82decc8`
+였고,
+최신 앱 로그
+`C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+의 마지막 기록 시각은
+`2026-04-04 14:34:34 KST`
+였다.
+
+이번 세션의 4컷 직접 수치:
+
+1. `capture_20260404053350037_45bce70109`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2896ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `10403ms`
+   - speculative close `preview-render-ready elapsedMs`: `3821ms`
+
+2. `capture_20260404053402205_56cc9ca9b1`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2975ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6501ms`
+
+3. `capture_20260404053410363_e1b35b4236`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3087ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6692ms`
+
+4. `capture_20260404053428017_dd6f41ec2f`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3501ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7266ms`
+
+이번 4컷 평균:
+
+- same-capture first-visible: 약 `3115ms`
+- preset-applied preview close: 약 `7715ms`
+
+이번 최신 재확인에서 중요한 사실:
+
+- 사용자가 말한 `3초대`
+  는 same-capture first-visible 기준으로는 맞다.
+- 실제로 최신 4컷의 first-visible은
+  `2.90s`, `2.98s`, `3.09s`, `3.50s`
+  였다.
+- 다만 고객이 실제로 기다리는 preset-applied close는 아직
+  `6.5s ~ 7.3s`
+  수준이고,
+  첫 컷은 다시 `10.4s`
+  까지 튀었다.
+- 즉 이번 회차는
+  `first-visible 체감은 3초대로 내려왔지만 final close는 아직 충분히 짧지 않다`
+  고 기록하는 편이 맞다.
+
+이번 세션에서 함께 확인된 패턴:
+
+- 4컷 모두 `fast-preview-promoted kind=legacy-canonical-scan`이 먼저 찍혔다.
+- 첫 컷은 `preview-render-start`가 두 번 찍혔고,
+  final close가 다시 약 `10.4s`로 크게 밀렸다.
+- 반면 2~4컷은 final close가 `6.5s ~ 7.3s`로 내려와,
+  연속촬영 구간은 직전 `9초대` 평균보다는 실제로 좋아졌다.
+- 최신 앱 로그의 마지막 컷에는
+  `speculative_preview_render_started`
+  뒤
+  `speculative_preview_wait_budget_exhausted wait_ms=2200`
+  가 남았지만,
+  `resident_first_visible_render_failed render-output-missing`
+  는 이미 `recent-session-visible`이 찍힌 뒤에 늦게 남았다.
+- 따라서 이번 회차는
+  `same-capture first-visible 3초대 진입`
+  과
+  `연속촬영 final close 6초대 후반 진입`
+  은 확인됐지만,
+  `콜드스타트 첫 컷 10초대`
+  와
+  `전체 평균 7초대`
+  는 아직 남아 있다고 기록해야 한다.
+
+이번 회차의 제품 결론:
+
+- `3초대까지 내려온 것 같다`
+  는 체감은 맞다.
+  다만 그 기준은 first-visible이다.
+- 최종 목표인 preset-applied close 기준으로는 아직 평균 약 `7.7초`다.
+- 특히 첫 컷이 다시 `10초대`로 튀기 때문에,
+  제품 체감 기준으로는
+  `좋아졌지만 아직 충분하지 않다`
+  로 기록하는 편이 정확하다.
+
+## 2026-04-04 최신 실로그 재확인 3: 콜드스타트만의 문제가 아니라, 연속촬영 3컷 모두에서 active speculative close 위에 duplicate preview render가 겹치며 preset-applied close가 다시 약 9.1초로 늘어났다
+
+이번 회차는 사용자가
+`콜드스타트도 문제지만, 연속촬영 후 보여지는 프리셋 적용 시간이 오히려 더 늘었다`
+고 말한 체감이 실제 최신 로그와 session artifact로도 맞는지 다시 닫기 위한 기록이다.
+
+기준 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30fa3bb160dd0`
+였고,
+최신 앱 로그
+`C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+의 마지막 기록 시각은
+`2026-04-04 14:18:30 KST`
+였다.
+
+이번 세션의 3컷 직접 수치:
+
+1. `capture_20260404051800843_7edc1c1526`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3148ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `9105ms`
+   - speculative close `preview-render-ready elapsedMs`: `3720ms`
+
+2. `capture_20260404051811734_6a88b8ebd4`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3012ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `9166ms`
+   - speculative close `preview-render-ready elapsedMs`: `3921ms`
+
+3. `capture_20260404051822274_9cd255ea21`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3011ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `9076ms`
+   - speculative close `preview-render-ready elapsedMs`: `3823ms`
+
+이번 3컷 평균:
+
+- same-capture first-visible: 약 `3057ms`
+- preset-applied preview close: 약 `9116ms`
+- speculative `fast-preview-raster` render elapsedMs: 약 `3821ms`
+
+이번 최신 재확인에서 중요한 사실:
+
+- 3컷 모두 `fast-preview-promoted kind=legacy-canonical-scan`이 먼저 찍혔다.
+- 즉 same-capture first-visible 자체는 계속 약 `3.0s` 수준으로 유지됐다.
+- 그러나 3컷 모두 최종 `previewVisibleAtMs`는 다시 약 `9.1s`였다.
+- `timing-events.log`에는 3컷 모두 `preview-render-start`가 두 번 찍혔다.
+- 최신 앱 로그에는 연속촬영 구간에서
+  `resident_first_visible_render_failed ... Access violation`
+  이 남았고,
+  마지막 컷은 그 직전에
+  `speculative_preview_wait_budget_exhausted wait_ms=2200`
+  뒤
+  `render_job_started ... sourceAsset=fast-preview-raster`
+  가 이어졌다.
+
+이번 회차의 제품 결론:
+
+- 지금 병목은
+  `speculative close가 느리다`
+  하나만이 아니다.
+- 더 직접적인 문제는
+  `이미 진행 중인 same-capture speculative close가 있는데도 host가 direct preview render를 다시 시작한다`
+  는 점이다.
+- 이 duplicate render가 preview runtime을 다시 경쟁시키면서,
+  resident lane이 실패하고
+  사용자 체감 close가 다시 약 `9초대`
+  로 밀린다.
+- 따라서 이번 단계의 우선순위는
+  `더 빠른 새 렌더를 추가로 시작하기`
+  가 아니라,
+  `이미 시작된 same-capture close를 끝까지 받아오고 duplicate render를 피하기`
+  다.
+
+이번 회차에서 바로 반영한 개선:
+
+1. direct preview render로 넘어가기 전에,
+   active speculative close가 남아 있으면 한 번 더 join wait 하도록 바꿨다.
+2. 그 사이 speculative output이 닫히면 그대로 promote해서 완료한다.
+3. 즉 `진행 중인 same-capture close`와 `직접 fallback close`가 같은 preview runtime 위에서 겹쳐 달리지 않도록 조정했다.
+
+다음 실검증에서 다시 볼 기준:
+
+- `capture acknowledged -> fastPreviewVisibleAtMs`
+- `capture acknowledged -> previewVisibleAtMs`
+- `timing-events.log`에서 capture당 `preview-render-start`가 한 번만 남는지
+- 앱 로그에서 `resident_first_visible_render_failed ... Access violation`이 사라지는지
+- final `recent-session-visible`이 다시 `9초대`가 아니라 `6초대`로 내려오는지
+
+## 2026-04-04 최신 실로그 재확인: same-capture first-visible은 약 3초지만, preset-applied close는 아직 약 7.9초고 현재 주병목은 speculative lane 자체가 여전히 4초대라는 점이다
+
+이번 최신 재확인은 사용자가
+`여전히 오래 걸린다`
+고 한 최신 체감이 실제 latest booth 로그와 session artifact로도 맞는지 다시 닫기 위한 기록이다.
+
+기준 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30f15c3a996f8`
+였고,
+최신 앱 로그
+`C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+의 마지막 기록 시각은
+`2026-04-04 14:08:15 KST`
+였다.
+
+이번 세션의 3컷 직접 수치:
+
+1. `capture_20260404050749386_05e637b0ad`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2980ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7841ms`
+   - raw close `preview-render-ready elapsedMs`: `4123ms`
+   - speculative detail `elapsedMs`: `4024ms`
+
+2. `capture_20260404050758697_2ffac168d4`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3131ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8068ms`
+   - raw close `preview-render-ready elapsedMs`: `4199ms`
+   - speculative detail `elapsedMs`: `4256ms`
+
+3. `capture_20260404050807684_5480293433`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2882ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7642ms`
+   - raw close `preview-render-ready elapsedMs`: `4022ms`
+   - speculative detail `elapsedMs`: `4019ms`
+
+이번 3컷 평균:
+
+- same-capture first-visible: 약 `2998ms`
+- preset-applied preview close: 약 `7850ms`
+- raw close `preview-render-ready elapsedMs`: 약 `4115ms`
+- speculative `fast-preview-raster` render elapsedMs: 약 `4100ms`
+
+이번 최신 재확인에서 가장 중요한 사실:
+
+- `session.json` 기준 latest 3컷 모두
+  `fastPreviewVisibleAtMs`는 약 `2.9s ~ 3.1s`에 들어왔다.
+- 그러나 final `previewVisibleAtMs`는 다시 약 `7.6s ~ 8.1s`였다.
+- 최신 앱 로그에는 마지막 컷에서
+  `speculative_preview_render_started`
+  뒤
+  `speculative_preview_wait_budget_exhausted wait_ms=720`
+  가 찍히고,
+  곧바로
+  `sourceAsset=raw-original`
+  fallback render가 시작됐다.
+- 동시에 session artifact에는 각 컷의
+  `.preview-speculative.detail`
+  파일이 남아 있었고,
+  그 안의 speculative `fast-preview-raster` render elapsedMs도 약 `4.0s ~ 4.3s`였다.
+
+이번 회차의 제품 결론:
+
+- 현재 latest 병목은
+  `wait budget이 너무 짧다`
+  만으로 설명되지 않는다.
+- 더 직접적인 병목은
+  `same-capture raster를 써도 speculative preset render 자체가 아직 약 4초대`
+  라는 점이다.
+- 즉 이번 단계의 우선순위는
+  `speculative lane이 더 자주 이기게 기다리기`
+  이전에,
+  `speculative lane 자체를 더 싸게 만들기`
+  다.
+
+이번 회차에서 바로 반영한 개선:
+
+1. `fast-preview-raster` preview render cap을
+   `384 -> 256`
+   으로 더 낮췄다.
+2. preview truth lane의 기본 booth-safe source selection이
+   same-capture raster preview를 재사용할 수 있게 바꿨다.
+   - 즉 fast preview가 이미 canonical preview path에 있으면,
+     fallback close도 굳이 RAW original만 강제하지 않도록 조정했다.
+3. speculative wait budget은
+   `720ms -> 2200ms`
+   수준으로 늘려,
+   더 가벼워진 raster lane이 닫힐 기회를 실제로 잡을 수 있게 했다.
+
+이번 변경의 의도:
+
+- latest evidence상 same-capture raster render가 아직 아주 빠르진 않지만,
+  그래도 RAW original close와 거의 같은 비용을 다시 한 번 쓰는 구조는 낭비가 크다.
+- 따라서 이번 라운드는
+  `RAW fallback을 빨리 시작하는 것`
+  보다
+  `lighter raster truth lane이 먼저 닫히도록 만들기`
+  에 더 무게를 둔다.
+
+다음 실검증에서 꼭 다시 볼 기준:
+
+- `capture acknowledged -> fastPreviewVisibleAtMs`
+- `capture acknowledged -> previewVisibleAtMs`
+- `preview-render-ready elapsedMs`
+- speculative detail의 `elapsedMs`
+- latest `timing-events.log`에서 final close owner가
+  `sourceAsset=fast-preview-raster`
+  로 실제 바뀌는지
+
+## 2026-04-04 최신 4컷 실로그 재확인: 사용자 체감대로 더 늘어났고, 이번 회차는 resident miss가 조용히 raw close로 넘어가는 쪽에 더 가깝다
+
+이번 회차는 사용자가
+`로딩이 더 늘어난 것 같다`
+고 말한 최신 체감이 실제 최신 로그와 세션 artifact로도 맞는지 닫기 위한 기록이다.
+
+기준으로 본 최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30deffa5eb40c`
+였고,
+최신 글로벌 앱 로그
+`C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+의 마지막 기록 시각은
+`2026-04-04 13:47:26 KST`
+였다.
+
+이 세션에는 총 4개 capture가 남아 있었다.
+
+이번 세션의 직접 수치:
+
+1. `capture_20260404044648078_4a0d6f85ee`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3221ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8389ms`
+   - `preview-render-ready elapsedMs`: `4425ms`
+
+2. `capture_20260404044658068_76359b5823`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3222ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8685ms`
+   - `preview-render-ready elapsedMs`: `4723ms`
+
+3. `capture_20260404044708359_bf102315c0`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3190ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8160ms`
+   - `preview-render-ready elapsedMs`: `4225ms`
+
+4. `capture_20260404044717796_352bd5a282`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3094ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7952ms`
+   - `preview-render-ready elapsedMs`: `4122ms`
+
+이번 4컷 평균:
+
+- same-capture first-visible: 약 `3182ms`
+- preset-applied preview close: 약 `8297ms`
+- `preview-render-ready elapsedMs`: 약 `4374ms`
+
+최근 같은 날 기록과 비교하면 이번 최신 회차는 체감 기준으로 더 나빠졌다.
+
+- `session_000000000018a30c240ea0a1f0`의 평균은
+  first-visible 약 `3276ms`,
+  preset-applied close 약 `7151ms`
+  였다.
+- `session_000000000018a30cf108b8edec`의 평균은
+  first-visible 약 `2956ms`,
+  preset-applied close 약 `7945ms`
+  였다.
+- 이번 최신 세션은 first-visible은 여전히 약 `3.1s` 수준이지만,
+  고객이 실제로 기다리는 preset-applied close는 다시 약 `8.3s`로 늘어났다.
+
+즉 이번 회차는
+`조금 더 느려진 것 같다`
+는 사용자의 체감이 로그 기준으로도 맞다고 기록하는 편이 정확하다.
+
+이번 세션에서 확인된 중요한 패턴:
+
+- 4컷 모두 `timing-events.log`에
+  `fast-preview-promoted kind=legacy-canonical-scan`
+  이 먼저 찍혔다.
+- 4컷 모두 `recent-session-pending-visible`은 먼저 찍혔고,
+  최종 `recent-session-visible`은 그 뒤 약 `8초` 전후에 닫혔다.
+- 4컷 모두 `preview-render-start`가 두 번 찍혔지만,
+  최종 `preview-render-ready` detail은 전부
+  `widthCap=384;heightCap=384;sourceAsset=raw-original`
+  이었다.
+- 즉 latest runtime drift보다는,
+  `현재 runtime 안에서 speculative first-visible path가 최종 close owner가 되지 못하고 raw-original truth lane이 계속 닫는다`
+  고 보는 편이 맞다.
+
+이번 세션의 helper 신호도 다시 비슷했다.
+
+- 4컷 모두 `file-arrived`에는 `fastPreviewPath=null`이었다.
+- 이후 `fast-preview-ready`는 모두 `windows-shell-thumbnail`로 도착했다.
+- 직접 계산하면
+  - `request -> file-arrived`: 약 `2954ms ~ 3599ms`
+  - `request -> fast-preview-ready`: 약 `3580ms ~ 4371ms`
+  - `file-arrived -> fast-preview-ready`: 약 `626ms ~ 771ms`
+  - 평균 `file-arrived -> fast-preview-ready`: 약 `690ms`
+  였다.
+- 즉 same-capture source는 계속 오고 있지만,
+  latest booth path는 그 source를 최종 preset-applied close로 연결하지 못하고 있다.
+
+이번 회차에서 특히 중요한 최신 앱 로그 신호:
+
+- 마지막 컷에서는
+  `speculative_preview_render_started`
+  가 먼저 찍혔다.
+- 그러나 곧바로
+  `speculative_preview_wait_budget_exhausted wait_ms=720`
+  이 남았고,
+  직후 raw-original preview render가 시작됐다.
+- 이번 최신 로그에는 예전 회차처럼
+  `resident_first_visible_render_failed`
+  나
+  `preview-render-failed`
+  가 함께 남지는 않았다.
+- 따라서 이번 최신 후퇴는
+  `명시적 resident failure`
+  보다는
+  `speculative lane이 제시간에 닫히지 못한 채 조용히 wait budget을 다 쓰고 raw close로 넘어가는 패턴`
+  에 더 가깝다고 적는 편이 맞다.
+
+이번 기록의 제품 결론:
+
+- 최신 4컷 실로그 기준으로도 사용자의 체감은 맞다.
+- first-visible은 여전히 약 `3초대`지만,
+  고객이 실제로 기다리는 preset-applied result는 다시 약 `8초대`로 늘어났다.
+- 이번 최신 회차는
+  `개선`
+  이 아니라
+  `same-capture first-visible은 유지됐지만 preset-applied close는 더 늘어난 최신 후퇴`
+  로 기록해야 한다.
+
+## 다음 단계 기록
+
+이번 회차에서는 구현 결론을 더 밀지 말고,
+먼저 아래 확인 항목을 같은 형식으로 닫는 편이 맞다.
+
+1. latest runtime에서
+   `speculative_preview_render_started -> speculative_preview_wait_budget_exhausted -> raw-original preview-render-ready`
+   순서가 마지막 컷만이 아니라 여러 컷에서 반복되는지 확인
+2. speculative lane이 실제로는 완료되지만 host가 너무 빨리 포기하는지,
+   아니면 실제로 `720ms` 안에 output을 만들지 못하는지
+   session artifact와 stderr 기준으로 분리 확인
+3. `legacy-canonical-scan`으로 잡히는 same-capture source가
+   현재 latest booth path에서
+   `first-visible only`
+   로만 쓰이고 있는지,
+   아니면 어떤 조건에서 later replacement close까지 소유할 수 있는지 다시 확인
+4. latest booth package 한 세션만으로 아래 seam이 한 번에 닫히도록 증거를 다시 모으기
+   - `request-capture`
+   - `file-arrived`
+   - `fast-preview-promoted`
+   - `recent-session-pending-visible`
+   - `speculative_preview_wait_budget_exhausted` 또는 동등 miss 신호
+   - `preview-render-ready`
+   - `recent-session-visible`
+5. 다음 구현 판단 전 제품 기준을 다시 그대로 유지하기
+   - 목표는 `same-capture first-visible` 자체가 아니라
+     `preset-applied preview close`를 줄이는 것이다.
+   - 따라서 다음 단계 판단도
+     `8초대 close를 실제로 줄일 수 있는가`
+     를 기준으로 해야 한다.
+
+## 2026-04-04 최신 3컷 재시도 기록: 이번 시도는 더 느려졌고, resident first-visible 경로 실패가 다시 보인다
+
+이번 회차는 사용자가 같은 런타임에서 추가로 3컷을 촬영한 뒤,
+그 결과가 실제로 좋아졌는지 아닌지를 다시 기록하기 위한 회차였다.
+
+최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30cf108b8edec`
+였다.
+
+이번 세션의 직접 수치:
+
+1. `capture_20260404042833898_8d9626df95`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3019ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8275ms`
+   - `preview-render-ready elapsedMs`: `4522ms`
+
+2. `capture_20260404042844064_a2ab8a5873`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2901ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7757ms`
+   - `preview-render-ready elapsedMs`: `4124ms`
+
+3. `capture_20260404042853753_bcb2770a92`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2949ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7804ms`
+   - `preview-render-ready elapsedMs`: `4121ms`
+
+이번 3컷 평균:
+
+- same-capture first-visible: 약 `2956ms`
+- preset-applied preview close: 약 `7945ms`
+
+직전 같은 런타임 세션
+`session_000000000018a30c240ea0a1f0`
+와 비교하면 이번 시도는 더 나빠졌다.
+
+- same-capture first-visible은 `3276ms -> 2956ms`로 약간 좋아졌다.
+- 그러나 고객이 실제로 기다리는 preset-applied close는 `7151ms -> 7945ms`로 더 느려졌다.
+- 즉 고객 체감 기준으로는 이번 시도를 `개선`으로 기록하면 안 되고,
+  `더 느려진 재시도`로 기록하는 편이 맞다.
+
+이번 세션에서 확인된 중요한 패턴:
+
+- 3컷 모두 `timing-events.log`에
+  `fast-preview-promoted kind=legacy-canonical-scan`
+  이 먼저 찍혔다.
+- 그 직후 3컷 모두 `preview-render-start`가 두 번 찍히고,
+  이어서 `preview-render-failed` 뒤 `preview-render-ready`로 닫혔다.
+- 최종 close는 여전히
+  `widthCap=384;heightCap=384;sourceAsset=raw-original`
+  render가 소유했다.
+
+이번 세션의 helper 신호도 다시 같았다.
+
+- 3컷 모두 `file-arrived`에는 `fastPreviewPath=null`이었다.
+- 이후 약 `0.28s ~ 0.44s` 뒤에야
+  `fast-preview-ready`가 `windows-shell-thumbnail`로 도착했다.
+- 즉 usable same-capture source는 실제로 오고 있었지만,
+  truthful close owner는 계속 raw-original render였다.
+
+이번 회차에서 더 중요했던 실패 신호:
+
+- 앱 로그에는 최신 세션 마지막 컷에서
+  `speculative_preview_wait_budget_exhausted wait_ms=720`
+  뒤에 raw-original render가 다시 시작된 기록이 남았다.
+- 같은 컷에서
+  `resident_first_visible_render_failed`
+  도 남았고,
+  detail에는 darktable-cli가 canonical preview jpg를 열지 못해
+  `no images to export, aborting`
+  했다고 적혀 있었다.
+- `timing-events.log`가 3컷 모두 같은
+  `preview-render-failed -> raw-original preview-render-ready`
+  순서를 남긴 점을 보면,
+  적어도 이번 세션에서는 resident first-visible 경로가 안정적으로 닫히지 못했다고 보는 편이 맞다.
+
+이번 기록의 제품 결론:
+
+- 최신 3컷 재시도는 `더 느려졌다`.
+- fast preview는 여전히 약 3초 안팎으로 보이지만,
+  고객이 기다리는 preset-applied result는 다시 약 7.8초 ~ 8.3초로 밀렸다.
+- 따라서 이번 시도는
+  `2초 이하 목표에 가까워진 회차`
+  가 아니라
+  `first-visible은 유지됐지만 preset-applied close는 오히려 후퇴한 회차`
+  로 기록해야 한다.
+
+## 다음 시도 기록
+
+다음 시도에서는 구현 결론을 서두르기보다,
+아래 관찰 포인트를 먼저 다시 같은 형식으로 닫는 편이 맞다.
+
+1. 같은 세션에서 3컷 이상 촬영 후
+   `preview-render-failed`가 매 컷 반복되는지 확인
+2. `resident_first_visible_render_failed`가
+   매번 같은 `can't open file ... no images to export`
+   패턴인지 확인
+3. `speculative_preview_wait_budget_exhausted`
+   이후 실제 close owner가 항상 `raw-original`인지 확인
+4. `fast-preview-promoted kind=legacy-canonical-scan`
+   이 먼저 찍히는 구조가 이번 후퇴와 계속 같이 움직이는지 확인
+
+다음 시도의 기록 기준은 그대로 유지한다.
+
+- `capture acknowledged -> fastPreviewVisibleAtMs`
+- `capture acknowledged -> previewVisibleAtMs`
+- `preview-render-ready elapsedMs`
+- `preview-render-failed` 유무
+- `resident_first_visible_render_failed` 유무
+- latest helper의 `fast-preview-ready observedAt - file-arrived` 차이
+
+## 2026-04-04 최신 같은 런타임 재검증 기록: runtime drift는 해소됐지만, 여전히 2초 아래는 아니고 병목은 late helper handoff miss와 warm-up 실패 쪽이 더 가깝다
+
+이번 회차는 사용자가 실제로
+`C:\Code\Project\Boothy_thumbnail-latency-seam-reinstrumentation`
+에서 `pnpm run dev:desktop:stable`로 실행한 뒤 남긴 최신 세션을 기준으로 다시 닫았다.
+
+최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30c240ea0a1f0`
+였고,
+총 4개 capture가 남아 있었다.
+
+이번 최신 세션의 직접 수치:
+
+1. `capture_20260404041353782_b02b35b3be`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3197ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6876ms`
+   - `preview-render-ready elapsedMs`: `3920ms`
+
+2. `capture_20260404041402672_b65421f422`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3815ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7682ms`
+   - `preview-render-ready elapsedMs`: `4021ms`
+
+3. `capture_20260404041411637_bad1cf7ca8`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3110ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7117ms`
+   - `preview-render-ready elapsedMs`: `4121ms`
+
+4. `capture_20260404041420047_b651a6383c`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2982ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6927ms`
+   - `preview-render-ready elapsedMs`: `4031ms`
+
+이번 최신 세션 평균은 다음처럼 정리하는 편이 맞다.
+
+- same-capture first-visible: 약 `3276ms`
+- preset-applied preview close: 약 `7151ms`
+
+이번 재검증에서 긍정적으로 바뀐 점:
+
+- latest render detail은 더 이상 예전 `512px + --disable-opencl`이 아니었다.
+- 실제 latest `timing-events.log`는 4컷 모두
+  `widthCap=384;heightCap=384;sourceAsset=raw-original`
+  을 남겼다.
+- 즉 이번부터는 runtime drift보다
+  `현재 브랜치 자체의 실제 성능`
+  을 보는 편이 맞다.
+
+이번 재검증에서 더 중요한 병목:
+
+- helper artifact를 같이 보면 4컷 모두
+  `fast-preview-ready`는 실제로 도착했다.
+- 하지만 `file-arrived`에는 계속 `fastPreviewPath=null`이었고,
+  usable same-capture preview는 그 뒤 약 `0.57s ~ 0.71s` 후에야
+  `windows-shell-thumbnail`로 닫혔다.
+- 현재 host는 late helper preview를 기다리는 예산이 너무 짧아서,
+  이 경로를 놓친 뒤 다시 RAW truth lane으로 내려가고 있었다.
+- 결과적으로 사용자는 same-capture 이미지를 먼저 볼 수는 있지만,
+  프리셋 적용 close owner는 계속 `raw-original` render였다.
+
+이번 회차에서 함께 확인한 추가 문제:
+
+- 앱 로그에는 preview worker warm-up 실패가 남아 있었다.
+- 원인은
+  `.boothy-darktable/preview/warmup/preview-renderer-warmup-source.png`
+  가 darktable/libpng 기준으로는 손상된 warm-up source였기 때문이다.
+- 즉 resident worker와 preview runtime을 미리 데우려던 경로가
+  현장에서는 실제로 실패하고 있었을 가능성이 높다.
+
+이번 기록의 결론:
+
+- 최신 런타임 정렬은 성공했다.
+- 그러나 최신 실측은 아직도
+  `first-visible 약 3.3초`,
+  `preset-applied close 약 7.2초`
+  수준이다.
+- 제품 목표인 `2초 이하`에 맞추려면,
+  단순 RAW cap 축소보다
+  `late helper handoff를 놓치지 않게 하고`,
+  `preview worker warm-up을 실제 장비에서 정상 복구하는 쪽`
+  이 우선순위가 더 높다.
+
+## 2026-04-04 최신 실검증 기록: 현재 성과는 worker 도입 전보다 낫다고 보기 어렵고, latest runtime은 여전히 예전 RAW truth lane에 묶여 있다
+
+최신 사용자 판단은 분명했다.
+
+- `최근 세션`의 프리셋 적용 사진은 여전히 느리다.
+- 이번 상태는 worker 구성 변경 전보다 좋아졌다고 보기 어렵다.
+- 먼저 보이는 same-capture 이미지는 있어도, 고객이 실제로 기다리는 `preset-applied preview close`는 그대로 늦다.
+
+이번 회차에서 확인한 최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30ad7a9bbd20c`
+였고,
+최신 앱 로그 [Boothy.log](/C:/Users/KimYS/AppData/Local/com.tauri.dev/logs/Boothy.log)의 마지막 기록 시각은
+`2026-04-04 12:50:38 KST`
+였다.
+
+이 세션에는 총 4개 capture가 남아 있었고,
+4개 모두 패턴이 거의 같았다.
+
+1. `capture_20260404035005875_14bcd041c8`
+   - `request -> file-arrived`: `3324ms`
+   - `request -> fast-preview-ready`: `4154ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3131ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6836ms`
+
+2. `capture_20260404035014073_d3a71f887b`
+   - `request -> file-arrived`: `2570ms`
+   - `request -> fast-preview-ready`: `3191ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3045ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7249ms`
+
+3. `capture_20260404035022689_9b58be3806`
+   - `request -> file-arrived`: `3014ms`
+   - `request -> fast-preview-ready`: `3588ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2817ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6859ms`
+   - 글로벌 앱 로그에도 같은 컷이 `capture_preview_ready elapsed_ms=6859`로 남아 있었다.
+
+4. `capture_20260404035030804_6684c2b560`
+   - `request -> file-arrived`: `3240ms`
+   - `request -> fast-preview-ready`: `3818ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2950ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6973ms`
+   - 글로벌 앱 로그에도 같은 컷이 `capture_preview_ready elapsed_ms=6973`로 남아 있었다.
+
+이번 최신 세션의 직접 요약:
+
+- same-capture first-visible은 대체로 `2.8s ~ 3.1s`였다.
+- 그러나 고객이 기다리는 preset-applied preview close는 `6.8s ~ 7.2s`였다.
+- 4컷 평균도
+  - `capture acknowledged -> fastPreviewVisibleAtMs`: 약 `2986ms`
+  - `capture acknowledged -> previewVisibleAtMs`: 약 `6979ms`
+  로,
+  worker topology가 고객 핵심 기다림을 절반 이하로 줄였다고 보기는 어렵다.
+
+이번 로그에서 특히 중요했던 기술 관찰:
+
+- 최신 `diagnostics/timing-events.log`의 4개 preview render detail은 모두
+  `sourceAsset=raw-original`
+  이었다.
+- 같은 detail에는 계속
+  `widthCap=512;heightCap=512`
+  와
+  `--disable-opencl`
+  이 남아 있었다.
+- 즉 latest runtime 기준에서는
+  `resident worker가 있더라도 preset-applied truth lane 자체는 여전히 예전 RAW 512 preview render로 닫히고 있다`
+  고 보는 편이 맞다.
+
+이번 최신 세션에서 보인 추가 신호:
+
+- helper 이벤트는 4컷 모두 `fast-preview-ready`를 남겼고,
+  source kind는 `windows-shell-thumbnail`이었다.
+- 그런데 host 앱 로그에는 마지막 컷에서도
+  `helper_fast_preview_wait_budget_exhausted wait_ms=120`
+  뒤에 바로 RAW preview render가 시작됐다.
+- 즉 fast preview는 실제로 오고 있지만,
+  고객이 기다리는 preset-applied close는 계속 fast preview가 아니라 RAW render가 소유하고 있었다.
+
+이번 회차에서 특히 중요하게 봐야 할 drift:
+
+- 현재 워킹트리 기준 preview baseline은 더 이상
+  `512px + --disable-opencl`
+  이 아니고,
+  booth-safe 기본값도 그 조합을 유지하지 않도록 바뀌어 있다.
+- 그런데 최신 실장비 증거는 여전히
+  `512px + --disable-opencl + raw-original`
+  을 가리켰다.
+- 따라서 이번 latest validation은
+  `현재 저장소의 기대 경로가 실제 booth runtime에 완전히 반영되지 않았거나`,
+  `실제 반영됐더라도 고객 핵심 지연을 줄이는 경로가 아니라 여전히 예전 truth lane이 실행되고 있다`
+  둘 중 하나로 보는 편이 맞다.
+
+이번 세션에서 계측 공백도 다시 확인됐다.
+
+- story 1.10이 요구한
+  `request-capture -> file-arrived -> fast-preview-visible -> preview-render-start -> capture_preview_ready -> recent-session-visible`
+  전체 seam이 같은 `timing-events.log`에 남아 있지 않았다.
+- 실제 최신 세션 `timing-events.log`에는 `preview-render-start`, `preview-render-ready`만 남았고,
+  나머지 경계는 앱 로그와 helper artifacts를 함께 봐야 닫혔다.
+- 즉 지금도 latest booth package 하나만으로 병목을 바로 닫기에는 계측이 아직 충분하지 않다.
+
+이번 최신 기록의 결론:
+
+- `session_000000000018a30ad7a9bbd20c` 기준 최신 제품 상태는
+  `same-capture first-visible은 약 3초`,
+  `preset-applied preview close는 여전히 약 7초`
+  로 정리하는 편이 맞다.
+- 따라서 현재 성과는
+  `worker 도입 뒤 제품 목표 달성`이 아니라
+  `먼저 보이는 사진은 생겼지만 고객이 실제로 기다리는 프리셋 적용 결과는 여전히 느림`
+  으로 기록해야 한다.
+- 이번 최신 로그는 또한
+  `실제 booth runtime이 아직 예전 RAW 512 truth lane을 쓰고 있다`
+  는 drift 의심까지 함께 보여 준다.
+
+## 2026-04-04 추가 환경 대조 기록: 최신 사용자가 본 느린 결과는 현재 브랜치보다 `C:\Code\Project\Boothy` 런타임과 더 정확히 맞는다
+
+이번 회차에서는
+`왜 latest session이 여전히 raw-original 512 / --disable-opencl 경로를 가리키는가`
+를 코드와 실행 환경까지 대조해 봤다.
+
+결론부터 적으면,
+최신 사용자가 본 느린 결과는 현재 작업 중인 브랜치
+`C:\Code\Project\Boothy_thumbnail-latency-seam-reinstrumentation`
+보다,
+별도로 존재하는 원본 저장소
+`C:\Code\Project\Boothy`
+의 런타임과 더 정확히 맞는다.
+
+이번에 직접 확인한 사실:
+
+- 현재 작업 브랜치 `src-tauri/src/render/mod.rs`는
+  booth-safe preview cap을 `384`로 두고,
+  기본 profile에서 `disable_opencl=false`로 잠겨 있다.
+- 반면 원본 저장소 `C:\Code\Project\Boothy\src-tauri\src\render\mod.rs`는
+  아직도 `RAW_PREVIEW_MAX_WIDTH_PX=512`,
+  preview invocation 기본 인자에 `--disable-opencl`을 넣고 있었다.
+- 최신 세션
+  `session_000000000018a30ad7a9bbd20c`
+  의 `timing-events.log`는 실제로
+  `widthCap=512;heightCap=512;sourceAsset=raw-original;... --disable-opencl`
+  를 남겼다.
+- 즉 최신 실측 증거는 현재 브랜치보다
+  원본 저장소의 preview lane과 더 정확히 일치했다.
+
+이번 회차에서 함께 본 실행 환경 사실:
+
+- 현재 시점에 떠 있던 프로세스는 `boothy-selectroom`뿐이었고,
+  booth 앱 프로세스는 살아 있지 않았다.
+- 따라서 사용자가 방금 본 느린 체감은
+  현재 이 브랜치의 최신 빌드를 계속 띄운 상태라기보다,
+  이전에 다른 저장소 또는 다른 빌드 산출물로 실행했던 결과일 가능성이 높다.
+- 원본 저장소 `C:\Code\Project\Boothy\src-tauri\target\debug\boothy.exe`
+  의 마지막 수정 시각은 `2026-04-03 16:59:50 KST`였고,
+  latest log가 가리키는 구현 성격과도 맞아 떨어졌다.
+
+이번 환경 대조가 주는 제품 판단:
+
+- 현재 문제는 단순히 `worker 구조가 생각보다 덜 빠르다`만이 아니다.
+- 더 직접적인 문제는
+  `우리가 개선 중인 브랜치와 사용자가 실제로 검증한 런타임이 서로 다를 가능성`
+  이 매우 높다는 점이다.
+- 즉 지금 상태에서는
+  `개선 브랜치의 성능이 나쁘다`
+  와
+  `실제로는 예전 런타임을 검증했다`
+  가 섞여 있어,
+  제품 판단과 코드 판단이 서로 어긋날 수 있다.
+
+이번 메모의 결론:
+
+- latest booth evidence는 현재 작업 브랜치보다 `C:\Code\Project\Boothy` 쪽 runtime과 더 강하게 일치한다.
+- 따라서 다음 단계는
+  `어느 저장소/빌드를 실제 booth 검증 대상으로 삼을지`를 먼저 고정하고,
+  그 동일 runtime에서 다시 측정해야 한다.
+- 그렇지 않으면 worker 구조 자체의 성과와 deployment drift를 구분할 수 없다.
+
+## 2026-04-04 최신 로그 기록: 최근 세션의 preset-applied photo는 여전히 느리고, worker 전과 큰 차이가 없다고 보는 편이 맞다
+
+최신 사용자 피드백은 간단했다.
+
+- `최근 세션`에 뜨는 프리셋 적용 사진은 아직 너무 늦다.
+- 체감상으로는 worker 도입 전과 큰 차이가 없다고 느껴진다.
+
+이번 회차는 구현이 아니라,
+이 판단이 최신 로그와 실제 session artifact로도 맞는지 닫기 위한 기록이다.
+
+이번에 기준으로 본 최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a30a45d92e1e74`
+였다.
+
+이 세션에서 확인된 제품 사실:
+
+- 세션 안에는 총 2개 capture가 남아 있었다.
+- 둘 다 same-capture first-visible은 먼저 확보됐지만,
+  `previewReady`로 닫히는 preset-applied photo는 여전히 느렸다.
+- latest app log와 session manifest가 같은 숫자를 가리켰다.
+
+이번 세션의 핵심 수치:
+
+1. 첫 번째 컷 `capture_20260404033938654_2f79032f7d`
+   - `request -> file-arrived`: 약 `3.1s`
+   - `request -> fast-preview-ready`: 약 `3.9s`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: 약 `3.1s`
+   - `capture acknowledged -> previewVisibleAtMs`: 약 `6983ms`
+   - 즉 first-visible은 먼저 왔지만,
+     고객이 실제로 기다리는 preset-applied close는 여전히 약 `7.0s`였다.
+
+2. 두 번째 컷 `capture_20260404033946807_75ec5c5f34`
+   - `request -> file-arrived`: 약 `3.3s`
+   - `request -> fast-preview-ready`: 약 `3.9s`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: 약 `2989ms`
+   - `capture acknowledged -> previewVisibleAtMs`: 약 `6838ms`
+   - 글로벌 앱 로그에도 같은 컷이
+     `capture_preview_ready elapsed_ms=6838`
+     로 남아 있었다.
+
+이번 로그가 주는 직접 결론:
+
+- 최신 기준에서도 preset-applied photo close는 대략 `6.8s ~ 7.0s` 수준이다.
+- 즉 이번 상태를 `체감상 빨라졌다`보다
+  `여전히 제품 기준 미달`로 기록하는 편이 맞다.
+- 사용자가 느낀 `별 변함이 없다`는 판단은 과장이 아니라 최신 로그와 맞는다.
+
+이번 세션에서 특히 중요했던 기술적 관찰:
+
+- 최신 `timing-events.log`의 preview render detail은 두 컷 모두
+  `sourceAsset=raw-original`
+  이었다.
+- 즉 지금 worker 변경은 first-visible topology에는 영향을 줬더라도,
+  고객이 기다리는 render-backed preset-applied truth lane은 여전히
+  RAW original 중심으로 닫히고 있었다.
+- 같은 로그 detail에는 여전히
+  `widthCap=512;heightCap=512`
+  와 `--disable-opencl`
+  이 남아 있었다.
+- 다시 말해 이번 최신 실측 기준으로는
+  `worker를 넣었지만 preset-applied photo 자체가 더 가벼워졌다고 보기 어렵다`
+  가 더 정확하다.
+
+이번 세션에서 함께 보인 제품 흐름:
+
+- latest app log에는 먼저
+  `recent-session-pending-visible`
+  이 찍혔다.
+- 그 뒤 실제 `recent-session-visible previewKind=preset-applied-preview`
+  는 `capture_preview_ready` 직후에야 닫혔다.
+- 즉 고객 입장에서는 `먼저 뭔가 보이긴 하지만, 프리셋 적용된 최근 세션 사진은 여전히 늦게 도착한다`
+  는 체감이 자연스럽다.
+
+이번 메모의 결론:
+
+- 최신 세션 `session_000000000018a30a45d92e1e74`는
+  worker 도입 이후에도 recent-session preset-applied photo가 여전히 약 `6.8s ~ 7.0s`
+  수준에서 닫히는 모습을 보여 줬다.
+- 따라서 이번 시점의 최신 제품 판단은
+  `별 변함 없음`, `여전히 느림`, `최근 세션의 프리셋 적용 사진 속도는 아직 개선 완료가 아님`
+  이다.
+- 다음 판단 기준도 그대로다.
+  `same-capture first-visible`이 아니라
+  `preset-applied preview close`를 실제로 얼마나 줄였는지로 봐야 한다.
+
+## 2026-04-04 최신 사용자 보정: worker 도입 뒤에도 `최근 세션`의 preset-applied photo는 아직 충분히 빨라지지 않았다
+
+최신 사용자 피드백은 이전의 낙관적 메모를 바로 보정해야 할 정도로 분명했다.
+
+- `최근 세션`에 뜨는 프리셋 적용 사진은 여전히 느리다.
+- 체감상으로는 worker 도입 전과 큰 차이가 없다고 느껴진다.
+- 즉 이번 시점의 실제 병목은 `same-capture first-visible`보다 `preset-applied preview close` 쪽으로 다시 좁혀 봐야 한다.
+
+이번 회차에서 현재 구현을 다시 대조해 본 결과:
+
+- 지금까지의 resident worker 변경은 주로 `먼저 보이는 사진`과 그 준비 경로를 줄이는 데 더 가깝다.
+- 반면 `previewReady`를 닫는 render-backed truth lane은 여전히 small rail용이라고 해도 체감상 무거운 preview artifact를 만들고 있었다.
+- 그래서 사용자 입장에서는 `사진이 먼저 보이는 것`은 달라졌어도, `프리셋 적용된 결과가 늦게 닫힌다`는 핵심 불만이 그대로 남을 수 있었다.
+
+이번에 바로 반영한 조치:
+
+- recent-session rail의 preset-applied preview truth lane 크기를 한 단계 더 낮췄다.
+- booth-safe render-backed preview profile cap을 `512 -> 384`로 줄여, `previewReady`를 닫는 실제 render 비용 자체를 낮추도록 조정했다.
+- 목적은 first-visible worker 체감이 약한 이유를 `대기 정책`이 아니라 `truth lane 산출물 크기`에서 먼저 줄이는 것이다.
+
+이번 조정의 제품 의미:
+
+- 이 변경은 `final render` 품질을 낮추는 것이 아니다.
+- 고객이 `최근 세션` 레일에서 확인하는 프리셋 적용 결과만 더 작은 booth-safe preview artifact로 빨리 닫히게 하려는 조정이다.
+- 즉 이번 회차의 질문은 `worker가 있느냐`보다 `worker 뒤에 닫히는 preset-applied preview 자체가 충분히 가벼운가`에 더 가깝다.
+
+이번 회차 검증:
+
+- preview invocation/계약 회귀는 Rust 테스트로 다시 확인한다.
+- 자동 검증이 유지되더라도, 최종 판단은 여전히 실장비에서 `capture_preview_ready elapsed_ms`가 실제로 내려가는지로 닫아야 한다.
+
+## 2026-04-04 현재 저장소 기준 최신 상태: 구조 변경은 반영됐고, 제품 종료 판단에는 실장비 증빙이 아직 남아 있다
+
+이 문서의 맨 위 기록은 현장 사용자 체감 메모로는 유효하다.
+다만 현재 워킹트리까지 포함한 최신 상태를 제품 판단용으로 다시 정리하면,
+이제는 `문제 확인 단계`가 아니라 `구조 변경 반영 + 자동 검증 통과 + 하드웨어 최종 증빙 대기`로 보는 편이 맞다.
+
+현재 저장소에서 이미 반영된 것:
+
+- Story 1.10 `known-good preview lane 복구와 상주형 first-visible worker 도입`이 `in-progress`로 올라가 있다.
+- booth 기본 preview lane은 실장비 비호환 실험 플래그를 기본 경로에서 빼고,
+  known-good baseline 쪽으로 다시 고정됐다.
+- recent-session first-visible 경로는 per-capture one-shot spawn만 의존하지 않고,
+  resident first-visible worker 우선 topology로 옮겨졌다.
+- same-capture first-visible이 먼저 보여도 `previewReady` truth owner는 계속 later render-backed close만 소유하도록 다시 잠갔다.
+- `capture-download-timeout` 뒤 helper가 회복했는데도 booth가 계속 멈춰 보이던
+  `phone-required` 고착 회귀를 풀도록 recovery 규칙이 보강됐다.
+
+현재 저장소에서 확인된 자동 검증:
+
+- `2026-04-04` 현재 `cargo test --test capture_readiness -- --nocapture --test-threads=1`는 `62 passed, 0 failed`였다.
+- 이 검증에는 same-capture fast preview handoff, later canonical replacement, recent-session-visible timing mirror,
+  speculative wait non-blocking, `capture-download-timeout` recovery 같은 최근 회귀 방지가 포함된다.
+
+아직 제품 완료로 단정하면 안 되는 이유:
+
+- Story 1.10 자체가 아직 `done`이 아니라 `in-progress`다.
+- story가 요구한 `한 개의 최신 실장비 session package만 봐도 request-capture -> file-arrived -> first-visible -> preview ready -> recent-session-visible을 다시 닫을 수 있는지`
+  는 아직 hardware evidence로 최종 닫히지 않았다.
+- 프런트 회귀 검증은 현재 워크스페이스에 `node_modules`가 없어 이번 회차에 다시 돌리지 못했다.
+
+따라서 이번 시점의 제품 판단은 이렇게 남기는 편이 맞다:
+
+- 현장 체감상 좋아졌다는 최신 사용자 메모는 유지한다.
+- 동시에 저장소 기준 공식 상태는 `핵심 구조 변경과 자동 회귀 방지는 반영됨`이지만,
+  `연속 촬영 안정성 / 2초 이하 체감 / session-seam 증빙`은 실장비에서 한 번 더 닫혀야 한다.
+- 즉 지금 상태는 `해결 완료`보다 `제품 합격선에 가까워진 유력 후보`에 더 가깝다.
+
+## 2026-04-04 최신 사용자 확인: 연속 촬영 기능은 복구됐고, preset-applied preview 체감도 2초 이하로 내려왔다
+
+이번 회차의 최신 사용자 확인은 비교적 분명했다.
+
+- 연속 촬영 기능 자체는 이제 동작한다.
+- 촬영 직후 같은 컷 사진이 recent-session rail에 바로 올라오는 흐름도 확인됐다.
+- 고객이 실제로 기다리는 `프리셋 적용된 결과`도 이제 체감상 `2초 이하`로 느껴진다.
+
+이번 확인이 특히 중요한 이유:
+
+- 최근 회차에서 resident first-visible worker / topology 변경을 넣은 뒤,
+  이번에는 사용자가 실제 체감 기준으로도 `2초 이하`라고 확인했다.
+- 즉 이번 구조 변경은 단순히 `연속 촬영이 다시 굴러간다`를 넘어서,
+  우리가 목표로 삼은 `preset-applied preview latency 단축`에도 유의미한 개선을 만든 것으로 기록해야 한다.
+
+이번 시점의 제품 의미:
+
+- 고객은 이미 `사진이 바로 보이느냐`와 `프리셋 적용 결과가 빨리 닫히느냐`를 구분해서 느끼고 있었고,
+  이번 확인은 두 기준 모두가 함께 개선됐다는 의미가 있다.
+- 현재 상태는 `same-capture first-visible`뿐 아니라
+  핵심 목표였던 `preset-applied preview를 충분히 빨리 보여 주기`도
+  체감 기준에서는 일단 합격선에 가까워졌다고 볼 수 있다.
+- 따라서 이번 회차 결과는
+  `연속 촬영 복구 + immediate first-visible 확보 + preset-applied preview 체감 2초 이하`
+  로 기록하는 편이 맞다.
+
+이번 메모의 결론:
+
+- 현재 최신 상태는 `연속 촬영은 동작`, `방금 찍은 사진도 바로 보임`, `프리셋 적용 결과도 체감상 2초 이하`다.
+- 이번 회차 기록은 구조 변경 이후 제품 체감이 실제로 좋아졌다는 최신 사용자 판단을 남기는 용도다.
+- 이번 회차에서는 추가 구현 없이 이 제품 판단만 최신 히스토리로 남긴다.
+
+## 2026-04-04 추가 실검증 로그 기록: 첫 컷은 약 3.3초대 first-visible, 둘째는 20초대, 셋째는 31초 timeout으로 종료
+
+이번 회차는 수정이 아니라,
+사용자 최신 제보
+`첫 번째 샷은 빨리 보였지만 2, 3번째 샷은 체감상 20초 이상 걸렸다`
+를 실제 session evidence로 다시 닫기 위한 기록이다.
+
+이번에 기준으로 본 최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3058db863a0e0`
+였다.
+
+이 세션에서 확인된 request-level 사실:
+
+- 요청은 총 3개였다.
+  - `request_000000000000064e98f99e0600`
+  - `request_000000000000064e98fa2519f0`
+  - `request_000000000000064e98fb823768`
+- 하지만 `session.json`에 최종 capture로 남은 것은 2개뿐이었다.
+- 세 번째 요청은 capture record를 남기지 못하고 세션이 `phone-required`로 종료됐다.
+
+이번 세션의 숫자는 사용자 체감과 거의 일치했다.
+
+1. 첫 번째 샷
+   - `request -> file-arrived`: 약 `3195ms`
+   - `request -> fast-preview-ready`: 약 `3915ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: 약 `3297ms`
+   - `capture acknowledged -> previewVisibleAtMs`: 약 `13796ms`
+   - 즉 첫 컷은 truthful preview close는 여전히 느렸지만,
+     same-capture first-visible은 약 `3.3s`대에 들어와 사용자가
+     `빨리 보였다`고 느낄 수 있는 패턴이었다.
+
+2. 두 번째 샷
+   - `request -> file-arrived`: 약 `19898ms`
+   - `request -> fast-preview-ready`: 약 `20521ms`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: 약 `20127ms`
+   - `capture acknowledged -> previewVisibleAtMs`: 약 `24199ms`
+   - 즉 둘째 샷의 `20초+` 체감은 로그로도 확인됐다.
+   - 특히 이 컷은 preview render 자체보다,
+     `request-capture -> file-arrived` 경계가 약 `19.9s`까지 늘어난 것이 더 큰 병목이었다.
+   - 같은 세션 `timing-events.log` 기준 이 컷의 render leg는
+     `preview-render-start -> preview-render-ready`가 약 `4226ms`였다.
+   - 다시 말해 둘째 컷의 주병목은 preview close 자체보다
+     helper completion / RAW handoff 지연 쪽에 더 가까웠다.
+
+3. 세 번째 샷
+   - 세 번째 요청 `request_000000000000064e98fb823768`은
+     `camera-helper-events.jsonl`에 `capture-accepted`만 남았다.
+   - 그 뒤 `file-arrived`나 `fast-preview-ready`는 끝내 오지 않았다.
+   - 대신 같은 세션 helper 이벤트는
+     `recovery-status(detailCode=capture-download-timeout)`와
+     `helper-error(detailCode=capture-download-timeout)`로 종료됐다.
+   - `request -> recovery-status`는 약 `31144ms`,
+     `request -> helper-error`는 약 `31146ms`였다.
+   - 즉 셋째 샷은 고객 체감상 `20초+`가 아니라,
+     실제로는 약 `31초`를 기다린 뒤 timeout으로 실패한 셈이다.
+
+이번 세션이 보여 준 제품 의미:
+
+- 사용자 제보
+  `첫 번째는 빨랐고, 둘째와 셋째는 20초 이상 걸렸다`
+  는 과장이 아니라 최신 세션 evidence와 맞는다.
+- 첫 컷은 first-visible이 약 `3.3s`대라 상대적으로 빨랐다.
+- 둘째 컷은 first-visible이 실제로 약 `20.1s`,
+  truthful preview close는 약 `24.2s`였다.
+- 셋째 컷은 preview lane까지 가지도 못하고
+  `capture-download-timeout`으로 약 `31.1s` 뒤 실패했다.
+
+이번 세션에서 특히 중요했던 판단:
+
+- 둘째 컷 `20초+`는 `preview-render`만의 문제로 보기 어렵다.
+- 실제 병목은 `request-capture -> file-arrived`가 약 `19.9s`까지 늘어난 helper completion 경계였다.
+- 셋째 컷은 그 경계가 아예 닫히지 못하고 timeout으로 무너졌다.
+- 따라서 이 최신 세션은
+  `preview lane이 느리다`만이 아니라,
+  `연속 촬영에서 helper completion boundary가 급격히 악화된다`
+  는 증거로도 봐야 한다.
+
+이번 회차에서 같이 남겨 둘 계측 공백:
+
+- 이 세션 `timing-events.log`에는 `preview-render-start`, `preview-render-ready`만 남았고,
+  story가 요구한 `request-capture`, `file-arrived`, `fast-preview-visible`, `recent-session-visible`는 닫히지 않았다.
+- 그래서 이번 판단은
+  `camera-helper-requests.jsonl`,
+  `camera-helper-events.jsonl`,
+  `session.json`
+  조합으로 닫았다.
+
+이번 메모의 결론:
+
+- 최신 session `session_000000000018a3058db863a0e0`는
+  `1번째 약 3.3s first-visible -> 2번째 약 20.1s first-visible / 24.2s preview close -> 3번째 약 31.1s timeout`
+  패턴을 실제로 보여 줬다.
+- 즉 현재 문제는 단순히 `조금 느리다`가 아니라,
+  연속 촬영에서 second/third shot latency가 제품 허용 범위를 완전히 벗어나는 상태다.
+- 다음 세션에서는 이 기록을 기준으로,
+  preview lane과 helper completion boundary 중 어느 쪽을 먼저 바로잡을지 다시 판단해야 한다.
+
+## 2026-04-04 후속 로그 분석: 첫 촬영 뒤 두 번째 샷 정지는 preview worker deadlock보다 `capture-download-timeout -> phone-required 고착`이 직접 원인이었다
+
+사용자 최신 제보는 이랬다.
+
+- 첫 번째 촬영은 성공적으로 진행됐다.
+- 그런데 두 번째 샷에서 제품이 멈췄다.
+
+이번 회차에서 실제로 다시 확인한 최신 세션은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3018959f17008`였다.
+
+이번 로그에서 먼저 확인된 사실:
+
+- 첫 번째 샷 `capture_20260404005935044_075740bc3a`는 실제로 닫혔다.
+- 글로벌 [Boothy.log](/C:/Users/KimYS/AppData/Local/com.tauri.dev/logs/Boothy.log)에는
+  `2026-04-04 00:59:48 KST` 기준
+  `capture_preview_ready elapsed_ms=14926`가 남아 있었다.
+- 같은 세션 `camera-helper-events.jsonl`에도 첫 요청은
+  `capture-accepted -> file-arrived -> fast-preview-ready`까지 정상으로 남아 있었다.
+
+하지만 두 번째 샷은 다른 패턴이었다.
+
+- 둘째 요청 `request_000000000000064e97f2d99910`은 `capture-accepted`까지만 남았다.
+- 그 뒤 같은 세션 helper 이벤트는
+  `recovery-status(detailCode=capture-download-timeout)`와
+  `helper-error(detailCode=capture-download-timeout)`로 종료됐다.
+- 중요한 점은, 그 직후 `camera-helper-status.json` 최종 상태가 다시
+  `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`로 회복했다는 것이다.
+
+즉 이번 회차의 직접 원인은 이렇게 정리됐다.
+
+- 두 번째 샷이 멈춘 직접 원인은 resident preview worker queue deadlock이 아니라,
+  helper completion boundary에서 `file-arrived`를 끝내 닫지 못한
+  `capture-download-timeout`이었다.
+- 그런데 제품이 실제로 멈춘 것처럼 보인 더 직접적인 이유는,
+  helper는 이미 `ready/healthy`로 회복했는데 host session lifecycle이
+  `phone-required`에 고정된 채 풀리지 않았기 때문이다.
+- 다시 말해 이번 증상은
+  `촬영 timeout 1회 -> helper 회복 -> booth는 계속 정지 상태`
+  순서의 제품 회귀였다.
+
+이번 회차에서 제거한 오진:
+
+- 처음에는 `second shot freeze`라서 resident first-visible worker 정지,
+  speculative preview lock 잔류, preview queue saturation을 먼저 의심할 수 있었다.
+- 하지만 실제 최신 세션 evidence에는 둘째 샷에 대해
+  `preview-render-queue-saturated`나 `resident_first_visible_render_enqueue_failed`가 아니라,
+  helper 쪽 `capture-download-timeout`만 남았다.
+- 따라서 이번 회차의 우선 문제는 preview lane보다
+  `timeout 뒤 session recovery truth를 어떻게 제품에 반영하느냐`였다.
+
+이번에 바로 반영한 조치:
+
+1. host recovery 규칙을 보강했다.
+   - helper live truth가 다시 `fresh / matched / ready / healthy`로 회복하면,
+     기존 retryable focus failure뿐 아니라 `capture-download-timeout`도
+     `phone-required` 고착에서 자동 복귀할 수 있게 했다.
+2. 회귀 테스트를 추가했다.
+   - `capture-download-timeout` 이후 helper가 다시 정상 상태를 쓰면
+     readiness가 `ready`, lifecycle stage가 `capture-ready`로 복귀하는지 테스트를 추가했다.
+3. 기존 보호 경계는 유지했다.
+   - helper가 아직 회복하지 않은 진짜 timeout 상태는 계속 `phone-required`를 유지하는지도 함께 다시 확인했다.
+
+이번 회차에서 실행해 통과한 검증:
+
+- `cargo test --test capture_readiness readiness_releases_phone_required_after_capture_download_timeout_recovers -- --nocapture`
+- `cargo test --test capture_readiness readiness_releases_phone_required_after_retryable_focus_failure_recovers -- --nocapture`
+- `cargo test --test capture_readiness capture_flow_times_out_when_helper_accepts_but_no_file_arrives -- --nocapture`
+
+이번 메모의 제품 의미:
+
+- 이번 수정은 `두 번째 샷 timeout 자체를 없앴다`기보다,
+  timeout 뒤 helper가 이미 살아났는데 제품이 계속 멈춰 보이는 회귀를 먼저 제거한 것이다.
+- 따라서 다음 실장비 확인에서는
+  `두 번째 샷 timeout 재발 여부`와
+  `재발하더라도 booth가 영구 정지 상태에 남지 않는지`
+  를 분리해서 봐야 한다.
+
+이번 시점에 남아 있는 별도 이슈:
+
+- 첫 번째 샷 preview latency는 여전히 매우 길다.
+  이번 최신 세션에서도 첫 컷 `capture_preview_ready elapsed_ms=14926`가 남아 있었다.
+- 같은 세션 `timing-events.log`에는 여전히
+  `request-capture`, `file-arrived`, `fast-preview-visible`, `recent-session-visible`가
+  session-scoped seam으로 충분히 닫히지 않았다.
+- 또한 최신 세션 preview render detail에는 아직 `--disable-opencl`이 남아 있어,
+  known-good booth invocation 복구 과제도 계속 유효하다.
+
+이번 메모의 결론:
+
+- `second shot freeze`의 최신 직접 원인은
+  `preview worker deadlock`보다 `capture-download-timeout 이후 phone-required 고착`이었다.
+- 이번 회차 조치로 product stop 상태는 완화했지만,
+  helper completion timeout 자체와 preview lane latency/correctness 문제는 별도 후속 과제로 남아 있다.
+
+## 2026-04-04 실장비 재검증: 5컷 세션에서도 여전히 제품 기준 미달, 계측 공백과 preview lane 회귀 동시 확인
+
+`2026-04-04 00:55 ~ 00:56 KST` 실장비 재테스트 기준 최신 세션은
+`session_000000000018a2e3d9373fdd38`였다.
+
+이번 재검증에서 바로 확인된 사실:
+
+- helper 쪽 capture round-trip 자체는 5컷 모두 닫혔다.
+- 최신 세션 `diagnostics/camera-helper-status.json` 최종 상태도 `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`였다.
+- 즉 이번 회차의 본문제는 `Phone Required`나 helper timeout 재발이 아니라, recent-session first-visible과 preset-applied preview lane의 속도/안정성 쪽이었다.
+
+이번 세션에서 남은 속도는 수치로도 분명했다:
+
+- `camera-helper-requests.jsonl` / `camera-helper-events.jsonl` 기준 `request-capture -> file-arrived`는 평균 약 `3286ms`였다.
+- 같은 기준 `request-capture -> fast-preview-ready`는 평균 약 `3863ms`였다.
+- `session.json` 기준 5컷의 `capture acknowledged -> RAW persisted`는 평균 약 `3028ms`였다.
+- 같은 세션에서 preview가 실제로 닫힌 4컷의 `capture acknowledged -> preview visible`은 평균 약 `9238ms`였다.
+- 특히 최근 3컷은 `7616ms`, `7761ms`, `8189ms`로, warm 상태라고 보기 쉬운 구간에서도 여전히 `7.6s ~ 8.2s`였다.
+- 최신 5번째 컷 `capture_20260403155615575_64db44e705`는 앱 로그 기준 `capture_preview_ready elapsed_ms=8189`, `recent-session-visible uiLagMs=48`이었다.
+
+이번 로그가 주는 제품 의미:
+
+- 이번에도 고객 체감 병목은 UI 반영이 아니라 preview 생성 자체였다.
+- RAW handoff만 늦은 것이 아니라, 그 뒤 preset-applied preview lane도 여전히 너무 무겁다.
+- 현재 수치에서는 미세 조정으로 `충분히 빨라졌다`고 보기 어렵다.
+
+이번 회차에서 새로 확인된 correctness/운영 리스크:
+
+- 같은 세션 첫 컷 `capture_20260403155533795_795031ecc2`는 `fastPreviewVisibleAtMs`가 기록됐고 preview 파일도 존재했지만, `session.json` 최종 상태가 `renderStatus=previewWaiting`으로 남아 first-visible replacement가 끝내 닫히지 않았다.
+- 같은 세션 둘째 컷은 `timing-events.log`에 `preview-render-queue-saturated`가 반복해서 남았고, 실제 `capture acknowledged -> preview visible`이 `13385ms`까지 늘어났다.
+- booth 장비의 preview stderr 로그에는 `warning: unknown option '--disable-opencl'`가 반복됐다.
+- 같은 stderr 근거에는 `Magick ... Access violation`과 `can't open file ... renders/previews/...jpg`도 남아, 최근 preview lane 실험이 현재 booth의 darktable `5.4.0` 환경에서는 안정적이지 않다는 신호가 확인됐다.
+
+이번 재검증에서 다시 드러난 계측 공백:
+
+- 이 브랜치의 목적과 달리, 최신 세션 `diagnostics/timing-events.log`에는 `request-capture`, `file-arrived`, `fast-preview-visible`, `recent-session-visible`가 남지 않았다.
+- 실제 최신 세션에서는 같은 정보가 `camera-helper-requests.jsonl`, `camera-helper-events.jsonl`, 글로벌 `Boothy.log`로는 확인되는데, per-session seam log에는 충분히 닫히지 못했다.
+- 즉 다음 구조 변경 판단 전에 `최신 세션 timing log 하나만 보면 병목을 다시 닫을 수 있는 상태`는 아직 아니다.
+
+이번 시점의 제품 판단:
+
+- helper 안정성은 이번 회차에서 우선 합격선에 가깝다.
+- 하지만 recent-session 속도는 여전히 허용 불가다.
+- 동시에 preview lane correctness도 일부 다시 흔들렸다.
+- 따라서 다음 단계는 단순 옵션 미세 조정이 아니라, `known-good correctness 복구 + 계측 복구 + 구조 변경 준비`가 함께 가야 한다.
+
+그래서 다음 단계는 아래 순서로 준비한다:
+
+1. preview invocation을 booth 실장비 기준 known-good 쪽으로 다시 고정한다.
+   - 최신 stderr가 보여 준 `--disable-opencl` 비지원과 speculative/fast-preview-raster 실패 흔적은 더 이상 운영 경로에 남겨 두지 않는다.
+   - 목표는 first capture가 다시 `previewWaiting`에 고착되지 않게 만드는 것이다.
+2. per-session seam 계측을 실제 booth 세션에서도 다시 닫는다.
+   - 최소한 같은 `timing-events.log` 안에 `request-capture`, `file-arrived`, `fast-preview-visible`, `preview-render-start`, `capture_preview_ready`, `recent-session-visible`가 함께 남아야 한다.
+   - 그래야 다음 구조 변경의 before/after를 한 파일에서 비교할 수 있다.
+3. 구조 변경의 1차 후보는 그대로 `상주형 first-visible renderer worker`다.
+   - 이번 세션에서도 preview render 자체가 steady-state로 약 `4.2s ~ 4.6s`였기 때문에, per-capture spawn과 queue 경합을 줄이는 topology 변경이 필요하다.
+4. 다만 worker만으로 끝내지 않는다.
+   - 이번 실장비에서 `fast-preview-ready`도 평균 약 `3.9s`였기 때문에, first-visible source 자체를 더 이르게 만들 후보도 함께 열어 둔다.
+   - 즉 다음 구조 변경 준비 범위는 `same engine, different topology`에 더해 `camera-thumbnail/intermediate-preview first` 후보까지 포함한다.
+
+이번 메모의 결론:
+
+- 최신 실장비 테스트는 `미세 조정 단계 종료`를 다시 확인해 줬다.
+- 다음 회차의 준비 완료 기준은 `preview lane correctness 복구`, `per-session seam log 복구`, `상주형 first-visible worker 설계 착수`다.
 
 ## 2026-04-03 실장비 업데이트
 

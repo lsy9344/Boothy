@@ -381,6 +381,48 @@ So that I do not experience a blank wait after the booth says my photo was saved
 **Then** telemetry separates fast-preview visibility from preset-applied preview readiness
 **And** hardware evidence confirms same-capture correctness, cross-session isolation, and safe behavior during burst capture queue delay
 
+Story 1.9 hardware follow-up note:
+- latest hardware evidence keeps this story in `review / No-Go`.
+- 미세 조정 단계는 이 스토리에서 종료되며, next corrective follow-up은 구조 변경을 다루는 Story 1.10이 맡는다.
+
+### Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
+
+As a booth customer,
+I want my just-captured photo to appear in the recent-session rail at product-acceptable speed without unstable preview replacement,
+So that I can trust the booth immediately after each capture and keep shooting without long blank waiting.
+
+**Acceptance Criteria:**
+
+**Given** the booth preview lane starts from an approved render baseline
+**When** the runtime prepares first-visible preview work on approved booth hardware
+**Then** the default preview invocation uses the validated known-good contract
+**And** speculative or experimental flags are excluded from the default booth path until separately approved
+
+**Given** the booth records a new capture request
+**When** diagnostics are written for that same session
+**Then** the session-level seam log contains `request-capture`, `file-arrived`, `fast-preview-visible` or equivalent first-visible event, `preview-render-start`, `capture_preview_ready`, and `recent-session-visible`
+**And** those events can be used to close the latency split for one recent hardware session without relying on mixed global logs
+
+**Given** first-visible preview work is needed for repeated captures in the same booth session
+**When** the runtime chooses how to prepare that preview
+**Then** it prefers a warm resident first-visible worker over per-capture one-shot render spawn
+**And** preset selection or session start may trigger warm-up, preset preload, or cache priming as long as capture truth is not blocked
+
+**Given** the runtime produces a first-visible image for the current capture
+**When** that image is surfaced to the customer before preset-applied render completion
+**Then** the canonical preview path and same-slot replacement rule remain unchanged
+**And** `previewReady` truth still belongs only to the later render-backed booth-safe preview
+
+**Given** the first-visible source may vary by hardware or path health
+**When** the runtime chooses among fast preview, camera thumbnail, intermediate preview, or resident-worker output
+**Then** it may use any approved same-capture source that preserves correctness
+**And** the customer experience remains truthful `Preview Waiting` until preset-applied preview readiness actually closes
+
+**Given** the resident worker loses warm state, saturates its queue, or fails to produce a safe first-visible result
+**When** the booth evaluates customer-safe fallback
+**Then** capture truth remains preserved
+**And** the booth falls back to truthful `Preview Waiting` and the normal render follow-up path instead of false-ready or cross-session leakage
+
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 
 고객이 현재 세션 사진만 검토하고 정책 범위 내에서 삭제하며, 세션 중 언제든 프리셋을 바꾸고, 조정된 종료 시각과 경고 알림을 이해하면서 촬영을 이어갈 수 있게 한다.

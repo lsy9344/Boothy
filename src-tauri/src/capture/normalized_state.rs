@@ -9,7 +9,7 @@ use crate::{
     capture::{
         ingest_pipeline::{
             complete_preview_render_in_dir, persist_capture_in_dir,
-            promote_pending_fast_preview_in_dir, start_speculative_preview_render_in_dir,
+            promote_pending_fast_preview_in_dir,
         },
         sidecar_client::{
             is_retryable_capture_helper_error, map_capture_round_trip_error,
@@ -135,10 +135,6 @@ where
     };
     let starting_event_count = read_capture_event_count(base_dir, &input.session_id)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
-    let speculative_base_dir = base_dir.to_path_buf();
-    let speculative_session_id = input.session_id.clone();
-    let speculative_request_id = request_id.clone();
-    let speculative_preset = active_preset.clone();
     let fast_preview_base_dir = base_dir.to_path_buf();
     let fast_preview_session_id = input.session_id.clone();
     let fast_preview_request_id = request_id.clone();
@@ -166,16 +162,6 @@ where
         &request_id,
         starting_event_count,
         |fast_preview| {
-            start_speculative_preview_render_in_dir(
-                &speculative_base_dir,
-                &speculative_session_id,
-                &speculative_request_id,
-                &fast_preview.capture_id,
-                &speculative_preset.preset_id,
-                &speculative_preset.published_version,
-                &fast_preview.fast_preview_path,
-            );
-
             if early_fast_preview_update.is_none() {
                 if let Some(update) = promote_pending_fast_preview_in_dir(
                     &fast_preview_base_dir,
@@ -528,7 +514,7 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
         return Ok(());
     };
 
-    if !is_retryable_capture_helper_error(&latest_helper_error) {
+    if !helper_error_allows_session_recovery_after_ready(&latest_helper_error) {
         return Ok(());
     }
 
@@ -552,6 +538,16 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
     );
 
     Ok(())
+}
+
+fn helper_error_allows_session_recovery_after_ready(
+    message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
+) -> bool {
+    if is_retryable_capture_helper_error(message) {
+        return true;
+    }
+
+    matches!(message.detail_code.as_str(), "capture-download-timeout")
 }
 
 fn sync_recoverable_render_failure_in_manifest(

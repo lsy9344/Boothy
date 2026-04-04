@@ -1,13 +1,20 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
+        LazyLock, Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 
 use crate::{
     preset::preset_bundle::PublishedPresetRuntimeBundle,
@@ -18,25 +25,37 @@ use crate::{
 };
 
 const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
-const MAX_IN_FLIGHT_RENDER_JOBS: usize = 2;
+const MAX_IN_FLIGHT_RENDER_JOBS: usize = if cfg!(test) { 64 } else { 2 };
 const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
-const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 512;
-const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 512;
-const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 384;
-const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 384;
+// The truthful recent-session rail preview does not need the old 512px cap.
+// Keep the render-backed close accurate, but shrink the booth-safe preview
+// artifact so preset-applied replacement lands materially sooner.
+const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
+const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
+const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
+const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
+const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
+const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-    0x42, 0x60, 0x82,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0x60, 0x60, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x01, 0x2B, 0x09, 0x4D, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+    0xAE, 0x42, 0x60, 0x82,
 ];
 
 static RENDER_QUEUE_DEPTH: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 static PREVIEW_RENDER_WARMUP_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+static RESIDENT_PREVIEW_WORKERS: LazyLock<Mutex<HashMap<String, ResidentPreviewWorkerHandle>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static RESIDENT_PREVIEW_WORKER_GENERATION: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static RESIDENT_PREVIEW_WORKER_RUN_INLINE_IN_TESTS: AtomicBool = AtomicBool::new(true);
+#[cfg(test)]
+static RESIDENT_PREVIEW_WORKER_TEST_IDLE_TIMEOUT_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderIntent {
@@ -65,6 +84,49 @@ enum PreviewRenderSourceKind {
 
 pub struct PreparedPreviewRender {
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PreviewInvocationProfile {
+    apply_custom_presets: bool,
+    disable_opencl: bool,
+    allow_fast_preview_raster: bool,
+}
+
+impl PreviewInvocationProfile {
+    fn approved_booth_safe() -> Self {
+        Self {
+            apply_custom_presets: false,
+            disable_opencl: false,
+            allow_fast_preview_raster: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResidentPreviewWorkerHandle {
+    generation: u64,
+    sender: SyncSender<ResidentPreviewWorkerJob>,
+}
+
+#[derive(Debug, Clone)]
+enum ResidentPreviewWorkerJob {
+    Render(ResidentPreviewRenderJob),
+}
+
+#[derive(Debug, Clone)]
+struct ResidentPreviewRenderJob {
+    base_dir: PathBuf,
+    session_id: String,
+    request_id: String,
+    capture_id: String,
+    preset_id: String,
+    preset_version: String,
+    source_asset_path: PathBuf,
+    source_cleanup_path: Option<PathBuf>,
+    output_path: PathBuf,
+    detail_path: PathBuf,
+    lock_path: PathBuf,
 }
 
 pub fn render_capture_asset_in_dir(
@@ -215,6 +277,58 @@ pub fn render_preview_asset_to_path_in_dir(
     output_path: &Path,
 ) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let _queue_guard = acquire_render_queue_slot()?;
+    render_preview_asset_to_path_with_queue_guard_in_dir(
+        base_dir,
+        session_id,
+        request_id,
+        capture_id,
+        preset_id,
+        preset_version,
+        source_asset_path,
+        output_path,
+    )
+}
+
+fn render_preview_asset_to_path_with_background_capacity_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    source_asset_path: &Path,
+    output_path: &Path,
+) -> Result<PreparedPreviewRender, RenderWorkerError> {
+    let Some(_queue_guard) = try_acquire_resident_preview_render_queue_slot() else {
+        return Err(RenderWorkerError {
+            reason_code: "render-queue-saturated",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail:
+                "resident first-visible worker가 남은 render slot을 확보하지 못했어요.".into(),
+        });
+    };
+    render_preview_asset_to_path_with_queue_guard_in_dir(
+        base_dir,
+        session_id,
+        request_id,
+        capture_id,
+        preset_id,
+        preset_version,
+        source_asset_path,
+        output_path,
+    )
+}
+
+fn render_preview_asset_to_path_with_queue_guard_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    source_asset_path: &Path,
+    output_path: &Path,
+) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let bundle =
         resolve_runtime_bundle_in_dir(base_dir, preset_id, preset_version, RenderIntent::Preview)?;
 
@@ -282,6 +396,43 @@ pub fn render_preview_asset_to_path_in_dir(
     })
 }
 
+pub fn prime_preview_worker_runtime_in_dir(base_dir: &Path, _session_id: &str) {
+    let worker_root = base_dir.join(".boothy-darktable").join("preview");
+    let _ = fs::create_dir_all(worker_root.join("warmup"));
+    let _ = ensure_preview_renderer_warmup_source(base_dir);
+}
+
+pub fn enqueue_resident_preview_render_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    source_asset_path: &Path,
+    source_cleanup_path: Option<&Path>,
+    output_path: &Path,
+    detail_path: &Path,
+    lock_path: &Path,
+) -> Result<(), RenderWorkerError> {
+    let worker_key = build_resident_preview_worker_key(session_id, preset_id, preset_version);
+    let job = ResidentPreviewWorkerJob::Render(ResidentPreviewRenderJob {
+        base_dir: base_dir.to_path_buf(),
+        session_id: session_id.to_string(),
+        request_id: request_id.to_string(),
+        capture_id: capture_id.to_string(),
+        preset_id: preset_id.to_string(),
+        preset_version: preset_version.to_string(),
+        source_asset_path: source_asset_path.to_path_buf(),
+        source_cleanup_path: source_cleanup_path.map(PathBuf::from),
+        output_path: output_path.to_path_buf(),
+        detail_path: detail_path.to_path_buf(),
+        lock_path: lock_path.to_path_buf(),
+    });
+
+    enqueue_resident_preview_worker_job(worker_key, job)
+}
+
 pub fn schedule_preview_renderer_warmup_in_dir(
     base_dir: &Path,
     session_id: &str,
@@ -290,6 +441,13 @@ pub fn schedule_preview_renderer_warmup_in_dir(
 ) {
     let warmup_key = build_preview_render_warmup_key(session_id, preset_id, preset_version);
     if !try_mark_preview_render_warmup_in_flight(&warmup_key) {
+        return;
+    }
+
+    prime_preview_worker_runtime_in_dir(base_dir, session_id);
+
+    if cfg!(test) {
+        clear_preview_render_warmup_in_flight(&warmup_key);
         return;
     }
 
@@ -311,7 +469,11 @@ pub fn schedule_preview_renderer_warmup_in_dir(
                 error.operator_detail
             );
         }
-        clear_preview_render_warmup_in_flight(&warmup_key);
+        clear_preview_render_warmup_in_flight(&build_preview_render_warmup_key(
+            &session_id,
+            &preset_id,
+            &preset_version,
+        ));
     });
 }
 
@@ -449,6 +611,14 @@ fn build_preview_render_warmup_key(
     format!("{session_id}:{preset_id}:{preset_version}")
 }
 
+fn build_resident_preview_worker_key(
+    session_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+) -> String {
+    format!("{session_id}:{preset_id}:{preset_version}")
+}
+
 fn try_mark_preview_render_warmup_in_flight(key: &str) -> bool {
     let Ok(mut in_flight) = PREVIEW_RENDER_WARMUP_IN_FLIGHT.lock() else {
         return false;
@@ -461,6 +631,170 @@ fn clear_preview_render_warmup_in_flight(key: &str) {
     if let Ok(mut in_flight) = PREVIEW_RENDER_WARMUP_IN_FLIGHT.lock() {
         in_flight.remove(key);
     }
+}
+
+fn enqueue_resident_preview_worker_job(
+    worker_key: String,
+    job: ResidentPreviewWorkerJob,
+) -> Result<(), RenderWorkerError> {
+    if resident_preview_worker_runs_inline_in_tests() {
+        let ResidentPreviewWorkerJob::Render(job) = job;
+        run_resident_preview_render_job(job);
+        return Ok(());
+    }
+
+    let mut handle = ensure_resident_preview_worker(&worker_key)?;
+
+    match handle.sender.try_send(job.clone()) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(RenderWorkerError {
+            reason_code: "render-queue-saturated",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!(
+                "resident first-visible worker queue가 가득 찼어요: key={worker_key}"
+            ),
+        }),
+        Err(TrySendError::Disconnected(_)) => {
+            remove_resident_preview_worker(&worker_key, handle.generation);
+            handle = ensure_resident_preview_worker(&worker_key)?;
+            match handle.sender.try_send(job) {
+                Ok(()) => Ok(()),
+                Err(TrySendError::Full(_)) => Err(RenderWorkerError {
+                    reason_code: "render-queue-saturated",
+                    customer_message: safe_render_failure_message(RenderIntent::Preview),
+                    operator_detail: format!(
+                        "resident first-visible worker queue가 재시도 뒤에도 가득 찼어요: key={worker_key}"
+                    ),
+                }),
+                Err(TrySendError::Disconnected(_)) => Err(RenderWorkerError {
+                    reason_code: "render-queue-unavailable",
+                    customer_message: safe_render_failure_message(RenderIntent::Preview),
+                    operator_detail: format!(
+                        "resident first-visible worker를 다시 시작하지 못했어요: key={worker_key}"
+                    ),
+                }),
+            }
+        }
+    }
+}
+
+fn ensure_resident_preview_worker(
+    worker_key: &str,
+) -> Result<ResidentPreviewWorkerHandle, RenderWorkerError> {
+    let mut workers = RESIDENT_PREVIEW_WORKERS
+        .lock()
+        .map_err(|_| RenderWorkerError {
+            reason_code: "render-queue-unavailable",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: "resident preview worker registry mutex를 잠그지 못했어요.".into(),
+        })?;
+
+    if let Some(handle) = workers.get(worker_key).cloned() {
+        return Ok(handle);
+    }
+
+    let generation = RESIDENT_PREVIEW_WORKER_GENERATION.fetch_add(1, Ordering::Relaxed);
+    let (sender, receiver) = mpsc::sync_channel(RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY);
+    let worker_key_owned = worker_key.to_string();
+
+    thread::spawn(move || {
+        run_resident_preview_worker(worker_key_owned, generation, receiver);
+    });
+
+    let handle = ResidentPreviewWorkerHandle { generation, sender };
+    workers.insert(worker_key.to_string(), handle.clone());
+
+    Ok(handle)
+}
+
+fn remove_resident_preview_worker(worker_key: &str, generation: u64) {
+    let Ok(mut workers) = RESIDENT_PREVIEW_WORKERS.lock() else {
+        return;
+    };
+
+    if workers
+        .get(worker_key)
+        .map(|handle| handle.generation == generation)
+        .unwrap_or(false)
+    {
+        workers.remove(worker_key);
+    }
+}
+
+fn run_resident_preview_worker(
+    worker_key: String,
+    generation: u64,
+    receiver: mpsc::Receiver<ResidentPreviewWorkerJob>,
+) {
+    loop {
+        match receiver.recv_timeout(resident_preview_worker_idle_timeout()) {
+            Ok(ResidentPreviewWorkerJob::Render(job)) => {
+                run_resident_preview_render_job(job);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                remove_resident_preview_worker(&worker_key, generation);
+                break;
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                remove_resident_preview_worker(&worker_key, generation);
+                break;
+            }
+        }
+    }
+}
+
+fn run_resident_preview_render_job(job: ResidentPreviewRenderJob) {
+    resident_preview_worker_test_delay();
+
+    log_render_start_in_dir(
+        &job.base_dir,
+        &job.session_id,
+        &job.capture_id,
+        &job.request_id,
+        RenderIntent::Preview,
+    );
+
+    let render_result = render_preview_asset_to_path_with_background_capacity_in_dir(
+        &job.base_dir,
+        &job.session_id,
+        &job.request_id,
+        &job.capture_id,
+        &job.preset_id,
+        &job.preset_version,
+        &job.source_asset_path,
+        &job.output_path,
+    );
+
+    match render_result {
+        Ok(prepared_render) => {
+            let _ = fs::write(&job.detail_path, prepared_render.detail);
+        }
+        Err(error) => {
+            log::warn!(
+                "resident_first_visible_render_failed session={} capture_id={} request_id={} reason_code={} detail={}",
+                job.session_id,
+                job.capture_id,
+                job.request_id,
+                error.reason_code,
+                error.operator_detail
+            );
+            log_render_failure_in_dir(
+                &job.base_dir,
+                &job.session_id,
+                &job.capture_id,
+                Some(&job.request_id),
+                RenderIntent::Preview,
+                error.reason_code,
+            );
+            let _ = fs::remove_file(&job.output_path);
+            let _ = fs::remove_file(&job.detail_path);
+        }
+    }
+
+    if let Some(source_cleanup_path) = job.source_cleanup_path.as_ref() {
+        let _ = fs::remove_file(source_cleanup_path);
+    }
+    let _ = fs::remove_file(&job.lock_path);
 }
 
 fn run_preview_renderer_warmup_in_dir(
@@ -544,10 +878,6 @@ fn ensure_preview_renderer_warmup_source(base_dir: &Path) -> Result<PathBuf, Ren
         .join("preview")
         .join("warmup")
         .join("preview-renderer-warmup-source.png");
-    if warmup_source_path.is_file() {
-        return Ok(warmup_source_path);
-    }
-
     if let Some(parent) = warmup_source_path.parent() {
         fs::create_dir_all(parent).map_err(|error| RenderWorkerError {
             reason_code: "render-warmup-dir-unavailable",
@@ -558,13 +888,22 @@ fn ensure_preview_renderer_warmup_source(base_dir: &Path) -> Result<PathBuf, Ren
         })?;
     }
 
-    fs::write(&warmup_source_path, PREVIEW_RENDER_WARMUP_INPUT_PNG).map_err(|error| {
-        RenderWorkerError {
-            reason_code: "render-warmup-source-write-failed",
-            customer_message: safe_render_failure_message(RenderIntent::Preview),
-            operator_detail: format!("preview renderer warm-up source를 쓰지 못했어요: {error}"),
-        }
-    })?;
+    let needs_refresh = match fs::read(&warmup_source_path) {
+        Ok(existing_bytes) => existing_bytes != PREVIEW_RENDER_WARMUP_INPUT_PNG,
+        Err(_) => true,
+    };
+
+    if needs_refresh {
+        fs::write(&warmup_source_path, PREVIEW_RENDER_WARMUP_INPUT_PNG).map_err(|error| {
+            RenderWorkerError {
+                reason_code: "render-warmup-source-write-failed",
+                customer_message: safe_render_failure_message(RenderIntent::Preview),
+                operator_detail: format!(
+                    "preview renderer warm-up source를 쓰지 못했어요: {error}"
+                ),
+            }
+        })?;
+    }
 
     Ok(warmup_source_path)
 }
@@ -734,6 +1073,54 @@ fn try_acquire_background_render_queue_slot() -> Option<RenderQueueGuard> {
     Some(RenderQueueGuard {})
 }
 
+fn try_acquire_resident_preview_render_queue_slot() -> Option<RenderQueueGuard> {
+    let Ok(mut depth) = RENDER_QUEUE_DEPTH.lock() else {
+        return None;
+    };
+
+    if *depth >= MAX_IN_FLIGHT_RENDER_JOBS {
+        return None;
+    }
+
+    *depth += 1;
+    Some(RenderQueueGuard {})
+}
+
+fn resident_preview_worker_idle_timeout() -> Duration {
+    #[cfg(test)]
+    {
+        let override_ms = RESIDENT_PREVIEW_WORKER_TEST_IDLE_TIMEOUT_MS.load(Ordering::Relaxed);
+        if override_ms > 0 {
+            return Duration::from_millis(override_ms);
+        }
+    }
+
+    RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT
+}
+
+#[cfg(test)]
+static RESIDENT_PREVIEW_WORKER_TEST_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+fn resident_preview_worker_runs_inline_in_tests() -> bool {
+    #[cfg(test)]
+    {
+        return RESIDENT_PREVIEW_WORKER_RUN_INLINE_IN_TESTS.load(Ordering::Relaxed);
+    }
+
+    #[allow(unreachable_code)]
+    false
+}
+
+fn resident_preview_worker_test_delay() {
+    #[cfg(test)]
+    {
+        let delay_ms = RESIDENT_PREVIEW_WORKER_TEST_DELAY_MS.load(Ordering::Relaxed);
+        if delay_ms > 0 {
+            thread::sleep(Duration::from_millis(delay_ms));
+        }
+    }
+}
+
 fn current_time_ms() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -846,7 +1233,9 @@ fn build_darktable_invocation(
     intent: RenderIntent,
     forced_source_kind: Option<PreviewRenderSourceKind>,
 ) -> DarktableInvocation {
-    let render_source = resolve_preview_render_source(capture, paths, intent, forced_source_kind);
+    let profile = approved_preview_invocation_profile();
+    let render_source =
+        resolve_preview_render_source(capture, paths, intent, forced_source_kind, profile);
     build_darktable_invocation_from_source(
         base_dir,
         _darktable_version,
@@ -867,6 +1256,7 @@ fn build_darktable_invocation_from_source(
     intent: RenderIntent,
     render_source_kind: PreviewRenderSourceKind,
 ) -> DarktableInvocation {
+    let profile = approved_preview_invocation_profile();
     let mode = match intent {
         RenderIntent::Preview => "preview",
         RenderIntent::Final => "final",
@@ -888,9 +1278,13 @@ fn build_darktable_invocation_from_source(
     ];
 
     if matches!(intent, RenderIntent::Preview) {
-        arguments.push("--apply-custom-presets".into());
-        arguments.push(DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED.into());
-        arguments.push("--disable-opencl".into());
+        if !profile.apply_custom_presets {
+            arguments.push("--apply-custom-presets".into());
+            arguments.push(DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED.into());
+        }
+        if profile.disable_opencl {
+            arguments.push("--disable-opencl".into());
+        }
         let (width_cap, height_cap) = preview_render_dimensions(render_source_kind);
         arguments.push("--width".into());
         arguments.push(width_cap.to_string());
@@ -915,6 +1309,10 @@ fn build_darktable_invocation_from_source(
     }
 }
 
+fn approved_preview_invocation_profile() -> PreviewInvocationProfile {
+    PreviewInvocationProfile::approved_booth_safe()
+}
+
 fn preview_render_dimensions(source_kind: PreviewRenderSourceKind) -> (u32, u32) {
     match source_kind {
         PreviewRenderSourceKind::RawOriginal => {
@@ -937,6 +1335,7 @@ fn resolve_preview_render_source(
     paths: &SessionPaths,
     intent: RenderIntent,
     forced_source_kind: Option<PreviewRenderSourceKind>,
+    profile: PreviewInvocationProfile,
 ) -> PreviewRenderSource {
     if matches!(
         forced_source_kind,
@@ -950,27 +1349,29 @@ fn resolve_preview_render_source(
     }
 
     if matches!(intent, RenderIntent::Preview) {
-        if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
-            let preview_asset = Path::new(preview_asset_path);
+        if profile.allow_fast_preview_raster {
+            if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
+                let preview_asset = Path::new(preview_asset_path);
 
-            if is_session_scoped_asset_path(&paths.session_root, preview_asset)
-                && is_valid_render_preview_asset(preview_asset)
-            {
+                if is_session_scoped_asset_path(&paths.session_root, preview_asset)
+                    && is_valid_render_preview_asset(preview_asset)
+                {
+                    return PreviewRenderSource {
+                        asset_path: preview_asset_path.to_string(),
+                        kind: PreviewRenderSourceKind::FastPreviewRaster,
+                    };
+                }
+            }
+
+            let canonical_preview_asset = paths
+                .renders_previews_dir
+                .join(format!("{}.jpg", capture.capture_id));
+            if is_valid_render_preview_asset(&canonical_preview_asset) {
                 return PreviewRenderSource {
-                    asset_path: preview_asset_path.to_string(),
+                    asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
                     kind: PreviewRenderSourceKind::FastPreviewRaster,
                 };
             }
-        }
-
-        let canonical_preview_asset = paths
-            .renders_previews_dir
-            .join(format!("{}.jpg", capture.capture_id));
-        if is_valid_render_preview_asset(&canonical_preview_asset) {
-            return PreviewRenderSource {
-                asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
-                kind: PreviewRenderSourceKind::FastPreviewRaster,
-            };
         }
     }
 
@@ -1306,6 +1707,9 @@ fn sanitize_process_output(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    static RESIDENT_PREVIEW_WORKER_TEST_MUTEX: LazyLock<Mutex<()>> =
+        LazyLock::new(|| Mutex::new(()));
+
     fn unique_temp_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "boothy-render-{label}-{}",
@@ -1314,6 +1718,55 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ))
+    }
+
+    struct ResidentPreviewWorkerTestGuard {
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ResidentPreviewWorkerTestGuard {
+        fn new(run_inline: bool, idle_timeout_ms: u64) -> Self {
+            let guard = RESIDENT_PREVIEW_WORKER_TEST_MUTEX
+                .lock()
+                .expect("resident worker test mutex should lock");
+            RESIDENT_PREVIEW_WORKER_RUN_INLINE_IN_TESTS.store(run_inline, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKER_TEST_IDLE_TIMEOUT_MS.store(idle_timeout_ms, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKER_TEST_DELAY_MS.store(0, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKERS
+                .lock()
+                .expect("resident preview workers should lock")
+                .clear();
+            Self { _guard: guard }
+        }
+    }
+
+    impl Drop for ResidentPreviewWorkerTestGuard {
+        fn drop(&mut self) {
+            RESIDENT_PREVIEW_WORKER_RUN_INLINE_IN_TESTS.store(true, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKER_TEST_IDLE_TIMEOUT_MS.store(0, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKER_TEST_DELAY_MS.store(0, Ordering::Relaxed);
+            RESIDENT_PREVIEW_WORKERS
+                .lock()
+                .expect("resident preview workers should lock")
+                .clear();
+        }
+    }
+
+    fn resident_preview_worker_test_job(label: &str) -> ResidentPreviewWorkerJob {
+        let temp_dir = unique_temp_dir(label);
+        ResidentPreviewWorkerJob::Render(ResidentPreviewRenderJob {
+            base_dir: temp_dir.clone(),
+            session_id: format!("session_{label}"),
+            request_id: format!("request_{label}"),
+            capture_id: format!("capture_{label}"),
+            preset_id: "preset_test".into(),
+            preset_version: "2026.03.31".into(),
+            source_asset_path: temp_dir.join("source.jpg"),
+            source_cleanup_path: None,
+            output_path: temp_dir.join("output.jpg"),
+            detail_path: temp_dir.join("output.detail"),
+            lock_path: temp_dir.join("output.lock"),
+        })
     }
 
     #[test]
@@ -1434,6 +1887,9 @@ mod tests {
             pair[0] == "--apply-custom-presets"
                 && pair[1] == DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED
         }));
+        assert!(!invocation
+            .arguments
+            .contains(&"--disable-opencl".to_string()));
         assert_eq!(
             invocation.render_source_kind,
             PreviewRenderSourceKind::RawOriginal
@@ -1508,13 +1964,38 @@ mod tests {
             .expect("warmup source should be creatable");
         let bytes = fs::read(&warmup_source).expect("warmup source should be readable");
 
-        assert!(bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]));
+        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_PNG);
 
         let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
-    fn preview_invocation_prefers_same_capture_fast_preview_raster_when_available() {
+    fn preview_renderer_warmup_source_rewrites_stale_png_bytes() {
+        let temp_dir = unique_temp_dir("preview-warmup-source-refresh");
+        let warmup_source = temp_dir
+            .join(".boothy-darktable")
+            .join("preview")
+            .join("warmup")
+            .join("preview-renderer-warmup-source.png");
+        fs::create_dir_all(
+            warmup_source
+                .parent()
+                .expect("warmup source should have a parent"),
+        )
+        .expect("warmup source parent should be creatable");
+        fs::write(&warmup_source, b"broken-png").expect("stale warmup source should be writable");
+
+        let warmup_source = ensure_preview_renderer_warmup_source(&temp_dir)
+            .expect("warmup source should be refreshed");
+        let bytes = fs::read(&warmup_source).expect("refreshed warmup source should be readable");
+
+        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_PNG);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn preview_invocation_prefers_same_capture_raster_when_available() {
         let temp_dir = unique_temp_dir("preview-fast-source");
         let session_id = "session_test";
         let paths = SessionPaths::new(&temp_dir, session_id);
@@ -1599,7 +2080,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_invocation_uses_canonical_preview_asset_even_when_manifest_preview_is_empty() {
+    fn preview_invocation_reuses_canonical_preview_asset_in_default_booth_safe_mode() {
         let temp_dir = unique_temp_dir("preview-canonical-fallback");
         let session_id = "session_test";
         let paths = SessionPaths::new(&temp_dir, session_id);
@@ -1684,6 +2165,51 @@ mod tests {
     }
 
     #[test]
+    fn fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview() {
+        let temp_dir = unique_temp_dir("fast-preview-raster-cap");
+        let output_path = temp_dir.join("renders").join("previews").join("capture_test.jpg");
+        let source_path = temp_dir.join("renders").join("previews").join("capture_test.source.jpg");
+
+        fs::create_dir_all(
+            output_path
+                .parent()
+                .expect("fast preview output path should have a parent"),
+        )
+        .expect("fast preview output directory should exist");
+        fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+            .expect("fast preview source should be writable");
+
+        let invocation = build_darktable_invocation_from_source(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &temp_dir.join("bundle").join("preview.xmp"),
+            &source_path,
+            &output_path,
+            RenderIntent::Preview,
+            PreviewRenderSourceKind::FastPreviewRaster,
+        );
+
+        assert!(invocation.arguments.contains(&"--width".to_string()));
+        assert!(invocation.arguments.contains(&"--height".to_string()));
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
+        assert!(invocation
+            .arguments
+            .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert!(
+            FAST_PREVIEW_RENDER_MAX_WIDTH_PX < RAW_PREVIEW_MAX_WIDTH_PX,
+            "fast-preview-raster should use a smaller cap than raw-original preview"
+        );
+        assert!(
+            FAST_PREVIEW_RENDER_MAX_HEIGHT_PX < RAW_PREVIEW_MAX_HEIGHT_PX,
+            "fast-preview-raster should use a smaller cap than raw-original preview"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn staging_render_output_path_stays_separate_from_the_canonical_preview_asset() {
         let temp_dir = unique_temp_dir("staging-path");
         let paths = SessionPaths::new(&temp_dir, "session_test");
@@ -1729,5 +2255,116 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn resident_preview_worker_can_use_remaining_render_capacity() {
+        let first_guard = acquire_render_queue_slot().expect("first slot should be available");
+        let resident_guard = try_acquire_resident_preview_render_queue_slot();
+
+        assert!(
+            resident_guard.is_some(),
+            "resident preview worker should use the remaining render slot"
+        );
+
+        drop(resident_guard);
+        drop(first_guard);
+    }
+
+    #[test]
+    fn resident_preview_worker_restarts_when_stale_handle_disconnects() {
+        let _config = ResidentPreviewWorkerTestGuard::new(false, 0);
+        let worker_key = "session_test:preset_test:2026.03.31".to_string();
+        let (sender, receiver) = mpsc::sync_channel(RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY);
+        let stale_generation = RESIDENT_PREVIEW_WORKER_GENERATION.fetch_add(1, Ordering::Relaxed);
+        drop(receiver);
+
+        RESIDENT_PREVIEW_WORKERS
+            .lock()
+            .expect("resident preview workers should lock")
+            .insert(
+                worker_key.clone(),
+                ResidentPreviewWorkerHandle {
+                    generation: stale_generation,
+                    sender,
+                },
+            );
+
+        enqueue_resident_preview_worker_job(
+            worker_key.clone(),
+            resident_preview_worker_test_job("disconnected"),
+        )
+        .expect("enqueue should recreate a disconnected resident worker");
+
+        let refreshed = RESIDENT_PREVIEW_WORKERS
+            .lock()
+            .expect("resident preview workers should lock")
+            .get(&worker_key)
+            .cloned()
+            .expect("worker should be re-registered");
+        assert_ne!(refreshed.generation, stale_generation);
+    }
+
+    #[test]
+    fn resident_preview_worker_reports_queue_saturation_for_full_async_queue() {
+        let _config = ResidentPreviewWorkerTestGuard::new(false, 0);
+        let worker_key = "session_test:preset_test:2026.03.31".to_string();
+        let (sender, receiver) = mpsc::sync_channel(RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY);
+        let generation = RESIDENT_PREVIEW_WORKER_GENERATION.fetch_add(1, Ordering::Relaxed);
+
+        sender
+            .try_send(resident_preview_worker_test_job("queued-1"))
+            .expect("first queue slot should be available");
+        sender
+            .try_send(resident_preview_worker_test_job("queued-2"))
+            .expect("second queue slot should be available");
+
+        RESIDENT_PREVIEW_WORKERS
+            .lock()
+            .expect("resident preview workers should lock")
+            .insert(
+                worker_key.clone(),
+                ResidentPreviewWorkerHandle { generation, sender },
+            );
+
+        let error = enqueue_resident_preview_worker_job(
+            worker_key,
+            resident_preview_worker_test_job("queue-full"),
+        )
+        .expect_err("enqueue should fail when the resident worker queue is full");
+
+        assert_eq!(error.reason_code, "render-queue-saturated");
+        drop(receiver);
+    }
+
+    #[test]
+    fn resident_preview_worker_restarts_after_idle_timeout() {
+        let _config = ResidentPreviewWorkerTestGuard::new(false, 20);
+        let worker_key = "session_test:preset_test:2026.03.31";
+        let first_handle = ensure_resident_preview_worker(worker_key)
+            .expect("resident worker should start on first access");
+
+        let mut removed = false;
+        for _ in 0..30 {
+            if !RESIDENT_PREVIEW_WORKERS
+                .lock()
+                .expect("resident preview workers should lock")
+                .contains_key(worker_key)
+            {
+                removed = true;
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            removed,
+            "idle resident worker should tear itself down after the timeout"
+        );
+
+        let second_handle = ensure_resident_preview_worker(worker_key)
+            .expect("resident worker should restart after idle teardown");
+        assert_ne!(first_handle.generation, second_handle.generation);
     }
 }
