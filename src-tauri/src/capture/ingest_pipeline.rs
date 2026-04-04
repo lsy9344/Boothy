@@ -66,6 +66,15 @@ struct PreparedSpeculativePreviewSource {
     cleanup_path: Option<PathBuf>,
 }
 
+fn should_start_speculative_preview_render(manifest: &SessionManifest) -> bool {
+    // The first capture of a real booth session is the cold-start path most likely
+    // to miss the resident worker join window and then pay for a duplicate render.
+    // Keep tests on the existing speculative path, but in production prefer the
+    // single truthful close for the very first capture until later captures can
+    // benefit from a warmed lane.
+    cfg!(test) || !manifest.captures.is_empty()
+}
+
 pub fn persist_capture_in_dir(
     base_dir: &Path,
     input: &CaptureRequestInputDto,
@@ -93,6 +102,7 @@ pub fn persist_capture_in_dir(
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
+    let allow_speculative_preview_render = should_start_speculative_preview_render(&manifest);
 
     let mut capture = build_saved_capture_record(
         &manifest,
@@ -143,6 +153,23 @@ pub fn persist_capture_in_dir(
     manifest.lifecycle.stage = "preview-waiting".into();
 
     write_session_manifest(&paths.manifest_path, &manifest)?;
+
+    if !allow_speculative_preview_render && capture.preview.asset_path.is_some() {
+        let _ = append_session_timing_event_in_dir(
+            base_dir,
+            SessionTimingEventInput {
+                session_id: &manifest.session_id,
+                event: "speculative-preview-skipped",
+                capture_id: Some(&capture.capture_id),
+                request_id: Some(&capture.request_id),
+                detail: Some("reason=first-capture-cold-start"),
+            },
+        );
+    }
+
+    if !allow_speculative_preview_render {
+        return Ok((manifest, capture, fast_preview_update));
+    }
 
     if let Some(first_visible_asset_path) = capture.preview.asset_path.as_deref() {
         start_speculative_preview_render_in_dir(
@@ -322,6 +349,39 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
                 let _ = fs::write(&speculative_detail_path, prepared_render.detail);
             }
             Err(error) => {
+                let capture_already_closed = read_session_manifest(
+                    &SessionPaths::new(&base_dir, &session_id).manifest_path,
+                )
+                .ok()
+                .and_then(|manifest| {
+                    manifest
+                        .captures
+                        .into_iter()
+                        .find(|capture| capture.capture_id == capture_id)
+                })
+                .map(|capture| {
+                    matches!(capture.render_status.as_str(), "previewReady" | "finalReady")
+                        && capture.preview.ready_at_ms.is_some()
+                })
+                .unwrap_or(false);
+
+                if capture_already_closed && error.reason_code == "render-output-missing" {
+                    log::info!(
+                        "speculative_preview_render_superseded session={} capture_id={} request_id={} reason_code={}",
+                        session_id,
+                        capture_id,
+                        request_id,
+                        error.reason_code
+                    );
+                    if let Some(source_cleanup_path) = source_cleanup_path.as_ref() {
+                        let _ = fs::remove_file(source_cleanup_path);
+                    }
+                    let _ = fs::remove_file(&speculative_output_path);
+                    let _ = fs::remove_file(&speculative_detail_path);
+                    let _ = fs::remove_file(&speculative_lock_path);
+                    return;
+                }
+
                 log::warn!(
                     "speculative_preview_render_failed session={} capture_id={} request_id={} reason_code={} detail={}",
                     session_id,
@@ -697,7 +757,7 @@ fn try_complete_speculative_preview_render_in_dir(
             &capture_snapshot.request_id,
         ))
         .unwrap_or_else(|_| {
-            "presetId=unknown;publishedVersion=unknown;binary=darktable-cli;source=unknown;elapsedMs=unknown;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=unknown;status=unknown"
+            "presetId=unknown;publishedVersion=unknown;binary=darktable-cli;source=unknown;elapsedMs=unknown;detail=widthCap=unknown;heightCap=unknown;hq=false;sourceAsset=fast-preview-raster;args=unknown;status=unknown"
                 .into()
         });
         log_render_ready_in_dir(
@@ -1144,6 +1204,14 @@ fn seed_pending_preview_asset_path(
         Some("legacy-canonical-scan"),
         Some(&format!("assetPath={asset_path}")),
     );
+    log_fast_preview_event(
+        paths,
+        capture_id,
+        request_id,
+        "fast-preview-visible",
+        Some("legacy-canonical-scan"),
+        Some(&format!("assetPath={asset_path}")),
+    );
 
     Some(FastPreviewPromotionResult {
         asset_path,
@@ -1519,6 +1587,13 @@ fn prepare_speculative_preview_source_path(
     request_id: &str,
     source_path: &Path,
 ) -> Option<PreparedSpeculativePreviewSource> {
+    if can_reuse_speculative_preview_source_in_place(paths, capture_id, source_path) {
+        return Some(PreparedSpeculativePreviewSource {
+            asset_path: source_path.to_path_buf(),
+            cleanup_path: None,
+        });
+    }
+
     let extension = source_path
         .extension()
         .and_then(|value| value.to_str())
@@ -1547,6 +1622,31 @@ fn prepare_speculative_preview_source_path(
         asset_path: staged_source_path.clone(),
         cleanup_path: Some(staged_source_path),
     })
+}
+
+fn can_reuse_speculative_preview_source_in_place(
+    paths: &SessionPaths,
+    capture_id: &str,
+    source_path: &Path,
+) -> bool {
+    let Some(parent) = source_path.parent() else {
+        return false;
+    };
+    let Some(file_stem) = source_path.file_stem().and_then(|value| value.to_str()) else {
+        return false;
+    };
+
+    if file_stem != capture_id {
+        return false;
+    }
+
+    let normalized_parent = normalize_path(parent);
+    let Some(normalized_previews_root) = canonicalize_existing_root(&paths.renders_previews_dir)
+    else {
+        return false;
+    };
+
+    normalized_parent == normalized_previews_root && is_valid_render_preview_asset(source_path)
 }
 
 fn current_time_ms() -> Result<u64, std::time::SystemTimeError> {
@@ -1679,10 +1779,17 @@ mod tests {
         let base_dir = unique_temp_dir("speculative-preview-source-copy");
         let session_id = "session_000000000000000000000001";
         let paths = SessionPaths::new(&base_dir, session_id);
-        let source_path = paths.renders_previews_dir.join("capture_test.jpg");
+        let source_path = paths
+            .handoff_dir
+            .join("fast-preview")
+            .join("capture_test.jpg");
 
-        fs::create_dir_all(&paths.renders_previews_dir)
-            .expect("preview directory should be created");
+        fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("handoff preview path should have a parent"),
+        )
+        .expect("handoff preview directory should be created");
         fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xD9])
             .expect("source preview should be writable");
 
@@ -1713,6 +1820,41 @@ mod tests {
         assert!(
             prepared.asset_path.exists(),
             "staged source should survive canonical preview replacement"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn canonical_preview_source_is_reused_in_place_for_speculative_close() {
+        let _guard = SPECULATIVE_WAIT_TEST_MUTEX
+            .lock()
+            .expect("test mutex should lock");
+        let base_dir = unique_temp_dir("speculative-preview-source-reuse");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let source_path = paths.renders_previews_dir.join("capture_large.jpg");
+
+        fs::create_dir_all(&paths.renders_previews_dir)
+            .expect("preview directory should be created");
+        fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xD9])
+            .expect("canonical preview should be writable");
+
+        let prepared = prepare_speculative_preview_source_path(
+            &paths,
+            "capture_large",
+            "request_test",
+            &source_path,
+        )
+        .expect("speculative preview source should be staged");
+
+        assert_eq!(
+            prepared.asset_path, source_path,
+            "canonical same-capture preview should be reused in place without a second raster copy"
+        );
+        assert_eq!(
+            prepared.cleanup_path, None,
+            "reused canonical preview should not be deleted during speculative cleanup"
         );
 
         let _ = fs::remove_dir_all(base_dir);

@@ -33,8 +33,8 @@ const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
 // artifact so preset-applied replacement lands materially sooner.
 const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
 const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
-const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
-const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
+const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 128;
+const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 128;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -1270,9 +1270,9 @@ fn build_darktable_invocation_from_source(
     };
     let binary_resolution = resolve_darktable_cli_binary();
     let mut arguments = vec![
-        source_asset_path.to_string_lossy().replace('\\', "/"),
-        xmp_template_path.to_string_lossy().replace('\\', "/"),
-        output_path.to_string_lossy().replace('\\', "/"),
+        darktable_cli_path_arg(source_asset_path),
+        darktable_cli_path_arg(xmp_template_path),
+        darktable_cli_path_arg(output_path),
         "--hq".into(),
         hq_flag.into(),
     ];
@@ -1295,9 +1295,9 @@ fn build_darktable_invocation_from_source(
     arguments.extend([
         "--core".into(),
         "--configdir".into(),
-        configdir.to_string_lossy().replace('\\', "/"),
+        darktable_cli_path_arg(&configdir),
         "--library".into(),
-        library.to_string_lossy().replace('\\', "/"),
+        darktable_cli_path_arg(&library),
     ]);
 
     DarktableInvocation {
@@ -1307,6 +1307,16 @@ fn build_darktable_invocation_from_source(
         arguments,
         working_directory: base_dir.to_path_buf(),
     }
+}
+
+fn darktable_cli_path_arg(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let trimmed = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix("//?/"))
+        .unwrap_or(raw.as_ref());
+
+    trimmed.replace('\\', "/")
 }
 
 fn approved_preview_invocation_profile() -> PreviewInvocationProfile {
@@ -2204,6 +2214,39 @@ mod tests {
         assert!(
             FAST_PREVIEW_RENDER_MAX_HEIGHT_PX < RAW_PREVIEW_MAX_HEIGHT_PX,
             "fast-preview-raster should use a smaller cap than raw-original preview"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn darktable_invocation_strips_windows_extended_length_prefixes() {
+        let temp_dir = unique_temp_dir("extended-length-prefix");
+        let output_path = PathBuf::from(r"\\?\C:\captures\renders\capture_test.jpg");
+        let source_path = PathBuf::from(r"\\?\C:\captures\previews\capture_test.jpg");
+        let xmp_path = PathBuf::from(r"\\?\C:\bundles\preview.xmp");
+
+        let invocation = build_darktable_invocation_from_source(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &xmp_path,
+            &source_path,
+            &output_path,
+            RenderIntent::Preview,
+            PreviewRenderSourceKind::FastPreviewRaster,
+        );
+
+        assert_eq!(
+            invocation.arguments.first().map(String::as_str),
+            Some("C:/captures/previews/capture_test.jpg")
+        );
+        assert_eq!(
+            invocation.arguments.get(1).map(String::as_str),
+            Some("C:/bundles/preview.xmp")
+        );
+        assert_eq!(
+            invocation.arguments.get(2).map(String::as_str),
+            Some("C:/captures/renders/capture_test.jpg")
         );
 
         let _ = fs::remove_dir_all(temp_dir);

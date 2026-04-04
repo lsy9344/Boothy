@@ -141,7 +141,8 @@ pub fn log_capture_client_state(app: tauri::AppHandle, input: CaptureClientDebug
 fn should_append_capture_client_timing_event(label: &str) -> bool {
     matches!(
         label,
-        "fast-preview-ready"
+        "button-pressed"
+            | "fast-preview-ready"
             | "current-session-preview-visible"
             | "current-session-preview-pending-visible"
             | "recent-session-visible"

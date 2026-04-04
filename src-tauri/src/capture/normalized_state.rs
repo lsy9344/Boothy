@@ -30,7 +30,7 @@ use crate::{
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::sync_post_end_state_in_dir,
     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
-    render::is_valid_render_preview_asset,
+    render::{is_valid_render_preview_asset, schedule_preview_renderer_warmup_in_dir},
     session::{
         session_manifest::{
             current_timestamp, rfc3339_to_unix_seconds, ActivePresetBinding, SessionCaptureRecord,
@@ -139,6 +139,13 @@ where
     let fast_preview_session_id = input.session_id.clone();
     let fast_preview_request_id = request_id.clone();
     let mut early_fast_preview_update = None;
+
+    schedule_preview_renderer_warmup_in_dir(
+        base_dir,
+        &input.session_id,
+        &active_preset.preset_id,
+        &active_preset.published_version,
+    );
 
     write_capture_request_message(base_dir, &request_message)
         .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;

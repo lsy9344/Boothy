@@ -1046,6 +1046,26 @@ internal sealed class CanonSdkCamera : IDisposable
         var fastPreviewDownload = TryDownloadPreviewThumbnail(context.Paths, directoryItem, captureId);
         if (string.IsNullOrWhiteSpace(fastPreviewDownload.FastPreviewPath))
         {
+            if (!string.IsNullOrWhiteSpace(fastPreviewDownload.FailureDetailCode))
+            {
+                try
+                {
+                    context.OnFastPreviewFailed?.Invoke(
+                        new CaptureFastPreviewFailedResult(
+                            context.Request.RequestId,
+                            captureId,
+                            fastPreviewDownload.FastPreviewKind,
+                            fastPreviewDownload.FailureDetailCode,
+                            DateTimeOffset.UtcNow
+                        )
+                    );
+                }
+                catch
+                {
+                    // Failure telemetry is best-effort and must not block RAW persistence.
+                }
+            }
+
             return fastPreviewDownload;
         }
 

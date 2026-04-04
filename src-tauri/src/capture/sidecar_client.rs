@@ -8,7 +8,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts::dto::HostErrorEnvelope, session::session_paths::SessionPaths};
+use crate::{
+    contracts::dto::HostErrorEnvelope,
+    session::session_paths::SessionPaths,
+    timing::{append_session_timing_event_in_dir, SessionTimingEventInput},
+};
 
 pub const CANON_HELPER_BUNDLE_DIR: &str = "sidecar/canon-helper";
 pub const CAMERA_HELPER_STATUS_FILE_NAME: &str = "camera-helper-status.json";
@@ -388,6 +392,7 @@ where
                         return Err(SidecarClientError::CaptureSessionMismatch);
                     }
 
+                    append_capture_accepted_timing_event(base_dir, message);
                     accepted_at_ms.get_or_insert(
                         current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?,
                     );
@@ -415,6 +420,8 @@ where
                     if message.session_id != session_id {
                         continue;
                     }
+
+                    append_fast_thumbnail_attempted_timing_event(base_dir, message);
                 }
                 CanonHelperEvent::FastThumbnailFailed(message) => {
                     if message.request_id != request_id {
@@ -425,6 +432,8 @@ where
                     if message.session_id != session_id {
                         continue;
                     }
+
+                    append_fast_thumbnail_failed_timing_event(base_dir, message);
                 }
                 CanonHelperEvent::FileArrived(message) => {
                     if message.request_id != request_id {
@@ -683,6 +692,80 @@ fn append_json_line<T: Serialize>(path: &Path, value: &T) -> Result<(), std::io:
     file.flush()?;
 
     Ok(())
+}
+
+fn append_helper_timing_event(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: Option<&str>,
+    event: &str,
+    detail: Option<String>,
+) {
+    let _ = append_session_timing_event_in_dir(
+        base_dir,
+        SessionTimingEventInput {
+            session_id,
+            event,
+            capture_id,
+            request_id: Some(request_id),
+            detail: detail.as_deref(),
+        },
+    );
+}
+
+fn append_capture_accepted_timing_event(
+    base_dir: &Path,
+    message: &CanonHelperCaptureAcceptedMessage,
+) {
+    append_helper_timing_event(
+        base_dir,
+        &message.session_id,
+        &message.request_id,
+        None,
+        "capture-accepted",
+        message
+            .detail_code
+            .as_ref()
+            .map(|detail_code| format!("detailCode={detail_code}")),
+    );
+}
+
+fn append_fast_thumbnail_attempted_timing_event(
+    base_dir: &Path,
+    message: &CanonHelperFastThumbnailAttemptedMessage,
+) {
+    append_helper_timing_event(
+        base_dir,
+        &message.session_id,
+        &message.request_id,
+        Some(&message.capture_id),
+        "fast-thumbnail-attempted",
+        Some(format!(
+            "observedAt={};fastPreviewKind={}",
+            message.observed_at,
+            message.fast_preview_kind.as_deref().unwrap_or("none")
+        )),
+    );
+}
+
+fn append_fast_thumbnail_failed_timing_event(
+    base_dir: &Path,
+    message: &CanonHelperFastThumbnailFailedMessage,
+) {
+    append_helper_timing_event(
+        base_dir,
+        &message.session_id,
+        &message.request_id,
+        Some(&message.capture_id),
+        "fast-thumbnail-failed",
+        Some(format!(
+            "observedAt={};detailCode={};fastPreviewKind={}",
+            message.observed_at,
+            message.detail_code,
+            message.fast_preview_kind.as_deref().unwrap_or("none")
+        )),
+    );
 }
 
 fn read_json_lines<T>(path: &Path) -> Result<Vec<T>, std::io::Error>

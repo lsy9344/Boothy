@@ -1309,6 +1309,44 @@ fn client_recent_session_visibility_events_are_mirrored_into_session_timing_logs
 }
 
 #[test]
+fn client_button_pressed_events_are_mirrored_into_session_timing_logs() {
+    let base_dir = unique_test_root("button-pressed-timing-log");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+
+    append_capture_client_timing_event_in_dir(
+        &base_dir,
+        &CaptureClientDebugLogInputDto {
+            label: "button-pressed".into(),
+            session_id: Some(session.session_id.clone()),
+            runtime_mode: Some("tauri".into()),
+            customer_state: None,
+            reason_code: None,
+            can_capture: None,
+            message: Some("requestId=request_button_01".into()),
+        },
+    );
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+
+    assert!(timing_events.contains("event=button-pressed"));
+    assert!(timing_events.contains("request=request_button_01"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn fast_preview_updates_are_emitted_from_the_canonical_preview_path_before_capture_save_closes() {
     let base_dir = unique_test_root("fast-preview-updates");
     let session = start_session_in_dir(
@@ -2547,6 +2585,19 @@ fn fast_thumbnail_attempted_and_failed_events_do_not_break_capture_success() {
     assert_eq!(result.status, "capture-saved");
     assert_eq!(result.capture.render_status, "previewWaiting");
     assert!(std::path::Path::new(&result.capture.raw.asset_path).is_file());
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+    assert!(timing_events.contains("event=capture-accepted"));
+    assert!(timing_events.contains("event=fast-thumbnail-attempted"));
+    assert!(timing_events.contains("event=fast-thumbnail-failed"));
+    assert!(timing_events.contains("fastPreviewKind=camera-thumbnail"));
+    assert!(timing_events.contains("detailCode=fast-thumbnail-download-failed"));
+    assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
 
     let _ = fs::remove_dir_all(base_dir);
 }
