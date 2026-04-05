@@ -2261,6 +2261,100 @@ Current target remains unchanged:
 - 동시에 helper 내부에서 pending fast preview를 단일 슬롯으로 들고 있다가 다음 촬영이 시작되면 사실상 버리던 구조를 큐 형태로 바꿨다.
 - 즉 immediate camera thumbnail이 실패해도, 이전 컷의 RAW 기반 fallback preview 후보를 다음 컷 때문에 폐기하지 않고 순서대로 계속 살려 두도록 했다.
 
+## 2026-04-05 최신 Test Look 재검토: local renderer route는 이미 close owner가 됐지만, final close는 아직 약 6.4초이고 지금 가장 싼 다음 수는 runtime-scoped sidecar cache 재사용이다
+
+이번 회차는 사용자가 직접 `Test Look`으로 바꿔 본 뒤
+`그래도 3초대가 나오는 것 같다`
+고 말한 체감을
+latest session과 실제 one-off 재현으로 다시 닫기 위한 기록이다.
+
+기준 latest session은
+`C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a351696c25d93c`
+였다.
+
+완료된 3컷의 직접 수치:
+
+1. `capture_20260405012332551_b25968bcc7`
+   - first-visible `2847ms`
+   - preview close `6203ms`
+2. `capture_20260405012342393_55d853d006`
+   - first-visible `3041ms`
+   - preview close `6486ms`
+3. `capture_20260405012350889_d151538d37`
+   - first-visible `2988ms`
+   - preview close `6426ms`
+
+평균:
+
+- same-capture first-visible: 약 `2959ms`
+- preset-applied preview close: 약 `6372ms`
+
+이번 latest에서 가장 중요한 사실:
+
+- 사용자가 느낀 `3초대`는 여전히 first-visible 기준으로는 맞다.
+- 하지만 `Test Look`에서도 final close는 아직 약 `6.2s ~ 6.5s`다.
+- helper `camera-thumbnail`는 계속 실패했고,
+  실제 same-capture first-visible은 여전히 `windows-shell-thumbnail` 경로가 닫았다.
+- 그런데 이번엔 truthful close owner가 이미 `fast-preview-raster`였다.
+- 즉 지금 병목은
+  `raw-original fallback을 아직 못 버렸다`
+  가 아니라,
+  `선택된 local renderer truthful close 자체가 여전히 비싸다`
+  쪽이다.
+
+이번 회차에서 별도로 확인한 one-off 근거:
+
+- booth 장비에서 `darktable-cli --version`만 단독 실행해도 약 `640ms ~ 787ms`가 들었다.
+- 같은 `Test Look` fast-preview JPG에 published XMP를 적용하는 one-off darktable 재현은 약 `3.7s ~ 3.8s`였다.
+- XMP에서 obvious raw-only 모듈을 임시로 꺼 본 실험은 약 `110ms` 정도만 줄였다.
+
+이 근거가 뜻하는 제품 판단:
+
+- 지금 단계의 가장 값싼 다음 수는 `look을 다시 손보는 것`이 아니다.
+- 가장 값싼 다음 수는
+  `local renderer sidecar의 반복 고정비를 줄이고 cache를 세션 밖으로 공유하는 것`
+  이다.
+- 즉 이번 회차의 우선순위는
+  `더 작은 cap`
+  이나
+  `또 다른 speculative 소스 변형`
+  보다,
+  `runtime-scoped worker/cache + repeated version probe 제거`
+  로 잡는 편이 맞다.
+
+이번 회차에서 바로 반영한 개선:
+
+1. local renderer sidecar worker root를 session-scoped에서 runtime-scoped로 옮겼다.
+   - `.boothy-local-renderer/preview`
+2. darktable binary version 확인을 `darktable-version-cache.json`으로 재사용하게 했다.
+   - binary path, last write time, file length가 같으면 repeated `--version` probe를 건너뛴다.
+3. local renderer가 same runtime-scoped `--cachedir`도 함께 쓰게 했다.
+
+이번 조정의 기대 효과:
+
+- 첫 컷만이 아니라 다음 세션에서도 sidecar가 이전 warm metadata/cache를 다시 활용할 수 있어야 한다.
+- booth에서 repeated fixed cost가 줄면,
+  final close가 현재 `6.4초` band에서 더 내려올 여지가 있다.
+- 만약 다음 hardware run에서도 큰 변화가 없으면,
+  남은 병목은 sidecar startup이 아니라 render body 자체로 봐야 한다.
+
+이번 회차 검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml local_renderer -- --test-threads=1`
+  - 통과
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache -- --test-threads=1`
+  - 통과
+
+이 시점의 최신 결론:
+
+- `3초대` 체감은 계속 맞다. 다만 여전히 first-visible 기준이다.
+- `Test Look`에서도 final close는 아직 약 `6.4초`다.
+- 이제 싸게 시도할 수 있는 startup/cache 절감은 한 번 더 넣었다.
+- 다음 실장비 검증에서 final close가 의미 있게 내려오지 않으면,
+  그 다음 판단은 더 이상 sidecar startup 최적화가 아니라
+  `lighter truthful renderer` 또는 `different close topology`
+  로 넘어가야 한다.
+
 이번 조정의 제품 의미:
 
 - 이 단계도 여전히 `엔진 변경`은 아니다.
@@ -2337,3 +2431,117 @@ Current target remains unchanged:
 
 - 현재 문제는 `조금 더 줄이면 될 수준`로 보기 어렵다.
 - 제품 관점의 다음 단계는 `최신 seam 재계측 1회 -> 구조 변경 여부 결정`이다.
+
+## 2026-04-05 추가 메모: Test Look 첫 컷 누락과 저화질 썸네일을 같이 수정
+
+- 최신 사용자 피드백은 세 가지였다.
+  - 첫 컷은 필터 적용이 닫히지 않았다.
+  - 연속 촬영도 아직 느렸다.
+  - 최근 세션 썸네일이 너무 흐렸다.
+
+이번에 다시 맞춰 본 latest session:
+
+- `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a359b2db1b8584`
+
+핵심 로그 해석:
+
+- 첫 컷은 `fastPreviewVisibleAtMs`까지는 갔지만 `previewReady`로 승격되지 않았다.
+- 그런데 세션 폴더에는 같은 첫 컷의 speculative output이 실제로 남아 있었다.
+  - detail elapsedMs 약 `9637ms`
+- 즉 첫 컷 문제는
+  `렌더가 완전히 죽었다`보다
+  `늦게 끝난 truthful close를 앱이 다시 올려주지 못했다`
+  쪽으로 보는 편이 맞다.
+- 동시에 truthful close JPG들은 대체로 `17KB ~ 33KB`였고,
+  fast-preview truthful close cap이 `128x128`인 현재 설정이
+  booth 체감 화질을 너무 많이 깎고 있었다.
+
+이번에 반영한 수정:
+
+- readiness가 finished speculative preview를 비차단으로 즉시 승격
+  - 첫 컷이 `previewWaiting`에 고착되지 않게 함
+- refinement follow-up wait를 `2s -> 12s`로 확장
+  - cold first shot의 늦은 close도 같은 사용자 흐름 안에서 닫히게 함
+- fast-preview truthful close cap을 `128 -> 256`으로 조정
+  - raw cap `384`보다 낮게 유지하면서 recent-session rail 선명도 회복
+
+이번 회차 검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_promotes_a_finished_speculative_preview_without_needing_another_capture -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_restores_a_sharper_than_legacy_128_cap -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml local_renderer -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness speculative_preview -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test session_manifest -- --test-threads=1`
+- 모두 통과
+
+이번 메모의 현재 결론:
+
+- 첫 컷 누락은 제품 버그로 보였고, 이번 수정으로 닫았다.
+- 썸네일 품질 회귀도 현재 기준선보다 선명한 쪽으로 되돌렸다.
+- 다만 실제 booth에서 `Test Look` close 시간이 얼마나 내려왔는지는 아직 재실측 전이다.
+- 다음 실장비 런에서도 completed close가 계속 `6s+`면,
+  남은 문제는 startup이 아니라 render body 자체다.
+
+## 2026-04-05 추가 메모: latest Test Look 4컷은 helper가 아니라 speculative close lane 우회가 병목이었다
+
+- latest measured session:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3753ffaaa16d8`
+- 4컷 모두 helper는 정상으로 닫혔다.
+  - `capture-accepted -> file-arrived`
+  - helper timeout 없음
+- 하지만 preview close는 여전히
+  - `8555ms`
+  - `7453ms`
+  - `6453ms`
+  - `6865ms`
+  band에 남아 있었다.
+
+이번에 확인한 핵심:
+
+- session package에 `renderer-route-selected / fallback / close-owner`가 없었다.
+- `.boothy-local-renderer/preview` runtime worker root도 latest run 기준 비어 있었다.
+- 즉 `Test Look` canary policy는 켜져 있었지만,
+  실제 winning close owner인 resident/speculative lane은 그 policy와 sidecar 최적화를 아예 타지 않고 있었다.
+
+이번 회차 수정:
+
+1. resident/speculative preview close도 session-locked preview route policy를 따르게 했다.
+2. canary preset이면 speculative lane도 local renderer sidecar candidate를 먼저 시도한다.
+3. sidecar 실패 시에는 그 same speculative lane 안에서 darktable baseline으로 즉시 fallback 한다.
+4. speculative output이 truth owner가 될 때도 route evidence를 같이 남기게 했다.
+
+이번 회차 검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness speculative -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness local_renderer -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test session_manifest -- --test-threads=1`
+- 모두 통과
+
+현재 결론:
+
+- 이제야 latest winning close lane에도 local renderer canary speedup이 실제로 적용될 조건이 갖춰졌다.
+- 다음 hardware run에서 같은 `6s+`가 유지되면,
+  그때는 truly render body cost를 다음 타깃으로 잡는 편이 맞다.
+
+## 2026-04-05 추가 메모: 21:44 booth run은 새 배선 검증본이 아니라 기존 동작 기준선으로 기록한다
+
+- latest booth session:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3768babafc5e4`
+- completed close:
+  - `7772ms`
+  - `8520ms`
+  - `7298ms`
+  - `7526ms`
+- helper는 여전히 정상으로 닫혔다.
+  - all four requests: `capture-accepted -> file-arrived`
+
+하지만 이번 세션은 새 구현 검증본으로 보지 않는다.
+
+- session package에 `renderer-route-selected / fallback / close-owner`가 여전히 없었다.
+- host log에는 아직 `preview_renderer_warmup_failed`와 `libpng ... CRC error`가 남았다.
+
+현재 판단:
+
+- 이 `21:44` 실측은 최신 코드가 현장 런타임에 반영되기 전 기준선으로 기록하는 편이 맞다.
+- 따라서 이번 회차의 코드 변경은 커밋 대상으로 유지하되,
+  hardware validation 완료 판정은 다음 fresh booth run에서 다시 닫아야 한다.

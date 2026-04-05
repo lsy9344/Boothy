@@ -6,6 +6,11 @@ set "xmp=%~2"
 set "output=%~3"
 set "actualOutput=%output%"
 
+if /I "%~1"=="--version" (
+  echo darktable-cli 5.4.1
+  exit /b 0
+)
+
 if "%output%"=="" exit /b 2
 
 if exist "%output%" (

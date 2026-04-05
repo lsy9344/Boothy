@@ -25,6 +25,7 @@ use crate::{
         },
         preset_catalog_state::capture_live_catalog_snapshot,
     },
+    render::initialize_session_locked_preview_render_route_policy_in_dir,
     session::{
         session_manifest::{
             build_session_manifest, current_timestamp, normalize_legacy_manifest,
@@ -65,6 +66,16 @@ pub fn start_session_in_dir(
     let manifest = build_session_manifest(session_id.clone(), validated_input)?;
 
     create_session_root(&paths, &manifest)?;
+    if let Err(error) =
+        initialize_session_locked_preview_render_route_policy_in_dir(base_dir, &session_id)
+    {
+        log::warn!(
+            "preview_route_policy_lock_init_failed session={} code={} detail={}",
+            session_id,
+            error.code,
+            error.message
+        );
+    }
     try_append_operator_audit_record(
         base_dir,
         OperatorAuditRecordInput {

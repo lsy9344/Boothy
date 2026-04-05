@@ -44,8 +44,7 @@ use boothy_lib::{
 };
 
 static FAKE_DARKTABLE_SETUP: Once = Once::new();
-static SPECULATIVE_PREVIEW_TEST_MUTEX: LazyLock<Mutex<()>> =
-    LazyLock::new(|| Mutex::new(()));
+static SPECULATIVE_PREVIEW_TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn unique_test_root(test_name: &str) -> PathBuf {
     ensure_fake_darktable_cli();
@@ -2000,9 +1999,10 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
     let canonical_preview_path = paths
         .renders_previews_dir
         .join(format!("{}.jpg", result.capture.capture_id));
-    let speculative_output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let speculative_detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -2034,11 +2034,222 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
         initial_capture.timing.xmp_preview_ready_at_ms
     );
     assert!(
-        initial_capture
-            .timing
-            .fast_preview_visible_at_ms
-            .is_some(),
+        initial_capture.timing.fast_preview_visible_at_ms.is_some(),
         "speculative close should preserve first-visible timing"
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn speculative_preview_close_uses_the_local_renderer_canary_when_policy_matches() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("speculative-local-renderer-canary");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let fast_preview_path = session_paths
+            .handoff_dir
+            .join("fast-preview")
+            .join(format!("{capture_id}.camera-thumbnail.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            fast_preview_path
+                .parent()
+                .expect("fast preview path should have a parent directory"),
+        )
+        .expect("fast preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&fast_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_fast_preview_ready_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &fast_preview_path,
+            Some("camera-thumbnail"),
+        );
+        thread::sleep(Duration::from_millis(40));
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            Some(&fast_preview_path),
+            Some("camera-thumbnail"),
+        );
+    });
+
+    let mut fast_preview_updates = Vec::new();
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |update| fast_preview_updates.push(update),
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("speculative close should still close the preview");
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert_eq!(fast_preview_updates.len(), 1);
+    assert!(timing_events.contains("event=renderer-route-selected"));
+    assert!(timing_events.contains("reason=local-renderer-sidecar"));
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
+    assert!(timing_events.contains("binary=local-renderer-sidecar"));
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(
+        !timing_events.contains("event=renderer-route-fallback"),
+        "accepted speculative local renderer close should not fall back"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_promotes_a_finished_speculative_preview_without_needing_another_capture() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("readiness-promotes-finished-speculative-preview");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path =
+        seed_pending_canonical_preview(&base_dir, &session.session_id, &result.capture.capture_id);
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    write_test_jpeg(&speculative_output_path);
+    fs::write(
+        &speculative_detail_path,
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=2200;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+    )
+    .expect("speculative render detail should be writable");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should promote a finished speculative close");
+
+    let latest_capture = readiness
+        .latest_capture
+        .expect("latest capture should stay attached");
+    assert_eq!(readiness.reason_code, "ready");
+    assert_eq!(latest_capture.render_status, "previewReady");
+    assert_eq!(
+        latest_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert!(
+        latest_capture.preview.ready_at_ms.is_some(),
+        "readiness should stamp the truthful close timing once the speculative output exists"
     );
 
     let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
@@ -2083,9 +2294,10 @@ fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fall
         "{}.{}.preview-speculative.lock",
         result.capture.capture_id, result.capture.request_id
     ));
-    let output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -2176,9 +2388,10 @@ fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_c
         "{}.{}.preview-speculative.lock",
         result.capture.capture_id, result.capture.request_id
     ));
-    let output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -3682,6 +3895,64 @@ fn readiness_releases_phone_required_after_capture_download_timeout_recovers() {
         },
     )
     .expect("capture-download-timeout should recover from phone-required once helper is ready");
+
+    assert_eq!(readiness.reason_code, "ready");
+    assert!(readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_releases_phone_required_after_capture_transfer_start_timeout_recovers() {
+    let base_dir = unique_test_root("capture-transfer-start-timeout-unlocks");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_helper_event(
+        &base_dir,
+        &session.session_id,
+        serde_json::json!({
+          "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+          "type": "helper-error",
+          "sessionId": session.session_id,
+          "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+          "detailCode": "capture-transfer-start-timeout",
+          "message": "촬영은 수락됐지만 RAW transfer 시작 신호가 오지 않았어요.",
+        }),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect(
+        "capture-transfer-start-timeout should recover from phone-required once helper is ready",
+    );
 
     assert_eq!(readiness.reason_code, "ready");
     assert!(readiness.can_capture);
@@ -5486,6 +5757,818 @@ fn preview_ready_capture_remains_scoped_to_its_own_session() {
     let _ = fs::remove_dir_all(base_dir);
 }
 
+#[test]
+fn complete_preview_render_accepts_a_valid_local_renderer_candidate_and_keeps_the_canonical_slot() {
+    let base_dir = unique_test_root("local-renderer-accept");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    assert_eq!(result.capture.timing.xmp_preview_ready_at_ms, None);
+
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("valid local renderer candidate should close the preview");
+
+    assert_valid_jpeg(canonical_preview_path.to_string_lossy().as_ref());
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert!(ready_capture.preview.ready_at_ms.is_some());
+    assert!(ready_capture.timing.xmp_preview_ready_at_ms.is_some());
+
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=renderer-route-selected"));
+    assert!(timing_events.contains("reason=local-renderer-sidecar"));
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
+    assert!(timing_events.contains("fidelityDetail=deltaE=0.4"));
+    assert!(
+        !timing_events.contains("event=renderer-route-fallback"),
+        "valid canary candidate should not fall back"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn forced_fallback_policy_skips_the_sidecar_and_keeps_darktable_as_close_owner() {
+    let base_dir = unique_test_root("local-renderer-forced-fallback");
+    write_preset_scoped_preview_render_route_policy(&base_dir, true);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("forced fallback should keep preview close healthy");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-route-selected"));
+    assert!(timing_events.contains("reason=darktable"));
+    assert!(timing_events.contains("policyReason=forced-fallback"));
+    assert!(timing_events.contains("fallbackReason=manual-disable"));
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=darktable"));
+    assert!(timing_events.contains("fidelityVerdict=approved-baseline"));
+    assert!(timing_events.contains("fidelityDetail=engine=darktable-cli,comparison=baseline-owner"));
+    assert!(
+        !timing_events.contains("event=renderer-route-fallback"),
+        "forced fallback should bypass the sidecar instead of attempting and failing"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn branch_scoped_policy_selects_the_local_renderer_without_an_env_override() {
+    let base_dir = unique_test_root("local-renderer-branch-scope");
+    let _branch_env_guard = scoped_env_vars(vec![("BOOTHY_BRANCH_ID", None)]);
+    write_branch_rollout_state(&base_dir, "gangnam-01");
+    write_branch_scoped_preview_render_route_policy(&base_dir, "gangnam-01");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("branch-scoped booth policy should still select the local renderer");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-route-selected"));
+    assert!(timing_events.contains("reason=local-renderer-sidecar"));
+    assert!(timing_events.contains("policyReason=canary-match"));
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn invalid_local_renderer_candidate_falls_back_to_darktable_without_false_ready() {
+    let base_dir = unique_test_root("local-renderer-fallback");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "wrong-session");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    assert_eq!(result.capture.timing.xmp_preview_ready_at_ms, None);
+
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("invalid canary candidate should fall back to darktable");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = session_paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    assert_valid_jpeg(canonical_preview_path.to_string_lossy().as_ref());
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=renderer-route-selected"));
+    assert!(timing_events.contains("reason=local-renderer-sidecar"));
+    assert!(timing_events.contains("event=renderer-route-fallback"));
+    assert!(timing_events.contains("reason=local-renderer-session-mismatch"));
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=darktable"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn wrong_capture_and_wrong_preset_candidates_fall_back_without_false_ready() {
+    for (mode, reason_code) in [
+        ("wrong-capture", "local-renderer-capture-mismatch"),
+        (
+            "wrong-preset-version",
+            "local-renderer-preset-version-mismatch",
+        ),
+    ] {
+        let base_dir = unique_test_root(&format!("local-renderer-{mode}"));
+        write_preset_scoped_preview_render_route_policy(&base_dir, false);
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should be created");
+        let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+        create_published_bundle(&catalog_root);
+        select_active_preset_in_dir(
+            &base_dir,
+            boothy_lib::contracts::dto::PresetSelectionInputDto {
+                session_id: session.session_id.clone(),
+                preset_id: "preset_soft-glow".into(),
+                published_version: "2026.03.20".into(),
+            },
+        )
+        .expect("preset should become active");
+
+        write_fake_local_renderer_sidecar(&base_dir, mode);
+
+        let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+        let ready_capture = complete_preview_render_in_dir(
+            &base_dir,
+            &session.session_id,
+            &result.capture.capture_id,
+        )
+        .expect("invalid canary candidate should fall back to darktable");
+
+        let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+        let canonical_preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{}.jpg", result.capture.capture_id));
+        let timing_events =
+            fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+                .expect("timing events should be readable");
+
+        assert_valid_jpeg(canonical_preview_path.to_string_lossy().as_ref());
+        assert_eq!(ready_capture.render_status, "previewReady");
+        assert!(timing_events.contains("event=renderer-route-fallback"));
+        assert!(timing_events.contains(&format!("reason={reason_code}")));
+        assert!(timing_events.contains("detail=route=darktable"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+}
+
+#[test]
+fn local_renderer_timeout_falls_back_to_darktable() {
+    let base_dir = unique_test_root("local-renderer-timeout");
+    let _timeout_guard = scoped_env_vars(vec![(
+        "BOOTHY_LOCAL_RENDERER_TIMEOUT_MS",
+        Some(std::ffi::OsString::from("50")),
+    )]);
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "timeout");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("timed out sidecar should fall back to darktable");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-route-fallback"));
+    assert!(timing_events.contains("reason=local-renderer-timeout"));
+    assert!(timing_events.contains("detail=route=darktable"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn malformed_stale_and_duplicate_local_renderer_candidates_fall_back_without_false_ready() {
+    for (mode, reason_code) in [
+        ("malformed", "local-renderer-malformed-response"),
+        ("stale", "local-renderer-stale-output"),
+        ("duplicate", "local-renderer-duplicate-completion"),
+    ] {
+        let base_dir = unique_test_root(&format!("local-renderer-{mode}-fallback"));
+        write_preset_scoped_preview_render_route_policy(&base_dir, false);
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should be created");
+        let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+        create_published_bundle(&catalog_root);
+        select_active_preset_in_dir(
+            &base_dir,
+            boothy_lib::contracts::dto::PresetSelectionInputDto {
+                session_id: session.session_id.clone(),
+                preset_id: "preset_soft-glow".into(),
+                published_version: "2026.03.20".into(),
+            },
+        )
+        .expect("preset should become active");
+
+        write_fake_local_renderer_sidecar(&base_dir, mode);
+
+        let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+        let ready_capture = complete_preview_render_in_dir(
+            &base_dir,
+            &session.session_id,
+            &result.capture.capture_id,
+        )
+        .expect("invalid canary candidate should fall back to darktable");
+
+        let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+        let timing_events =
+            fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+                .expect("timing events should be readable");
+
+        assert_eq!(ready_capture.render_status, "previewReady");
+        assert!(timing_events.contains("event=renderer-route-fallback"));
+        assert!(timing_events.contains(&format!("reason={reason_code}")));
+        assert!(timing_events.contains("detail=route=darktable"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+}
+
+#[test]
+fn local_renderer_error_envelope_is_recorded_before_fallback() {
+    let base_dir = unique_test_root("local-renderer-error-envelope");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "error-envelope");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("sidecar error envelope should still fall back to darktable");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-route-fallback"));
+    assert!(timing_events.contains("reason=local-renderer-sidecar-error"));
+    assert!(timing_events.contains("reasonDetail=local renderer sidecar가 오류 envelope를 반환했어요: darktable bridge failed inside the sidecar"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn noisy_local_renderer_stderr_does_not_force_a_false_timeout() {
+    let base_dir = unique_test_root("local-renderer-noisy-stderr");
+    let _timeout_guard = scoped_env_vars(vec![(
+        "BOOTHY_LOCAL_RENDERER_TIMEOUT_MS",
+        Some(std::ffi::OsString::from("1500")),
+    )]);
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "noisy-stderr");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("noisy stderr alone should not force a timeout fallback");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
+    assert!(
+        !timing_events.contains("reason=local-renderer-timeout"),
+        "stderr noise alone should not trigger timeout fallback"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_policy_is_locked_from_session_start_through_the_active_session() {
+    let base_dir = unique_test_root("local-renderer-session-policy-lock");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let locked_policy_path = session_paths
+        .diagnostics_dir
+        .join("preview-renderer-policy.lock.json");
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    assert!(
+        locked_policy_path.is_file(),
+        "policy lock should exist before the first capture"
+    );
+    let locked_policy =
+        fs::read_to_string(&locked_policy_path).expect("locked policy should be readable");
+    assert!(locked_policy.contains("\"presetId\": \"preset_soft-glow\""));
+
+    write_preset_scoped_preview_render_route_policy(&base_dir, true);
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first capture should close with the canary route");
+
+    write_preview_render_route_policy(&base_dir, &session.session_id, true);
+
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("mid-session policy edits should not flip the selected route");
+
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    let first_capture_section = timing_events
+        .lines()
+        .filter(|line| line.contains(&format!("capture={}", first_capture.capture.capture_id)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(first_capture_section.contains("event=renderer-route-selected"));
+    assert!(first_capture_section.contains("reason=local-renderer-sidecar"));
+    assert!(
+        !first_capture_section.contains("policyReason=forced-fallback"),
+        "session-start lock should ignore policy edits made before the first capture closes"
+    );
+
+    let second_capture_section = timing_events
+        .lines()
+        .filter(|line| line.contains(&format!("capture={}", second_capture.capture.capture_id)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(second_capture_section.contains("event=renderer-route-selected"));
+    assert!(second_capture_section.contains("reason=local-renderer-sidecar"));
+    assert!(
+        !second_capture_section.contains("policyReason=forced-fallback"),
+        "active-session policy lock should ignore later branch policy edits"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn local_renderer_truthful_close_reuses_an_existing_canonical_preview_slot() {
+    let base_dir = unique_test_root("local-renderer-same-slot");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path =
+        seed_pending_canonical_preview(&base_dir, &session.session_id, &result.capture.capture_id);
+    let before_bytes = fs::read(&canonical_preview_path).expect("pending preview should exist");
+
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("truthful close should replace the pending preview in place");
+    let after_bytes = fs::read(&canonical_preview_path).expect("rendered preview should exist");
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert_ne!(
+        before_bytes, after_bytes,
+        "truthful close should replace the existing slot instead of leaving the pending bytes"
+    );
+    assert!(
+        timing_events.contains("sourceAsset=fast-preview-raster"),
+        "accepted local renderer close should preserve the actual fast-preview source in diagnostics"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn local_renderer_fallback_reuses_an_existing_canonical_preview_slot() {
+    let base_dir = unique_test_root("local-renderer-fallback-same-slot");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "error-envelope");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path =
+        seed_pending_canonical_preview(&base_dir, &session.session_id, &result.capture.capture_id);
+    let before_bytes = fs::read(&canonical_preview_path).expect("pending preview should exist");
+
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("fallback close should still replace the pending preview in place");
+    let after_bytes = fs::read(&canonical_preview_path).expect("rendered preview should exist");
+
+    assert_eq!(
+        ready_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert_ne!(
+        before_bytes, after_bytes,
+        "darktable fallback should reuse the canonical slot instead of abandoning the pending preview"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn real_local_renderer_sidecar_rejects_an_unpinned_darktable_binary() {
+    let base_dir = unique_test_root("local-renderer-version-mismatch");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let mismatched_darktable = write_fake_darktable_binary_with_version(&base_dir, "5.5.0");
+    let real_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
+        .join("sidecar")
+        .join("local-renderer")
+        .join("local-renderer-sidecar.cmd");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_LOCAL_RENDERER_BIN",
+            Some(real_sidecar.into_os_string()),
+        ),
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(mismatched_darktable.into_os_string()),
+        ),
+    ]);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("version mismatch should fall back to darktable");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("reason=local-renderer-sidecar-error"));
+    assert!(timing_events.contains("requested=5.4.1 actual=5.5.0"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache() {
+    let base_dir = unique_test_root("local-renderer-version-cache");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let (counting_darktable, version_counter_path) =
+        write_counting_fake_darktable_binary_with_version(&base_dir, "5.4.1");
+    let real_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
+        .join("sidecar")
+        .join("local-renderer")
+        .join("local-renderer-sidecar.cmd");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_LOCAL_RENDERER_BIN",
+            Some(real_sidecar.into_os_string()),
+        ),
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(counting_darktable.into_os_string()),
+        ),
+    ]);
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    create_published_bundle(&catalog_root);
+
+    for customer_name in ["Kim", "Lee"] {
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: customer_name.into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should be created");
+        select_active_preset_in_dir(
+            &base_dir,
+            boothy_lib::contracts::dto::PresetSelectionInputDto {
+                session_id: session.session_id.clone(),
+                preset_id: "preset_soft-glow".into(),
+                published_version: "2026.03.20".into(),
+            },
+        )
+        .expect("preset should become active");
+
+        let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+        let ready_capture = complete_preview_render_in_dir(
+            &base_dir,
+            &session.session_id,
+            &result.capture.capture_id,
+        )
+        .expect("local renderer should close the preview");
+        assert_eq!(ready_capture.render_status, "previewReady");
+    }
+
+    let version_probe_count = fs::read_to_string(&version_counter_path)
+        .expect("version counter should be readable")
+        .lines()
+        .count();
+    let cache_path = base_dir
+        .join(".boothy-local-renderer")
+        .join("preview")
+        .join("darktable-version-cache.json");
+    let cache_contents = fs::read_to_string(&cache_path).expect("version cache should exist");
+
+    assert_eq!(
+        version_probe_count, 1,
+        "runtime-scoped sidecar cache should avoid probing the darktable version on every capture"
+    );
+    assert!(
+        cache_contents.contains("\"version\":  \"5.4.1\"")
+            || cache_contents.contains("\"version\":\"5.4.1\""),
+        "cached version metadata should be written once the sidecar verifies the binary"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
 fn mark_capture_final_ready(base_dir: &PathBuf, session_id: &str, capture_id: &str) {
     let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
     let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
@@ -5599,8 +6682,328 @@ fn timestamp_offset(offset_seconds: i64) -> String {
     current_timestamp(shifted).expect("shifted timestamp should serialize")
 }
 
+fn seed_pending_canonical_preview(
+    base_dir: &PathBuf,
+    session_id: &str,
+    capture_id: &str,
+) -> PathBuf {
+    let paths = SessionPaths::new(base_dir, session_id);
+    let canonical_preview_path = paths.renders_previews_dir.join(format!("{capture_id}.jpg"));
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+    fs::write(&canonical_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+        .expect("pending preview should be writable");
+
+    let manifest_path = paths.manifest_path;
+    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+    let mut manifest: SessionManifest =
+        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
+    let capture = manifest
+        .captures
+        .iter_mut()
+        .find(|value| value.capture_id == capture_id)
+        .expect("capture should exist");
+    capture.preview.asset_path = Some(canonical_preview_path.to_string_lossy().into_owned());
+    capture.preview.ready_at_ms = None;
+    capture.render_status = "previewWaiting".into();
+    capture.timing.fast_preview_visible_at_ms = Some(capture.raw.persisted_at_ms + 5);
+
+    fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    canonical_preview_path
+}
+
+fn write_preview_render_route_policy(base_dir: &PathBuf, session_id: &str, force_disable: bool) {
+    let branch_config_dir = base_dir.join("branch-config");
+    fs::create_dir_all(&branch_config_dir).expect("branch config dir should exist");
+
+    let forced_fallback_routes = if force_disable {
+        vec![serde_json::json!({
+            "route": "local-renderer-sidecar",
+            "sessionId": session_id,
+            "reason": "manual-disable"
+        })]
+    } else {
+        Vec::new()
+    };
+
+    fs::write(
+        branch_config_dir.join("preview-renderer-policy.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "sessionId": session_id,
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.03.20",
+              "reason": "test-canary"
+            }
+          ],
+          "forcedFallbackRoutes": forced_fallback_routes
+        }))
+        .expect("preview route policy should serialize"),
+    )
+    .expect("preview route policy should be writable");
+}
+
+fn write_branch_scoped_preview_render_route_policy(base_dir: &PathBuf, branch_id: &str) {
+    let branch_config_dir = base_dir.join("branch-config");
+    fs::create_dir_all(&branch_config_dir).expect("branch config dir should exist");
+
+    fs::write(
+        branch_config_dir.join("preview-renderer-policy.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "branchId": branch_id,
+              "reason": "branch-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }))
+        .expect("preview route policy should serialize"),
+    )
+    .expect("preview route policy should be writable");
+}
+
+fn write_preset_scoped_preview_render_route_policy(base_dir: &PathBuf, force_disable: bool) {
+    let branch_config_dir = base_dir.join("branch-config");
+    fs::create_dir_all(&branch_config_dir).expect("branch config dir should exist");
+
+    let forced_fallback_routes = if force_disable {
+        vec![serde_json::json!({
+            "route": "local-renderer-sidecar",
+            "presetId": "preset_soft-glow",
+            "presetVersion": "2026.03.20",
+            "reason": "manual-disable"
+        })]
+    } else {
+        Vec::new()
+    };
+
+    fs::write(
+        branch_config_dir.join("preview-renderer-policy.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.03.20",
+              "reason": "test-canary"
+            }
+          ],
+          "forcedFallbackRoutes": forced_fallback_routes
+        }))
+        .expect("preview route policy should serialize"),
+    )
+    .expect("preview route policy should be writable");
+}
+
+fn write_branch_rollout_state(base_dir: &PathBuf, branch_id: &str) {
+    let branch_config_dir = base_dir.join("branch-config");
+    fs::create_dir_all(&branch_config_dir).expect("branch config dir should exist");
+
+    fs::write(
+        branch_config_dir.join("state.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "branch-rollout-store/v1",
+          "approvedBaselines": [],
+          "branches": [
+            {
+              "branchId": branch_id,
+              "displayName": "Gangnam Booth",
+              "deploymentBaseline": {
+                "buildVersion": "boothy-2026.03.20.4",
+                "presetStackVersion": "preset-stack-2026.03.20",
+                "approvedAt": "2026-03-20T09:44:49+09:00",
+                "actorId": "operator-noah",
+                "actorLabel": "Noah Lee"
+              },
+              "rollbackBaseline": null,
+              "pendingBaseline": null,
+              "localSettings": {
+                "contactPhone": null,
+                "contactEmail": null,
+                "contactKakao": null,
+                "supportHours": null,
+                "operationalToggles": []
+              },
+              "activeSession": null
+            }
+          ]
+        }))
+        .expect("branch rollout store should serialize"),
+    )
+    .expect("branch rollout store should be writable");
+}
+
+fn write_fake_local_renderer_sidecar(base_dir: &PathBuf, mode: &str) {
+    let sidecar_dir = base_dir.join("sidecar").join("local-renderer");
+    fs::create_dir_all(&sidecar_dir).expect("fake sidecar dir should exist");
+    let script_path = sidecar_dir.join("local-renderer-sidecar.ps1");
+    let wrapper_path = sidecar_dir.join("local-renderer-sidecar.cmd");
+
+    let script_template = r#"
+param(
+  [string]$requestPath,
+  [string]$responsePath
+)
+
+$request = Get-Content -Path $requestPath -Raw | ConvertFrom-Json
+$mode = "__MODE__"
+
+if ($mode -eq "malformed") {
+  [System.IO.File]::WriteAllText($responsePath, "{not-json")
+  exit 0
+}
+
+if ($mode -eq "timeout") {
+  Start-Sleep -Milliseconds 200
+}
+
+if ($mode -eq "error-envelope") {
+  $response = @{
+    schemaVersion = "local-renderer-response/v1"
+    error = @{
+      message = "darktable bridge failed inside the sidecar"
+    }
+  }
+  [System.IO.File]::WriteAllText(
+    $responsePath,
+    ($response | ConvertTo-Json -Depth 5)
+  )
+  exit 1
+}
+
+if ($mode -eq "noisy-stderr") {
+  foreach ($index in 1..20000) {
+    [Console]::Error.WriteLine(("renderer-noise-" + $index.ToString("D5")))
+  }
+}
+
+$candidatePath = [string]$request.candidateOutputPath
+[System.IO.File]::WriteAllBytes($candidatePath, [byte[]](255,216,255,217))
+
+$sessionId = [string]$request.sessionId
+$captureId = [string]$request.captureId
+$presetVersion = [string]$request.presetVersion
+$writtenAt = [int64]$request.capturePersistedAtMs + 10
+$completionOrdinal = 1
+
+switch ($mode) {
+  "wrong-session" { $sessionId = "session_other" }
+  "wrong-capture" { $captureId = "capture_other" }
+  "wrong-preset-version" { $presetVersion = "2026.03.21" }
+  "stale" { $writtenAt = [int64]$request.capturePersistedAtMs - 1 }
+  "duplicate" { $completionOrdinal = 2 }
+}
+
+$response = @{
+  schemaVersion = "local-renderer-response/v1"
+  route = "local-renderer-sidecar"
+  sessionId = $sessionId
+  captureId = $captureId
+  requestId = [string]$request.requestId
+  presetId = [string]$request.presetId
+  presetVersion = $presetVersion
+  candidatePath = $candidatePath
+  candidateWrittenAtMs = $writtenAt
+  elapsedMs = 120
+  fidelity = @{
+    verdict = "matched"
+    detail = "deltaE=0.4"
+  }
+  attempt = @{
+    retryOrdinal = 0
+    completionOrdinal = $completionOrdinal
+  }
+}
+
+[System.IO.File]::WriteAllText(
+  $responsePath,
+  ($response | ConvertTo-Json -Depth 5)
+)
+"#;
+    fs::write(&script_path, script_template.replace("__MODE__", mode))
+        .expect("fake sidecar script should be writable");
+    fs::write(
+        &wrapper_path,
+        "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0local-renderer-sidecar.ps1\" %*\r\n",
+    )
+    .expect("fake sidecar wrapper should be writable");
+}
+
 fn create_published_bundle(catalog_root: &PathBuf) {
     create_named_published_bundle(catalog_root, "preset_soft-glow", "Soft Glow", "2026.03.20");
+}
+
+fn write_fake_darktable_binary_with_version(base_dir: &PathBuf, version: &str) -> PathBuf {
+    let binary_path = base_dir.join("fake-darktable-versioned.cmd");
+    fs::write(
+        &binary_path,
+        format!(
+            concat!(
+                "@echo off\r\n",
+                "setlocal EnableExtensions EnableDelayedExpansion\r\n",
+                "if /I \"%~1\"==\"--version\" (\r\n",
+                "  echo darktable-cli {version}\r\n",
+                "  exit /b 0\r\n",
+                ")\r\n",
+                "set \"output=%~3\"\r\n",
+                "if \"%output%\"==\"\" exit /b 2\r\n",
+                "for %%I in (\"%output%\") do if not exist \"%%~dpI\" mkdir \"%%~dpI\" >nul 2>&1\r\n",
+                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$bytes=[Convert]::FromBase64String('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAgEAACAQQCAwAAAAAAAAAAAAABAgMABAURITESQVFh/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAT/xAAZEQADAQEBAAAAAAAAAAAAAAAAARECEiH/2gAMAwEAAhEDEQA/AJ9b0qS2K4wqY5lW9L0L4b2E6b9K1+JrZk3QmY2Dg5Nf/2Q==');[IO.File]::WriteAllBytes('%output%',$bytes)\"\r\n",
+                "exit /b 0\r\n"
+            ),
+            version = version
+        ),
+    )
+    .expect("versioned fake darktable should be writable");
+
+    binary_path
+}
+
+fn write_counting_fake_darktable_binary_with_version(
+    base_dir: &PathBuf,
+    version: &str,
+) -> (PathBuf, PathBuf) {
+    let binary_path = base_dir.join("fake-darktable-counting.cmd");
+    let version_counter_path = base_dir.join("fake-darktable-version-counter.log");
+    fs::write(
+        &binary_path,
+        format!(
+            concat!(
+                "@echo off\r\n",
+                "setlocal EnableExtensions EnableDelayedExpansion\r\n",
+                "set \"counter_file={counter_file}\"\r\n",
+                "if /I \"%~1\"==\"--version\" (\r\n",
+                "  >>\"%counter_file%\" echo version\r\n",
+                "  echo darktable-cli {version}\r\n",
+                "  exit /b 0\r\n",
+                ")\r\n",
+                "set \"output=%~3\"\r\n",
+                "if \"%output%\"==\"\" exit /b 2\r\n",
+                "for %%I in (\"%output%\") do if not exist \"%%~dpI\" mkdir \"%%~dpI\" >nul 2>&1\r\n",
+                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$bytes=[Convert]::FromBase64String('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAgEAACAQQCAwAAAAAAAAAAAAABAgMABAURITESQVFh/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAT/xAAZEQADAQEBAAAAAAAAAAAAAAAAARECEiH/2gAMAwEAAhEDEQA/AJ9b0qS2K4wqY5lW9L0L4b2E6b9K1+JrZk3QmY2Dg5Nf/2Q==');[IO.File]::WriteAllBytes('%output%',$bytes)\"\r\n",
+                "exit /b 0\r\n"
+            ),
+            version = version,
+            counter_file = version_counter_path.to_string_lossy()
+        ),
+    )
+    .expect("counting fake darktable should be writable");
+
+    (binary_path, version_counter_path)
 }
 
 fn create_named_published_bundle(

@@ -10,6 +10,7 @@ use boothy_lib::{
         preset_bundle::load_published_preset_runtime_bundle,
         preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
     },
+    render::set_preview_route_lock_failures_for_tests,
     session::{
         session_manifest::{
             build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
@@ -128,6 +129,41 @@ fn fails_manifest_build_when_system_time_precedes_unix_epoch() {
 
     assert_eq!(error.code, "session-persistence-failed");
     assert!(error.message.contains("시스템 시계"));
+}
+
+#[test]
+fn session_start_keeps_the_customer_session_even_when_preview_route_lock_persistence_fails() {
+    let base_dir = unique_test_root("preview-route-lock-soft-failure");
+    set_preview_route_lock_failures_for_tests(1);
+
+    let result = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("preview route lock persistence should not block session creation");
+
+    let paths = SessionPaths::new(&base_dir, &result.session_id);
+
+    assert!(
+        paths.session_root.exists(),
+        "session root should still exist"
+    );
+    assert!(
+        paths.manifest_path.is_file(),
+        "manifest should still be durable"
+    );
+    assert!(
+        !paths
+            .diagnostics_dir
+            .join("preview-renderer-policy.lock.json")
+            .exists(),
+        "failed lock persistence should not pretend the lock file was written"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
 }
 
 #[test]

@@ -9,7 +9,7 @@ use crate::{
     capture::{
         ingest_pipeline::{
             complete_preview_render_in_dir, persist_capture_in_dir,
-            promote_pending_fast_preview_in_dir,
+            promote_pending_fast_preview_in_dir, sync_completed_speculative_preview_in_dir,
         },
         sidecar_client::{
             is_retryable_capture_helper_error, map_capture_round_trip_error,
@@ -70,9 +70,12 @@ pub fn get_capture_readiness_in_dir(
     let repaired_invalid_preview = sync_invalid_preview_truth_in_manifest(base_dir, &mut manifest)?;
     let repaired_render_failure =
         sync_recoverable_render_failure_in_manifest(base_dir, &mut manifest)?;
+    let repaired_finished_speculative_preview =
+        sync_finished_speculative_preview_in_manifest(base_dir, &mut manifest)?;
     sync_better_preview_assets_in_manifest(base_dir, &mut manifest)?;
     sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest)?;
-    if repaired_invalid_preview || repaired_render_failure {
+    if repaired_invalid_preview || repaired_render_failure || repaired_finished_speculative_preview
+    {
         manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
         sync_better_preview_assets_in_manifest(base_dir, &mut manifest)?;
         sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest)?;
@@ -554,7 +557,10 @@ fn helper_error_allows_session_recovery_after_ready(
         return true;
     }
 
-    matches!(message.detail_code.as_str(), "capture-download-timeout")
+    matches!(
+        message.detail_code.as_str(),
+        "capture-download-timeout" | "capture-transfer-start-timeout"
+    )
 }
 
 fn sync_recoverable_render_failure_in_manifest(
@@ -608,6 +614,43 @@ fn sync_recoverable_render_failure_in_manifest(
             );
             Ok(false)
         }
+    }
+}
+
+fn sync_finished_speculative_preview_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<bool, HostErrorEnvelope> {
+    let Some(latest_capture) = manifest.captures.last() else {
+        return Ok(false);
+    };
+
+    if latest_capture.render_status != "previewWaiting"
+        || latest_capture.preview.ready_at_ms.is_some()
+        || latest_capture.preview.asset_path.is_none()
+    {
+        return Ok(false);
+    }
+
+    match sync_completed_speculative_preview_in_dir(
+        base_dir,
+        &manifest.session_id,
+        &latest_capture.capture_id,
+    )? {
+        Some(capture)
+            if matches!(
+                capture.render_status.as_str(),
+                "previewReady" | "finalReady"
+            ) && capture.preview.ready_at_ms.is_some() =>
+        {
+            log::info!(
+                "capture_preview_promoted_from_finished_speculative_close session={} capture_id={}",
+                manifest.session_id,
+                latest_capture.capture_id
+            );
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 

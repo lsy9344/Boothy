@@ -1,4 +1,4 @@
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{path::BaseDirectory, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 pub mod branch_config;
 pub mod capture;
@@ -27,6 +27,16 @@ pub fn run() {
                 .path()
                 .app_local_data_dir()
                 .map_err(|error| format!("앱 데이터 경로를 확인하지 못했어요: {error}"))?;
+            if std::env::var_os("BOOTHY_LOCAL_RENDERER_BIN").is_none() {
+                if let Ok(local_renderer_path) = app.path().resolve(
+                    "sidecar/local-renderer/local-renderer-sidecar.cmd",
+                    BaseDirectory::Resource,
+                ) {
+                    if local_renderer_path.is_file() {
+                        std::env::set_var("BOOTHY_LOCAL_RENDERER_BIN", local_renderer_path);
+                    }
+                }
+            }
             let runtime_base_dir =
                 session::session_repository::resolve_app_session_base_dir(app_local_data_dir);
             preset::default_catalog::ensure_default_preset_catalog_in_dir(&runtime_base_dir)

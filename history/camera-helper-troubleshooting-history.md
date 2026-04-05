@@ -917,3 +917,59 @@ dotnet publish sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -c Releas
 1. 같은 패턴이 다시 나오기 전까지는 이 조합을 기본 해법으로 유지한다.
 2. 재발 시에는 먼저 새 session evidence가 정말 `capture-download-timeout` 재발인지 확인하고,
    이전과 같은 경로가 아니면 helper completion 원인으로 바로 단정하지 않는다.
+
+## 2026-04-05 21:05 +09:00 추가 정정: `capture-accepted` 뒤 아무 transfer 신호도 없으면, completion timeout 전체를 기다리지 말고 transfer-start timeout으로 먼저 자른다
+
+- 실제 최신 재발 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3741cf8095e30`
+  였다.
+- 사용자 체감은 "두 번째 촬영에서 `촬영 처리 중`이 수십 초 유지된 뒤 결과가 안 올라왔다"였다.
+- 이번 세션의 helper evidence는 기존 3번째 샷 timeout과는 조금 달랐다.
+  - 첫 번째 요청은 `capture-accepted -> fast-thumbnail-attempted -> file-arrived`로 정상
+  - 두 번째 요청 `request_000000000000064eb547b121e8`은 `capture-accepted`만 있고
+    이후 `fast-thumbnail-attempted`, `file-arrived`가 전혀 없었다
+  - 약 31초 뒤 `recovery-status(detailCode=capture-download-timeout)`와
+    `helper-error(detailCode=capture-download-timeout)`가 찍혔다
+  - 네 번째 요청 `request_000000000000064eb54be1d300`도 같은 패턴으로 다시 timeout 됐다
+- 즉 이번 failure는
+  helper가 "download가 느리다" 수준이 아니라,
+  **download/transfer start callback 자체를 못 받은 채 wait budget만 다 써버린 케이스**로 보는 편이 정확했다.
+
+이번에 조정한 helper 동작:
+
+1. capture 수락 시점을 `AcceptedAt`으로 별도 저장한다.
+2. helper wait loop는 기존 전체 completion timeout을 유지하되,
+   `DownloadStarted`가 아직 false인 상태가 `8초`를 넘기면
+   `capture-transfer-start-timeout`으로 먼저 실패시킨다.
+3. transfer가 실제로 시작된 capture는 기존 completion timeout 경계대로 계속 기다린다.
+4. host recovery 판정도
+   `capture-download-timeout`뿐 아니라
+   `capture-transfer-start-timeout`까지 session recovery 허용 대상으로 확장했다.
+
+왜 이렇게 바꿨는가:
+
+- 최신 정상 booth evidence를 다시 훑어 보면
+  성공 capture는 transfer/fast-thumbnail 시작이 대체로 `0~5초` 안에서 보였다.
+- 따라서 transfer 시작이 아예 보이지 않는 케이스를 `30초`까지 끌고 가는 건
+  고객 체감과 운영 회복 모두에 불리했다.
+- 이번 수정은 root cause를 완전히 제거하는 것과 별개로,
+  **stall 길이를 먼저 줄여 booth를 덜 묶는 보호막** 역할을 한다.
+
+추가로 같이 발견한 것:
+
+- 같은 세션의 host log에는
+  `preview_renderer_warmup_failed ... libpng error: Not enough image data`
+  가 남아 있었다.
+- 원인은 embedded warmup PNG fixture가 깨져 있던 것이었고,
+  이번 회차에 known-good PNG로 교체했다.
+- 이것은 helper timeout의 직접 원인은 아니지만,
+  preview warmup이 항상 실패해 초기 render 고정비를 줄이지 못하게 하던 별도 손실이었다.
+
+운영 메모 갱신:
+
+1. `capture-accepted` 뒤 `fast-thumbnail-attempted`와 `file-arrived`가 둘 다 없으면
+   먼저 transfer-start 경계 실패로 본다.
+2. 이 경우 앞으로는 `capture-download-timeout`만 찾지 말고
+   `capture-transfer-start-timeout`도 같이 본다.
+3. booth 체감이 다시 길어지면 helper evidence와 함께
+   host의 `preview_renderer_warmup_failed` 재발 여부도 같이 확인한다.

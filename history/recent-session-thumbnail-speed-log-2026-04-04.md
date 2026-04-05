@@ -332,3 +332,400 @@ Latest session contained 3 recent captures.
 
 - The next hardware run should stop showing `preview-render-failed reason=render-process-failed` on the first preview attempt for these captures.
 - If that first failure disappears, the booth should immediately stop paying the duplicate second render and move back down from the current `10s` class.
+
+## 2026-04-05 Test Look canary follow-up
+
+### Latest source
+
+- session path:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a351696c25d93c`
+- files reviewed:
+  - `session.json`
+  - `diagnostics/timing-events.log`
+  - `diagnostics/camera-helper-events.jsonl`
+- policy switched to:
+  - `presetId=preset_test-look`
+  - `presetVersion=2026.03.31`
+
+### Measured captures
+
+Completed captures in the latest `Test Look` session:
+
+1. `capture_20260405012332551_b25968bcc7`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2847ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6203ms`
+2. `capture_20260405012342393_55d853d006`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3041ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6486ms`
+3. `capture_20260405012350889_d151538d37`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2988ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6426ms`
+
+Average of the completed cuts:
+
+- same-capture first-visible: about `2959ms`
+- preset-applied truthful close: about `6372ms`
+
+### Product reading
+
+- The user’s latest `3초대` impression is still accurate for first-visible.
+- But the customer-facing truthful close is still staying in roughly the `6.2s ~ 6.5s` class on `Test Look`.
+- This means the main remaining wait is still after the pending same-capture image is already on screen.
+
+### Root-cause reading
+
+- `camera-thumbnail` still failed first on every completed cut.
+  - `detailCode=fast-thumbnail-download-failed`
+- helper still promoted `windows-shell-thumbnail` after RAW arrival.
+- the truthful close owner was already the `fast-preview-raster` route, not the old raw-original path.
+- so the latest problem is no longer `which route did we choose?`
+- the latest problem is `how much fixed cost does the chosen local renderer route still pay every time it runs?`
+
+Local reproduction and bench notes from the same `Test Look` source:
+
+- `darktable-cli --version` alone cost about `640ms ~ 787ms` on the booth machine.
+- applying the published `Test Look` XMP to the same fast-preview JPG still cost about `3.7s ~ 3.8s` in one-off reproduction.
+- a quick experiment disabling obvious RAW-only modules in a temporary XMP only saved about `110ms`.
+- product interpretation:
+  - the cheap next win is not more XMP surgery
+  - the cheap next win is removing repeated sidecar fixed cost and preserving cache across sessions
+
+### Latest tech docs re-checked
+
+- darktable official program invocation docs say:
+  - `--version` is a separate process path
+  - `--cachedir` stores thumbnail cache and precompiled OpenCL binaries for faster startup
+  - source: `https://docs.darktable.org/usermanual/3.8/en/special-topics/program-invocation/darktable/`
+- Tauri official sidecar docs continue to frame sidecars as normal external binaries launched by the app shell.
+  - source: `https://v2.tauri.app/develop/sidecar/`
+
+### Change introduced after this review
+
+- local renderer sidecar now uses a runtime-scoped worker root instead of a session-scoped one
+  - `.boothy-local-renderer/preview`
+- local renderer now writes and reuses `darktable-version-cache.json`
+  - once the darktable binary path, size, and last-write time match, the sidecar skips the repeated `--version` probe
+- local renderer now also supplies `--cachedir` under the same runtime-scoped worker root
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml local_renderer -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next real booth run should keep the same `3s` first-visible class
+- and it should spend less time in the local renderer fixed-cost part of the close path
+- if the next hardware run still stays near the same `6.3s` band even after this cache reuse lands, the next target is no longer sidecar startup overhead
+- at that point the remaining cost is the render body itself, and the next step should move toward a lighter truthful renderer or a different close topology
+
+## 2026-04-05 second follow-up: first Test Look capture stayed unfiltered, later closes were still slow, and thumbnail quality regressed
+
+### Latest problematic source
+
+- session path:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a359b2db1b8584`
+- files reviewed:
+  - `session.json`
+  - `diagnostics/timing-events.log`
+  - `renders/previews/*`
+
+### What the latest booth evidence showed
+
+First capture:
+
+1. `capture_20260405035512593_24c7ba7114`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `2971ms`
+   - `previewVisibleAtMs`: `null`
+   - `xmpPreviewReadyAtMs`: `null`
+   - session manifest stayed at `renderStatus=previewWaiting`
+
+Later completed captures:
+
+1. `capture_20260405035530621_e43ffb3b9c`
+   - `capture acknowledged -> previewVisibleAtMs`: `7115ms`
+2. `capture_20260405035541031_71f9d50724`
+   - `capture acknowledged -> previewVisibleAtMs`: `8880ms`
+3. `capture_20260405035550373_b694687f8b`
+   - `capture acknowledged -> previewVisibleAtMs`: `6533ms`
+
+### Detailed root-cause reading
+
+For the first capture, `timing-events.log` showed:
+
+- one `preview-render-start` right after fast preview visibility
+- another `preview-render-start` about `5s` later
+- immediate `preview-render-queue-saturated`
+- no later `preview-render-ready`
+
+But the session preview folder still contained:
+
+- `capture_20260405035512593_24c7ba7114.preview-speculative.jpg`
+- `capture_20260405035512593_24c7ba7114.request_000000000000064eae844ef2e0.preview-speculative.detail`
+
+That speculative detail recorded:
+
+- `elapsedMs=9637`
+- `widthCap=128;heightCap=128`
+- `sourceAsset=fast-preview-raster`
+
+Product reading:
+
+- the first capture did not truly fail to render
+- it finished too late for the original follow-up window
+- and the app never promoted the finished speculative result back into the canonical latest-capture state
+
+At the same time, truthful preview JPG sizes for later captures were only around:
+
+- `33290` bytes
+- `17742` bytes
+- `33553` bytes
+
+This matched the user report that the recent-session thumbnail looked too soft.
+With the current `128x128` fast-preview truthful cap, that reading was credible.
+
+### Change introduced after this review
+
+- readiness now opportunistically promotes a finished speculative preview close for the latest waiting capture
+  - this means the first capture no longer needs another capture or manual action to become truthful-close ready
+- capture command follow-up refinement wait expanded from `2s` to `12s`
+  - this is deliberately longer than the observed `9637ms` first speculative close
+- fast-preview truthful close cap increased from `128x128` to `256x256`
+  - still below the raw-original `384x384` path
+  - but materially sharper than the regressed `128px` booth rail output
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_promotes_a_finished_speculative_preview_without_needing_another_capture -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_restores_a_sharper_than_legacy_128_cap -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml local_renderer -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness speculative_preview -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test session_manifest -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next real booth run should stop leaving the first `Test Look` capture in `previewWaiting`
+- the recent-session truthful thumbnail should look visibly sharper than the `128px` regression
+- if completed truthful close still stays in the same `6s+` band after this, the remaining cost should be treated as render-body cost rather than missed promotion or startup fixed cost
+
+## 2026-04-05 third follow-up: second Test Look capture stalled in `촬영 처리 중`, and the stall came from helper transfer never starting rather than from the preview renderer
+
+### Latest problematic source
+
+- session path:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3741cf8095e30`
+- preset:
+  `Test Look / 2026.03.31`
+- files reviewed:
+  - `session.json`
+  - `diagnostics/timing-events.log`
+  - `diagnostics/camera-helper-events.jsonl`
+  - `C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+
+### What the latest booth evidence showed
+
+Completed captures in the same session:
+
+1. `capture_20260405115912929_7300bdc8d0`
+   - `capture acknowledged -> previewVisibleAtMs`: `6418ms`
+2. `capture_20260405120023003_f12fb9965e`
+   - `capture acknowledged -> previewVisibleAtMs`: `6308ms`
+
+Failed middle request:
+
+1. `request_000000000000064eb547b121e8`
+   - `capture-accepted` logged at `11:59:19Z`
+   - no `fast-thumbnail-attempted`
+   - no `file-arrived`
+   - helper recovery/error logged at about `11:59:50Z`
+   - effective stall: about `31s`
+
+The same session later showed the same pattern again on:
+
+1. `request_000000000000064eb54be1d300`
+   - accepted at `12:00:30Z`
+   - timeout recovery at `12:01:01Z`
+
+### Detailed reading
+
+Product reading:
+
+- this was not a "filter applied too slowly" close-path regression
+- the booth got stuck waiting before RAW transfer had even really started
+- because the helper only knew the request had been accepted, then kept waiting until the full download timeout expired
+
+At the same time, host logs showed preview warmup was still not helping:
+
+- `preview_renderer_warmup_started`
+- then `preview_renderer_warmup_failed`
+- stderr detail:
+  `libpng warning: IDAT: Extra compressed data / libpng error: Not enough image data`
+
+That meant the runtime warmup PNG fixture itself was broken, so warmup never actually completed.
+
+### Change introduced after this review
+
+- helper now distinguishes
+  - "capture was accepted"
+  - from "RAW transfer actually started"
+- if transfer start never arrives, helper now cuts over to
+  `capture-transfer-start-timeout`
+  after `8s` instead of consuming the full `30s` completion budget
+- host recovery now treats `capture-transfer-start-timeout` the same way as the old helper timeout for readiness recovery
+- preview renderer warmup input PNG was replaced with a known-good fixture so warmup can finally execute instead of failing immediately
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_capture_transfer_start_timeout_recovers -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source_matches_the_known_good_png_fixture -- --test-threads=1`
+  - passed
+- `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`
+  - passed
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --no-restore`
+  - passed
+
+### Next expectation
+
+- the same helper-side stall should no longer keep the booth in `촬영 처리 중` for `30s+`
+- if the camera/helper boundary fails again, the booth should move into recovery noticeably sooner
+- if real hardware still shows `6s+` closes after this, that remaining cost should still be treated as preview-render body cost, not this helper stall
+
+## 2026-04-05 fourth follow-up: latest Test Look run proved the canary speedup was still bypassing the winning speculative close lane
+
+### Latest measured source
+
+- session path:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3753ffaaa16d8`
+- preset:
+  `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures in the same session:
+
+1. `capture_20260405122004678_9752b1807b`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `4798ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8555ms`
+2. `capture_20260405122013771_7dc7ff617a`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `3933ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7453ms`
+3. `capture_20260405122020979_cf1712edb4`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `2849ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6453ms`
+4. `capture_20260405122029138_543b9ec46a`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `3182ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6865ms`
+
+### Key reading
+
+- helper stall은 이미 사라졌다
+  - 모든 컷이 `capture-accepted -> file-arrived`로 정상 닫혔다
+- 그런데 booth close는 여전히 `6.4s ~ 8.6s` band에 남아 있었다
+- 더 중요하게는 같은 session package에
+  - `renderer-route-selected`
+  - `renderer-route-fallback`
+  - `renderer-close-owner`
+  흔적이 전혀 없었다
+- runtime worker root `C:\Users\KimYS\Pictures\dabi_shoot\.boothy-local-renderer\preview`도
+  최신 실측 시점에는 실제 산출 흔적이 없었다
+
+Product reading:
+
+- `Test Look` canary policy는 켜져 있었지만,
+  실제로 customer-facing close owner가 된 경로는 여전히 resident/speculative lane이었다
+- 그리고 그 lane은 session-locked preview route policy를 보지 않고 darktable direct path로 닫고 있었다
+- 그래서 직전 회차에 넣은
+  - runtime-scoped sidecar cache reuse
+  - darktable version probe reuse
+  최적화가 최신 winning close path에는 아예 적용되지 못하고 있었다
+
+### Change introduced after this review
+
+- resident/speculative preview close도 이제 same session-locked preview route policy를 본다
+- canary preset이면 speculative lane도 local renderer sidecar candidate를 먼저 사용한다
+- sidecar가 실패하면 그 speculative lane 안에서 즉시 approved darktable baseline으로 fallback 한다
+- speculative output이 나중에 truth owner로 승격될 때도
+  - `renderer-route-selected`
+  - `renderer-route-fallback`
+  - `renderer-close-owner`
+  evidence가 session package에 같이 남도록 보강했다
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness speculative -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness local_renderer -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test session_manifest -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- 다음 `Test Look` 실측부터는 latest winning speculative close에도 local renderer canary 이득이 실제로 들어가야 한다
+- 같은 session package 하나만 열어도 route selection / fallback / close owner를 바로 확인할 수 있어야 한다
+- 만약 그 뒤에도 completed close가 여전히 같은 `6s+` band에 머무르면,
+  이제 남은 문제는 truly render body 자체이고 다음 수는 `lighter truthful renderer` 쪽이어야 한다
+
+## 2026-04-05 fifth follow-up: latest booth session still looks like a pre-fix baseline, so record it as data but not as proof that the new route wiring landed on hardware
+
+### Latest measured source
+
+- session path:
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3768babafc5e4`
+- preset:
+  `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260405124346795_6f4a2114f6`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `2966ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7772ms`
+2. `capture_20260405124357452_ddb8d42b39`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `4521ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8520ms`
+3. `capture_20260405124406153_478b1ddf63`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `3381ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7298ms`
+4. `capture_20260405124415751_e5276d0047`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: about `3359ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7526ms`
+
+Helper evidence:
+
+- all four requests still closed with `capture-accepted -> file-arrived`
+- no helper timeout on this run either
+
+But this run also showed two important negatives:
+
+1. the session package still did **not** contain
+   - `renderer-route-selected`
+   - `renderer-route-fallback`
+   - `renderer-close-owner`
+2. host log still showed
+   - `preview_renderer_warmup_failed`
+   - `libpng error: IDAT: CRC error`
+
+### Product reading
+
+- this latest booth run should be treated as a **data baseline**, not as proof that the newest route-wiring change already reached the hardware runtime
+- the missing route evidence means the speculative close that won on this session still behaved like the older path
+- the warmup CRC error also means this runtime still carried the old broken warmup fixture behavior
+
+### Immediate interpretation
+
+- the newly added speculative-canary wiring is code-complete and test-covered
+- but this `21:44` booth run does not yet validate it in the field
+- the next approved hardware check must specifically confirm:
+  - `renderer-route-selected`
+  - `renderer-close-owner`
+  - and the disappearance of the warmup CRC error

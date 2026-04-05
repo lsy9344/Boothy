@@ -20,12 +20,20 @@ internal sealed class CanonSdkCamera : IDisposable
     ];
     private const string CaptureCompletionTimeoutOverrideFileName =
         ".camera-helper-capture-timeout-ms";
+    private const string CaptureTransferStartTimeoutOverrideFileName =
+        ".camera-helper-transfer-start-timeout-ms";
+    private static readonly TimeSpan CaptureWaitPollInterval = TimeSpan.FromMilliseconds(100);
     // Real follow-up captures on EOS 700D hardware can take well beyond 15 seconds
     // before the transfer boundary closes. Keep enough headroom to avoid treating
     // slow but valid RAW handoffs as fatal helper failures.
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
         30000
     );
+    // In healthy booth captures, the object-transfer callback starts well before
+    // the full RAW handoff closes. If that callback never starts, fail fast and
+    // recycle instead of hanging the booth for the whole completion budget.
+    private static readonly TimeSpan DefaultCaptureTransferStartTimeout =
+        TimeSpan.FromMilliseconds(8000);
 
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;
@@ -211,13 +219,47 @@ internal sealed class CanonSdkCamera : IDisposable
         }
 
         CaptureDownloadResult result;
+        var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
+        var captureTransferStartTimeout = ResolveCaptureTransferStartTimeout(paths.RuntimeRoot);
+        var completionDeadline = DateTimeOffset.UtcNow.Add(captureCompletionTimeout);
         try
         {
-            var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
-            result = await captureContext.Completion.Task.WaitAsync(
-                captureCompletionTimeout,
-                cancellationToken
-            );
+            while (true)
+            {
+                if (captureContext.Completion.Task.IsCompleted)
+                {
+                    result = await captureContext.Completion.Task.WaitAsync(cancellationToken);
+                    break;
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                if (
+                    CaptureTransferTimeoutBudget.HasExceeded(
+                        captureContext.AcceptedAt,
+                        Volatile.Read(ref captureContext.DownloadStarted) == 1,
+                        captureTransferStartTimeout,
+                        now
+                    )
+                )
+                {
+                    throw new CanonCaptureException(
+                        "capture-transfer-start-timeout",
+                        "촬영은 수락됐지만 RAW transfer 시작 신호가 오지 않았어요.",
+                        recoveryRequired: true
+                    );
+                }
+
+                if (now >= completionDeadline)
+                {
+                    throw new TimeoutException();
+                }
+
+                var remaining = completionDeadline - now;
+                var delay = remaining < CaptureWaitPollInterval
+                    ? remaining
+                    : CaptureWaitPollInterval;
+                await Task.Delay(delay, cancellationToken);
+            }
         }
         catch (TimeoutException)
         {
@@ -423,6 +465,21 @@ internal sealed class CanonSdkCamera : IDisposable
         return long.TryParse(configured, out var configuredTimeoutMs) && configuredTimeoutMs > 0
             ? TimeSpan.FromMilliseconds(configuredTimeoutMs)
             : DefaultCaptureCompletionTimeout;
+    }
+
+    private static TimeSpan ResolveCaptureTransferStartTimeout(string runtimeRoot)
+    {
+        var overridePath = Path.Combine(runtimeRoot, CaptureTransferStartTimeoutOverrideFileName);
+        if (File.Exists(overridePath))
+        {
+            var overrideValue = File.ReadAllText(overridePath).Trim();
+            if (long.TryParse(overrideValue, out var timeoutMs) && timeoutMs > 0)
+            {
+                return TimeSpan.FromMilliseconds(timeoutMs);
+            }
+        }
+
+        return DefaultCaptureTransferStartTimeout;
     }
 
     private static CanonCaptureException BuildCaptureTriggerException(uint err)
@@ -1609,5 +1666,19 @@ internal sealed class CurrentCaptureContext
     public Action<CaptureFastPreviewReadyResult>? OnFastPreviewReady { get; }
     public Action<CaptureFastPreviewFailedResult>? OnFastPreviewFailed { get; }
     public TaskCompletionSource<CaptureDownloadResult> Completion { get; }
+    public DateTimeOffset AcceptedAt { get; } = DateTimeOffset.UtcNow;
     public int DownloadStarted;
+}
+
+internal static class CaptureTransferTimeoutBudget
+{
+    public static bool HasExceeded(
+        DateTimeOffset acceptedAt,
+        bool downloadStarted,
+        TimeSpan timeout,
+        DateTimeOffset now
+    )
+    {
+        return !downloadStarted && now - acceptedAt > timeout;
+    }
 }

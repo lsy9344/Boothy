@@ -961,3 +961,73 @@ Select-String -Path <camera-helper-events.jsonl 경로> -Pattern "<requestId>"
 
 1. 이후 다시 같은 패턴이 나오기 전까지는 `2026-04-01 18:40 +09:00` 항목의 원인/수정 조합을 현행 정상 해법으로 본다.
 2. 다음 회귀가 생기면 새 session evidence를 다시 분리해서, 같은 root cause의 재발인지 다른 경계의 새 실패인지부터 구분한다.
+
+### 2026-04-05 21:05 +09:00 추가 재발: 두 번째 촬영이 `촬영 처리 중`에 오래 멈추고 결과가 안 올라오면, render보다 먼저 helper transfer-start 경계를 본다
+
+이번 실기기 제보는 "두 번째 촬영에서 `촬영 처리 중`이 수십 초 유지된 뒤 결과가 올라오지 않았다"는 패턴이었다.
+실제 최신 세션 evidence를 다시 맞춰 보니, 이번 건도 render body가 오래 걸린 것이 아니라
+**helper가 촬영 수락 뒤 RAW transfer 시작 신호를 끝내 받지 못한 채 timeout으로 회복한 경계 실패**로 보는 것이 맞았다.
+
+실제 확인 근거:
+
+- 문제 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3741cf8095e30`
+  였다.
+- `session.json` 기준 활성 프리셋은 `Test Look / 2026.03.31` 이었다.
+- 같은 세션의 `captures`는 2장만 정상 완료됐다.
+  - `capture_20260405115912929_7300bdc8d0`: `previewReady`, `elapsedMs=6418`
+  - `capture_20260405120023003_f12fb9965e`: `previewReady`, `elapsedMs=6308`
+- 그런데 두 번째 촬영 요청
+  `request_000000000000064eb547b121e8`
+  은 `timing-events.log`에서
+  `request-capture -> capture-accepted` 뒤 약 32초 동안 `file-arrived`가 전혀 없었고,
+  이후에만 `button-pressed`가 남았다.
+- 같은 요청의 `camera-helper-events.jsonl`은 더 직접적이었다.
+  - `capture-accepted`
+  - 이후 `fast-thumbnail-attempted`도 없음
+  - `file-arrived`도 없음
+  - 마지막은 `recovery-status(detailCode=capture-download-timeout)`와
+    `helper-error(detailCode=capture-download-timeout)`
+- 같은 세션의 네 번째 요청
+  `request_000000000000064eb54be1d300`
+  도 같은 패턴으로 다시 timeout 됐다.
+
+이번에 새로 정리한 핵심:
+
+- 이 패턴은 "필터 적용이 너무 느리다"가 아니라,
+  **셔터 수락 후 transfer callback 자체가 시작되지 않아 helper가 빈 대기만 하다가 timeout 되는 문제**다.
+- 성공한 최근 booth capture들을 비교해 보면
+  정상 건은 `capture-accepted -> fast-thumbnail-attempted`가 대체로 `0~5초` 안에서 시작됐다.
+- 따라서 transfer 시작 신호가 전혀 없는 케이스까지 기존 `30초` completion budget 전체를 다 기다리게 두는 건
+  booth 고객 경험에 너무 불리하다고 판단했다.
+
+이번 회차 수정:
+
+1. helper에 `capture-transfer-start-timeout` 경계를 새로 추가했다.
+2. 촬영 수락 뒤 `DownloadStarted`가 `8초` 안에 시작되지 않으면,
+   더 이상 `30초` 전체를 소비하지 않고 조기 실패 후 recovery로 넘기게 했다.
+3. host는 새 detail code `capture-transfer-start-timeout`도
+   기존 `capture-download-timeout`처럼 recoverable helper error로 취급하게 맞췄다.
+4. 별도로 preview warmup input PNG가 깨져 있어 warmup이 항상 실패하던 문제도 함께 고쳤다.
+
+기대 효과:
+
+- 같은 종류의 helper stall이 다시 와도
+  부스는 더 이상 `수십 초` 동안 멈춘 것처럼 보이지 않고,
+  대략 `8초` 안쪽에서 더 빨리 실패/회복 경로로 넘어가게 된다.
+- preview warmup도 이제 실제로 동작할 수 있는 상태가 됐다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_capture_transfer_start_timeout_recovers -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source_matches_the_known_good_png_fixture -- --test-threads=1`
+- `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --no-restore`
+- 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. `Test Look`으로 새 세션을 시작해 최소 3장 연속 촬영한다.
+2. 같은 stall이 다시 나와도 `촬영 처리 중`이 예전처럼 `30초+` 유지되지 않는지 본다.
+3. 재발 시에는 같은 세션의 `camera-helper-events.jsonl`에서
+   `capture-transfer-start-timeout`으로 더 빨리 닫히는지 먼저 본다.

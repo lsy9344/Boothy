@@ -15,9 +15,9 @@ use crate::{
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     render::{
         enqueue_resident_preview_render_in_dir, is_valid_render_preview_asset,
-        log_render_failure_in_dir, log_render_ready_in_dir, log_render_start_in_dir,
-        promote_preview_render_output, render_capture_asset_in_dir,
-        render_preview_asset_to_path_in_dir, RenderIntent,
+        log_preview_route_events_from_prepared_detail_in_dir, log_render_failure_in_dir,
+        log_render_ready_in_dir, log_render_start_in_dir, promote_preview_render_output,
+        render_capture_asset_in_dir, render_preview_asset_to_path_in_dir, RenderIntent,
     },
     session::{
         session_manifest::{
@@ -349,21 +349,22 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
                 let _ = fs::write(&speculative_detail_path, prepared_render.detail);
             }
             Err(error) => {
-                let capture_already_closed = read_session_manifest(
-                    &SessionPaths::new(&base_dir, &session_id).manifest_path,
-                )
-                .ok()
-                .and_then(|manifest| {
-                    manifest
-                        .captures
-                        .into_iter()
-                        .find(|capture| capture.capture_id == capture_id)
-                })
-                .map(|capture| {
-                    matches!(capture.render_status.as_str(), "previewReady" | "finalReady")
-                        && capture.preview.ready_at_ms.is_some()
-                })
-                .unwrap_or(false);
+                let capture_already_closed =
+                    read_session_manifest(&SessionPaths::new(&base_dir, &session_id).manifest_path)
+                        .ok()
+                        .and_then(|manifest| {
+                            manifest
+                                .captures
+                                .into_iter()
+                                .find(|capture| capture.capture_id == capture_id)
+                        })
+                        .map(|capture| {
+                            matches!(
+                                capture.render_status.as_str(),
+                                "previewReady" | "finalReady"
+                            ) && capture.preview.ready_at_ms.is_some()
+                        })
+                        .unwrap_or(false);
 
                 if capture_already_closed && error.reason_code == "render-output-missing" {
                     log::info!(
@@ -570,13 +571,40 @@ pub fn complete_preview_render_in_dir(
         }
     };
 
-    finish_preview_render_in_dir(
-        base_dir,
-        &paths,
-        session_id,
-        capture_id,
-        rendered_preview,
-    )
+    finish_preview_render_in_dir(base_dir, &paths, session_id, capture_id, rendered_preview)
+}
+
+pub fn sync_completed_speculative_preview_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+) -> Result<Option<SessionCaptureRecord>, HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let Some(capture_index) = manifest
+        .captures
+        .iter()
+        .position(|capture| capture.capture_id == capture_id)
+    else {
+        return Ok(None);
+    };
+
+    if manifest.captures[capture_index]
+        .preview
+        .asset_path
+        .is_some()
+        && matches!(
+            manifest.captures[capture_index].render_status.as_str(),
+            "previewReady" | "finalReady"
+        )
+    {
+        return Ok(Some(manifest.captures[capture_index].clone()));
+    }
+
+    try_complete_speculative_preview_render_in_dir(base_dir, &paths, &mut manifest, capture_index)
 }
 
 fn wait_for_speculative_preview_completion_in_dir(
@@ -760,6 +788,13 @@ fn try_complete_speculative_preview_render_in_dir(
             "presetId=unknown;publishedVersion=unknown;binary=darktable-cli;source=unknown;elapsedMs=unknown;detail=widthCap=unknown;heightCap=unknown;hq=false;sourceAsset=fast-preview-raster;args=unknown;status=unknown"
                 .into()
         });
+        log_preview_route_events_from_prepared_detail_in_dir(
+            base_dir,
+            &capture_snapshot.session_id,
+            &capture_snapshot.capture_id,
+            &capture_snapshot.request_id,
+            &render_detail,
+        );
         log_render_ready_in_dir(
             base_dir,
             &capture_snapshot.session_id,
@@ -887,10 +922,14 @@ fn finish_preview_render_in_dir(
                 "exceededBudget".into()
             };
         } else {
-            capture.timing.preview_visible_at_ms =
-                capture.timing.preview_visible_at_ms.or(capture.preview.ready_at_ms);
-            capture.timing.xmp_preview_ready_at_ms =
-                capture.timing.xmp_preview_ready_at_ms.or(capture.preview.ready_at_ms);
+            capture.timing.preview_visible_at_ms = capture
+                .timing
+                .preview_visible_at_ms
+                .or(capture.preview.ready_at_ms);
+            capture.timing.xmp_preview_ready_at_ms = capture
+                .timing
+                .xmp_preview_ready_at_ms
+                .or(capture.preview.ready_at_ms);
         }
 
         (capture.clone(), first_truth_close)
