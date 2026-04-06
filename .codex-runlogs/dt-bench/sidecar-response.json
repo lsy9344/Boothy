@@ -1,0 +1,6 @@
+{
+    "error":  {
+                  "message":  "candidate output missing after darktable bridge"
+              },
+    "schemaVersion":  "local-renderer-response/v1"
+}

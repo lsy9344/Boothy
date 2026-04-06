@@ -58,9 +58,9 @@ const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5, 0x1C, 0x0C,
-    0x02, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xFC, 0xFF, 0x1F, 0x00,
-    0x03, 0x03, 0x02, 0x00, 0xEE, 0xFE, 0xA9, 0xF9, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x60, 0x00, 0x02, 0x00,
+    0x00, 0x05, 0x00, 0x01, 0x7A, 0x5E, 0xAB, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
     0xAE, 0x42, 0x60, 0x82,
 ];
 
@@ -117,7 +117,7 @@ impl PreviewInvocationProfile {
     fn approved_booth_safe() -> Self {
         Self {
             apply_custom_presets: false,
-            disable_opencl: false,
+            disable_opencl: true,
             allow_fast_preview_raster: true,
         }
     }
@@ -357,6 +357,22 @@ fn render_capture_asset_with_forced_source_in_dir(
                 )
                 }
                 Err(error) => {
+                    if should_force_darktable_for_session_after_local_renderer_error(&error) {
+                        if let Err(lock_error) =
+                            mark_session_locked_preview_route_forced_fallback_after_local_renderer_error(
+                                &paths, capture,
+                            )
+                        {
+                            log::warn!(
+                                "preview_route_forced_fallback_write_failed session={} capture_id={} request_id={} code={} detail={}",
+                                capture.session_id,
+                                capture.capture_id,
+                                capture.request_id,
+                                lock_error.reason_code,
+                                lock_error.operator_detail
+                            );
+                        }
+                    }
                     append_render_event(
                         &paths,
                         &capture.capture_id,
@@ -578,6 +594,22 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
                     });
                 }
                 Err(error) => {
+                    if should_force_darktable_for_session_after_local_renderer_error(&error) {
+                        if let Err(lock_error) =
+                            mark_session_locked_preview_route_forced_fallback_after_local_renderer_error(
+                                &paths, capture_context,
+                            )
+                        {
+                            log::warn!(
+                                "preview_route_forced_fallback_write_failed session={} capture_id={} request_id={} code={} detail={}",
+                                capture_context.session_id,
+                                capture_context.capture_id,
+                                capture_context.request_id,
+                                lock_error.reason_code,
+                                lock_error.operator_detail
+                            );
+                        }
+                    }
                     let invocation = build_darktable_invocation_from_source(
                         base_dir,
                         &bundle.darktable_version,
@@ -1862,6 +1894,38 @@ fn current_time_ms() -> Result<u64, String> {
         .as_millis() as u64)
 }
 
+fn should_mirror_render_event_to_runtime_log(event: &str) -> bool {
+    matches!(
+        event,
+        "renderer-route-selected" | "renderer-route-fallback" | "renderer-close-owner"
+    )
+}
+
+fn should_warn_for_render_event(event: &str) -> bool {
+    matches!(event, "renderer-route-fallback")
+}
+
+fn render_event_runtime_log_summary(
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+    intent: RenderIntent,
+    event: &str,
+    reason_code: Option<&str>,
+    detail: Option<&str>,
+) -> Option<String> {
+    if !should_mirror_render_event_to_runtime_log(event) {
+        return None;
+    }
+
+    Some(format!(
+        "render_route_event session={session_id} capture_id={capture_id} request_id={request_id} stage={} event={event} reason_code={} detail={}",
+        render_stage_label(intent),
+        reason_code.unwrap_or("none"),
+        detail.unwrap_or("none")
+    ))
+}
+
 fn append_render_event(
     paths: &SessionPaths,
     capture_id: &str,
@@ -1897,6 +1961,26 @@ fn append_render_event(
             .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_default()
     );
+
+    if let Some(summary) = render_event_runtime_log_summary(
+        &paths
+            .session_root
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        capture_id,
+        request_id,
+        intent,
+        event,
+        Some(reason_code),
+        Some(detail),
+    ) {
+        if should_warn_for_render_event(event) {
+            log::warn!("{summary}");
+        } else {
+            log::info!("{summary}");
+        }
+    }
 }
 
 struct RenderQueueGuard {}
@@ -1997,6 +2081,7 @@ fn build_darktable_invocation_from_source(
     };
     let worker_root = base_dir.join(".boothy-darktable").join(mode);
     let configdir = worker_root.join("config");
+    let cachedir = worker_root.join("cache");
     let library = worker_root.join("library.db");
     let hq_flag = match intent {
         RenderIntent::Preview => "false",
@@ -2030,6 +2115,8 @@ fn build_darktable_invocation_from_source(
         "--core".into(),
         "--configdir".into(),
         darktable_cli_path_arg(&configdir),
+        "--cachedir".into(),
+        darktable_cli_path_arg(&cachedir),
         "--library".into(),
         darktable_cli_path_arg(&library),
     ]);
@@ -2435,6 +2522,70 @@ fn load_session_locked_preview_render_route_policy(
             locked_policy_path.to_string_lossy()
         ),
     })
+}
+
+fn should_force_darktable_for_session_after_local_renderer_error(
+    error: &RenderWorkerError,
+) -> bool {
+    error.reason_code.starts_with("local-renderer-")
+}
+
+fn mark_session_locked_preview_route_forced_fallback_after_local_renderer_error(
+    paths: &SessionPaths,
+    capture: &SessionCaptureRecord,
+) -> Result<(), RenderWorkerError> {
+    let locked_policy_path = session_locked_preview_render_route_policy_path(paths);
+    let mut policy = if locked_policy_path.is_file() {
+        load_preview_render_route_policy_from_path(&locked_policy_path)
+    } else {
+        PreviewRenderRoutePolicy::default()
+    };
+
+    let session_rule_already_exists = policy.forced_fallback_routes.iter().any(|rule| {
+        rule.route == PreviewRenderRoute::LocalRendererSidecar
+            && rule.session_id.as_deref() == Some(capture.session_id.as_str())
+            && rule.preset_id.as_deref() == capture.active_preset_id.as_deref()
+            && rule.preset_version.as_deref() == Some(capture.active_preset_version.as_str())
+            && rule.reason.as_deref() == Some("session-sidecar-health-check-failed")
+    });
+    if session_rule_already_exists {
+        return Ok(());
+    }
+
+    policy.forced_fallback_routes.push(PreviewRenderRouteRule {
+        route: PreviewRenderRoute::LocalRendererSidecar,
+        booth_alias: None,
+        branch_id: None,
+        session_id: Some(capture.session_id.clone()),
+        preset_id: capture.active_preset_id.clone(),
+        preset_version: Some(capture.active_preset_version.clone()),
+        reason: Some("session-sidecar-health-check-failed".into()),
+    });
+
+    let policy_bytes = serde_json::to_vec_pretty(&policy).map_err(|error| RenderWorkerError {
+        reason_code: "preview-route-policy-lock-write-failed",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!(
+            "session-locked preview route policy forced fallback를 직렬화하지 못했어요: {error}"
+        ),
+    })?;
+
+    fs::create_dir_all(&paths.diagnostics_dir).map_err(|error| RenderWorkerError {
+        reason_code: "preview-route-policy-lock-write-failed",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!(
+            "session-locked preview route policy directory를 준비하지 못했어요: {error}"
+        ),
+    })?;
+    fs::write(&locked_policy_path, policy_bytes).map_err(|error| RenderWorkerError {
+        reason_code: "preview-route-policy-lock-write-failed",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!(
+            "session-locked preview route policy forced fallback를 저장하지 못했어요: {error}"
+        ),
+    })?;
+
+    Ok(())
 }
 
 fn sanitize_preview_render_route_policy(
@@ -3816,7 +3967,7 @@ mod tests {
             pair[0] == "--apply-custom-presets"
                 && pair[1] == DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED
         }));
-        assert!(!invocation
+        assert!(invocation
             .arguments
             .contains(&"--disable-opencl".to_string()));
         assert_eq!(
@@ -4145,6 +4296,51 @@ mod tests {
     }
 
     #[test]
+    fn preview_invocation_uses_a_runtime_scoped_cachedir() {
+        let temp_dir = unique_temp_dir("preview-invocation-cachedir");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.source.jpg");
+
+        fs::create_dir_all(
+            output_path
+                .parent()
+                .expect("preview output path should have a parent"),
+        )
+        .expect("preview output directory should exist");
+        fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+            .expect("preview source should be writable");
+
+        let invocation = build_darktable_invocation_from_source(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &temp_dir.join("bundle").join("preview.xmp"),
+            &source_path,
+            &output_path,
+            RenderIntent::Preview,
+            PreviewRenderSourceKind::FastPreviewRaster,
+        );
+
+        let expected_cachedir = darktable_cli_path_arg(
+            &temp_dir
+                .join(".boothy-darktable")
+                .join("preview")
+                .join("cache"),
+        );
+        assert!(invocation
+            .arguments
+            .windows(2)
+            .any(|pair| { pair[0] == "--cachedir" && pair[1] == expected_cachedir }));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn fast_preview_raster_invocation_restores_a_sharper_than_legacy_128_cap() {
         assert!(
             FAST_PREVIEW_RENDER_MAX_WIDTH_PX >= 256,
@@ -4160,9 +4356,9 @@ mod tests {
     fn preview_renderer_warmup_source_matches_the_known_good_png_fixture() {
         let known_good_png: &[u8] = &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00,
-            0x00, 0xB5, 0x1C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78,
-            0xDA, 0x63, 0xFC, 0xFF, 0x1F, 0x00, 0x03, 0x03, 0x02, 0x00, 0xEE, 0xFE, 0xA9, 0xF9,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x60, 0x00, 0x02, 0x00, 0x00, 0x05, 0x00, 0x01, 0x7A, 0x5E, 0xAB, 0x3F,
             0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ];
 
@@ -4170,6 +4366,69 @@ mod tests {
             PREVIEW_RENDER_WARMUP_INPUT_PNG, known_good_png,
             "warmup source should stay a valid 1x1 PNG fixture so preview warmup can actually run"
         );
+    }
+
+    #[test]
+    fn preview_renderer_warmup_source_fixture_has_valid_png_chunk_crcs() {
+        assert!(
+            png_fixture_has_valid_chunk_crcs(PREVIEW_RENDER_WARMUP_INPUT_PNG),
+            "warmup source must stay a structurally valid PNG so darktable warmup actually primes the booth runtime"
+        );
+    }
+
+    fn png_fixture_has_valid_chunk_crcs(bytes: &[u8]) -> bool {
+        const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+        if !bytes.starts_with(PNG_SIGNATURE) {
+            return false;
+        }
+
+        let mut offset = PNG_SIGNATURE.len();
+        while offset < bytes.len() {
+            if offset + 12 > bytes.len() {
+                return false;
+            }
+
+            let length = u32::from_be_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]) as usize;
+            let chunk_type_start = offset + 4;
+            let chunk_data_start = chunk_type_start + 4;
+            let chunk_data_end = chunk_data_start + length;
+            let chunk_crc_end = chunk_data_end + 4;
+            if chunk_crc_end > bytes.len() {
+                return false;
+            }
+
+            let expected_crc = u32::from_be_bytes([
+                bytes[chunk_data_end],
+                bytes[chunk_data_end + 1],
+                bytes[chunk_data_end + 2],
+                bytes[chunk_data_end + 3],
+            ]);
+            let calculated_crc = crc32(&bytes[chunk_type_start..chunk_data_end]);
+            if expected_crc != calculated_crc {
+                return false;
+            }
+
+            offset = chunk_crc_end;
+        }
+
+        true
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in bytes {
+            crc ^= byte as u32;
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg() & 0xEDB8_8320;
+                crc = (crc >> 1) ^ mask;
+            }
+        }
+        !crc
     }
 
     #[test]
@@ -4362,5 +4621,62 @@ mod tests {
         let second_handle = ensure_resident_preview_worker(worker_key)
             .expect("resident worker should restart after idle teardown");
         assert_ne!(first_handle.generation, second_handle.generation);
+    }
+
+    #[test]
+    fn renderer_route_events_are_mirrored_into_runtime_log_messages() {
+        let summary = render_event_runtime_log_summary(
+            "session_test",
+            "capture_test",
+            "request_test",
+            RenderIntent::Preview,
+            "renderer-route-selected",
+            Some("local-renderer-sidecar"),
+            Some("policyReason=canary-match;fallbackReason=none"),
+        )
+        .expect("route selection should produce a runtime log summary");
+
+        assert_eq!(
+            summary,
+            "render_route_event session=session_test capture_id=capture_test request_id=request_test stage=preview event=renderer-route-selected reason_code=local-renderer-sidecar detail=policyReason=canary-match;fallbackReason=none"
+        );
+    }
+
+    #[test]
+    fn renderer_route_fallback_events_are_marked_as_warn_level_candidates() {
+        let summary = render_event_runtime_log_summary(
+            "session_test",
+            "capture_test",
+            "request_test",
+            RenderIntent::Preview,
+            "renderer-route-fallback",
+            Some("candidate-invalid"),
+            Some("from=local-renderer-sidecar;to=darktable;reasonDetail=wrong-session"),
+        )
+        .expect("route fallback should produce a runtime log summary");
+
+        assert_eq!(
+            summary,
+            "render_route_event session=session_test capture_id=capture_test request_id=request_test stage=preview event=renderer-route-fallback reason_code=candidate-invalid detail=from=local-renderer-sidecar;to=darktable;reasonDetail=wrong-session"
+        );
+        assert!(should_warn_for_render_event("renderer-route-fallback"));
+    }
+
+    #[test]
+    fn non_route_render_events_do_not_emit_runtime_route_summaries() {
+        assert!(
+            render_event_runtime_log_summary(
+                "session_test",
+                "capture_test",
+                "request_test",
+                RenderIntent::Preview,
+                "preview-render-ready",
+                Some("preview-ready"),
+                Some("detail=none"),
+            )
+            .is_none(),
+            "only route-audit events should mirror into runtime route summaries"
+        );
+        assert!(!should_warn_for_render_event("renderer-close-owner"));
     }
 }

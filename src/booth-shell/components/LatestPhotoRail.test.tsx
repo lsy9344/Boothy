@@ -43,6 +43,7 @@ describe('LatestPhotoRail', () => {
         onDeleteCancel={() => {}}
         onDeleteConfirm={() => {}}
         onDeleteIntent={() => {}}
+        onPhotoClick={() => {}}
       />,
     )
 
@@ -69,6 +70,7 @@ describe('LatestPhotoRail', () => {
         onDeleteCancel={() => {}}
         onDeleteConfirm={() => {}}
         onDeleteIntent={() => {}}
+        onPhotoClick={() => {}}
       />,
     )
 

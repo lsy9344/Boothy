@@ -577,6 +577,84 @@ select {
   color: #f4efe6;
 }
 
+.latest-photo-rail__photo-button {
+  all: unset;
+  display: block;
+  cursor: pointer;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.latest-photo-rail__photo-button:disabled {
+  cursor: default;
+}
+
+.latest-photo-rail__photo-button:not(:disabled):focus-visible {
+  outline: 2px solid rgba(243, 200, 142, 0.8);
+  outline-offset: 2px;
+}
+
+.photo-fullscreen-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 6, 4, 0.88);
+  backdrop-filter: blur(6px);
+}
+
+.photo-fullscreen-viewer__panel {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  width: min(420px, 90vw);
+  max-height: 96dvh;
+  padding: 20px;
+  border: 1px solid rgba(243, 200, 142, 0.24);
+  border-radius: 24px;
+  background: rgba(30, 20, 14, 0.96);
+  overflow-y: auto;
+}
+
+.photo-fullscreen-viewer__panel img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 16px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.photo-fullscreen-viewer__badge {
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(243, 200, 142, 0.18);
+  color: #f7dcc0;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.photo-fullscreen-viewer__label {
+  margin: 0;
+  color: #d2c7bf;
+  font-size: 0.95rem;
+}
+
+.photo-fullscreen-viewer__close {
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f0c786 0%, #d59a52 100%);
+  color: #201816;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .authoring-shell {
   display: grid;
   gap: 18px;

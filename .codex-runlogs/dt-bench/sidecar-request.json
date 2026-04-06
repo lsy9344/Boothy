@@ -1,0 +1,17 @@
+{
+  "schemaVersion":"local-renderer-request/v1",
+  "sessionId":"session_000000000018a351696c25d93c",
+  "captureId":"capture_20260405012332551_b25968bcc7",
+  "requestId":"request_000000000000064eac65e85770",
+  "boothAlias":"bench",
+  "presetId":"preset_test-look",
+  "presetVersion":"2026.03.31",
+  "rawAssetPath":"C:\\Users\\KimYS\\Pictures\\dabi_shoot\\sessions\\session_000000000018a351696c25d93c\\captures\\originals\\capture_20260405012332551_b25968bcc7.CR2",
+  "sourceAssetPath":"C:\\Users\\KimYS\\Pictures\\dabi_shoot\\sessions\\session_000000000018a351696c25d93c\\renders\\previews\\capture_20260405012332551_b25968bcc7.jpg",
+  "candidateOutputPath":"C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\.codex-runlogs\\dt-bench\\sidecar-output.jpg",
+  "xmpTemplatePath":"C:\\Users\\KimYS\\Pictures\\dabi_shoot\\preset-catalog\\published\\preset_test-look\\2026.03.31\\xmp\\test-look.xmp",
+  "darktableVersion":"5.4.0",
+  "capturePersistedAtMs":1775352214369,
+  "previewWidthCap":128,
+  "previewHeightCap":128
+}

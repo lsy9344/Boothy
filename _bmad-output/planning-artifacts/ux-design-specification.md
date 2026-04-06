@@ -274,7 +274,8 @@ flowchart TD
 - 본문 첫 문장은 저장 완료 사실을 먼저 말하고, 둘째 문장에서 확인용 사진이 준비 중임을 설명합니다.
 - 가능하면 현재 액션 가능 여부를 함께 제시합니다. 예: "잠시 뒤 확인 사진이 나타납니다" 또는 "다음 촬영은 계속 가능합니다".
 - same-capture fast preview가 준비되면 최신 사진 레일에 먼저 노출할 수 있지만, preset-applied preview가 준비될 때까지 상태 자체는 `Preview Waiting`으로 유지합니다.
-- first-visible source가 fast preview, intermediate preview, 또는 상주형 worker output으로 바뀌더라도 고객에게는 "먼저 같은 컷이 보이고, 나중에 더 정확한 결과로 안정화된다"는 경험이 유지되어야 합니다.
+- first-visible source나 truthful close route가 fast preview, intermediate preview, 상주형 worker output, 또는 approved local renderer route로 바뀌더라도 고객에게는 "먼저 같은 컷이 보이고, 나중에 더 정확한 결과로 안정화된다"는 경험이 유지되어야 합니다.
+- renderer route 변경은 새로운 고객 상태 이름을 만들지 않으며, 고객 상태는 계속 `Preview Waiting`과 later ready 상태만 사용합니다.
 - 나중에 더 정확한 booth-safe preview가 준비되면 고객이 같은 shot으로 인식할 수 있게 같은 자리에서 자연스럽게 교체합니다.
 - 최신 사진 레일이 아직 비어 있어도 정상이라는 점을 보조 문구로 명시합니다.
 - 이 상태가 길어져 `Phone Required`로 넘어갈 수 있는 경우에도, 고객에게는 내부 실패 원인이 아니라 "도움이 필요하다"는 결과만 전달합니다.

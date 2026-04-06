@@ -9,7 +9,9 @@ use std::{
 
 use crate::{
     capture::{
-        sidecar_client::{CompletedCaptureFastPreview, FastPreviewReadyUpdate},
+        sidecar_client::{
+            read_capture_request_messages, CompletedCaptureFastPreview, FastPreviewReadyUpdate,
+        },
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
     },
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
@@ -55,6 +57,7 @@ const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 2600;
 const SPECULATIVE_PREVIEW_JOIN_POLL_MS: u64 = 80;
 const PREVIEW_REFINEMENT_IDLE_WAIT_MS: u64 = 5000;
 const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
+const FIRST_CAPTURE_COLD_START_REASON_DETAIL: &str = "reason=first-capture-cold-start";
 
 struct FastPreviewPromotionResult {
     asset_path: String,
@@ -66,13 +69,48 @@ struct PreparedSpeculativePreviewSource {
     cleanup_path: Option<PathBuf>,
 }
 
-fn should_start_speculative_preview_render(manifest: &SessionManifest) -> bool {
+fn should_start_speculative_preview_render(
+    base_dir: &Path,
+    session_id: &str,
+    current_request_id: &str,
+    manifest: &SessionManifest,
+) -> bool {
     // The first capture of a real booth session is the cold-start path most likely
     // to miss the resident worker join window and then pay for a duplicate render.
     // Keep tests on the existing speculative path, but in production prefer the
     // single truthful close for the very first capture until later captures can
     // benefit from a warmed lane.
-    cfg!(test) || !manifest.captures.is_empty()
+    if cfg!(test) || !manifest.captures.is_empty() {
+        return true;
+    }
+
+    read_capture_request_messages(base_dir, session_id)
+        .map(|requests| {
+            requests
+                .into_iter()
+                .any(|request| request.request_id != current_request_id)
+        })
+        .unwrap_or(false)
+}
+
+fn was_first_capture_cold_start_recorded(
+    paths: &SessionPaths,
+    capture_id: &str,
+    request_id: &str,
+) -> bool {
+    let log_path = paths.diagnostics_dir.join("timing-events.log");
+    let Ok(contents) = fs::read_to_string(log_path) else {
+        return false;
+    };
+    let capture_field = format!("\tcapture={capture_id}\t");
+    let request_field = format!("\trequest={request_id}\t");
+
+    contents.lines().any(|line| {
+        line.contains(&capture_field)
+            && line.contains(&request_field)
+            && line.contains("\tevent=speculative-preview-skipped\t")
+            && line.contains(FIRST_CAPTURE_COLD_START_REASON_DETAIL)
+    })
 }
 
 pub fn persist_capture_in_dir(
@@ -102,7 +140,12 @@ pub fn persist_capture_in_dir(
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
-    let allow_speculative_preview_render = should_start_speculative_preview_render(&manifest);
+    let allow_speculative_preview_render = should_start_speculative_preview_render(
+        base_dir,
+        &input.session_id,
+        &request_id,
+        &manifest,
+    );
 
     let mut capture = build_saved_capture_record(
         &manifest,
@@ -154,7 +197,7 @@ pub fn persist_capture_in_dir(
 
     write_session_manifest(&paths.manifest_path, &manifest)?;
 
-    if !allow_speculative_preview_render && capture.preview.asset_path.is_some() {
+    if !allow_speculative_preview_render {
         let _ = append_session_timing_event_in_dir(
             base_dir,
             SessionTimingEventInput {
@@ -162,7 +205,7 @@ pub fn persist_capture_in_dir(
                 event: "speculative-preview-skipped",
                 capture_id: Some(&capture.capture_id),
                 request_id: Some(&capture.request_id),
-                detail: Some("reason=first-capture-cold-start"),
+                detail: Some(FIRST_CAPTURE_COLD_START_REASON_DETAIL),
             },
         );
     }
@@ -467,6 +510,13 @@ pub fn complete_preview_render_in_dir(
                 capture.active_preset_id.as_deref(),
                 capture.preview.asset_path.as_deref(),
             ) {
+                if was_first_capture_cold_start_recorded(
+                    &paths,
+                    &capture.capture_id,
+                    &capture.request_id,
+                ) {
+                    break capture;
+                }
                 start_speculative_preview_render_in_dir(
                     base_dir,
                     session_id,

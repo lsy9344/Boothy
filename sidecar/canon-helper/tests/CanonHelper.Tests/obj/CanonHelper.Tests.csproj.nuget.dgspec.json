@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj": {}
+    "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj": {}
   },
   "projects": {
-    "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
+    "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
       "version": "0.1.0",
       "restore": {
-        "projectUniqueName": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj",
+        "projectUniqueName": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj",
         "projectName": "canon-helper",
-        "projectPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj",
+        "projectPath": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj",
         "packagesPath": "C:\\Users\\KimYS\\.nuget\\packages\\",
-        "outputPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\obj\\",
+        "outputPath": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\KimYS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -68,14 +68,14 @@
         }
       }
     },
-    "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj": {
+    "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
+        "projectUniqueName": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
         "projectName": "CanonHelper.Tests",
-        "projectPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
+        "projectPath": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
         "packagesPath": "C:\\Users\\KimYS\\.nuget\\packages\\",
-        "outputPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\obj\\",
+        "outputPath": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\KimYS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -90,8 +90,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
-                "projectPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj"
+              "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
+                "projectPath": "C:\\Code\\Project\\Boothy_thumbnail-latency-seam-reinstrumentation\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj"
               }
             }
           }

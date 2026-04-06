@@ -1867,7 +1867,8 @@ fn readiness_promotes_a_late_canonical_fast_preview_without_marking_preview_read
 }
 
 #[test]
-fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallback() {
+fn complete_preview_render_keeps_the_first_capture_on_a_single_direct_close_when_fast_preview_arrives_late(
+) {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -1908,46 +1909,17 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
 
     let initial_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect("late same-capture preview should be reused before raw fallback");
+            .expect("late same-capture preview should still close truthfully on the first capture");
 
     assert!(initial_capture.timing.fast_preview_visible_at_ms.is_some());
     assert_eq!(
         initial_capture.preview.asset_path.as_deref(),
         Some(canonical_preview_path.to_string_lossy().as_ref())
     );
-
-    let refined_capture = if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
-        initial_capture
-    } else {
-        assert_eq!(initial_capture.render_status, "previewWaiting");
-        assert_eq!(initial_capture.preview.ready_at_ms, None);
-        assert_eq!(initial_capture.timing.preview_visible_at_ms, None);
-
-        let mut ready = None;
-        for _ in 0..40 {
-            let manifest = read_manifest(&base_dir, &session.session_id);
-            let latest_capture = manifest
-                .captures
-                .iter()
-                .find(|capture| capture.capture_id == result.capture.capture_id)
-                .cloned()
-                .expect("capture should stay in manifest");
-
-            if latest_capture.timing.xmp_preview_ready_at_ms.is_some() {
-                ready = Some(latest_capture);
-                break;
-            }
-
-            thread::sleep(Duration::from_millis(50));
-        }
-
-        ready.expect("raw refinement should eventually close truthful preview")
-    };
-
-    assert_eq!(refined_capture.render_status, "previewReady");
+    assert_eq!(initial_capture.render_status, "previewReady");
     assert_eq!(
-        refined_capture.preview.ready_at_ms,
-        refined_capture.timing.xmp_preview_ready_at_ms
+        initial_capture.preview.ready_at_ms,
+        initial_capture.timing.xmp_preview_ready_at_ms
     );
 
     let timing_events = fs::read_to_string(
@@ -1957,10 +1929,97 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
     )
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=fast-preview-promoted"));
+    assert!(timing_events.contains("event=speculative-preview-skipped"));
+    assert!(timing_events.contains("reason=first-capture-cold-start"));
+    assert_eq!(
+        timing_events.matches("event=preview-render-start").count(),
+        1,
+        "the first capture should not start a second competing close when late fast preview arrives"
+    );
     assert!(
-        timing_events.contains("event=preview-render-failed")
-            || timing_events.contains("sourceAsset=fast-preview-raster"),
-        "late same-capture preview should restart the speculative fast path before raw fallback"
+        !timing_events.contains("event=preview-render-queue-saturated"),
+        "the first capture should not hit preview queue saturation from a duplicate close"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn deleting_the_first_capture_does_not_reclassify_a_later_capture_as_cold_start() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("late-fast-preview-after-first-delete");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first capture should close truthfully");
+    delete_capture_in_dir(
+        &base_dir,
+        CaptureDeleteInputDto {
+            session_id: session.session_id.clone(),
+            capture_id: first_capture.capture.capture_id.clone(),
+        },
+    )
+    .expect("the first capture should be deletable after closing");
+
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", second_capture.capture.capture_id));
+    fs::create_dir_all(
+        canonical_preview_path
+            .parent()
+            .expect("preview path should have a parent directory"),
+    )
+    .expect("preview directory should exist");
+    write_test_jpeg(&canonical_preview_path);
+
+    let refined_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("later capture should still use the warmed path after the first capture was deleted");
+
+    assert_eq!(refined_capture.render_status, "previewReady");
+    assert!(refined_capture.timing.fast_preview_visible_at_ms.is_some());
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+    assert_eq!(
+        timing_events.matches("reason=first-capture-cold-start").count(),
+        1,
+        "deleting the original first capture should not make later captures look like cold-start work"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -6237,6 +6296,80 @@ fn noisy_local_renderer_stderr_does_not_force_a_false_timeout() {
 }
 
 #[test]
+fn local_renderer_failure_forces_darktable_for_the_rest_of_the_session() {
+    let base_dir = unique_test_root("local-renderer-session-health-fallback");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "error-envelope");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first capture should still recover with darktable fallback");
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("second capture should close without retrying the unhealthy sidecar");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    let first_capture_section = timing_events
+        .lines()
+        .filter(|line| line.contains(&format!("capture={}", first_capture.capture.capture_id)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(first_capture_section.contains("event=renderer-route-fallback"));
+    assert!(first_capture_section.contains("reason=local-renderer-sidecar-error"));
+
+    let second_capture_section = timing_events
+        .lines()
+        .filter(|line| line.contains(&format!("capture={}", second_capture.capture.capture_id)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(second_capture_section.contains("event=renderer-route-selected"));
+    assert!(second_capture_section.contains("reason=darktable"));
+    assert!(second_capture_section.contains("policyReason=forced-fallback"));
+    assert!(second_capture_section.contains("fallbackReason=session-sidecar-health-check-failed"));
+    assert!(
+        !second_capture_section.contains("event=renderer-route-fallback"),
+        "once the session marks the sidecar unhealthy, later captures should bypass it instead of retrying and failing again"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn preview_route_policy_is_locked_from_session_start_through_the_active_session() {
     let base_dir = unique_test_root("local-renderer-session-policy-lock");
     write_preset_scoped_preview_render_route_policy(&base_dir, false);
@@ -6493,6 +6626,68 @@ fn real_local_renderer_sidecar_rejects_an_unpinned_darktable_binary() {
 }
 
 #[test]
+fn real_local_renderer_sidecar_accepts_patch_skew_within_the_same_darktable_minor() {
+    let base_dir = unique_test_root("local-renderer-version-patch-skew");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let compatible_patch_darktable = write_fake_darktable_binary_with_version(&base_dir, "5.4.0");
+    let real_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
+        .join("sidecar")
+        .join("local-renderer")
+        .join("local-renderer-sidecar.cmd");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_LOCAL_RENDERER_BIN",
+            Some(real_sidecar.into_os_string()),
+        ),
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(compatible_patch_darktable.into_os_string()),
+        ),
+    ]);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("same-minor darktable patch skew should still let the local renderer close");
+
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=renderer-close-owner"));
+    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
+    assert!(
+        !timing_events.contains("requested=5.4.1 actual=5.4.0"),
+        "same-minor patch skew should not force a version-mismatch fallback"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache() {
     let base_dir = unique_test_root("local-renderer-version-cache");
     write_preset_scoped_preview_render_route_policy(&base_dir, false);
@@ -6564,6 +6759,117 @@ fn real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache()
         cache_contents.contains("\"version\":  \"5.4.1\"")
             || cache_contents.contains("\"version\":\"5.4.1\""),
         "cached version metadata should be written once the sidecar verifies the binary"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn real_local_renderer_sidecar_disables_opencl_for_preview_bridge() {
+    let base_dir = unique_test_root("local-renderer-disable-opencl");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let (argument_logging_darktable, arguments_log_path) =
+        write_argument_logging_fake_darktable_binary_with_version(&base_dir, "5.4.1");
+    let real_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
+        .join("sidecar")
+        .join("local-renderer")
+        .join("local-renderer-sidecar.cmd");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_LOCAL_RENDERER_BIN",
+            Some(real_sidecar.into_os_string()),
+        ),
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(argument_logging_darktable.into_os_string()),
+        ),
+    ]);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("local renderer should close the preview");
+
+    let arguments_log =
+        fs::read_to_string(&arguments_log_path).expect("argument log should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(
+        arguments_log.contains("--disable-opencl"),
+        "real local renderer sidecar should disable opencl to avoid first-run kernel compile stalls in the booth"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn direct_darktable_preview_disables_opencl_for_the_booth_safe_lane() {
+    let base_dir = unique_test_root("direct-preview-disable-opencl");
+    fs::create_dir_all(&base_dir).expect("test root should exist");
+    let (argument_logging_darktable, arguments_log_path) =
+        write_argument_logging_fake_darktable_binary_with_version(&base_dir, "5.4.1");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(argument_logging_darktable.into_os_string()),
+        ),
+        ("BOOTHY_LOCAL_RENDERER_BIN", None),
+    ]);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("direct darktable preview should close the preview");
+
+    let arguments_log =
+        fs::read_to_string(&arguments_log_path).expect("argument log should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(
+        arguments_log.contains("--disable-opencl"),
+        "the booth-safe direct preview lane should disable opencl so small truthful closes do not pay unnecessary gpu startup cost"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -7004,6 +7310,39 @@ fn write_counting_fake_darktable_binary_with_version(
     .expect("counting fake darktable should be writable");
 
     (binary_path, version_counter_path)
+}
+
+fn write_argument_logging_fake_darktable_binary_with_version(
+    base_dir: &PathBuf,
+    version: &str,
+) -> (PathBuf, PathBuf) {
+    let binary_path = base_dir.join("fake-darktable-args.cmd");
+    let arguments_log_path = base_dir.join("fake-darktable-args.log");
+    fs::write(
+        &binary_path,
+        format!(
+            concat!(
+                "@echo off\r\n",
+                "setlocal EnableExtensions EnableDelayedExpansion\r\n",
+                "set \"args_log={args_log}\"\r\n",
+                "if /I \"%~1\"==\"--version\" (\r\n",
+                "  echo darktable-cli {version}\r\n",
+                "  exit /b 0\r\n",
+                ")\r\n",
+                ">>\"%args_log%\" echo %*\r\n",
+                "set \"output=%~3\"\r\n",
+                "if \"%output%\"==\"\" exit /b 2\r\n",
+                "for %%I in (\"%output%\") do if not exist \"%%~dpI\" mkdir \"%%~dpI\" >nul 2>&1\r\n",
+                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$bytes=[Convert]::FromBase64String('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAgEAACAQQCAwAAAAAAAAAAAAABAgMABAURITESQVFh/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAT/xAAZEQADAQEBAAAAAAAAAAAAAAAAARECEiH/2gAMAwEAAhEDEQA/AJ9b0qS2K4wqY5lW9L0L4b2E6b9K1+JrZk3QmY2Dg5Nf/2Q==');[IO.File]::WriteAllBytes('%output%',$bytes)\"\r\n",
+                "exit /b 0\r\n"
+            ),
+            version = version,
+            args_log = arguments_log_path.to_string_lossy()
+        ),
+    )
+    .expect("argument logging fake darktable should be writable");
+
+    (binary_path, arguments_log_path)
 }
 
 fn create_named_published_bundle(

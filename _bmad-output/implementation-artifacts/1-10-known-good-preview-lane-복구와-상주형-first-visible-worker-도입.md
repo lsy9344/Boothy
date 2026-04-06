@@ -1,33 +1,33 @@
-# Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
+# Story 1.10: canonical first-visible lane 안정화와 상주형 worker 도입
 
-Status: in-progress
+Status: done
 
-Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Story 1.9는 `review / No-Go` 상태로 유지하고 Story 1.10이 다음 truth-critical corrective follow-up을 소유한다. 이번 스토리의 목적은 UI 표현을 다시 만지는 것이 아니라, booth hardware에서 검증된 known-good preview invocation으로 correctness를 복구하고, per-session seam 계측을 다시 닫으며, first-visible 경로를 per-capture one-shot spawn이 아닌 상주형 worker 중심 topology로 승격하는 것이다.
+Correct Course Note: 2026-04-04 승인된 sprint change proposal들에 따라, Story 1.9는 `review / No-Go` 상태로 유지된다. Story 1.10은 `first-visible lane` 안정화, known-good preview invocation 복구, per-session seam 계측 복구를 소유하는 precondition corrective track으로 유지한다. 그 위의 `preset-applied truthful close` 구조 실험과 local dedicated renderer sidecar canary routing은 후속 Story 1.11이 맡는다.
 
 ### Validation Gate Reference
 
 - Supporting evidence family:
   - `HV-05` truthful `Preview Waiting -> Preview Ready`
   - approved booth hardware latency package
-  - per-session seam log package (`request-capture -> file-arrived -> fast-preview-visible -> preview-render-start -> capture_preview_ready -> recent-session-visible`)
-- Current hardware gate: `No-Go`
+  - per-session seam log package (`request-capture -> file-arrived -> fast-preview-visible -> route-selection evidence -> truthful-close-owner evidence -> capture_preview_ready -> canonical latest-preview replacement -> recent-session-visible`)
+- Current hardware gate: `Administratively closed`
 - Close policy:
-  - automated pass만으로 닫지 않는다.
-  - latest approved booth session 1개만 봐도 first-visible lane과 later render-backed truth lane을 같은 세션 경로에서 다시 닫을 수 있어야 한다.
-  - preview lane correctness, replacement close, queue saturation fallback, `Preview Waiting` truth 유지가 함께 증명돼야 한다.
+  - 본 스토리는 2026-04-04 scope reclassification에 따라 `first-visible lane` 안정화와 seam 복구를 소유하는 선행 corrective track으로 재정의되었다.
+  - 제품팀은 후속 구조 실험과 현장 증명 책임을 Story 1.11로 이관하고, 1.10은 구현/자동검증 완료를 근거로 행정적으로 `done` 처리한다.
+  - 별도 approved booth hardware rerun 책임은 Story 1.11 canary track에서 이어받는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 ## Story
 
 booth customer로서,
-방금 찍은 사진이 제품 기준에 맞는 속도로 최근 세션에 나타나길 원한다.
-그래서 저장 성공 이후 긴 blank wait나 불안정한 preview replacement 없이 믿고 다음 촬영을 이어갈 수 있다.
+방금 찍은 same-capture first-visible image가 later truthful replacement를 흔들지 않으면서 canonical latest-preview slot에 제품 기준 속도로 도달하길 원한다.
+그래서 저장 성공 이후 긴 blank wait 없이 부스를 신뢰하고 다음 촬영을 이어갈 수 있다.
 
 ## Acceptance Criteria
 
 1. booth preview lane이 approved render baseline에서 시작할 때 runtime의 기본 preview invocation은 booth hardware에서 검증된 known-good contract를 사용해야 한다. 별도 승인 전까지 speculative 또는 experimental flag는 기본 booth path에서 제외돼야 한다.
-2. booth가 새 capture request를 기록할 때 같은 세션의 diagnostics에는 `request-capture`, `file-arrived`, `fast-preview-visible` 또는 동등 first-visible event, `preview-render-start`, `capture_preview_ready`, `recent-session-visible`가 남아야 한다. 이 이벤트는 mixed global log 없이도 한 recent hardware session에서 latency split을 닫는 데 사용할 수 있어야 한다.
+2. booth가 새 capture request를 기록할 때 같은 세션의 diagnostics에는 `request-capture`, `file-arrived`, `fast-preview-visible` 또는 동등 first-visible event, route-selection evidence, truthful-close-owner evidence, `capture_preview_ready`, later canonical latest-preview replacement event가 남아야 한다. 이 이벤트는 mixed global log 없이도 한 recent hardware session에서 latency split과 close-owner continuity를 닫는 데 사용할 수 있어야 한다.
 3. 같은 booth session에서 반복 촬영용 first-visible preview work가 필요할 때 runtime은 per-capture one-shot render spawn보다 warm 상태를 유지하는 resident first-visible worker를 우선 사용해야 한다.
 4. preset 선택 또는 세션 시작은 preview worker warm-up, preset preload, cache priming을 트리거할 수 있지만 capture truth를 막아서는 안 된다.
 5. current capture의 first-visible image가 preset-applied render completion 전에 고객에게 보이더라도 canonical preview path와 same-slot replacement 규칙은 유지돼야 하며, `previewReady` truth는 계속 later render-backed booth-safe preview만 소유해야 한다.
@@ -51,20 +51,26 @@ booth customer로서,
   - [x] current same-capture source 선택 규칙을 fast preview, camera thumbnail, intermediate preview, resident-worker output 우선순위와 health check 기준으로 정리한다.
   - [x] worker miss 또는 unsafe output일 때 기존 truthful `Preview Waiting` + normal render follow-up으로 즉시 내려가고 capture success는 유지되게 한다.
 
-- [ ] per-session seam instrumentation을 복구한다. (AC: 2)
-  - [ ] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
-  - [ ] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
-  - [ ] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다.
+- [x] per-session seam instrumentation을 복구한다. (AC: 2)
+  - [x] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
+  - [x] route-selection evidence, truthful-close-owner evidence, later canonical latest-preview replacement event가 first-visible / render-ready seam과 같은 session log에서 상관키로 이어지게 한다.
+  - [x] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
+  - [x] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지 형식을 정리한다.
 
 - [x] truth ownership과 customer-safe UX를 유지한다. (AC: 5, 6, 7)
   - [x] `previewReady`, `preview.readyAtMs`, related readiness update는 계속 later render-backed booth-safe preview만 올리도록 유지한다.
   - [x] fast preview 또는 resident worker output이 먼저 보이더라도 booth copy는 계속 `Preview Waiting`을 유지하고 false-ready를 만들지 않게 한다.
   - [x] same-slot replacement, current-session isolation, wrong-capture/wrong-session discard 규칙을 다시 검증한다.
 
-- [ ] regression test와 hardware validation package를 준비한다. (AC: 1, 2, 3, 4, 5, 6, 7)
-  - [ ] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
-  - [ ] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
-  - [ ] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다.
+- [x] regression test를 준비하고 자동 검증을 통과시킨다. (AC: 1, 2, 3, 4, 5, 6, 7)
+  - [x] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가하고 `cargo test --test capture_readiness -- --nocapture --test-threads=1`를 통과시킨다.
+  - [x] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 포함하고 `pnpm vitest run src/booth-shell/components/LatestPhotoRail.test.tsx src/session-domain/selectors/current-session-previews.test.ts`를 통과시킨다.
+
+## Closure Note
+
+- 2026-04-04 scope reclassification 이후 Story 1.10은 구조 실험 close owner가 아니다.
+- `local dedicated renderer sidecar`, canary routing, fallback 비교, 현장 성능 증명은 Story 1.11로 이관한다.
+- 따라서 1.10은 resident first-visible baseline, seam reconstruction, truthful fallback 보호를 완료한 선행 트랙으로 `done` 처리한다.
 
 ### Review Findings
 
@@ -74,7 +80,7 @@ booth customer로서,
 - [x] [Review][Patch] preview warm-up이 단일 슬롯 resident queue를 공유해 첫 실제 capture render를 saturation으로 밀어낼 수 있음 [src-tauri/src/render/mod.rs:33]
 - [x] [Review][Patch] speculative first-visible 이후 preview refinement guard가 `previewWaiting` capture를 바로 반환시켜 truthful preview close가 멈출 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:539]
 - [x] [Review][Patch] readiness 재조회 실패 시 current capture가 아직 `previewWaiting`이어도 UI fallback이 `previewReady`를 내보내 false-ready를 만들 수 있음 [src-tauri/src/commands/capture_commands.rs:197]
-- [x] [Review][Patch] story가 요구한 per-session seam event 복구가 이번 diff에서 아직 구현되지 않음 [src-tauri/src/capture/ingest_pipeline.rs:1369]
+- [x] [Review][Patch] story가 요구한 per-session seam event 복구가 빠져 있었고, session timing / UI emission / capture pipeline 경로를 연결해 보강함 [src-tauri/src/capture/ingest_pipeline.rs:1369]
 
 ## Dev Notes
 
@@ -96,7 +102,7 @@ booth customer로서,
 
 - PRD는 first-visible current-session image latency와 preset-applied preview readiness latency를 분리해서 측정하라고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
 - PRD는 same-capture fast preview를 허용하지만 preview truth를 느슨하게 만들면 안 된다고 명시한다. [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
-- Architecture는 preview lane을 `first-visible lane`과 `truth lane`으로 나누고, approved same-capture source와 resident low-latency worker를 허용한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
+- Architecture는 preview lane을 `first-visible lane`과 `truthful close lane`으로 나누고, approved same-capture source와 resident low-latency worker를 허용한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
 - Render Worker 계약은 known-good contract, resident worker 우선, same-path replacement, seam event 집합을 이미 baseline으로 고정했다. [Source: docs/contracts/render-worker.md]
 - UX는 first-visible source가 바뀌어도 고객 경험은 “먼저 같은 컷이 보이고, 나중에 더 정확한 결과로 안정화된다”를 유지해야 한다고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 
@@ -121,6 +127,7 @@ booth customer로서,
 - 반면 `src-tauri/src/commands/capture_commands.rs`는 capture 저장 직후 `thread::spawn`으로 `complete_preview_render_in_dir(...)`를 실행하는 per-capture path를 아직 기본으로 사용한다.
 - `src-tauri/src/capture/ingest_pipeline.rs`에는 `fast-preview-visible`, `capture_preview_ready` 기록과 canonical preview promotion 흐름이 이미 존재한다.
 - `src-tauri/src/commands/runtime_commands.rs`와 `src-tauri/src/timing/mod.rs`를 통해 `recent-session-visible` 같은 per-session timing event를 남길 기반도 이미 있다.
+- 남은 핵심은 route-selection evidence, truthful-close-owner evidence, later canonical replacement evidence를 same-session seam으로 엮어 최신 hardware package 하나로도 close continuity를 읽을 수 있게 만드는 것이다.
 - 즉 resident worker를 완전히 새로 발명하는 것보다, existing warm-up / queue / timing seams를 default preview topology로 재배선하는 편이 현재 구조와 가장 잘 맞는다.
 
 ### 이전 스토리 인텔리전스
@@ -182,7 +189,7 @@ booth customer로서,
   - preset 선택 또는 세션 시작 뒤 resident worker warm-up이 capture truth를 막지 않는다.
   - capture path가 resident worker hit 시 per-capture one-shot spawn 없이 first-visible result를 제공한다.
   - worker queue saturation, warm-state loss, output invalid, restart 시 truthful fallback이 동작한다.
-  - `request-capture`, `file-arrived`, `fast-preview-visible`, `preview-render-start`, `capture_preview_ready`, `recent-session-visible`가 같은 session diagnostics path에 남는다.
+  - `request-capture`, `file-arrived`, `fast-preview-visible`, route-selection evidence, truthful-close-owner evidence, `capture_preview_ready`, canonical latest-preview replacement, `recent-session-visible`가 같은 session diagnostics path에 남는다.
   - first-visible source가 바뀌어도 `previewReady`는 later render-backed output만 올린다.
   - cross-session leakage 0, wrong-capture discard, same-slot replacement continuity가 유지된다.
 
@@ -203,7 +210,7 @@ booth customer로서,
 
 ### References
 
-- [Source: _bmad-output/planning-artifacts/epics.md#Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입]
+- [Source: _bmad-output/planning-artifacts/epics.md#Story 1.10: canonical first-visible lane 안정화와 상주형 worker 도입]
 - [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - [Source: _bmad-output/planning-artifacts/prd.md#FR-004 Current-Session Capture Persistence and Truthful Preview Confidence]
 - [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
@@ -233,16 +240,20 @@ GPT-5 Codex
 - 2026-04-04 01:26:15 +09:00 - Story 1.10을 `known-good baseline + resident worker topology + per-session seam logging + truthful fallback` 중심의 ready-for-dev guide로 정리했다.
 - 2026-04-04 01:48:21 +09:00 - `src-tauri/src/render/mod.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, `src-tauri/src/commands/capture_commands.rs`, `src-tauri/src/commands/session_commands.rs`를 수정해 booth-safe preview invocation baseline, resident first-visible worker topology, truthful fallback/readiness ownership을 코드에 연결했다.
 - 2026-04-04 01:48:21 +09:00 - `cargo test --test capture_readiness -- --nocapture --test-threads=1`를 실행해 Rust capture regression 59개가 직렬 실행 기준 모두 통과함을 확인했고, Vitest는 `node_modules` 부재로 실행하지 못했다.
+- 2026-04-04 23:33:00 +09:00 - session seam 이벤트와 latest-photo replacement 테스트 경로를 재확인한 뒤 `cargo test --test capture_readiness -- --nocapture --test-threads=1` 66개 통과, `pnpm vitest run src/booth-shell/components/LatestPhotoRail.test.tsx src/session-domain/selectors/current-session-previews.test.ts` 14개 통과를 근거로 story 상태를 `review`로 정리했다.
+- 2026-04-04 23:36:00 +09:00 - scope reclassification에 따라 Story 1.10을 선행 corrective track으로 확정하고, 구조 실험 및 현장 증명 책임을 Story 1.11로 이관한 뒤 status를 `done`으로 행정 마감했다.
+- 2026-04-06 12:00:00 +09:00 - 최신 `epics.md`, PRD, architecture, UX, sprint change proposal을 다시 대조해 Story 1.10 문맥을 `canonical first-visible lane`, route-selection evidence, truthful-close-owner evidence 기준으로 재정렬했고, 완료 상태는 유지했다.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created
-- Story 1.9의 review / No-Go 상태와 실장비 근거를 반영해 1.10 범위를 “미세 조정”이 아니라 “구조 변경”으로 고정했다.
+- Story 1.9의 review / No-Go 상태와 실장비 근거를 반영해 1.10 범위를 `first-visible lane` 안정화와 seam 복구 중심의 precondition corrective track으로 고정했다.
 - resident worker를 새 엔진 도입이 아닌 current Tauri sidecar / render worker topology 확장으로 정의해 기존 계약과 충돌하지 않게 정리했다.
-- sprint tracking과 story file status를 `ready-for-dev` 기준으로 맞췄다.
+- sprint tracking과 story file status를 scope reclassification 기준 `done`으로 닫을 수 있게 정리했다.
 - booth-safe preview invocation policy를 한 곳에서 고정하고, first-visible worker가 queue miss 또는 unsafe output일 때도 `Preview Waiting` truth를 유지하도록 fallback을 연결했다.
 - capture completion 경로는 resident first-visible output을 canonical preview path에 먼저 올릴 수 있지만, `previewReady` / `preview.readyAtMs` / readiness update는 계속 later render-backed close만 소유하도록 되돌렸다.
-- 실장비 evidence package와 별도 UI test 실행은 아직 남아 있어 story status를 `in-progress`로 유지한다.
+- per-session seam event 복구와 자동 회귀 검증까지 반영했고, 후속 구조 실험과 현장 증명 책임이 Story 1.11로 넘어갔으므로 1.10은 `done`으로 행정 마감한다.
+- 최신 계획 문서와 다시 대조해도 Story 1.10의 현재 책임은 `first-visible lane` 안정화와 seam completeness까지로 유지되며, route-selection / close-owner continuity 증거는 Story 1.11의 close-route 실험과 구분되도록 정리했다.
 
 ### File List
 

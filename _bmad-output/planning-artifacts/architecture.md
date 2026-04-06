@@ -12,6 +12,7 @@ inputDocuments:
   - '_bmad-output/planning-artifacts/prd.md'
   - '_bmad-output/planning-artifacts/ux-design-specification.md'
   - '_bmad-output/planning-artifacts/prd-validation-report-20260320-015539.md'
+  - 'docs/recent-session-preview-architecture-update-input-2026-04-06.md'
   - 'docs/release-baseline.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
   - 'reference/darktable/README.md'
@@ -33,12 +34,15 @@ This document defines the implementation-shaping technical decisions for Boothy 
 
 - [Product requirements document](./prd.md)
 - [UX design specification](./ux-design-specification.md)
+- [Recent session preview architecture update input](../../docs/recent-session-preview-architecture-update-input-2026-04-06.md)
 - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
 - [Darktable reference](../../reference/darktable/README.md)
 
 ## System Overview
 
-Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration and darktable rendering remain isolated execution boundaries so booth UI never interprets raw helper or render-engine output directly.
+Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, preview replacement, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration and darktable rendering remain isolated execution boundaries so booth UI never interprets raw helper or render-engine output directly.
+
+The booth-facing preview problem is defined by how fast the latest large preview on the main customer surface is replaced with the preset-applied result after a capture, not by rail thumbnail speed alone. The host therefore owns the relationship between a fast `first-visible lane` and the later `truthful close lane`: one capture, one canonical latest-preview slot, one capture-bound preset version, and one later same-slot replacement when the truthful close artifact arrives. Rail thumbnails are derived from or shared with that latest-preview artifact rather than acting as an independent preview truth path.
 
 ```mermaid
 flowchart LR
@@ -67,10 +71,10 @@ flowchart LR
 ### Requirements Overview
 
 **Functional Requirements:**
-Boothy currently defines 9 functional requirements. Architecturally, they cluster into seven capability groups. First, the booth must support a very low-friction session start based on a customer-facing booth alias composed of name plus phone-last-four and a bounded preset choice. Second, it must normalize readiness and capture eligibility so customers only see preparation, ready, waiting, or phone-required states rather than device internals. Third, it must persist captures into the active session and show latest-photo confidence while preserving strict current-session scope. Fourth, it must support bounded in-session cleanup behavior: current-session review, deletion, and forward-only preset changes for future captures. Fifth, it must run a timing and completion model that includes adjusted end time, warning and end alerts, and explicit post-end outcome states. Sixth, it must provide an internal preset-authoring and publication workflow for authorized users. Seventh, it must expose bounded operator diagnostics, recovery, and lifecycle visibility. Architecturally, this is a booth-first, preset-driven Windows product with three distinct user surfaces: booth customer, operator, and authorized preset management.
+Boothy currently defines 9 functional requirements. Architecturally, they cluster into seven capability groups. First, the booth must support a very low-friction session start based on a customer-facing booth alias composed of name plus phone-last-four and a bounded preset choice. Second, it must normalize readiness and capture eligibility so customers only see preparation, ready, waiting, or phone-required states rather than device internals. Third, it must persist captures into the active session and drive truthful latest large preview replacement while preserving strict current-session scope. Fourth, it must support bounded in-session cleanup behavior: current-session review, deletion, and forward-only preset changes for future captures. Fifth, it must run a timing and completion model that includes adjusted end time, warning and end alerts, and explicit post-end outcome states. Sixth, it must provide an internal preset-authoring and publication workflow for authorized users. Seventh, it must expose bounded operator diagnostics, recovery, and lifecycle visibility. Architecturally, this is a booth-first, preset-driven Windows product with three distinct user surfaces: booth customer, operator, and authorized preset management.
 
 **Non-Functional Requirements:**
-Six NFRs strongly shape the architecture. The customer surface must stay copy-light and free of technical or authoring language. Branches must remain consistent in preset catalog, timing rules, and booth journey except for tightly approved local settings. The booth must acknowledge customer actions quickly and show latest-photo feedback within a defined budget on approved hardware. Session isolation is strict: cross-session asset leakage is unacceptable. Timing rules and post-end transitions must be reliable enough to preserve customer trust. Release behavior must support staged rollout, rollback, and zero forced updates during active sessions. In addition, the loaded UX specification still contributes useful non-functional constraints around touch-friendly capture layouts, separate operator density, WCAG 2.2 AA accessibility targets, and deployment-oriented responsive behavior where those constraints do not conflict with the approved PRD and architecture baseline.
+Six NFRs strongly shape the architecture. The customer surface must stay copy-light and free of technical or authoring language. Branches must remain consistent in preset catalog, timing rules, and booth journey except for tightly approved local settings. The booth must acknowledge customer actions quickly, surface first-visible reassurance independently, and close the latest preset-applied large preview within a defined truthful budget on approved hardware. Session isolation is strict: cross-session asset leakage is unacceptable. Timing rules and post-end transitions must be reliable enough to preserve customer trust. Release behavior must support staged rollout, rollback, and zero forced updates during active sessions. In addition, the loaded UX specification still contributes useful non-functional constraints around touch-friendly capture layouts, separate operator density, WCAG 2.2 AA accessibility targets, and deployment-oriented responsive behavior where those constraints do not conflict with the approved PRD and architecture baseline.
 
 **Scale & Complexity:**
 The customer journey is simpler than the previously assumed capture-to-editor product, but the architectural complexity remains high because the system must coordinate local session truth, real camera state, preset lifecycle, timing policy, operator recovery, and branch-safe deployment in one booth runtime. This is not cloud-scale complexity; it is boundary and workflow complexity centered on a local Windows desktop product.
@@ -79,14 +83,22 @@ The customer journey is simpler than the previously assumed capture-to-editor pr
 - Complexity level: high
 - Estimated architectural components: 8
 
+### Recent Measurement and Problem Reframing
+
+- Recent approved-session evidence shows same-capture `first-visible` improvement to roughly `3.0s - 3.5s`, with the best measured run at `2959ms`.
+- The truthful close that customers actually wait for on the large booth surface remains materially slower: recent measured preset-applied close sits around `6372ms` in the best run, often `7s - 8.5s`, with a worst recent first-cut reading of `10403ms`.
+- Therefore the central architecture problem is no longer thumbnail latency alone. It is `latest preset-applied preview replacement latency` on the main large preview surface.
+- `first-visible lane` remains productively useful, but it is no longer sufficient as the primary success criterion. The leading optimization target is the winning `truthful close lane`.
+
 ### Technical Constraints & Dependencies
 
 - The primary runtime is an approved Windows desktop booth PC and monitor.
 - The customer workflow must stay booth-first, local-first, and usable without browser navigation or manual OS file browsing.
 - The authoritative product definition is the approved current PRD and aligned planning artifacts, not the older capture-to-full-editor assumption.
 - The product adopts name-plus-last-four booth alias entry for the customer-facing start flow, but that alias must remain separate from the durable internal session identifier and any broader legacy operational assumptions.
-- Real camera readiness, trigger, capture persistence, and latest-photo confirmation are product-critical dependencies.
+- Real camera readiness, trigger, capture persistence, and latest large preview replacement truth are product-critical dependencies.
 - The customer sees only 1-6 approved published presets; detailed darktable-backed preset-authoring controls are restricted to authorized internal use.
+- Canonical same-slot replacement, host-owned `Preview Waiting` truth, and capture-bound preset-version binding are hard preview contracts rather than implementation details.
 - Timing policy is a core product dependency: adjusted end time, 5-minute warning, exact-end alert, export-waiting/completed/phone-required states, and operator extensions all affect flow truth.
 - Branch variance must stay tightly controlled; active branches should differ only through approved local settings such as contact information or bounded operational toggles.
 - Staged rollout, rollback, and zero forced updates during active sessions are hard desktop-operational constraints.
@@ -97,6 +109,7 @@ The customer journey is simpler than the previously assumed capture-to-editor pr
 - Session identity, naming, and downstream handoff consistency
 - Session-scoped asset persistence, deletion, and privacy isolation
 - Camera-state normalization into customer-safe and operator-diagnostic views
+- Latest large preview replacement ownership, same-slot replacement correctness, and rail-derivation consistency
 - Preset lifecycle from internal authoring to approval, publication, activation, and forward-only in-session changes
 - Timing-policy calculation, warning/alert behavior, and post-end state transitions
 - Completion, export-waiting, and handoff guidance without reintroducing customer-side detailed editing
@@ -189,8 +202,10 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - Boothy remains one packaged Tauri application, but it is split into three capability-gated surfaces: `booth customer shell`, `operator console`, and `internal preset-authoring`.
 - The durable source of truth for active booth work is a session-scoped filesystem root, not route state, UI memory, or SQLite.
 - The customer-facing booth alias is distinct from the durable `sessionId`; the alias is used for booth guidance and approved handoff while the filesystem and contracts rely on the opaque session identifier.
+- The primary booth-facing preview artifact is the latest large preview; rail thumbnails are derived from or share the same close owner rather than defining separate preview truth.
 - darktable-backed preset authoring and apply are the authoritative preset truth path; detailed module control stays only inside internal preset-authoring, not as a customer-facing editing workspace.
 - The Rust host is the single normalization point for camera/helper truth, timing truth, and post-end workflow truth before those states are translated to UI.
+- `Preview Waiting` remains host-owned until the preset-applied preview file for the capture-bound preset version is validated and promoted at the canonical same slot.
 - Camera integration is isolated behind a bundled helper/sidecar boundary with versioned messages and filesystem handoff; camera SDK truth does not leak into React.
 - The first approved camera implementation profile is a Windows-only Canon EDSDK helper exe; generic multi-vendor abstraction is deferred until hardware evidence justifies it.
 - Session timing rules, warning alerts, exact-end behavior, and post-end state transitions are host-owned workflow rules.
@@ -209,6 +224,9 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - Centralized preset distribution service
 - Stronger authoring authentication such as SSO or hardware-backed identity
 - Remote log export and centralized observability
+- Local dedicated truthful renderer for preview-close work if the current close lane cannot meet the revised product target
+- Preview-only published artifact if it can lower truthful close cost without weakening preset-version binding
+- Different close topology that separates latest preview close from final/export completion while preserving `Preview Waiting` truth
 - Promotion from sidecar stdio to named pipes or a longer-lived local service if hardware evidence requires it
 
 ### Darktable Capability Scope
@@ -231,13 +249,15 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 ### Data Architecture
 
 - **Primary session truth:** Every active booth session owns one local session root that contains manifest metadata, captured originals, derived booth-facing images, handoff-ready outputs, and diagnostics snapshots.
-- **Suggested session structure:** `session.json`, `captures/originals/`, `renders/previews/`, `renders/finals/`, `handoff/`, and optional `diagnostics/` under one session boundary.
+- **Suggested session structure:** `session.json`, `captures/originals/`, `renders/previews/latest/`, `renders/previews/rail/`, `renders/finals/`, `handoff/`, and optional `diagnostics/` under one session boundary.
 - **Session identity split:** The booth-start flow captures a customer-facing `boothAlias` built from name plus phone-last-four, while the host creates an opaque durable `sessionId` for contracts, storage, and correlation.
 - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
 - **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The host may promote an approved same-capture first-visible image into the session's canonical preview path before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker.
-- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement produced from the capture-bound published preset artifact.
+- **Primary preview artifact:** The latest large preset-applied preview at the canonical latest-preview slot is the booth-facing preview truth. Rail thumbnails are derived from or share that artifact and must never create an independent truth path.
+- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truthful close lane`. The host may promote an approved same-capture first-visible image into the canonical latest-preview slot before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker. The truthful close lane must later replace that same slot for the same capture and preset version.
+- **Preview truth rule:** `Preview Waiting`, `previewReady`, and `readyAtMs` remain reserved for the later host-validated preset-applied replacement produced from the capture-bound published preset artifact.
+- **Close-owner rule:** The host records which route won the truthful close, but the booth surfaces continue to see only one canonical latest-preview artifact and any rail derivatives that share that close owner.
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
 - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
 - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
@@ -261,17 +281,17 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 ### API & Communication Patterns
 
 - **Frontend to host:** Tauri commands are the request-response path for session start, preset selection, capture, delete, timing updates, completion transitions, diagnostics queries, operator actions, and preset publication.
-- **Host to frontend streaming:** Tauri channels carry ordered state changes for readiness, capture progress, latest-photo availability, timing transitions, completion state, and operator diagnostics.
+- **Host to frontend streaming:** Tauri channels carry ordered state changes for readiness, capture progress, first-visible availability, latest large preview replacement, rail derivative availability, timing transitions, completion state, and operator diagnostics.
 - **Host to helper:** The camera/helper boundary uses bundled sidecar stdio with versioned JSON-line messages.
 - **Helper contract shape:** The first contract should cover session configuration, capture request, health/status, restart/recovery, correlation of file arrival back to the host, and optional fast-preview handoff metadata.
 - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
 - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
-- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later render-backed output still replaces it at the same canonical path and only then advances `previewReady`.
+- **Preset/render core rule:** The Rust host owns render truth and may route preview-close execution through either the approved darktable path or an approved local dedicated renderer adapter behind the same capture-bound contract. Any alternative renderer route acts only as a candidate-result producer behind the host, never as an independent truth owner. Booth routes receive only booth-safe outputs and typed status, never renderer-internal editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later host-validated preset-applied output still replaces it at the same canonical latest-preview slot for the same capture and preset version and only then advances `previewReady`.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
 - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
-- **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
-- **Session seam logging rule:** Approved hardware validation must be able to close the preview seam from one recent session log containing `request-capture`, `file-arrived`, `fast-preview-visible` or equivalent first-visible event, `preview-render-start`, `capture_preview_ready`, and `recent-session-visible`.
+- **Latency telemetry rule:** Preview instrumentation should distinguish `fastPreviewVisibleAtMs`, `previewVisibleAtMs`, cold-start delay, render queue delay, selected renderer route, fallback reason, same-slot replacement correctness, preset-version binding, and close-owner outcome so product latency analysis does not collapse into one metric.
+- **Session seam logging rule:** Approved hardware validation must be able to close the preview seam from one recent session log containing `request-capture`, `file-arrived`, `fast-preview-visible` or equivalent first-visible event, route-selection evidence, truthful-close-owner evidence, `capture_preview_ready`, and the later canonical latest-preview replacement event for that same slot.
 
 ### Frontend Architecture
 
@@ -283,6 +303,7 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Privilege-gating rule:** Operator navigation and any authoring or settings controls remain hidden until admin authentication succeeds and the current machine profile permits those surfaces.
 - **Authoring rule:** Internal preset-authoring may wrap or launch darktable-based editing/review flows and Boothy publication controls, but only inside the authoring surface.
 - **Performance strategy:** Keep the booth shell light, preload bounded preset previews, lazy-load operator and authoring surfaces, and use React `19.x` async patterns for non-blocking transitions.
+- **Preview presentation rule:** The large latest-preview surface is the primary customer artifact. Rail thumbnails may help orientation, but they must derive from or share the same close owner and must not outrank the large preview in truth decisions.
 - **Boundary rule:** React components do not call Tauri directly. Typed adapters and services own all `invoke`, channel subscriptions, and host orchestration.
 
 ### Infrastructure & Deployment
@@ -345,7 +366,7 @@ flowchart TB
 4. Implement the booth shell against mocked host and mocked helper behavior.
 5. Implement operator diagnostics and bounded recovery against the same normalized host truth.
 6. Implement internal preset-authoring and publication on top of the darktable-backed preset artifact workflow without exposing module-level controls to booth routes.
-7. Integrate the real camera/helper boundary and prove `capture request -> file arrival -> latest-photo confirmation -> handoff state`.
+7. Integrate the real camera/helper boundary and prove `capture request -> file arrival -> first-visible evidence -> latest preset-applied preview replacement -> handoff state`.
 8. Add rollout, rollback, and signing-ready release guardrails.
 
 **Cross-Component Dependencies:**
@@ -715,7 +736,7 @@ boothy/
   - `src/preset-catalog/`
   - `src-tauri/src/commands/session_commands.rs`
   - `src-tauri/src/preset/`
-- FR-003/FR-004 (readiness + latest-photo confidence)
+- FR-003/FR-004 (readiness + latest large preview replacement confidence)
   - `src/booth-shell/`
   - `src/capture-adapter/`
   - `src-tauri/src/capture/`
@@ -815,19 +836,22 @@ boothy/
 
 The architecture is now ready to support regenerated implementation stories against the following frozen contract surfaces.
 
-- Session manifest contract: exact `session.json` schema including capture correlation IDs, preset version references, raw/preview/final fields, render-status correlation, and post-end state fields.
-- Preset bundle contract: immutable published preset artifact schema including approved compatibility metadata, preview/final render profiles, rollback-safe identifiers, and catalog-facing metadata required for future-session publication only.
+- Session manifest contract: exact `session.json` schema including capture correlation IDs, preset version references, raw/preview/final fields, `fastPreviewVisibleAtMs`, `previewVisibleAtMs`, close-owner route, same-slot replacement evidence, render-status correlation, and post-end state fields.
+- Preset bundle contract: immutable published preset artifact schema including approved compatibility metadata, latest-preview behavior, preview/final render profiles, rollback-safe identifiers, and catalog-facing metadata required for future-session publication only.
+- Latest preview replacement contract: canonical large-preview path, same-slot replacement semantics, rail-derivation rules, `Preview Waiting` truth, and host-owned readiness promotion rules.
+- Local renderer adapter contract: approved request/response envelope, candidate-output validation rules, renderer-route diagnostics fields, and fallback semantics for any non-darktable local close path.
 - Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery, with booth `Ready` and operator `카메라 연결 상태` both derived from the same host-normalized camera/helper truth.
 - Canon helper implementation profile: the chosen Windows-only Canon EDSDK helper packaging, ownership split, diagnostics expectations, and recovery semantics that refine the generic sidecar contract for the current product decision.
 - Authoring publication contract: required publication payload fields, approval-state transitions, immutable published artifact requirements, audit metadata, and future-session-only application rules.
+- Renderer routing policy and canary evidence contract: feature-gated route selection, darktable fallback requirements, booth/session/preset rollout scope, close-owner evidence, and immediate rollback evidence for preview-close experiments.
 - Release runbooks, fixture naming conventions, and sample datasets may continue to expand, but they no longer block regeneration of the corrected implementation-story baseline for preset publication, operator recovery, and release-governance tracks.
 
 ## Initial Implementation Priorities
 
-1. Regenerate the implementation story artifacts for Epic 4-6 against the frozen contract baseline and the approved corrected epic map.
-2. Implement the authorized-user publication flow and the truthful preview/final-render outcome flow around the frozen publication, manifest, render-status, and sidecar contracts.
-3. Wire the booth, operator, and authoring surfaces through typed adapters so UI never bypasses host normalization.
-4. Implement timing/completion and release-governance work as separate downstream epic tracks with their own verification gates.
+1. Regenerate the implementation story artifacts so preview replacement work is framed around latest large preview truth rather than rail thumbnail speed, then refresh Epic 4-6 artifacts against that frozen contract baseline.
+2. Implement the authorized-user publication flow and the truthful preview/final-render outcome flow around the frozen publication, manifest, render-status, latest-preview replacement, and sidecar contracts.
+3. Wire the booth, operator, and authoring surfaces through typed adapters so UI never bypasses host normalization of first-visible evidence, truthful close, or preset-version binding.
+4. Evaluate `local dedicated truthful renderer`, `preview-only artifact`, and `different close topology` as the next architecture review candidates if the current truthful close lane cannot meet the revised large-preview target on approved hardware.
 
 ## Architecture Validation Results
 

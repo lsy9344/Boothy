@@ -74,20 +74,25 @@ booth customer로서,
   - Story 1.2: active session 생성, `boothAlias`와 `sessionId` 분리, session root와 초기 `session.json`
   - Story 1.3: active preset 선택과 published preset version 바인딩
   - Story 1.4: host-normalized readiness state와 valid-state capture gating
-- 현재 워크스페이스에는 Story 1.1 문서만 존재하고 1.2, 1.3, 1.4 문서는 아직 생성되지 않았다. 따라서 dev agent는 이 스토리를 바로 구현하더라도 위 선행 책임을 중복 구현하지 말고, 필요한 최소 seam만 두고 같은 contract surface 위에서 이어서 구현해야 한다.
+- 현재 워크스페이스에는 Story 1.2, 1.3, 1.4 산출물과 대응 구현 코드가 이미 존재한다. 따라서 이 문서는 선행 책임을 다시 발명하라는 뜻이 아니라, 기존 session/preset/readiness 경계 위에 FR-004의 persisted capture truth와 `Preview Waiting` 보호 흐름을 어떻게 얹어야 하는지 설명하는 기준선으로 읽어야 한다.
 
 ### 현재 워크스페이스 상태
 
-- 확인 결과 현재 저장소에는 계획 문서와 Story 1.1 문서만 있고, 실제 앱 scaffold는 아직 없다.
-- `package.json`, `pnpm-lock.yaml`, `src/`, `src-tauri/`, `tests/`, `Cargo.toml`이 아직 존재하지 않는다.
-- git 저장소도 초기화되어 있지 않아 최근 commit intelligence는 사용할 수 없다.
-- 따라서 실제 구현을 시작하려면 Story 1.1의 bootstrap과 typed boundary skeleton이 먼저 착지해야 한다.
+- 현재 저장소에는 `package.json`, `pnpm-lock.yaml`, `src/`, `src-tauri/`, 테스트 코드, 그리고 Epic 1 후속 story 문서가 모두 존재한다.
+- 프런트엔드는 React 19 + React Router 7 + Zod 4 + Vite 8 기준, 호스트는 Tauri 2.10 / Rust 2021 기준으로 정착해 있다.
+- git 저장소가 활성화되어 있고 현재 작업 브랜치는 `feature/thumbnail-local-renderer-next-attempt`다. 최근 커밋은 preview close canary routing, capture recovery, seam logging 계열 변경을 포함한다.
+- 따라서 이 story의 현재 가치는 부트스트랩 안내가 아니라, persisted capture truth와 host-owned `Preview Waiting` 경계를 이후 구조 변경 속에서도 흔들리지 않게 유지하는 제품/구조 기준선에 있다.
 
 ### 이전 스토리 인텔리전스
 
-- Story 1.1은 `/booth`, `/operator`, `/authoring`, `/settings` 최상위 surface와 `shared-contracts`, adapter/service 경계를 먼저 만드는 방향으로 정리되어 있다.
-- Story 1.5는 그 구조를 이어받아야 하며, capture UI와 host orchestration을 위해 별도 임시 디렉터리나 직접 `invoke` 패턴을 새로 만들면 안 된다.
-- Story 1.1은 "실제 앱 골격 + 올바른 경계 + 숨겨진 내부 surface"가 목표였고, Story 1.5는 그 위에 FR-004의 truthful capture/preview 흐름을 얹는 첫 번째 고가치 기능 스토리다.
+- Story 1.1은 `/booth`, `/operator`, `/authoring`, `/settings` 최상위 surface와 `shared-contracts`, adapter/service 경계를 세웠고, Story 1.4는 host-owned readiness truth와 capture gating을 실제 코드로 고정했다.
+- Story 1.5는 그 위에 FR-004의 persisted capture truth, truthful `Preview Waiting`, current-session rail isolation을 얹는 연결 고리다.
+- 따라서 capture UI와 host orchestration을 확장할 때는 별도 임시 디렉터리나 직접 `invoke` 패턴을 새로 만들지 말고, 기존 `session-domain`, `capture-adapter`, `src-tauri/src/capture` 경계를 따라야 한다.
+
+### Git 인텔리전스
+
+- 현재 브랜치의 최근 커밋은 preview close canary routing, capture recovery, thumbnail latency seam logging을 다루고 있다.
+- 이 흐름은 Story 1.5의 책임이 단순 thumbnail speed가 아니라 `Preview Waiting` truth, same-slot replacement, capture recovery safety를 계속 보존하는 데 있음을 다시 확인시켜 준다.
 
 ### 구현 가드레일
 

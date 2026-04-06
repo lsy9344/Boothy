@@ -14,6 +14,7 @@ import {
 import { useSessionState } from '../../session-domain/state/use-session-state'
 import { playTimingCue } from '../../timing-policy/audio'
 import { LatestPhotoRail } from '../components/LatestPhotoRail'
+import { PhotoFullscreenViewer } from '../components/PhotoFullscreenViewer'
 import { PreviewWaitingPanel } from '../components/PreviewWaitingPanel'
 import { selectCustomerStatusCopy } from '../selectors/customerStatusCopy'
 import { ReadinessScreen } from './ReadinessScreen'
@@ -150,6 +151,10 @@ export function CaptureScreen() {
   const [pendingDeleteCaptureId, setPendingDeleteCaptureId] = useState<string | null>(
     null,
   )
+  const [fullscreenSelection, setFullscreenSelection] = useState<{
+    sessionId: string
+    captureId: string
+  } | null>(null)
   const playedTimingCueKeyRef = useRef<string | null>(null)
 
   const readiness =
@@ -251,6 +256,15 @@ export function CaptureScreen() {
     )
       ? pendingDeleteCaptureId
       : null
+  const fullscreenPreview =
+    fullscreenSelection === null ||
+    fullscreenSelection.sessionId !== sessionDraft.sessionId
+      ? null
+      : currentSessionPreviews.find(
+          (preview) =>
+            preview.captureId === fullscreenSelection.captureId &&
+            preview.readyAtMs !== null,
+        ) ?? null
 
   const playCue = useEffectEvent((phase: 'warning' | 'ended') => {
     void playTimingCue(phase)
@@ -390,7 +404,24 @@ export function CaptureScreen() {
           setFallbackError(null)
           setPendingDeleteCaptureId(captureId)
         }}
+        onPhotoClick={(preview) => {
+          if (sessionDraft.sessionId !== null) {
+            setFullscreenSelection({
+              sessionId: sessionDraft.sessionId,
+              captureId: preview.captureId,
+            })
+          }
+        }}
       />
+
+      {fullscreenPreview !== null ? (
+        <PhotoFullscreenViewer
+          preview={fullscreenPreview}
+          onClose={() => {
+            setFullscreenSelection(null)
+          }}
+        />
+      ) : null}
 
       {fallbackError !== null ? (
         <p className="preset-select-screen__error">{fallbackError}</p>

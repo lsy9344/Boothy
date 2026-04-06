@@ -12,6 +12,7 @@ type LatestPhotoRailProps = {
   onDeleteCancel(): void
   onDeleteConfirm(captureId: string): void
   onDeleteIntent(captureId: string): void
+  onPhotoClick(preview: CurrentSessionPreview): void
 }
 
 const HORIZONTAL_SCROLL_STEP_PX = 240
@@ -38,6 +39,7 @@ export function LatestPhotoRail({
   onDeleteCancel,
   onDeleteConfirm,
   onDeleteIntent,
+  onPhotoClick,
 }: LatestPhotoRailProps) {
   function isRenderPending(preview: CurrentSessionPreview) {
     return preview.readyAtMs === null
@@ -116,17 +118,29 @@ export function LatestPhotoRail({
               {preview.isLatest ? (
                 <span className="latest-photo-rail__badge">최신 사진</span>
               ) : null}
-              <SessionPreviewImage
-                key={`${preview.captureId}:${preview.assetPath}:${preview.readyAtMs ?? 'pending'}`}
-                assetPath={preview.assetPath}
-                alt={buildPreviewAltText(preview, index + 1)}
-                captureId={preview.captureId}
-                requestId={preview.requestId}
-                readyAtMs={preview.readyAtMs}
-                isLatest={preview.isLatest}
-                prioritizeLoading={preview.isLatest || preview.readyAtMs === null}
-                visibilityLabelBase="recent-session"
-              />
+              <button
+                type="button"
+                className="latest-photo-rail__photo-button"
+                disabled={preview.readyAtMs === null}
+                aria-label={`${buildPreviewAltText(preview, index + 1)} 크게 보기`}
+                onClick={() => {
+                  if (preview.readyAtMs !== null) {
+                    onPhotoClick(preview)
+                  }
+                }}
+              >
+                <SessionPreviewImage
+                  key={`${preview.captureId}:${preview.assetPath}:${preview.readyAtMs ?? 'pending'}`}
+                  assetPath={preview.assetPath}
+                  alt={buildPreviewAltText(preview, index + 1)}
+                  captureId={preview.captureId}
+                  requestId={preview.requestId}
+                  readyAtMs={preview.readyAtMs}
+                  isLatest={preview.isLatest}
+                  prioritizeLoading={preview.isLatest || preview.readyAtMs === null}
+                  visibilityLabelBase="recent-session"
+                />
+              </button>
               <figcaption>
                 촬영 당시{' '}
                 {preview.presetDisplayName ??

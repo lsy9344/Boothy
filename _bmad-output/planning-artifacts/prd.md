@@ -10,12 +10,13 @@ status: 'draft-v1.2-darktable-foundation-alignment'
 documentType: 'product-requirements-document'
 inputDocuments:
   - '_bmad-output/planning-artifacts/architecture.md'
+  - 'docs/recent-session-preview-architecture-update-input-2026-04-06.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
 stepsCompleted:
   - 'step-e-01-discovery'
   - 'step-e-02-review'
   - 'step-e-03-edit'
-lastEdited: '2026-03-20'
+lastEdited: '2026-04-06'
 editHistory:
   - date: '2026-03-08'
     changes: 'BMAD structure, measurable FR/NFR, traceability, desktop app requirements added'
@@ -53,6 +54,8 @@ editHistory:
     changes: 'Validation-report follow-up: removed broken source references from frontmatter and source list, and normalized FR-004, FR-006, FR-007, and FR-009 to actor-first phrasing'
   - date: '2026-03-20'
     changes: 'Final cleanup pass: normalized PRD title to BMAD template convention and added a short executive digest for faster stakeholder review'
+  - date: '2026-04-06'
+    changes: 'Problem definition, KPI framing, FR-004, NFR-003, and validation assumptions updated from thumbnail speed toward latest preset-applied large preview replacement with explicit first-visible vs truthful close separation'
 ---
 
 # Product Requirements Document - Boothy
@@ -61,15 +64,16 @@ This PRD defines product behavior, product boundaries, and required operational 
 
 **Executive Digest**
 
-- Product shape: Boothy is a booth-first Windows desktop photo product with preset-driven capture, current-session-only review, and clearly timed completion guidance.
+- Product shape: Boothy is a booth-first Windows desktop photo product with preset-driven capture, latest large preview replacement as the core post-capture value, current-session-only review, and clearly timed completion guidance.
 - Customer boundary: customers start with a simple name-plus-phone-last-four booth alias, select one approved published preset, capture confidently, and never enter a direct editing workflow.
-- Operational boundary: capture success, preview readiness, and final completion are separate truths that must be reported honestly.
+- Operational boundary: capture success, first-visible reassurance, preset-applied preview readiness, and final completion are separate truths that must be reported honestly.
 - Internal control: authorized staff manage preset authoring, approval, publication, and rollback outside the booth runtime.
-- Release focus: the MVP succeeds when branches deliver consistent presets, truthful state transitions, bounded operator recovery, and no cross-session privacy leaks.
+- Release focus: the MVP succeeds when branches deliver consistent presets, truthful latest-preview replacement, bounded operator recovery, and no cross-session privacy leaks.
 
 ## Source Documents
 
 - [Architecture decision document](./architecture.md)
+- [Recent session preview architecture update input](../../docs/recent-session-preview-architecture-update-input-2026-04-06.md)
 - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
 
 ## Executive Summary
@@ -80,11 +84,11 @@ Boothy is a booth-first Windows desktop photo product for booth customers. The c
 
 Boothy's booth runtime consumes only approved published preset artifacts. Those artifacts are created and approved in an authorized internal workflow and define the preset identity, pinned render compatibility, and the booth-safe preview and final rendering behavior that customers later experience.
 
-Camera truth and render truth are separate product responsibilities. A successful capture means the active session has safely persisted the new source photo. Preview readiness and final export readiness are later booth-safe outcomes that must be reported truthfully to the customer.
+Camera truth and render truth are separate product responsibilities. A successful capture means the active session has safely persisted the new source photo. The primary post-capture customer value is that the latest large preview on the booth screen is replaced quickly by the preset-applied result. Rail thumbnails are supporting artifacts, not the main product truth. Preview readiness and final export readiness are later booth-safe outcomes that must be reported truthfully to the customer.
 
 ### Business Problem
 
-Current self-photo booth experiences lose customer confidence when session start feels administrative, look choice is unclear, capture success is ambiguous, preview or completion timing is misleading, or end-of-session guidance changes too late.
+Current self-photo booth experiences lose customer confidence when session start feels administrative, look choice is unclear, capture success is ambiguous, the latest large preview replacement feels slow or misleading, or end-of-session guidance changes too late.
 
 At the same time, businesses need branch-consistent looks without exposing authoring complexity to customers, and operators need bounded tools when either capture or rendering cannot continue safely.
 
@@ -92,7 +96,7 @@ The product must solve both problems at once:
 
 - fast booth entry
 - bounded creative choice through approved published presets
-- reliable capture truth and current-session preview confidence
+- reliable capture truth and fast, truthful latest preset-applied preview replacement
 - current-session-only review and cleanup
 - visible and trustworthy timing guidance
 - truthful post-end waiting, completion, and handoff guidance
@@ -109,14 +113,14 @@ The product must solve both problems at once:
 
 Boothy's value is not booth automation alone and not end-user editor power. Its value is confident booth use without technical burden, powered by internally crafted looks that customers consume only as approved published results.
 
-Customers start quickly, choose a look they understand, capture photos with truthful booth feedback, and finish a clearly timed session without ambiguity. Internal teams retain creative control through darktable-backed preset authoring and publication, while the booth runtime exposes only approved preset choices and booth-safe status.
+Customers start quickly, choose a look they understand, capture photos with truthful booth feedback, and see the latest large preview move from early reassurance to preset-applied replacement without ambiguity. Internal teams retain creative control through darktable-backed preset authoring and publication, while the booth runtime exposes only approved preset choices and booth-safe status.
 
 ### Differentiation
 
 - Session-name-based booth start with minimal friction
 - Small approved preset catalog built from published preset artifacts rather than live editing controls
-- Truthful booth separation between capture success, preview readiness, and final completion
-- Guided capture with current-session-only preview confidence
+- Truthful booth separation between capture success, first-visible reassurance, preset-applied preview readiness, and final completion
+- Guided capture with latest large preview replacement as the main post-capture value and current-session-only confidence
 - Current-session-only review, deletion, and forward-only preset changes
 - Adjusted end time visible from the start of the session
 - Sound-backed 5-minute warning and exact-end alert
@@ -153,7 +157,7 @@ The customer-facing experience should translate booth state into simple, action-
 - `Preparing`: the booth is starting the session or confirming whether capture can begin
 - `Ready`: the booth can accept capture because the active session and capture boundary are in a valid state
 - `Capturing`: the booth is actively creating a new current-session capture
-- `Preview Waiting`: the booth has accepted a current-session capture and is preparing customer-safe preview feedback
+- `Preview Waiting`: the booth has accepted a current-session capture and is waiting for the host-validated preset-applied latest-preview replacement
 - `Review`: the customer can see current-session photos and approved cleanup actions
 - `Warning`: the booth is inside the final 5-minute guidance window before the scheduled end time
 - `Export Waiting`: shooting has ended and the booth is preparing the end-of-session deliverable or handoff package
@@ -164,7 +168,7 @@ The customer-facing experience should translate booth state into simple, action-
 
 ### Primary Business Outcome
 
-Within the first 60 days of pilot rollout, Boothy should let customers start quickly, choose an approved look, capture confidently, and complete a clearly timed booth session while reducing support burden compared with the previous booth flow and preserving branch-consistent preset results.
+Within the first 60 days of pilot rollout, Boothy should let customers start quickly, choose an approved look, capture confidently, and complete a clearly timed booth session while reducing support burden compared with the previous booth flow, preserving branch-consistent preset results, and making the latest preset-applied large preview feel promptly trustworthy.
 
 ### KPI Table
 
@@ -173,8 +177,8 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 | Monthly phone / remote support incidents | Approx. 500 incidents per month across all branches | 250 or fewer incidents per month | Combined support and remote assistance logs |
 | Self-start session success rate | Unknown | 85% or higher | Sessions that reach first successful current-session raw persistence without operator intervention |
 | Preset selection completion rate | New metric | 95% or higher | Sessions that reach preset selection and choose a preset within 20 seconds without operator intervention |
-| First-visible current-session image latency | New metric | Measured separately on approved booth hardware so the team can improve same-capture first-visible speed against the active hardware baseline | Request-level seam logs and pilot timing review |
-| Preset-applied preview readiness latency | New metric | Preset-applied current-session preview visible within 5 seconds for 95th-percentile successful captures after raw persistence | Lifecycle logs and pilot timing review |
+| First-visible same-capture latency | Recent measured average about `3.0s - 3.5s`, best recent run `2959ms` | Measured separately on approved booth hardware so the team can improve early reassurance speed without treating it as the final success condition | Request-level seam logs and pilot timing review |
+| Latest preset-applied preview replacement latency | Recent measured average about `6.4s - 8.5s`; worst recent first-cut reading `10403ms` | Latest preset-applied large preview replacement visible within 5 seconds for 95th-percentile successful captures after raw persistence | Lifecycle logs, per-session seam logs, and pilot timing review |
 | Published preset reproducibility rate | New metric | 99% or higher | Same approved preset version produces expected preview and final output within approved variance across pilot branches |
 | Adjusted end-time visibility correctness | New metric | 99% or higher | Sessions where the displayed end time matches the approved timing policy from session start |
 | Warning and end alert reliability | New metric | 99% or higher | Qualifying sessions where the 5-minute warning and exact-end alert occur within +/- 5 seconds of scheduled time |
@@ -187,7 +191,7 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 - Customers should feel they can start immediately without learning software.
 - Customers should feel their main creative choice is clear and bounded.
 - Customers should feel that choosing a preset is sufficient and that no manual editing step is required to complete the booth session.
-- Customers should trust that the booth does not claim preview readiness or completion before those states are actually ready.
+- Customers should trust that the booth does not claim preview readiness or completion before those states are actually ready, even if an earlier same-capture image appears first.
 - Customers should understand what happens at warning time, end time, preview waiting, export waiting, and completion without staff improvisation.
 - Operators should feel informed and bounded, not responsible for guessing whether failure is in capture truth or render truth.
 - Owners should feel the product is consistent, supportable, and marketable across branches.
@@ -211,7 +215,7 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 - Approved preset selection from a small bounded catalog of published preset artifacts
 - Customer-safe readiness guidance and capture control
 - Real camera readiness, trigger, and source-photo persistence for the required booth workflow
-- Truthful preview waiting and current-session preview confidence
+- Truthful preview waiting and latest large preview replacement confidence
 - Current-session review only
 - Deletion of current-session captures according to the current-session deletion policy
 - In-session preset changes at any time, with changes applying from that moment forward without rewriting past captures
@@ -261,17 +265,20 @@ Each published booth preset is an approved artifact bundle, not just a display n
 - Each preset has a stable preset identity and published version.
 - Each preset is tied to approved render compatibility for booth use.
 - Each preset includes the customer-facing look representation needed for booth selection.
-- Each preset includes the approved booth-safe preview behavior and final render behavior required for downstream use.
+- Each preset includes the approved booth-safe latest-preview behavior and final render behavior required for downstream use.
+- The latest large preview is the primary booth-facing artifact. Rail thumbnails are derived from or share that latest-preview artifact and do not define a separate preview truth.
 - A same-capture first-visible image may appear earlier to reduce blank waiting, and that first-visible source may come from a fast preview, camera thumbnail, intermediate preview, or approved low-latency worker output.
-- Preset-applied `previewReady` truth still comes only from the published artifact's render behavior for that capture-bound preset version.
+- Preset-applied `previewReady` truth still comes only from the host-validated latest large preview replacement for that capture-bound preset version, even when execution is routed through an approved alternative local renderer adapter.
+- Approved renderer routing must preserve same-slot replacement, canonical latest-preview path ownership, capture-bound preset versioning, and darktable-safe fallback behavior.
 - Only approved published preset artifacts may appear in the customer booth catalog.
 
 ### Booth-Safe Runtime Boundary
 
 The booth runtime promises a safe, bounded customer experience rather than live authoring power.
 
-- The booth runtime owns customer guidance, session state, timing guidance, and current-session review behavior.
-- The booth runtime treats capture truth and render truth as separate responsibilities.
+- The booth runtime owns customer guidance, session state, timing guidance, current-session review behavior, and latest large preview replacement truth.
+- The booth runtime treats capture truth, first-visible reassurance, preset-applied preview truth, and final completion as separate responsibilities.
+- The booth runtime keeps `Preview Waiting` until the host validates the preset-applied latest-preview replacement for the capture-bound preset version.
 - The booth runtime never exposes mutable authoring state, shared library state, or raw render-engine internals to customers.
 - The booth runtime may report waiting, ready, completed, or phone-required states, but it must not imply that preview or final output is ready before that state is true.
 - The booth runtime must apply the named policy references and post-end completion taxonomy below rather than inventing branch-local customer truth.
@@ -368,7 +375,7 @@ The booth must resolve post-end truth using one explicit state and, when applica
 | Preparing | Session name input is accepted or session recovery begins | Ready or Phone Required |
 | Ready | Session and booth are in a valid state for capture | Capturing or Phone Required |
 | Capturing | One or more photos are being captured into the active session | Preview Waiting, Ready, Warning, or Phone Required |
-| Preview Waiting | A current-session capture has been accepted and customer-safe preview feedback is still being prepared | Review, Warning, Export Waiting, or Phone Required |
+| Preview Waiting | A current-session capture has been accepted and the canonical latest large preview is still waiting for host-validated preset-applied replacement | Review, Warning, Export Waiting, or Phone Required |
 | Review | Only active-session photos are visible for confidence checks and approved cleanup | Capturing, Warning, Export Waiting, or Phone Required |
 | Warning | The booth is within the final 5-minute timing window | Capturing, Preview Waiting, Review, Export Waiting, or Phone Required |
 | Export Waiting | Scheduled shooting time has ended, shooting is disabled, and the booth is preparing the end-of-session deliverable or handoff package | Completed or Phone Required |
@@ -385,7 +392,7 @@ The booth must resolve post-end truth using one explicit state and, when applica
 | Preset lock-in | Understand the editing boundary | Keep the booth experience focused on preset choice and capture rather than direct editing | Customer understands they are choosing a finished approved look, not entering an editor |
 | Readiness | Know whether capture can begin | Show plain-language preparation, ready, waiting, or phone-required guidance | Customer understands whether to wait, capture, or call |
 | Capture | Take one or more photos with confidence | Accept capture only in approved booth states, persist the new source photo to the current session, and preserve session isolation | Customer trusts that capture was accepted and stored |
-| Preview waiting and confidence | Understand whether the latest result is ready | Show current-session preview feedback when ready, or explicit waiting guidance while preview preparation is still in progress | Customer understands whether the booth is still preparing the current-session preview or is ready for review |
+| Preview waiting and confidence | Understand whether the latest large result is ready | Show current-session latest-preview feedback when ready, or explicit waiting guidance while preset-applied replacement is still in progress | Customer understands whether the booth is still preparing the current-session latest preview or is ready for review |
 | Review and cleanup | Confirm current-session photos are usable | Show only current-session photos, allow approved deletion, and allow future-capture preset change | Customer sees only their own session assets and can manage them within bounds |
 | Timing guidance | Understand how much time remains and what happens next | Show adjusted end time, 5-minute warning, and exact-end behavior clearly | Customer understands whether shooting can continue or has ended |
 | Completion or handoff | Finish the session without ambiguity | Keep the customer in `Export Waiting` until booth-side required work is complete, then show `Completed` as either `Local Deliverable Ready` or `Handoff Ready` with the right next action | Customer knows whether to keep waiting, leave with a ready deliverable, move to the next location, or call |
@@ -516,11 +523,12 @@ This section records product decisions that later UX, architecture, epic, and st
 - The bounded preset catalog is part of the product promise, not just a launch simplification.
 - Later artifacts must preserve low-choice selection, active preset visibility, and the no-editor customer boundary.
 
-### Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate
+### Decision 2: Capture Truth, First-Visible Reassurance, Truthful Preview, and Final Completion Stay Separate
 
 - Capture success means the new source photo is safely persisted to the active session.
+- First-visible reassurance may appear earlier, but it is not the same as preset-applied preview truth.
 - Preview readiness and final completion are later booth-safe outcomes that must be communicated truthfully.
-- The booth may show a same-capture fast preview before preset-applied preview readiness, but it must stay in truthful waiting language until the render-backed preview is actually ready.
+- The booth may show a same-capture fast preview before preset-applied preview readiness, but it must stay in truthful waiting language until the preset-applied latest large preview is actually ready at the same slot.
 - Later artifacts must not collapse these states into one ambiguous success message.
 
 ### Decision 3: Internal Craft Stays Behind a Publication Boundary
@@ -601,13 +609,14 @@ Users can understand whether the booth is preparing, ready, preview-waiting, exp
 
 ### FR-004 Current-Session Capture Persistence and Truthful Preview Confidence
 
-Users can capture photos into the active session and receive truthful current-session confidence while booth-safe preview feedback progresses from waiting to ready.
+Users can capture photos into the active session and receive truthful current-session confidence while the latest large preview progresses from early same-capture reassurance to preset-applied same-slot replacement.
 
 **Acceptance Criteria**
 - A successful capture means the new source photo is associated with and safely persisted under the active session before booth success feedback is shown.
-- The booth can distinguish capture acceptance from preview readiness in customer-safe language when preview preparation is still in progress.
-- The booth may show a same-capture pending preview before `previewReady`, but it must not imply that the preset-applied booth-safe preview is already ready.
-- The latest customer-visible confirmation includes only current-session assets.
+- The booth can distinguish capture acceptance, first-visible reassurance, and preset-applied preview readiness in customer-safe language when preview preparation is still in progress.
+- The latest large preview is the primary booth-facing artifact. If a same-capture pending preview appears before `previewReady`, it occupies the same canonical slot that the preset-applied booth-safe preview later replaces.
+- `Preview Waiting` remains active until the host validates the preset-applied preview file for the capture-bound preset version.
+- The latest customer-visible confirmation and any rail derivative include only current-session assets and preserve same-slot replacement correctness.
 - The active preset name remains visible on the capture surface and preview confirmation surface while that preset is active.
 
 **Sources**
@@ -734,16 +743,18 @@ The system shall keep 100% of active branches on the same approved customer pres
 
 ### NFR-003 Booth Responsiveness and Preview Readiness
 
-The system shall acknowledge primary customer actions within 1 second, surface a truthful first-visible current-session image as early as safely possible after source-photo persistence, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking, request-level seam logs, and pilot logs.
+The system shall acknowledge primary customer actions within 1 second, surface a same-capture first-visible current-session image as early as safely possible after source-photo persistence, and replace the latest large booth preview with the preset-applied result within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking, request-level seam logs, and pilot logs.
 
 **Acceptance Criteria**
 - Primary customer actions such as session start, preset selection, delete confirmation, and post-end state entry are acknowledged within 1 second.
-- First-visible current-session image latency is measured separately from preset-applied preview readiness so the product can improve the early customer-visible result without weakening preview truth.
-- When a same-capture fast preview is available, the booth may surface it before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied preview is actually ready.
+- `fastPreviewVisibleAtMs` is measured separately from `previewVisibleAtMs` so the product can improve the early customer-visible result without weakening preview truth or mistaking `first-visible` for success.
+- When a same-capture fast preview is available, the booth may surface it at the canonical latest-preview slot before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied replacement is actually ready.
 - The first-visible source may come from an approved fast preview, camera thumbnail, intermediate preview, or low-latency worker output as long as same-capture correctness is preserved.
-- 95th-percentile successful captures show preset-applied current-session preview confirmation within 5 seconds after source-photo persistence.
+- Rail thumbnail speed is not a standalone launch metric; rail artifacts must derive from or share the same truthful close owner as the latest large preview.
+- 95th-percentile successful captures show latest preset-applied large preview replacement within 5 seconds after source-photo persistence.
 - If preset-applied preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
-- Performance is measured on approved branch hardware with request-level seam evidence that distinguishes first-visible latency from preset-applied readiness latency.
+- Performance is measured on approved branch hardware with request-level seam evidence that distinguishes first-visible latency from truthful close latency, selected renderer route, same-slot replacement correctness, and preset-version binding.
+- When more than one approved renderer route exists, the product compares route-specific close latency, fallback rate, and preset fidelity without weakening preview truth or customer-safe waiting behavior.
 
 **Sources**
 - [KPI Table](#kpi-table)
@@ -803,7 +814,8 @@ The system shall support staged branch rollout to explicitly selected branch set
 | Name-plus-last-four booth alias entry is sufficient for customer throughput and does not create unacceptable ambiguity | Prevents reintroducing broader personal-data collection or a weaker booth-start identifier | PRD to UX handoff | PM + UX |
 | The approved preset catalog is small enough to keep choice simple but broad enough for customer appeal | Prevents either choice overload or insufficient creative value | UX and pilot validation | PM + UX |
 | Published preset artifacts can maintain consistent look quality across branches without drift | Prevents branch inconsistency and preset-truth erosion | Architecture and operational validation | PM + Architect |
-| Approved branch hardware can sustain preview-readiness targets under the approved render path | Prevents shipping a booth experience that feels slow or misleading in practice | Prototype and smoke validation | Architect + Dev |
+| Approved branch hardware can sustain latest preset-applied preview replacement targets under the approved truthful close path | Prevents shipping a booth experience that feels slow or misleading in practice | Prototype and smoke validation | Architect + Dev |
+| A lighter truthful renderer, preview-only artifact, or different close topology can reduce latest large preview replacement latency without weakening `Preview Waiting` truth or preset-version binding | Prevents the team from over-optimizing first-visible while the real customer wait remains slow | Architecture follow-up and hardware validation | Architect + Dev |
 | Final render or handoff completion can resolve independently without confusing customers | Prevents a false need to reintroduce customer-side editing or false-complete states | UX and pilot validation | PM + UX |
 | Operators can separate capture-state failure from render-state failure using bounded diagnostics only | Prevents unsafe or overly broad recovery behavior | Operator drill validation | PM + Ops |
 | Preset publication and rollback can affect future sessions without mutating active sessions | Prevents live-session instability and unbounded operational risk | Architecture and rollout validation | PM + Architect |
@@ -814,11 +826,13 @@ The system shall support staged branch rollout to explicitly selected branch set
 - A customer can choose one approved published preset and reach a valid capture state without operator help.
 - Successful capture stores the new source photo under the current session before booth success feedback is shown.
 - Booth `Ready` is recognized as release truth only when live camera/helper truth is confirmed through the host-owned runtime boundary with fresh status rather than browser fallback, stale session state, or incomplete helper signals.
-- The booth reports preview readiness truthfully: current-session preview appears when ready, and explicit waiting guidance appears when it is not.
+- The booth reports preview readiness truthfully: `Preview Waiting` remains until the preset-applied latest large preview is ready at the canonical same slot, and explicit waiting guidance appears whenever that replacement is not yet complete.
+- Latest-preview route evidence and same-slot replacement evidence can be recovered from one approved session package for hardware validation review.
 - The customer can review only current-session photos, delete only as allowed by the `Current-Session Deletion Policy`, and change presets for future captures.
 - The adjusted end time is visible from session start, and the 5-minute warning plus exact-end alert fire correctly.
 - After session end, the product enters one explicit post-end state within the allowed timing budget, and `Completed` resolves only as `Local Deliverable Ready` or `Handoff Ready` after booth-side required work is actually complete.
 - Render failure does not masquerade as capture failure and does not corrupt current-session truth.
+- Any newly introduced renderer route supports booth-scoped canary, instant fallback to the approved darktable path, and no increase in false-ready or cross-session leakage incidents.
 - Booth customers never enter a direct photo-editing workflow and never see darktable, XMP, module, style, or library terms.
 - Publication and rollback can promote or revert approved preset artifacts for future sessions without mutating active sessions.
 - Branch rollout controls can promote explicitly selected branch sets and roll back the app build and approved preset stack without interrupting an active customer session.

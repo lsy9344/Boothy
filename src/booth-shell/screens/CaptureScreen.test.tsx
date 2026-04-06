@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -93,6 +93,39 @@ function renderCaptureScreen(
   overrides: Partial<SessionStateContextValue> = {},
   sessionDraftOverrides: CaptureScreenSessionDraftOverrides = {},
 ) {
+  const value = createCaptureScreenState(overrides, sessionDraftOverrides)
+  const rendered = render(
+    <SessionStateContext.Provider value={value}>
+      <CaptureScreen />
+    </SessionStateContext.Provider>,
+  )
+
+  return {
+    ...value,
+    ...rendered,
+    rerenderWith(
+      nextOverrides: Partial<SessionStateContextValue> = {},
+      nextSessionDraftOverrides: CaptureScreenSessionDraftOverrides = {},
+    ) {
+      const nextValue = createCaptureScreenState(
+        nextOverrides,
+        nextSessionDraftOverrides,
+      )
+      rendered.rerender(
+        <SessionStateContext.Provider value={nextValue}>
+          <CaptureScreen />
+        </SessionStateContext.Provider>,
+      )
+
+      return nextValue
+    },
+  }
+}
+
+function createCaptureScreenState(
+  overrides: Partial<SessionStateContextValue> = {},
+  sessionDraftOverrides: CaptureScreenSessionDraftOverrides = {},
+) {
   const {
     captureReadiness: captureReadinessOverrides,
     manifest: manifestOverrides,
@@ -137,7 +170,7 @@ function renderCaptureScreen(
     postEnd: null,
   }
 
-  const value: SessionStateContextValue = {
+  return {
     isStarting: false,
     isLoadingPresetCatalog: false,
     isSelectingPreset: false,
@@ -255,14 +288,6 @@ function renderCaptureScreen(
     }),
     ...overrides,
   }
-
-  render(
-    <SessionStateContext.Provider value={value}>
-      <CaptureScreen />
-    </SessionStateContext.Provider>,
-  )
-
-  return value
 }
 
 describe('CaptureScreen', () => {
@@ -1744,6 +1769,87 @@ describe('CaptureScreen', () => {
     expect(
       screen.getByText(/이 사진은 이전 룩으로 찍혔고 그대로 유지돼요\./i),
     ).toBeInTheDocument()
+  })
+
+  it('closes the fullscreen viewer when the selected preview disappears from the current session', async () => {
+    const user = userEvent.setup()
+    const view = renderCaptureScreen(
+      {},
+      {
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:00:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [
+            createCaptureRecord({
+              captureId: 'capture_latest',
+              renderStatus: 'previewReady',
+              preview: {
+                assetPath: 'fixtures/current-session-latest.jpg',
+                enqueuedAtMs: 100,
+                readyAtMs: 500,
+              },
+            }),
+          ],
+          postEnd: null,
+        },
+      },
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: /현재 세션 최신 사진.*크게 보기/i }),
+    )
+
+    expect(
+      screen.getByRole('dialog', { name: /soft glow 룩 전체 화면 보기/i }),
+    ).toBeInTheDocument()
+
+    view.rerenderWith(
+      {},
+      {
+        manifest: {
+          schemaVersion: 'session-manifest/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          boothAlias: 'Kim 4821',
+          customer: {
+            name: 'Kim',
+            phoneLastFour: '4821',
+          },
+          createdAt: '2026-03-20T00:00:00.000Z',
+          updatedAt: '2026-03-20T00:01:00.000Z',
+          lifecycle: {
+            status: 'active',
+            stage: 'capture-ready',
+          },
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+          activePresetId: 'preset_soft-glow',
+          captures: [],
+          postEnd: null,
+        },
+      },
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
   })
 
   it('asks for confirmation before deleting a current-session photo and calls deleteCapture on confirm', async () => {

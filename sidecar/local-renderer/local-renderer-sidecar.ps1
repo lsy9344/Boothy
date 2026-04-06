@@ -145,6 +145,47 @@ function Resolve-DarktableVersion {
   throw "darktable version probe did not return a semantic version"
 }
 
+function ConvertTo-DarktableVersionParts {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$version
+  )
+
+  if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
+    return $null
+  }
+
+  return @{
+    major = [int]$Matches[1]
+    minor = [int]$Matches[2]
+    patch = [int]$Matches[3]
+  }
+}
+
+function Test-DarktableVersionCompatibility {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$requestedVersion,
+    [Parameter(Mandatory = $true)]
+    [string]$resolvedVersion
+  )
+
+  if ($requestedVersion -eq $resolvedVersion) {
+    return $true
+  }
+
+  $requestedParts = ConvertTo-DarktableVersionParts -version $requestedVersion
+  $resolvedParts = ConvertTo-DarktableVersionParts -version $resolvedVersion
+  if (-not $requestedParts -or -not $resolvedParts) {
+    return $false
+  }
+
+  return (
+    $requestedParts.major -eq $resolvedParts.major -and
+    $requestedParts.minor -eq $resolvedParts.minor
+  )
+}
+
 function Write-ErrorResponse {
   param(
     [string]$schemaVersion,
@@ -194,6 +235,7 @@ $arguments = @(
   "false",
   "--apply-custom-presets",
   "false",
+  "--disable-opencl",
   "--width",
   [string]$request.previewWidthCap,
   "--height",
@@ -214,7 +256,7 @@ try {
     throw "darktable version pin is missing from the request"
   }
 
-  if ($resolvedDarktableVersion -ne $requestedDarktableVersion) {
+  if (-not (Test-DarktableVersionCompatibility -requestedVersion $requestedDarktableVersion -resolvedVersion $resolvedDarktableVersion)) {
     throw "darktable version mismatch: requested=$requestedDarktableVersion actual=$resolvedDarktableVersion"
   }
 

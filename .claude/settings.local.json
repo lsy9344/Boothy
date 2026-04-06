@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\Code\\\\Project\\\\Boothy_thumbnail-latency-seam-reinstrumentation\" && npm run build 2>&1 | tail -30)",
+      "Bash(cd \"C:\\\\Code\\\\Project\\\\Boothy_thumbnail-latency-seam-reinstrumentation\" && npm run build 2>&1 | grep -E \"\\(error TS|booth-shell\\)\" | head -20)"
+    ]
+  }
+}

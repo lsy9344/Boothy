@@ -729,3 +729,473 @@ But this run also showed two important negatives:
   - `renderer-route-selected`
   - `renderer-close-owner`
   - and the disappearance of the warmup CRC error
+
+## 2026-04-06 sixth follow-up: latest hardware sessions prove the 1.11 route wiring is finally live, but every canary render still falls back because the booth runtime is on darktable `5.4.0` while the request pin is `5.4.1`
+
+### Latest measured sources
+
+- session paths:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3aa34bbfaeeb0`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3990e532fba00`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+From `session_000000000018a3aa34bbfaeeb0`:
+
+1. `capture_20260406043031157_467c0e39cd`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3749ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `14366ms`
+   - timing log included:
+     - `speculative-preview-skipped`
+     - `renderer-route-selected`
+     - `renderer-route-fallback`
+     - `renderer-close-owner`
+   - fallback detail:
+     - `darktable version mismatch: requested=5.4.1 actual=5.4.0`
+2. `capture_20260406043046499_e8ac721b93`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2991ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7176ms`
+   - local-renderer diagnostics response still returned:
+     - `darktable version mismatch: requested=5.4.1 actual=5.4.0`
+3. `capture_20260406043546550_db0682c879`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2990ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7295ms`
+   - local-renderer diagnostics response still returned:
+     - `darktable version mismatch: requested=5.4.1 actual=5.4.0`
+4. `capture_20260406043556525_f47742492d`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3087ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7183ms`
+   - local-renderer diagnostics response still returned:
+     - `darktable version mismatch: requested=5.4.1 actual=5.4.0`
+
+From `session_000000000018a3990e532fba00`:
+
+- all three captures also wrote local-renderer response envelopes with the same mismatch:
+  - `darktable version mismatch: requested=5.4.1 actual=5.4.0`
+- that session also recorded an early `preview-render-queue-saturated`, so the booth paid both:
+  - the old direct darktable close body cost
+  - plus repeated failed canary attempts that could never win
+
+### Product reading
+
+- this is no longer a "new route wiring didn't land on hardware" problem
+- the latest session package now contains route evidence, which means the 1.11 canary path is actually executing in the field
+- the current blocker is narrower and more concrete:
+  - the published booth request pin says `5.4.1`
+  - the installed darktable runtime cached by the sidecar is `5.4.0`
+  - so every canary attempt is rejected before it can contribute any speedup
+- product-wise, the booth is still behaving like a darktable fallback baseline:
+  - first capture stayed very slow at `14.4s`
+  - follow-up captures stayed in the `7.1s ~ 7.3s` truthful-close band
+
+### Change introduced after this review
+
+- local renderer sidecar now accepts patch skew within the same darktable `major.minor`
+- in practice this means the current booth combination
+  - request pin `5.4.1`
+  - installed runtime `5.4.0`
+  is now treated as compatible instead of being rejected
+- cross-minor or cross-major mismatches still fail closed and fall back
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_accepts_patch_skew_within_the_same_darktable_minor -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_rejects_an_unpinned_darktable_binary -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_reuses_a_runtime_scoped_darktable_version_cache -- --test-threads=1`
+  - passed
+- `cargo fmt --manifest-path src-tauri/Cargo.toml`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should keep `renderer-route-selected` / `renderer-close-owner` evidence
+- the repeated `requested=5.4.1 actual=5.4.0` mismatch should disappear
+- if the booth still closes in the same `7s+` band after that, the remaining work is no longer route enablement; it is the actual truthful render body cost
+
+## 2026-04-06 seventh follow-up: version mismatch is gone on hardware, but the next live blocker is the sidecar's first OpenCL bring-up cost
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3ac38ba08752c`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406050726153_eb8e72fafb`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3926ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `17587ms`
+   - route evidence now showed the canary path executing immediately:
+     - `renderer-route-selected`
+     - then `renderer-route-fallback`
+   - but the fallback reason changed from version mismatch to:
+     - `local renderer sidecar가 제한 시간 안에 끝나지 않았어요`
+   - same runtime also created a fresh `.boothy-local-renderer\preview\cache\cached_v5_kernels...` tree during that first attempt
+2. `capture_20260406050744943_336b29448c`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3343ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11464ms`
+   - local-renderer response now failed with:
+     - `candidate output missing after darktable bridge`
+3. `capture_20260406050757460_92d45c5ca9`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2925ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `10651ms`
+   - local-renderer response again failed with:
+     - `candidate output missing after darktable bridge`
+
+### Product reading
+
+- the earlier version compatibility fix did work:
+  - the repeated `requested=5.4.1 actual=5.4.0` rejection is gone from the latest hardware session
+- but the booth is still not getting the canary speedup because the local renderer is now losing for a different reason
+- the first live attempt paid a large one-time sidecar environment cost:
+  - OpenCL kernel cache creation under `.boothy-local-renderer\preview\cache`
+  - followed by a `10s` sidecar timeout
+- product-wise that means the booth still falls back to baseline darktable and keeps a very slow truthful close band:
+  - first capture: `17.6s`
+  - follow-up captures: `10.6s ~ 11.5s`
+
+### Change introduced after this review
+
+- local renderer sidecar now forces `--disable-opencl` for booth preview bridge runs
+- the goal is to stop the first canary attempt from spending its budget on GPU kernel initialization instead of producing a customer-facing preview
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_disables_opencl_for_preview_bridge -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_accepts_patch_skew_within_the_same_darktable_minor -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_rejects_an_unpinned_darktable_binary -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should no longer show:
+  - `local-renderer-timeout` on the first canary attempt
+  - or a brand-new OpenCL kernel cache build dominating the first close
+- if `candidate output missing after darktable bridge` still survives after this,
+  then the remaining blocker is inside the sidecar bridge/output publication itself, not version routing or GPU warm-up
+
+## 2026-04-06 eighth follow-up: the booth feels roughly 2x slower because each capture is now paying a failed sidecar render body and then a second darktable fallback body in sequence
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3aceb669047b8`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406052016176_35b175e6fe`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3349ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11630ms`
+   - sidecar selected at `05:20:18Z`
+   - sidecar fallback logged at `05:20:22Z`
+   - darktable close owner logged at `05:20:26Z`
+2. `capture_20260406052029539_e7f8287e44`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3839ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11482ms`
+   - same pattern repeated:
+     - local renderer attempt first
+     - `candidate output missing after darktable bridge`
+     - then baseline darktable close
+3. `capture_20260406052042301_d5c9c7b966`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3264ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11647ms`
+   - same late sidecar failure repeated again
+
+One extra clue from the same session:
+
+- the preview folder still contained
+  - `capture_20260406052042301_d5c9c7b966.preview-rendering.jpg`
+- which means the candidate path was not truly "impossible"; the booth simply failed to trust the sidecar in time and then still retried baseline close
+
+### Why it felt about 2x slower
+
+- the older good baseline on `Test Look` was roughly:
+  - `fastPreviewVisibleAtMs` around `3s`
+  - `previewVisibleAtMs` around `6.3s ~ 7.3s`
+- the newest run is roughly:
+  - `fastPreviewVisibleAtMs` still around `3s`
+  - `previewVisibleAtMs` around `11.5s ~ 11.6s`
+- product-wise the extra time is not coming from camera transfer or first-visible discovery anymore
+- it is coming from a duplicated truthful-close body:
+  - first the booth spends about `4s` trying the sidecar route
+  - then, after that fails, it spends about another `4s` on baseline darktable fallback
+- that serial double-pay is why the booth now feels close to `2x` slower than the earlier `6s` class
+
+### Change introduced after this review
+
+- once a session records a local renderer failure, the session-locked preview route policy now adds a forced fallback for the rest of that session
+- product effect:
+  - the first failed canary capture may still pay the recovery cost
+  - but later captures in the same session should stop retrying the same unhealthy sidecar and should fall back directly to the older darktable baseline instead of paying the double render every time
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness local_renderer_failure_forces_darktable_for_the_rest_of_the_session -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness local_renderer_error_envelope_is_recorded_before_fallback -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should show:
+  - first failed sidecar attempt, if any
+  - then later captures in the same session selecting `policyReason=forced-fallback` immediately
+- if that restores the booth from `11s` back toward the older `6s ~ 7s` band, then the immediate product regression is contained
+- after that, the remaining engineering work is to fix the sidecar bridge so it can actually win again instead of only being quarantined
+
+## 2026-04-06 ninth follow-up: session quarantine did contain the `11s` regression, and the next preset-applied speed win should come from reducing direct darktable preview fixed cost
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3ad70b60b9790`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406052943288_c7bedebde2`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3163ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11442ms`
+   - first capture still paid:
+     - sidecar attempt
+     - `candidate output missing after darktable bridge`
+     - then darktable fallback close
+2. `capture_20260406052956865_769f0e5223`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3340ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7118ms`
+3. `capture_20260406053013263_e51110182f`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3072ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6854ms`
+
+The same session's locked route policy now contained:
+
+- `forcedFallbackRoutes`
+  - `sessionId = session_000000000018a3ad70b60b9790`
+  - `reason = session-sidecar-health-check-failed`
+
+### Product reading
+
+- the session-sidecar quarantine worked
+- the booth no longer stayed in the broken `11s` class for every later shot in the same session
+- after the first failed canary attempt, the booth returned to roughly the older baseline band:
+  - `7.1s`
+  - `6.85s`
+- that means the urgent product regression is partially contained
+- but the preset-applied large preview is still slower than desired because the darktable baseline close itself remains too expensive
+
+### New root-cause reading
+
+- the latest later captures no longer show another expensive sidecar retry body
+- so the remaining wait is now dominated by the direct darktable preview lane again
+- one implementation gap was still visible in the invocation path:
+  - sidecar preview bridge already had a runtime-scoped `--cachedir`
+  - direct darktable preview invocation did not
+- product interpretation:
+  - the booth was preserving cache reuse on the canary bridge path
+  - but not on the approved baseline path that is currently winning after quarantine
+  - so the current truthful close owner was still leaving an easy startup/cache win on the table
+
+### Change introduced after this review
+
+- direct darktable preview invocation now also uses a runtime-scoped `--cachedir`
+- this aligns the approved baseline close path with the same cache reuse approach already used by the local renderer bridge
+- the intended product outcome is to pull the remaining `6.8s ~ 7.1s` preset-applied close band down without sacrificing preview sharpness
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_invocation_uses_a_runtime_scoped_cachedir -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml real_local_renderer_sidecar_disables_opencl_for_preview_bridge -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should keep the first-visible `3s` class
+- later captures in a quarantined session should stay out of the `11s` regression
+- and the remaining preset-applied close should come down from roughly `6.8s ~ 7.1s` if the cached baseline path removes enough startup cost
+
+## 2026-04-06 tenth follow-up: the booth is meaningfully faster now, but the product target must be reframed as `original visible -> preset-applied visible <= 2.5s`
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3ae424e9b17e8`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406054445582_62d75f1749`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `5524ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `16989ms`
+   - `original visible -> preset-applied visible`: `11465ms`
+   - first capture still paid:
+     - sidecar selection
+     - `candidate output missing after darktable bridge`
+     - then darktable fallback close
+2. `capture_20260406054625081_9f1d9cb71d`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3065ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6509ms`
+   - `original visible -> preset-applied visible`: `3444ms`
+3. `capture_20260406054633092_f7b16f00bf`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3126ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6524ms`
+   - `original visible -> preset-applied visible`: `3398ms`
+
+### Product reading
+
+- the booth did get materially faster versus the earlier `11s` regression
+- later captures are now back in the `6.5s` class instead of the broken `11s` class
+- but the remaining customer wait is still too long once the original image is already on screen
+- the right product metric is now explicit:
+  - `presetAppliedDeltaMs = previewVisibleAtMs - fastPreviewVisibleAtMs`
+- on the latest good later captures that delta is still:
+  - `3444ms`
+  - `3398ms`
+- so the booth is improved, but it is still about `0.9s` away from the new target band
+
+### Updated target
+
+- the product target is now:
+  - `original visible -> preset-applied visible <= 2500ms`
+- this is stricter and more product-truthful than only tracking:
+  - `capture acknowledged -> previewVisibleAtMs`
+- because the guest already sees the original by then and is specifically waiting for the preset-applied replacement
+
+### New root-cause reading
+
+- the winning later lane is currently the direct darktable preview close, not the sidecar
+- the latest code path still allowed the booth-safe direct preview lane to run without `--disable-opencl`
+- for a small `256px` truthful close, that means the approved baseline lane could still pay unnecessary GPU/OpenCL startup overhead even when the sidecar is already quarantined
+- product interpretation:
+  - the booth had already removed one large fixed cost by reusing `--cachedir`
+  - but it was still leaving another startup cost in the direct close lane that is actually serving customers right now
+
+### Change introduced after this review
+
+- the booth-safe direct darktable preview lane now also forces `--disable-opencl`
+- this aligns the approved baseline preview close with the sidecar bridge decision that was already made for the same booth workload
+- the intended outcome is to pull the remaining later-capture `presetAppliedDeltaMs` from about `3.4s` toward the new `2.5s` target without weakening truthfulness
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_invocation_uses_display_sized_render_arguments -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness direct_darktable_preview_disables_opencl_for_the_booth_safe_lane -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness real_local_renderer_sidecar_disables_opencl_for_preview_bridge -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should still keep the `3s` first-visible class
+- later captures should keep the restored `6.5s` class or better
+- and the more important metric should move next:
+  - `previewVisibleAtMs - fastPreviewVisibleAtMs`
+  - from about `3.4s`
+  - toward `<= 2.5s`
+
+## 2026-04-06 eleventh follow-up: latest hardware run stayed much faster than the old regression, but the remaining `3.4s ~ 3.8s` preset-applied delta exposed a broken preview warmup fixture
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3aec7f04568e8`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406055418489_84eba569c0`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3126ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11663ms`
+   - `original visible -> preset-applied visible`: `8537ms`
+   - first capture still paid:
+     - sidecar selection
+     - `candidate output missing after darktable bridge`
+     - then darktable fallback close
+2. `capture_20260406055432199_4210c99eeb`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3729ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7159ms`
+   - `original visible -> preset-applied visible`: `3430ms`
+3. `capture_20260406055441142_9a5bdb9e7a`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `4151ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7936ms`
+   - `original visible -> preset-applied visible`: `3785ms`
+
+The same session also proved:
+
+- the first capture still forced the sidecar quarantine for the rest of that session
+- the direct darktable preview lane was now really running with:
+  - `--disable-opencl`
+  - `--cachedir`
+
+### Product reading
+
+- the booth is still much better than the old `11s` regression
+- later captures stayed in roughly the `7s` class instead of collapsing back to `11s`
+- but the customer-facing gap from original image shown to preset-applied image shown is still too long:
+  - `3430ms`
+  - `3785ms`
+- that means the latest opencl/cache fixes were helpful but not enough to hit the product target:
+  - `original visible -> preset-applied visible <= 2500ms`
+
+### New root-cause reading
+
+- direct darktable preview stderr had been repeatedly collapsing to:
+  - `libpng error: IDAT: CRC error`
+- the booth runtime warmup fixture at:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\.boothy-darktable\preview\warmup\preview-renderer-warmup-source.png`
+  was then checked directly
+- its `IDAT` chunk CRC was invalid
+- product interpretation:
+  - the booth believed it had a preview warmup path
+  - but the warmup source itself was corrupted
+  - so the warmup lane could not reliably pre-prime the approved direct preview runtime that customers are currently waiting on
+
+### Change introduced after this review
+
+- the preview warmup fixture was replaced with a structurally valid `1x1` PNG
+- a regression test now verifies that the warmup fixture's PNG chunk CRCs are valid, not just byte-stable
+- intended product outcome:
+  - warmup should actually warm the direct preview runtime now
+  - later captures should spend less time between original-visible and preset-applied-visible
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source_is_written_as_png -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source_fixture_has_valid_png_chunk_crcs -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml direct_darktable_preview_disables_opencl_for_the_booth_safe_lane -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should keep the improved `7s`-class later captures
+- first capture may still be penalized until the sidecar bridge bug is fixed
+- but later captures should now have a realistic chance to move:
+  - from `3.4s ~ 3.8s` original-to-preset delta
+  - toward the `<= 2.5s` target
