@@ -13,11 +13,15 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
   - renderer route comparison package (`renderer-route-selected -> renderer-route-fallback -> renderer-close-owner`)
   - preset fidelity comparison package
   - rollback drill evidence
+- Primary KPI:
+  - `presetAppliedDeltaMs = previewVisibleAtMs - fastPreviewVisibleAtMs`
+  - primary artifact: `latest large preview replacement speed`
+  - prototype target: later captures 기준 `<= 2500ms`에 근접하거나 baseline darktable 대비 의미 있는 단축
 - Current hardware gate: `Not run yet`
 - Close policy:
   - automated pass만으로 닫지 않는다.
   - approved booth hardware에서 local renderer route와 darktable fallback을 같은 제품 계약 아래 비교해야 한다.
-  - 승인 기준은 meaningful `latest large preview truthful close` 단축, preset fidelity 유지, `false-ready` 0건, cross-session leakage 0건, forced fallback / rollback 즉시성이다.
+  - 승인 기준은 `original visible -> preset-applied visible` 구간의 측정 가능한 감소, preset fidelity 유지, `false-ready` 0건, cross-session leakage 0건, same-slot replacement correctness, forced fallback / rollback 즉시성이다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -33,7 +37,7 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
 2. sidecar가 current capture용 canonical preview candidate를 반환하면 host는 same-session, same-capture, allowed-path, preset-version, raster validity를 검증한 뒤에만 이를 truthful preset-applied preview close로 채택할 수 있어야 한다. `previewReady`는 host validation 성공 전에는 절대 올라가면 안 된다.
 3. booth runtime이 둘 이상의 approved preview-close route를 지원할 때 route 선택은 explicit feature-gated policy로 제어돼야 하며, unhealthy sidecar execution은 customer-safe waiting behavior를 깨지 않고 approved darktable path로 즉시 fallback할 수 있어야 한다.
 4. 고객이 이미 same-capture first-visible image를 `Preview Waiting` 중에 본 상태여도, sidecar route 또는 fallback route가 truthful preset-applied preview를 닫을 때 canonical latest large preview path와 same-slot replacement 규칙은 그대로 유지돼야 한다. rail thumbnail과 다른 파생 surface는 이 primary close owner를 공유해야 하며 별도 preview truth를 만들면 안 된다. 고객 상태 이름은 계속 `Preview Waiting`과 later ready 상태만 사용해야 한다.
-5. approved booth hardware canary에서는 selected route, fallback reason, close-owner result, elapsed timing, fidelity evidence가 하나의 session package 안에서 비교 가능해야 한다. 승인 기준은 meaningful `latest large preview truthful close` 개선, preset fidelity 유지, `false-ready` 0건, cross-session leakage 0건, rollback 즉시성이다.
+5. approved booth hardware canary에서는 selected route, fallback reason, close-owner result, `fastPreviewVisibleAtMs`, `previewVisibleAtMs`, `presetAppliedDeltaMs`, fidelity evidence가 하나의 session package 안에서 비교 가능해야 한다. 승인 기준은 later captures 기준 `presetAppliedDeltaMs`가 baseline darktable 대비 의미 있게 줄어드는 것이며, canary 이후 승격에는 합의된 truthful-close delta 목표, preset fidelity 유지, `false-ready` 0건, cross-session leakage 0건, same-slot replacement correctness, rollback 즉시성이 필요하다.
 
 ## Tasks / Subtasks
 
@@ -58,7 +62,7 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
   - [x] current-session isolation, wrong-shot discard, cross-session leakage 0 원칙을 새 route에서도 다시 잠근다.
 
 - [x] diagnostics / canary evidence / rollback governance를 보강한다. (AC: 3, 5)
-  - [x] 한 session diagnostics package만으로 `renderer-route-selected`, `renderer-route-fallback`, `renderer-close-owner`, `elapsedMs`, fidelity verdict를 비교할 수 있게 한다.
+  - [x] 한 session diagnostics package만으로 `renderer-route-selected`, `renderer-route-fallback`, `renderer-close-owner`, `fastPreviewVisibleAtMs`, `previewVisibleAtMs`, `elapsedMs`, fidelity verdict를 비교할 수 있게 한다.
   - [x] branch rollout / rollback 거버넌스와 충돌하지 않게 route canary와 forced fallback 기준을 문서화한다.
   - [x] operator-safe diagnostics에는 route와 fallback 이유를 남기되, 고객 화면에는 내부 엔진/sidecar 용어를 노출하지 않는다.
 
@@ -97,18 +101,22 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
 
 - 2026-04-06 입력 문서와 승인된 correct-course는 same-capture `first-visible`이 최근 `약 3.0s ~ 3.5s`, best run `2959ms`까지 내려온 반면 고객이 실제로 기다리는 `preset-applied truthful close`는 best run `6372ms`, 다른 회차는 `7s ~ 10s+`에 남아 있다고 정리했다. [Source: docs/recent-session-preview-architecture-update-input-2026-04-06.md]
 - 즉 남은 문제는 rail에 무언가를 빨리 보이는 것보다, 고객이 크게 보고 있는 `latest large preview truthful close` 자체를 더 짧게 만들 수 있는 구조가 무엇인지다. [Source: docs/recent-session-preview-architecture-update-input-2026-04-06.md]
+- 2026-04-07 방향 전환 문서는 이 판단을 실행 계획으로 고정하면서, 이제 주력 질문이 `speculative/local-renderer 미세 튜닝을 계속할지`가 아니라 `host-owned truth를 유지한 채 truthful close hot path를 local dedicated renderer로 분리할지`라고 못 박았다. 또한 KPI를 `presetAppliedDeltaMs` 중심으로 다시 고정했다. [Source: docs/recent-session-preview-direction-change-and-execution-plan-2026-04-07.md]
+- 같은 날 프로토타입 범위 문서는 이번 실험을 `latest large preview의 preset-applied close만 local dedicated renderer candidate로 시험하고, 실패 시 darktable fallback으로 즉시 복귀하는 bounded experiment`로 제한했다. 즉 이번 스토리는 full pipeline 교체나 multi-surface redesign이 아니라 좁은 preview-close 실험이어야 한다. [Source: docs/recent-session-preview-prototype-scope-2026-04-07.md]
 - 2026-04-04 기술 리서치는 `Rust/Tauri host 유지 + local dedicated renderer sidecar + darktable fallback`이 현재 계약을 가장 덜 깨면서도 canary와 rollback을 붙이기 쉬운 1차 권장안이라고 결론 냈다. [Source: _bmad-output/planning-artifacts/research/technical-thumbnail-architecture-decision-research-2026-04-04.md]
 - 같은 날짜 sprint change proposal은 Story 1.10을 baseline stabilization track으로 유지하고, 구조 실험 책임을 새 Story 1.11로 분리 승인했다. [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260404-232052.md]
-- 2026-04-06 승인안은 이 기술 방향을 뒤집지 않고, Story 1.11의 성공 기준을 `latest large preview replacement` 중심으로 다시 고정하고 cross-cutting artifact/seam 재정렬은 후속 Story 1.12 backlog로 분리했다. [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-110430.md]
+- 2026-04-06 승인안은 이 기술 방향을 뒤집지 않고, Story 1.11의 성공 기준을 `latest large preview replacement` 중심으로 다시 고정하고 cross-cutting artifact/seam 재정렬은 후속 Story 1.12 backlog로 분리했다. [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-233432.md]
 
 ### 스토리 기반 요구사항
 
+- 방향 전환 문서는 주 목표를 `latest large preview replacement speed`와 `presetAppliedDeltaMs`로 다시 정의하고, close owner 비율과 fallback 여부를 same session package에서 설명 가능해야 한다고 요구한다. [Source: docs/recent-session-preview-direction-change-and-execution-plan-2026-04-07.md]
+- 프로토타입 범위 문서는 이번 단계의 primary success를 later captures 기준 `presetAppliedDeltaMs <= 2500ms` 근접 또는 baseline darktable 대비 의미 있는 반복 단축으로 정의하고, first capture는 주 성공지표가 아니지만 `previewWaiting` 잔류나 세션 파손이 나면 실패라고 못 박는다. [Source: docs/recent-session-preview-prototype-scope-2026-04-07.md]
 - PRD는 first-visible image와 preset-applied preview readiness latency를 분리해서 측정하되, 둘 다 `latest large preview` 기준으로 읽어야 하며 route가 바뀌어도 `previewReady` truth는 host-validated render behavior에만 속한다고 못 박는다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
 - PRD는 `latest large preview`를 primary booth-facing artifact로 정의하고, rail thumbnail은 이를 공유하거나 파생하는 secondary surface일 뿐 별도 truth path가 아니라고 규정한다. [Source: _bmad-output/planning-artifacts/prd.md#FR-004 Current-Session Capture Persistence and Truthful Preview Confidence]
 - PRD release gate는 새 renderer route가 booth-scoped canary, instant fallback, false-ready / leakage 0을 지원해야 한다고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Release Gates]
 - Architecture는 preview-close execution이 approved darktable path 또는 approved local dedicated renderer adapter 뒤에서 routeable할 수 있지만, 대체 route는 candidate-result producer일 뿐 독립 truth owner가 아니라고 정의한다. 또한 `latest large preview`가 primary artifact이고 rail은 같은 close owner를 공유하는 secondary surface라고 못 박는다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
 - Session manifest 계약은 `previewWaiting` 중 canonical latest preview path가 먼저 채워질 수 있어도, `preview.readyAtMs`가 비어 있으면 아직 truthful close가 아니며 `fastPreviewVisibleAtMs`와 `previewVisibleAtMs`를 분리 유지해야 한다고 고정한다. [Source: docs/contracts/session-manifest.md]
-- Render worker 계약과 sprint proposal은 diagnostics에 `renderer-route-selected`, `renderer-route-fallback`, `renderer-close-owner`를 남기고, primary latest large preview close를 기준으로 route 비교가 가능해야 한다고 요구한다. [Source: docs/contracts/render-worker.md] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-110430.md]
+- Render worker 계약과 sprint proposal은 diagnostics에 `renderer-route-selected`, `renderer-route-fallback`, `renderer-close-owner`를 남기고, primary latest large preview close를 기준으로 route 비교가 가능해야 한다고 요구한다. [Source: docs/contracts/render-worker.md] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-233432.md]
 - UX는 route가 fast preview, resident worker, local renderer로 바뀌어도 고객 상태 이름을 늘리지 말고 같은 컷이 먼저 보였다가 나중에 더 정확한 결과로 안정화되는 경험만 유지하라고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 
 ### 선행 의존성과 구현 순서
@@ -125,14 +133,35 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
   5. diagnostics / canary evidence / rollback drill을 보강한다.
   6. contract test -> host integration test -> booth hardware canary 순으로 닫는다.
 
+### 이번 프로토타입의 좁은 범위
+
+- primary surface는 `latest large preview replacement` 하나로 제한한다.
+- host가 truth owner로 남고, local renderer는 `candidate result producer`만 맡는다.
+- preview close만 이번 스토리 범위에 포함한다. final/export close는 out of scope다.
+- canary는 approved preset `1개`, booth `1대`, fresh runtime 기준 소수 세션으로 제한한다.
+- local renderer route는 opt-in canary에서만 켠다. default booth path는 계속 darktable baseline이다.
+
+### 이번 프로토타입의 비범위
+
+- 전체 렌더 파이프라인 교체
+- export / final render 교체
+- first-visible lane 재설계
+- rail thumbnail 전용 최적화
+- camera helper 개선
+- watch-folder bridge
+- edge appliance
+- multi-preset rollout
+- multi-booth rollout
+- quality downscale 기반 체감 개선
+
 ### 현재 워크스페이스 상태
 
 - `src-tauri/src/render/mod.rs`에는 resident first-visible worker, warm-up, darktable preview/final render path, canonical preview replacement 자산이 이미 있다.
 - `src-tauri/src/capture/ingest_pipeline.rs`와 `src-tauri/tests/capture_readiness.rs`에는 same-capture preview promotion과 seam logging 회귀 기반이 있다.
 - `src-tauri/src/branch_config/mod.rs`와 `src-tauri/tests/branch_rollout.rs`에는 branch rollout / rollback baseline, active-session defer, pending baseline 적용 규칙이 이미 있다.
-- 반면 현재 `src-tauri/tauri.conf.json`과 capability 파일은 `core:default`만 열어 두고 있고, sidecar 외부 바이너리 bundle / execute 권한은 아직 명시돼 있지 않다.
-- 현재 repo에는 `sidecar/canon-helper/`만 있고 local renderer 전용 경계는 없다.
-- 즉 1.11은 기존 render/capture/session truth 자산을 재사용하되, `새 route의 계약 + 패키징 + host gate`를 추가하는 형태가 가장 자연스럽다.
+- 현재 `src-tauri/tauri.conf.json`에는 local renderer bootstrap resource가 번들 대상으로 포함돼 있고, Rust startup wiring은 packaged runtime에서 해당 sidecar 경로를 해석하도록 보강돼 있다. capability surface는 고객 창 기준 최소 범위를 유지한다.
+- 현재 repo에는 `sidecar/local-renderer/` 전용 경계와 bootstrap entrypoint가 존재한다. 다만 이 경계는 아직 dedicated renderer 최종형이라기보다 canary contract를 유지하는 bounded prototype 자산으로 취급해야 한다.
+- 즉 1.11은 기존 render/capture/session truth 자산을 재사용하되, `새 route의 계약 + 패키징 + host gate + bounded canary evidence`를 추가/정렬하는 형태가 가장 자연스럽다.
 
 ### 이전 스토리 인텔리전스
 
@@ -201,12 +230,14 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
   - wrong-session / wrong-capture / wrong-preset-version / stale-output / malformed-output은 모두 rejection 된다.
   - route policy가 booth / session / preset 단위 canary를 지원하고, active session safety 규칙을 깨지 않는다.
   - forced fallback / rollback lane이 적용되면 새 route를 즉시 우회하고도 customer-safe waiting behavior가 유지된다.
-  - session seam package 하나만으로 route selected, fallback reason, close owner, elapsedMs, fidelity verdict, `latest-large-preview-visible`를 primary artifact 기준으로 비교할 수 있다.
+  - session seam package 하나만으로 route selected, fallback reason, close owner, `fastPreviewVisibleAtMs`, `previewVisibleAtMs`, elapsedMs, fidelity verdict, `latest-large-preview-visible`를 primary artifact 기준으로 비교할 수 있다.
+  - later captures 기준 `presetAppliedDeltaMs`를 baseline darktable와 직접 비교할 수 있어야 한다.
+  - first capture는 주 성공지표가 아니더라도 `Preview Waiting` 잔류나 세션 파손이 나면 실패로 판정할 수 있어야 한다.
   - booth hardware canary에서 local renderer route와 darktable fallback을 같은 세션 기준으로 비교하는 evidence package가 재현 가능하다.
 
 ### 최신 기술 / 제품 컨텍스트
 
-- 2026-04-06 승인된 제품 재정렬은 Story 1.11의 목표를 `thumbnail speed`가 아니라 `latest large preview replacement` 중심으로 다시 고정했다. Story 1.11은 route experiment와 canary를 유지하되, cross-cutting artifact ownership / seam reinstrumentation은 신규 Story 1.12 backlog로 분리해 scope creep를 막는다. [Source: docs/recent-session-preview-architecture-update-input-2026-04-06.md] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-110430.md]
+- 2026-04-06 승인된 제품 재정렬은 Story 1.11의 목표를 `thumbnail speed`가 아니라 `latest large preview replacement` 중심으로 다시 고정했다. Story 1.11은 route experiment와 canary를 유지하되, cross-cutting artifact ownership / seam reinstrumentation은 신규 Story 1.12 backlog로 분리해 scope creep를 막는다. [Source: docs/recent-session-preview-architecture-update-input-2026-04-06.md] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-233432.md]
 - 현재 repo는 `@tauri-apps/api` / `@tauri-apps/cli` `2.10.1`, Rust `tauri` `2.10.3`, React `19.2.4`, Zod `4.3.6`, Vitest `4.1.0`을 사용한다. 새 route는 이 현재 메이저 라인과 충돌하지 않는 범위에서 구현해야 한다. [Source: package.json] [Source: src-tauri/Cargo.toml]
 - React 공식 문서는 latest major를 `19.2`로 안내한다. 즉 1.11은 UI 프레임워크 교체가 아니라 existing host/booth-shell 경계 위에서 해결해야 한다. [Source: https://react.dev/versions]
 - Tauri 2 공식 문서는 external sidecar binary packaging 패턴을 계속 지원한다. 현재 repo에는 shell/sidecar capability wiring이 없으므로, Tauri-managed sidecar를 택한다면 최소 권한으로 보강하는 작업이 필요하다. 이 문장은 공식 sidecar 문서를 현재 `tauri.conf.json`/capabilities 상태에 적용한 추론이다. [Source: src-tauri/tauri.conf.json] [Source: src-tauri/capabilities/booth-window.json] [Source: https://v2.tauri.app/develop/sidecar/]
@@ -232,8 +263,10 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
 - [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 - [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Latest Photo Rail]
 - [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260404-232052.md]
-- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-110430.md]
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260406-233432.md]
 - [Source: _bmad-output/planning-artifacts/research/technical-thumbnail-architecture-decision-research-2026-04-04.md]
+- [Source: docs/recent-session-preview-direction-change-and-execution-plan-2026-04-07.md]
+- [Source: docs/recent-session-preview-prototype-scope-2026-04-07.md]
 - [Source: docs/recent-session-preview-architecture-update-input-2026-04-06.md]
 - [Source: history/recent-session-thumbnail-speed-agent-context.md]
 - [Source: _bmad-output/implementation-artifacts/1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결.md]
@@ -266,22 +299,33 @@ GPT-5 Codex
 - 2026-04-05 01:34:00 +09:00 - `docs/contracts/local-renderer-adapter.md`, `docs/contracts/render-worker.md`, `docs/contracts/branch-rollout.md`, `sidecar/local-renderer/README.md`를 갱신해 route governance와 sidecar boundary를 문서화했다.
 - 2026-04-06 12:05:00 +09:00 - 승인된 preview replacement reframe을 반영해 Story 1.11 문구를 `latest large preview` 중심으로 재정렬하고, primary/secondary artifact 구분 및 seam evidence guardrail을 보강했다.
 - 2026-04-06 12:27:13 +09:00 - `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`, `pnpm test:run`, `pnpm lint`를 다시 실행해 회귀를 검증했고, `hardware-validation-ledger.md`의 Story 1.8 canonical package 문구를 현재 governance 테스트 기대와 다시 정렬했다.
+- 2026-04-07 14:36:17 +09:00 - 2026-04-07 방향 전환/프로토타입 범위 보강에 맞춰 Story 1.11 구현을 재개하고, canary evidence package에 `presetAppliedDeltaMs`를 직접 남기도록 Rust timing contract, capture pipeline diagnostics, shared contract schema를 함께 보강했다.
+- 2026-04-07 14:36:17 +09:00 - `cargo test --manifest-path src-tauri/Cargo.toml local_renderer_truthful_close_reuses_an_existing_canonical_preview_slot -- --nocapture`, `npm test -- src/shared-contracts/contracts.test.ts`, `npm run lint`는 통과했다. full Rust regression `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`는 기존 `capture_readiness` 계열 실패들 때문에 현재 전체 green으로 닫히지 않았다.
+- 2026-04-07 15:25:00 +09:00 - 최신 hardware log `session_000000000018a3fcd2473e8d84`를 재검토한 결과, local-renderer canary가 truthful close가 아니라 speculative preview lane에도 붙어 bounded prototype scope를 벗어나고 있음을 확인했다.
+- 2026-04-07 15:25:00 +09:00 - speculative preview render를 approved darktable baseline으로 다시 고정하고, truthful close hot path만 local-renderer canary를 유지하도록 `src-tauri/src/render/mod.rs`와 `src-tauri/tests/capture_readiness.rs`를 갱신했다. `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_render_stays_on_darktable_even_when_truthful_close_canary_matches -- --nocapture`, `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_baseline_does_not_force_darktable_for_later_truthful_close_canary -- --nocapture`, `cargo test --manifest-path src-tauri/Cargo.toml local_renderer_truthful_close_reuses_an_existing_canonical_preview_slot -- --nocapture`는 통과했다.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created
 - Story 1.10의 범위 재정의와 2026-04-04 구조 전환 승인 내용을 반영해, 1.11을 별도 local renderer topology experiment로 분리했다.
 - 2026-04-06 realignment를 반영해 Story 1.11의 성공 기준을 `latest large preview truthful close`로 명확히 고정하고, rail을 shared close owner를 따르는 secondary surface로 다시 정의했다.
+- 2026-04-07 방향 전환 문서와 프로토타입 범위 문서를 반영해, KPI를 `presetAppliedDeltaMs` 중심으로 다시 강조하고 bounded prototype의 in-scope / out-of-scope를 스토리 본문에 고정했다.
 - 새 route를 `candidate result producer`로만 제한하고, host validation / fallback / canary / rollback을 필수 범위로 고정했다.
 - 기존 render/capture/session/branch rollout 자산을 재사용하되, 새 frozen surface로 `local renderer adapter contract`와 `renderer routing policy`를 명시했다.
 - host가 `branch-config/preview-renderer-policy.json` 기반으로 preview close route를 선택하고, local renderer candidate를 검증한 뒤에만 same-slot canonical preview를 승격하도록 구현했다.
 - invalid/malformed/stale/duplicate candidate는 모두 truthful darktable fallback으로 우회하고, diagnostics package에 route selected/fallback/close-owner evidence를 남기도록 보강했다.
-- full Rust 검증은 `cargo test --manifest-path .\\src-tauri\\Cargo.toml -- --test-threads=1`로 통과했다. 기본 병렬 실행은 기존 shared test runtime 특성 때문에 여전히 비결정적일 수 있어 단일 스레드 검증을 증거 기준으로 기록한다.
-- `pnpm test:run` 258개 테스트와 `pnpm lint`까지 다시 통과시켜, story close 전 회귀 게이트와 governance ledger 정합성을 함께 확인했다.
+- canary evidence package가 `fastPreviewVisibleAtMs`, `previewVisibleAtMs`뿐 아니라 `presetAppliedDeltaMs`도 같은 capture timing contract와 `capture_preview_ready` 이벤트 detail 안에서 직접 비교할 수 있도록 보강했다.
+- shared contract가 새 timing field를 허용하도록 정렬해, host가 남긴 truthful-close delta를 상위 계층이 안전하게 소비할 수 있게 했다.
+- 최신 hardware evidence에서 speculative lane이 local-renderer canary를 계속 상속하던 scope drift를 확인했고, 이를 제거해 canary를 truthful close hot path에만 다시 한정했다.
+- full Rust 검증은 `cargo test --manifest-path .\\src-tauri\\Cargo.toml -- --test-threads=1` 기준 아직 기존 `capture_readiness` 계열 실패 때문에 green이 아니다.
+- `pnpm lint`와 targeted Rust/contract tests는 통과했지만, story close 전 hardware rerun과 broader Rust 회귀 재정리는 아직 남아 있다.
 - approved booth hardware canary evidence는 코드/문서 기준으로 준비했으며, 실제 booth 수집 자체는 별도 현장 검증 단계에서 수행해야 한다.
 
 ### Change Log
 
+- 2026-04-07 - speculative preview lane가 local-renderer canary를 상속하던 scope drift를 제거하고, bounded prototype 문서대로 truthful close hot path만 canary 대상으로 다시 제한했다.
+- 2026-04-07 - `presetAppliedDeltaMs`를 session timing contract와 `capture_preview_ready` diagnostics evidence에 추가해 Story 1.11의 2026-04-07 canary KPI 기준을 코드에 반영했다.
+- 2026-04-07 - 방향 전환 및 좁은 프로토타입 범위 문서를 반영해 Story 1.11의 KPI, bounded scope, non-goals, canary evidence 기준을 보강했다.
 - 2026-04-06 - Story 1.11 문구를 latest large preview replacement 중심으로 재정렬하고, primary/secondary artifact 및 seam evidence 기준을 보강했다.
 - 2026-04-06 - 전체 검증 재실행 중 발견된 hardware validation governance ledger 문구 회귀를 정렬하고 story 상태를 `review`로 갱신했다.
 - 2026-04-05 - local renderer canary route, host validation gate, darktable fallback, diagnostics evidence package, contract/docs/test coverage를 추가하고 story 상태를 `review`로 전환했다.
@@ -294,6 +338,15 @@ GPT-5 Codex
 - docs/contracts/local-renderer-adapter.md
 - docs/contracts/render-worker.md
 - docs/contracts/branch-rollout.md
+- history/recent-session-thumbnail-speed-log-2026-04-04.md
 - sidecar/local-renderer/README.md
+- src/shared-contracts/contracts.test.ts
+- src/shared-contracts/schemas/session-capture.ts
+- src-tauri/src/capture/ingest_pipeline.rs
+- src-tauri/src/capture/normalized_state.rs
+- src-tauri/src/commands/capture_commands.rs
+- src-tauri/src/diagnostics/recovery.rs
 - src-tauri/src/render/mod.rs
+- src-tauri/src/session/session_manifest.rs
 - src-tauri/tests/capture_readiness.rs
+- src-tauri/tests/operator_diagnostics.rs

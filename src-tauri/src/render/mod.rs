@@ -46,9 +46,9 @@ const SESSION_LOCKED_PREVIEW_RENDER_ROUTE_POLICY_FILE_NAME: &str =
     "preview-renderer-policy.lock.json";
 const DARKTABLE_FIDELITY_VERDICT: &str = "approved-baseline";
 const DARKTABLE_FIDELITY_DETAIL: &str = "engine=darktable-cli;comparison=baseline-owner";
-// The truthful recent-session rail preview does not need the old 512px cap.
-// Keep the render-backed close accurate, but shrink the booth-safe preview
-// artifact so preset-applied replacement lands materially sooner.
+// The truthful recent-session rail preview must stay visually acceptable even
+// while we chase latency, so keep the booth-safe fast-preview cap at the
+// restored quality floor.
 const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
 const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
@@ -520,19 +520,13 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
 ) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let bundle =
         resolve_runtime_bundle_in_dir(base_dir, preset_id, preset_version, RenderIntent::Preview)?;
-    let paths = SessionPaths::new(base_dir, session_id);
-    let capture_context = load_capture_for_session(&paths, capture_id);
-    let selected_route = capture_context
-        .as_ref()
-        .map(|capture| resolve_selected_preview_render_route_in_dir(base_dir, &paths, capture))
-        .unwrap_or(ResolvedPreviewRenderRoute {
-            route: PreviewRenderRoute::Darktable,
-            reason_code: "capture-context-unavailable",
-            fallback_reason: Some(
-                "speculative preview close가 capture context를 찾지 못해 approved baseline으로 내려갑니다."
-                    .into(),
-            ),
-        });
+    // Keep the local-renderer canary scoped to the truthful close hot path.
+    // Speculative first-visible work stays on the approved darktable baseline.
+    let selected_route = ResolvedPreviewRenderRoute {
+        route: PreviewRenderRoute::Darktable,
+        reason_code: "speculative-baseline",
+        fallback_reason: None,
+    };
 
     if !is_valid_render_preview_asset(source_asset_path) {
         return Err(RenderWorkerError {
@@ -554,117 +548,6 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
         ),
     })?;
     let _ = fs::remove_file(output_path);
-
-    if selected_route.route == PreviewRenderRoute::LocalRendererSidecar {
-        if let Some(capture_context) = capture_context.as_ref() {
-            match render_preview_via_local_renderer_sidecar_for_source_in_dir(
-                base_dir,
-                &paths,
-                capture_context,
-                &bundle,
-                source_asset_path,
-                PreviewRenderSourceKind::FastPreviewRaster,
-                output_path,
-            ) {
-                Ok(candidate) => {
-                    return Ok(PreparedPreviewRender {
-                        detail: with_speculative_route_metadata(
-                            format!(
-                                "presetId={};publishedVersion={};binary=local-renderer-sidecar;source=sidecar-candidate;elapsedMs={};detail={};route={};fidelityVerdict={};fidelityDetail={};retryOrdinal={}",
-                                bundle.preset_id,
-                                bundle.published_version,
-                                candidate.elapsed_ms,
-                                render_invocation_detail_with_source(
-                                    RenderIntent::Preview,
-                                    Some(PreviewRenderSourceKind::FastPreviewRaster),
-                                ),
-                                selected_route.route.as_reason_code(),
-                                &candidate.fidelity_verdict,
-                                diagnostic_detail_value(candidate.fidelity_detail.as_deref()),
-                                candidate.retry_ordinal
-                            ),
-                            &selected_route,
-                            None,
-                            None,
-                            PreviewRenderRoute::LocalRendererSidecar,
-                            "accepted",
-                            &candidate.fidelity_verdict,
-                            candidate.fidelity_detail.as_deref().unwrap_or("none"),
-                        ),
-                    });
-                }
-                Err(error) => {
-                    if should_force_darktable_for_session_after_local_renderer_error(&error) {
-                        if let Err(lock_error) =
-                            mark_session_locked_preview_route_forced_fallback_after_local_renderer_error(
-                                &paths, capture_context,
-                            )
-                        {
-                            log::warn!(
-                                "preview_route_forced_fallback_write_failed session={} capture_id={} request_id={} code={} detail={}",
-                                capture_context.session_id,
-                                capture_context.capture_id,
-                                capture_context.request_id,
-                                lock_error.reason_code,
-                                lock_error.operator_detail
-                            );
-                        }
-                    }
-                    let invocation = build_darktable_invocation_from_source(
-                        base_dir,
-                        &bundle.darktable_version,
-                        &bundle.xmp_template_path,
-                        source_asset_path,
-                        output_path,
-                        RenderIntent::Preview,
-                        PreviewRenderSourceKind::FastPreviewRaster,
-                    );
-                    let render_detail = render_invocation_detail_with_source(
-                        RenderIntent::Preview,
-                        Some(invocation.render_source_kind),
-                    );
-                    log::info!(
-                        "speculative_preview_render_started session={} capture_id={} request_id={} binary={} source={} detail={}",
-                        session_id,
-                        capture_id,
-                        request_id,
-                        invocation.binary,
-                        invocation.binary_source,
-                        render_detail
-                    );
-
-                    let render_started = Instant::now();
-                    let invocation_result =
-                        run_darktable_invocation(&invocation, RenderIntent::Preview)?;
-                    validate_render_output(output_path, RenderIntent::Preview)?;
-                    let render_elapsed_ms = render_started.elapsed().as_millis();
-
-                    return Ok(PreparedPreviewRender {
-                        detail: with_speculative_route_metadata(
-                            format!(
-                                "presetId={};publishedVersion={};binary={};source={};elapsedMs={};detail={};args={};status={}",
-                                bundle.preset_id,
-                                bundle.published_version,
-                                invocation.binary,
-                                invocation.binary_source,
-                                render_elapsed_ms,
-                                render_detail,
-                                invocation.arguments.join(" "),
-                                invocation_result.exit_code
-                            ),
-                            &selected_route,
-                            Some(error.reason_code),
-                            Some(error.operator_detail.as_str()),
-                            PreviewRenderRoute::Darktable,
-                            "fallback-accepted",
-                            DARKTABLE_FIDELITY_VERDICT,
-                            DARKTABLE_FIDELITY_DETAIL,
-                        ),
-                    });
-                }
-            }
-        }
-    }
 
     let invocation = build_darktable_invocation_from_source(
         base_dir,
@@ -1050,6 +933,19 @@ fn load_capture_for_session(
         .captures
         .into_iter()
         .find(|capture| capture.capture_id == capture_id)
+}
+
+fn load_truth_closed_capture_for_session(
+    paths: &SessionPaths,
+    capture_id: &str,
+) -> Option<SessionCaptureRecord> {
+    load_capture_for_session(paths, capture_id).filter(|capture| {
+        matches!(
+            capture.render_status.as_str(),
+            "previewReady" | "finalReady"
+        ) && capture.preview.asset_path.is_some()
+            && capture.preview.ready_at_ms.is_some()
+    })
 }
 
 fn detail_field_value(detail: &str, key: &str) -> Option<String> {
@@ -1536,6 +1432,23 @@ fn run_resident_preview_render_job(job: ResidentPreviewRenderJob) {
             let _ = fs::write(&job.detail_path, prepared_render.detail);
         }
         Err(error) => {
+            let paths = SessionPaths::new(&job.base_dir, &job.session_id);
+            if load_truth_closed_capture_for_session(&paths, &job.capture_id).is_some() {
+                log::info!(
+                    "resident_first_visible_render_superseded session={} capture_id={} request_id={} reason_code={}",
+                    job.session_id,
+                    job.capture_id,
+                    job.request_id,
+                    error.reason_code
+                );
+                let _ = fs::remove_file(&job.output_path);
+                let _ = fs::remove_file(&job.detail_path);
+                if let Some(source_cleanup_path) = job.source_cleanup_path.as_ref() {
+                    let _ = fs::remove_file(source_cleanup_path);
+                }
+                let _ = fs::remove_file(&job.lock_path);
+                return;
+            }
             log::warn!(
                 "resident_first_visible_render_failed session={} capture_id={} request_id={} reason_code={} detail={}",
                 job.session_id,
@@ -3275,6 +3188,9 @@ fn sanitize_process_output(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::session_manifest::{
+        SessionCustomer, SessionLifecycle, SESSION_MANIFEST_SCHEMA_VERSION,
+    };
 
     static RESIDENT_PREVIEW_WORKER_TEST_MUTEX: LazyLock<Mutex<()>> =
         LazyLock::new(|| Mutex::new(()));
@@ -3381,11 +3297,104 @@ mod tests {
                 preview_visible_at_ms: None,
                 fast_preview_visible_at_ms: None,
                 xmp_preview_ready_at_ms: None,
+                preset_applied_delta_ms: None,
                 capture_budget_ms: 1_000,
                 preview_budget_ms: 5_000,
                 preview_budget_state: "pending".into(),
             },
         }
+    }
+
+    fn write_test_manifest(temp_dir: &Path, session_id: &str, capture: SessionCaptureRecord) {
+        let paths = SessionPaths::new(temp_dir, session_id);
+        fs::create_dir_all(&paths.session_root).expect("session root should exist");
+        crate::session::session_repository::write_session_manifest(
+            &paths.manifest_path,
+            &SessionManifest {
+                schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+                session_id: session_id.into(),
+                booth_alias: "Kim 4821".into(),
+                customer: SessionCustomer {
+                    name: "Kim".into(),
+                    phone_last_four: "4821".into(),
+                },
+                created_at: "2026-04-07T00:00:00Z".into(),
+                updated_at: "2026-04-07T00:00:00Z".into(),
+                lifecycle: SessionLifecycle {
+                    status: "active".into(),
+                    stage: "capture-ready".into(),
+                },
+                catalog_revision: None,
+                catalog_snapshot: None,
+                active_preset: None,
+                active_preset_id: Some("preset_test".into()),
+                active_preset_display_name: Some("Test".into()),
+                timing: None,
+                captures: vec![capture],
+                post_end: None,
+            },
+        )
+        .expect("manifest should write");
+    }
+
+    #[test]
+    fn resident_preview_worker_suppresses_stale_failure_after_truth_close() {
+        let _guard = ResidentPreviewWorkerTestGuard::new(true, 0);
+        let temp_dir = unique_temp_dir("resident-preview-superseded");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        let mut capture = test_capture_record(
+            &temp_dir,
+            session_id,
+            "Kim 4821",
+            "capture_test",
+            "request_test",
+            "preset_test",
+            "2026.03.31",
+        );
+        capture.render_status = "previewReady".into();
+        capture.preview.asset_path = Some(
+            paths
+                .renders_previews_dir
+                .join("capture_test.jpg")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        capture.preview.ready_at_ms = Some(2_000);
+        capture.timing.preview_visible_at_ms = Some(2_000);
+        capture.timing.xmp_preview_ready_at_ms = Some(2_000);
+
+        write_test_manifest(&temp_dir, session_id, capture);
+        fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics dir should exist");
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+        fs::write(
+            paths.renders_previews_dir.join("capture_test.jpg"),
+            [0xFF, 0xD8, 0xFF, 0xD9],
+        )
+        .expect("canonical preview should exist");
+
+        run_resident_preview_render_job(ResidentPreviewRenderJob {
+            base_dir: temp_dir.clone(),
+            session_id: session_id.into(),
+            request_id: "request_test".into(),
+            capture_id: "capture_test".into(),
+            preset_id: "preset_test".into(),
+            preset_version: "2026.03.31".into(),
+            source_asset_path: temp_dir.join("missing-source.jpg"),
+            source_cleanup_path: None,
+            output_path: temp_dir.join("speculative-output.jpg"),
+            detail_path: temp_dir.join("speculative-output.detail"),
+            lock_path: temp_dir.join("speculative-output.lock"),
+        });
+
+        let timing_events =
+            fs::read_to_string(paths.diagnostics_dir.join("timing-events.log")).unwrap_or_default();
+        assert!(
+            !timing_events.contains("event=preview-render-failed"),
+            "truth-closed capture should not emit a stale preview failure"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -3937,6 +3946,7 @@ mod tests {
                     preview_visible_at_ms: None,
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
+                    preset_applied_delta_ms: None,
                     capture_budget_ms: 1000,
                     preview_budget_ms: 5000,
                     preview_budget_state: "pending".into(),
@@ -4015,6 +4025,7 @@ mod tests {
                     preview_visible_at_ms: None,
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
+                    preset_applied_delta_ms: None,
                     capture_budget_ms: 1000,
                     preview_budget_ms: 5000,
                     preview_budget_state: "pending".into(),
@@ -4122,6 +4133,7 @@ mod tests {
                     preview_visible_at_ms: None,
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
+                    preset_applied_delta_ms: None,
                     capture_budget_ms: 1000,
                     preview_budget_ms: 5000,
                     preview_budget_state: "pending".into(),
@@ -4207,6 +4219,7 @@ mod tests {
                     preview_visible_at_ms: None,
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
+                    preset_applied_delta_ms: None,
                     capture_budget_ms: 1000,
                     preview_budget_ms: 5000,
                     preview_budget_state: "pending".into(),
@@ -4344,11 +4357,11 @@ mod tests {
     fn fast_preview_raster_invocation_restores_a_sharper_than_legacy_128_cap() {
         assert!(
             FAST_PREVIEW_RENDER_MAX_WIDTH_PX >= 256,
-            "fast-preview truthful close should stay sharp enough for the booth rail"
+            "fast-preview truthful close should stay at the restored 256px booth-safe floor"
         );
         assert!(
             FAST_PREVIEW_RENDER_MAX_HEIGHT_PX >= 256,
-            "fast-preview truthful close should stay sharp enough for the booth rail"
+            "fast-preview truthful close should stay at the restored 256px booth-safe floor"
         );
     }
 

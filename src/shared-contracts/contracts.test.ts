@@ -1281,6 +1281,7 @@ describe('shared contracts baseline', () => {
         previewVisibleAtMs: null,
         fastPreviewVisibleAtMs: 180,
         xmpPreviewReadyAtMs: null,
+        presetAppliedDeltaMs: null,
         captureBudgetMs: 1000,
         previewBudgetMs: 5000,
         previewBudgetState: 'pending',
@@ -1291,6 +1292,7 @@ describe('shared contracts baseline', () => {
     expect(capture.preview.readyAtMs).toBeNull()
     expect(capture.timing.fastPreviewVisibleAtMs).toBe(180)
     expect(capture.timing.xmpPreviewReadyAtMs).toBeNull()
+    expect(capture.timing.presetAppliedDeltaMs).toBeNull()
   })
 
   it('accepts live capture truth timestamps that use an explicit UTC offset', () => {

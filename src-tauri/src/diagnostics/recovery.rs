@@ -7,7 +7,10 @@ use std::{
 use crate::{
     capture::{
         ingest_pipeline::complete_preview_render_in_dir,
-        normalized_state::get_capture_readiness_in_dir,
+        normalized_state::{
+            clear_capture_block_state_in_dir, get_capture_readiness_in_dir,
+            retry_capture_blocked_session_in_dir,
+        },
     },
     contracts::dto::{
         validate_operator_recovery_action_input, CapabilitySnapshotDto, CaptureReadinessInputDto,
@@ -22,8 +25,9 @@ use crate::{
     handoff::sync_post_end_state_in_dir,
     session::{
         session_manifest::{
-            current_timestamp, rfc3339_to_unix_seconds, unix_seconds_to_rfc3339, SessionManifest,
-            SessionPostEnd, SESSION_POST_END_PHONE_REQUIRED, WARNING_LEAD_SECONDS,
+            compute_preset_applied_delta_ms, current_timestamp, rfc3339_to_unix_seconds,
+            unix_seconds_to_rfc3339, SessionManifest, SessionPostEnd,
+            SESSION_POST_END_PHONE_REQUIRED, WARNING_LEAD_SECONDS,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -168,11 +172,11 @@ fn execute_retry(
             )
         }
         Some("capture") => {
-            let _ = read_live_manifest(base_dir, &input.session_id)?;
+            let recovered = retry_capture_blocked_session_in_dir(base_dir, &input.session_id)?;
             let refreshed_summary =
                 load_operator_recovery_summary_in_dir(base_dir, capability_snapshot)?;
 
-            if refreshed_summary.blocked_category.is_none() {
+            if recovered && refreshed_summary.blocked_category.is_none() {
                 return build_applied_result(
                     base_dir,
                     input.session_id,
@@ -228,6 +232,7 @@ fn execute_boundary_restart(
             manifest.lifecycle.stage = derive_active_lifecycle_stage(&manifest);
             manifest.updated_at = current_timestamp(SystemTime::now())?;
             write_session_manifest(&paths.manifest_path, &manifest)?;
+            let _ = clear_capture_block_state_in_dir(base_dir, &input.session_id);
 
             let refreshed_summary =
                 load_operator_recovery_summary_in_dir(base_dir, capability_snapshot)?;
@@ -263,6 +268,8 @@ fn execute_boundary_restart(
             latest_capture.timing.preview_visible_at_ms = None;
             latest_capture.timing.fast_preview_visible_at_ms = None;
             latest_capture.timing.xmp_preview_ready_at_ms = None;
+            latest_capture.timing.preset_applied_delta_ms =
+                compute_preset_applied_delta_ms(None, None);
             latest_capture.timing.preview_budget_state = "pending".into();
             manifest.post_end = None;
             manifest.lifecycle.stage = "preview-waiting".into();

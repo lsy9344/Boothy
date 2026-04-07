@@ -1199,3 +1199,339 @@ The same session also proved:
 - but later captures should now have a realistic chance to move:
   - from `3.4s ~ 3.8s` original-to-preset delta
   - toward the `<= 2.5s` target
+
+## 2026-04-06 twelfth follow-up: latest 4-shot run stayed in the improved band, but the next speed win must preserve preview quality and fix the sidecar bridge instead
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3b2849985f598`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406070254402_1f9eb3e1eb`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3147ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `11579ms`
+   - `original visible -> preset-applied visible`: `8432ms`
+   - first capture still paid:
+     - sidecar selection
+     - `candidate output missing after darktable bridge`
+     - then darktable fallback close
+2. `capture_20260406070309170_85b205d267`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `5055ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `8589ms`
+   - `original visible -> preset-applied visible`: `3534ms`
+3. `capture_20260406070317587_e0e6ae607b`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2968ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6578ms`
+   - `original visible -> preset-applied visible`: `3610ms`
+4. `capture_20260406070326551_4fd015f407`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3625ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7396ms`
+   - `original visible -> preset-applied visible`: `3771ms`
+
+### Product reading
+
+- the latest run confirms the booth is still well out of the older `11s` regression class
+- later captures remain much faster overall and are now consistently landing in the `3.5s ~ 3.8s` original-to-preset delta band
+- that is materially better than before, but it still misses the product target:
+  - `original visible -> preset-applied visible <= 2500ms`
+- preview quality must not be degraded any further while chasing that target
+
+### New root-cause reading
+
+- the first-capture problem is still the sidecar bridge bug
+- latest diagnostics also show the sidecar did not simply fail to render; it wrote candidate files into malformed local paths under the repo instead of the intended session folder
+- product interpretation:
+  - the current path still leaves sidecar wins on the table without buying the customer any quality improvement
+  - the next speed step should recover those canary wins by fixing the darktable bridge path handling, not by shrinking the visible preview artifact
+
+### Change introduced after this review
+
+- the temporary `256 -> 224` cap reduction idea was rejected and rolled back
+- preview quality is now an explicit product guardrail for this line of work
+- the local renderer sidecar now normalizes Windows paths the same way as the host darktable lane before invoking the bridge
+- intended product outcome:
+  - recover first-capture canary closes that were being lost to misplaced candidate files
+  - keep working toward the `<= 2.5s` target without any further quality loss
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_restores_a_sharper_than_legacy_128_cap -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml real_local_renderer_sidecar_normalizes_windows_paths_for_darktable_bridge -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next approved hardware run should still preserve the same customer flow:
+  - original image first
+  - truthful preset-applied replacement second
+- the first capture should stop losing canary wins just because the candidate landed in the wrong folder
+- later-capture improvement still has to come from a different path than quality reduction
+
+## 2026-04-06 thirteenth follow-up: the fixed bridge let the first two closes land through the local renderer again, but a speculative miss still quarantined the rest of the session
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3b3e1bd199650`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406072747273_a285366fbc`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3043ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7351ms`
+   - `original visible -> preset-applied visible`: `4308ms`
+   - local renderer sidecar was the accepted close owner again:
+     - `route=local-renderer-sidecar`
+     - `result=accepted`
+2. `capture_20260406072757646_f0447a94aa`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3262ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7501ms`
+   - `original visible -> preset-applied visible`: `4239ms`
+   - local renderer sidecar was again accepted as close owner
+3. `capture_20260406072807509_7591be58b1`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3022ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7029ms`
+   - `original visible -> preset-applied visible`: `4007ms`
+   - the speculative local-renderer attempt failed with:
+     - `candidate output missing after darktable bridge`
+   - that speculative miss then fell back to darktable
+4. `capture_20260406072818620_b117fee0d8`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `4017ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7625ms`
+   - `original visible -> preset-applied visible`: `3608ms`
+   - the session had already dropped back to the baseline close lane
+
+### Product reading
+
+- the bridge/path fix did recover a real product win:
+  - the first two captures no longer lost the local renderer canary at the boundary
+- but the customer-facing replacement is still too slow:
+  - `3608ms ~ 4308ms`
+  - target remains `<= 2500ms`
+- preview quality still stays out of scope for further cuts
+
+### New root-cause reading
+
+- the latest miss was not "sidecar never works"
+- it was "a speculative sidecar miss can still mark the whole session unhealthy"
+- product interpretation:
+  - one background miss should not erase the chance for later captures to use the faster close lane
+  - that quarantine behavior was directly hurting the later-capture preset-applied delay
+
+### Change introduced after this review
+
+- speculative local-renderer misses no longer force the entire session onto darktable
+- only truthful close-path local-renderer failures can still trigger the session health fallback
+- intended product outcome:
+  - later captures keep retrying the canary lane instead of being pushed down to baseline after one speculative miss
+  - preserve the recovered canary benefit while still honoring the `<= 2500ms` target and the no-quality-loss guardrail
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness speculative_local_renderer_failure_does_not_force_darktable_for_the_rest_of_the_session -- --test-threads=1`
+  - passed
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness local_renderer_failure_forces_darktable_for_the_rest_of_the_session -- --test-threads=1`
+  - passed
+
+### Next expectation
+
+- the next hardware run should keep the recovered local-renderer close path available deeper into the session
+- if the booth still sits in the `3.6s ~ 4.3s` band after that, the next target should move from route survival to the remaining render body itself
+
+## 2026-04-06 fourteenth follow-up: latest 3-shot run kept the first close on the local renderer, but later captures still fell back while late speculative outputs appeared after the truthful close
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3b4d9e4b386c8`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260406074534310_544b548dd2`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2963ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7092ms`
+   - `original visible -> preset-applied visible`: `4129ms`
+   - truthful close owner:
+     - `route=local-renderer-sidecar`
+     - `result=accepted`
+2. `capture_20260406074544668_334b2c232d`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3028ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6959ms`
+   - `original visible -> preset-applied visible`: `3931ms`
+   - the local-renderer response still said:
+     - `candidate output missing after darktable bridge`
+   - but a speculative candidate and detail file appeared in the session preview folder a few seconds later:
+     - `capture_20260406074544668_334b2c232d.preview-speculative.jpg`
+3. `capture_20260406074554935_9ade6c8d9a`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3608ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7542ms`
+   - `original visible -> preset-applied visible`: `3934ms`
+   - the local-renderer response again said:
+     - `candidate output missing after darktable bridge`
+   - the preview folder then showed:
+     - a late `preview-speculative.jpg`
+     - and the request-scoped speculative lock still present at the time of inspection
+
+### Product reading
+
+- the booth kept the recovered first-capture canary win
+- but the customer-facing replacement is still stalled around:
+  - `3931ms ~ 4129ms`
+- this is still materially above the product target:
+  - `original visible -> preset-applied visible <= 2500ms`
+
+### New root-cause reading
+
+- the dominant latest pattern is not a pure path-loss failure anymore
+- later captures are still reporting `candidate output missing after darktable bridge`, while the corresponding speculative output shows up in the session folder after the truthful close has already fallen back
+- product interpretation:
+  - the booth is still losing time to a "late speculative completion after fallback already won" pattern
+  - so the remaining gap is now strongly tied to speculative close timing/ownership, not to further preview quality tradeoffs
+
+### Change introduced after this review
+
+- none
+- this turn only records the latest hardware evidence in the history log
+
+### Next expectation
+
+- the next speed pass should target the late speculative completion gap directly
+- the customer metric to watch remains:
+  - `original visible -> preset-applied visible`
+
+## 2026-04-06 direction-change note: stop treating the current speculative/local-renderer tuning path as the primary plan
+
+### Decision
+
+- Boothy will no longer treat incremental tuning of the current speculative close plus local-renderer routing path as the main route to the product target.
+- From this point, that line of work should be treated as investigated enough for decision-making, not as the primary remaining optimization track.
+
+### Why this decision is now explicit
+
+- the product target is still:
+  - `original visible -> preset-applied visible <= 2500ms`
+- the latest measured hardware band is still roughly:
+  - `3931ms ~ 4129ms`
+- recent fixes did recover real wins:
+  - first-capture canary recovery
+  - path publication recovery
+  - session-wide double-render regressions
+- but the remaining gap now clusters around:
+  - late speculative completion after fallback already won
+  - truthful close ownership/runtime structure
+  - render-body cost that is not shrinking enough through tuning alone
+
+### Product conclusion
+
+- this should no longer be framed as "keep polishing the current path until it reaches the goal"
+- it should now be framed as:
+  - the current path was a necessary investigation stage
+  - it produced useful evidence
+  - but it did not prove capable enough to confidently reach the `<= 2500ms` goal through further micro-tuning alone
+
+### Forward direction
+
+- the next primary plan should move to architecture change evaluation
+- the leading categories remain:
+  - `lighter truthful renderer`
+  - `different close topology`
+- preview quality remains a fixed guardrail during that transition:
+  - recent-session preview quality must not be degraded further
+
+## 2026-04-07 follow-up: latest 3-shot run pushed later-capture delta back above `4s`, and the logs showed speculative work was still inheriting the local-renderer canary outside the bounded prototype scope
+
+### Latest measured source
+
+- session path:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a3fcd2473e8d84`
+- preset:
+  - `Test Look / 2026.03.31`
+
+### What the latest booth evidence showed
+
+Completed captures:
+
+1. `capture_20260407054425657_ba6c638c7a`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3768ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7848ms`
+   - `original visible -> preset-applied visible`: `4080ms`
+   - first capture still logged:
+     - `speculative-preview-skipped`
+     - `reason=first-capture-cold-start`
+2. `capture_20260407054433656_398881095b`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `2870ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `6871ms`
+   - `original visible -> preset-applied visible`: `4001ms`
+3. `capture_20260407054441582_6c59db074b`
+   - `capture acknowledged -> fastPreviewVisibleAtMs`: `3044ms`
+   - `capture acknowledged -> previewVisibleAtMs`: `7286ms`
+   - `original visible -> preset-applied visible`: `4242ms`
+
+The same session also proved:
+
+- route policy lock still canaried:
+  - `preset_test-look / 2026.03.31 -> local-renderer-sidecar`
+- `camera-thumbnail` still failed first on all 3 cuts
+  - `detailCode=fast-thumbnail-download-failed`
+- helper still promoted `windows-shell-thumbnail` as the fast same-capture source
+- late speculative detail files still recorded:
+  - `selectedRoute=local-renderer-sidecar`
+  - `routeFallbackReasonCode=local-renderer-sidecar-error`
+  - `closeOwnerRoute=darktable`
+
+### Product reading
+
+- later captures moved back into roughly the `4.0s ~ 4.2s` original-to-preset band
+- that is still materially above the product target:
+  - `original visible -> preset-applied visible <= 2500ms`
+- the customer-facing truthful close in this run still came from the approved darktable baseline
+- the local-renderer activity that survived in the latest evidence was speculative-path churn, not a clean truthful-close win
+
+### New root-cause reading
+
+- the latest 2026-04-07 prototype scope said:
+  - `latest large preview의 preset-applied close만 local dedicated renderer candidate로 시험`
+- but the runtime still allowed speculative preview render work to inherit the same local-renderer canary policy
+- that mismatch kept producing:
+  - local-renderer request/response artifacts on the speculative lane
+  - `candidate output missing after darktable bridge`
+  - late speculative darktable fallback detail after the primary close had already finished
+- product interpretation:
+  - the booth was still spending route complexity on a lane that the bounded prototype had explicitly taken out of scope
+  - this did not buy a faster truthful close
+  - it mostly added route noise and made the latest evidence package harder to read
+
+### Change introduced after this review
+
+- speculative preview render no longer uses the local-renderer canary route
+- speculative first-visible work now stays on the approved darktable baseline
+- the local-renderer canary remains reserved for the truthful close hot path only
+- regression checks added:
+  - `speculative_preview_render_stays_on_darktable_even_when_truthful_close_canary_matches`
+  - `speculative_preview_baseline_does_not_force_darktable_for_later_truthful_close_canary`
+  - `local_renderer_truthful_close_reuses_an_existing_canonical_preview_slot`
+
+### Next expectation
+
+- the next hardware run should stop producing speculative local-renderer request/response artifacts
+- speculative detail should stop recording:
+  - `routeFallbackReasonCode=local-renderer-sidecar-error`
+- same-session evidence should become easier to read:
+  - local-renderer route evidence only where truthful close actually owns or loses the close
+- this change alone does not promise a speed win
+- its purpose is to remove scope drift and route noise so the next truthful-close comparison is honest

@@ -23,9 +23,10 @@ use crate::{
     },
     session::{
         session_manifest::{
-            current_timestamp, ActivePresetBinding, CaptureTimingMetrics, FinalCaptureAsset,
-            PreviewCaptureAsset, RawCaptureAsset, SessionCaptureRecord, SessionManifest,
-            CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS, SESSION_CAPTURE_SCHEMA_VERSION,
+            compute_preset_applied_delta_ms, current_timestamp, ActivePresetBinding,
+            CaptureTimingMetrics, FinalCaptureAsset, PreviewCaptureAsset, RawCaptureAsset,
+            SessionCaptureRecord, SessionManifest, CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS,
+            SESSION_CAPTURE_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -74,13 +75,12 @@ fn should_start_speculative_preview_render(
     session_id: &str,
     current_request_id: &str,
     manifest: &SessionManifest,
+    has_first_visible_asset: bool,
 ) -> bool {
-    // The first capture of a real booth session is the cold-start path most likely
-    // to miss the resident worker join window and then pay for a duplicate render.
-    // Keep tests on the existing speculative path, but in production prefer the
-    // single truthful close for the very first capture until later captures can
-    // benefit from a warmed lane.
-    if cfg!(test) || !manifest.captures.is_empty() {
+    // The first capture can still use the speculative lane safely once a
+    // same-capture source is already available. Keep the direct-only cold-start
+    // path for cases where no first-visible asset exists yet.
+    if !manifest.captures.is_empty() || has_first_visible_asset {
         return true;
     }
 
@@ -93,24 +93,25 @@ fn should_start_speculative_preview_render(
         .unwrap_or(false)
 }
 
-fn was_first_capture_cold_start_recorded(
+fn resolve_superseded_preview_capture_in_dir(
     paths: &SessionPaths,
     capture_id: &str,
-    request_id: &str,
-) -> bool {
-    let log_path = paths.diagnostics_dir.join("timing-events.log");
-    let Ok(contents) = fs::read_to_string(log_path) else {
-        return false;
-    };
-    let capture_field = format!("\tcapture={capture_id}\t");
-    let request_field = format!("\trequest={request_id}\t");
-
-    contents.lines().any(|line| {
-        line.contains(&capture_field)
-            && line.contains(&request_field)
-            && line.contains("\tevent=speculative-preview-skipped\t")
-            && line.contains(FIRST_CAPTURE_COLD_START_REASON_DETAIL)
-    })
+) -> Option<SessionCaptureRecord> {
+    read_session_manifest(&paths.manifest_path)
+        .ok()
+        .and_then(|manifest| {
+            manifest
+                .captures
+                .into_iter()
+                .find(|capture| capture.capture_id == capture_id)
+        })
+        .filter(|capture| {
+            matches!(
+                capture.render_status.as_str(),
+                "previewReady" | "finalReady"
+            ) && capture.preview.asset_path.is_some()
+                && capture.preview.ready_at_ms.is_some()
+        })
 }
 
 pub fn persist_capture_in_dir(
@@ -140,13 +141,6 @@ pub fn persist_capture_in_dir(
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
-    let allow_speculative_preview_render = should_start_speculative_preview_render(
-        base_dir,
-        &input.session_id,
-        &request_id,
-        &manifest,
-    );
-
     let mut capture = build_saved_capture_record(
         &manifest,
         &active_preset,
@@ -169,6 +163,10 @@ pub fn persist_capture_in_dir(
     if let Some(ref promoted_fast_preview) = promoted_fast_preview {
         capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
         capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
+        capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+            capture.timing.fast_preview_visible_at_ms,
+            capture.timing.preview_visible_at_ms,
+        );
     } else if let Some(seed_result) =
         seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
     {
@@ -176,6 +174,10 @@ pub fn persist_capture_in_dir(
         // preview file already exists on disk, keep the fast-path alive.
         capture.preview.asset_path = Some(seed_result.asset_path);
         capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
+        capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+            capture.timing.fast_preview_visible_at_ms,
+            capture.timing.preview_visible_at_ms,
+        );
     }
 
     let fast_preview_update =
@@ -190,6 +192,13 @@ pub fn persist_capture_in_dir(
                     .and_then(|preview| preview.kind.clone()),
                 visible_at_ms: promoted.visible_at_ms.unwrap_or(persisted_at_ms),
             });
+    let allow_speculative_preview_render = should_start_speculative_preview_render(
+        base_dir,
+        &input.session_id,
+        &capture.request_id,
+        &manifest,
+        capture.preview.asset_path.is_some(),
+    );
 
     manifest.captures.push(capture.clone());
     manifest.updated_at = current_timestamp(SystemTime::now())?;
@@ -392,24 +401,10 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
                 let _ = fs::write(&speculative_detail_path, prepared_render.detail);
             }
             Err(error) => {
-                let capture_already_closed =
-                    read_session_manifest(&SessionPaths::new(&base_dir, &session_id).manifest_path)
-                        .ok()
-                        .and_then(|manifest| {
-                            manifest
-                                .captures
-                                .into_iter()
-                                .find(|capture| capture.capture_id == capture_id)
-                        })
-                        .map(|capture| {
-                            matches!(
-                                capture.render_status.as_str(),
-                                "previewReady" | "finalReady"
-                            ) && capture.preview.ready_at_ms.is_some()
-                        })
-                        .unwrap_or(false);
-
-                if capture_already_closed && error.reason_code == "render-output-missing" {
+                let paths = SessionPaths::new(&base_dir, &session_id);
+                if error.reason_code == "render-output-missing"
+                    && resolve_superseded_preview_capture_in_dir(&paths, &capture_id).is_some()
+                {
                     log::info!(
                         "speculative_preview_render_superseded session={} capture_id={} request_id={} reason_code={}",
                         session_id,
@@ -510,13 +505,6 @@ pub fn complete_preview_render_in_dir(
                 capture.active_preset_id.as_deref(),
                 capture.preview.asset_path.as_deref(),
             ) {
-                if was_first_capture_cold_start_recorded(
-                    &paths,
-                    &capture.capture_id,
-                    &capture.request_id,
-                ) {
-                    break capture;
-                }
                 start_speculative_preview_render_in_dir(
                     base_dir,
                     session_id,
@@ -602,6 +590,20 @@ pub fn complete_preview_render_in_dir(
     ) {
         Ok(value) => value,
         Err(error) => {
+            if error.reason_code == "render-output-missing" {
+                if let Some(superseded_capture) =
+                    resolve_superseded_preview_capture_in_dir(&paths, capture_id)
+                {
+                    log::info!(
+                        "capture_preview_render_superseded session={} capture_id={} request_id={} reason_code={}",
+                        session_id,
+                        capture_id,
+                        capture_snapshot.request_id,
+                        error.reason_code
+                    );
+                    return Ok(superseded_capture);
+                }
+            }
             log::warn!(
                 "capture_preview_render_failed session={} capture_id={} reason_code={} detail={}",
                 session_id,
@@ -881,6 +883,10 @@ fn try_complete_speculative_preview_render_in_dir(
                     .fast_preview_visible_at_ms
                     .unwrap_or(preview_visible_at_ms),
             );
+            capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+                capture.timing.fast_preview_visible_at_ms,
+                capture.timing.preview_visible_at_ms,
+            );
             capture.timing.preview_budget_state = budget_state.into();
 
             capture.clone()
@@ -981,6 +987,10 @@ fn finish_preview_render_in_dir(
                 .xmp_preview_ready_at_ms
                 .or(capture.preview.ready_at_ms);
         }
+        capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+            capture.timing.fast_preview_visible_at_ms,
+            capture.timing.preview_visible_at_ms,
+        );
 
         (capture.clone(), first_truth_close)
     };
@@ -1017,6 +1027,10 @@ fn sync_helper_fast_preview_before_render(
             capture.preview.asset_path = Some(promoted_fast_preview.asset_path);
             if capture.timing.fast_preview_visible_at_ms.is_none() {
                 capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
+                capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+                    capture.timing.fast_preview_visible_at_ms,
+                    capture.timing.preview_visible_at_ms,
+                );
             }
             manifest.updated_at = current_timestamp(SystemTime::now())?;
             write_session_manifest(&paths.manifest_path, manifest)?;
@@ -1244,6 +1258,7 @@ fn build_saved_capture_record(
             preview_visible_at_ms: None,
             fast_preview_visible_at_ms: None,
             xmp_preview_ready_at_ms: None,
+            preset_applied_delta_ms: None,
             capture_budget_ms: CAPTURE_BUDGET_MS,
             preview_budget_ms: PREVIEW_BUDGET_MS,
             preview_budget_state: "pending".into(),
@@ -1749,10 +1764,25 @@ fn append_capture_preview_ready_event(
     preview_ready_at_ms: u64,
 ) {
     let detail = format!(
-        "elapsedMs={};budgetState={};renderStatus={}",
+        "elapsedMs={};budgetState={};renderStatus={};fastPreviewVisibleAtMs={};previewVisibleAtMs={};presetAppliedDeltaMs={}",
         preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms),
         capture.timing.preview_budget_state,
-        capture.render_status
+        capture.render_status,
+        capture
+            .timing
+            .fast_preview_visible_at_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".into()),
+        capture
+            .timing
+            .preview_visible_at_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".into()),
+        capture
+            .timing
+            .preset_applied_delta_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".into())
     );
     let _ = append_session_timing_event_in_dir(
         base_dir,
@@ -1776,6 +1806,9 @@ fn system_time_to_ms(value: SystemTime) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::session_manifest::{
+        SessionCustomer, SessionLifecycle, SESSION_MANIFEST_SCHEMA_VERSION,
+    };
 
     static SPECULATIVE_WAIT_TEST_MUTEX: std::sync::LazyLock<std::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
@@ -1788,6 +1821,84 @@ mod tests {
                 .expect("system clock should be available")
                 .as_nanos()
         ))
+    }
+
+    fn sample_capture_with_preview_close(
+        session_id: &str,
+        render_status: &str,
+        preview_asset_path: Option<&str>,
+        preview_ready_at_ms: Option<u64>,
+    ) -> SessionCaptureRecord {
+        SessionCaptureRecord {
+            schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
+            session_id: session_id.into(),
+            booth_alias: "gangnam-01".into(),
+            active_preset_id: Some("preset_daylight".into()),
+            active_preset_version: "2026.03.27".into(),
+            active_preset_display_name: Some("Daylight".into()),
+            capture_id: "capture_test".into(),
+            request_id: "request_test".into(),
+            raw: RawCaptureAsset {
+                asset_path: "captures/originals/capture_test.CR2".into(),
+                persisted_at_ms: 100,
+            },
+            preview: PreviewCaptureAsset {
+                asset_path: preview_asset_path.map(str::to_string),
+                enqueued_at_ms: Some(100),
+                ready_at_ms: preview_ready_at_ms,
+            },
+            final_asset: FinalCaptureAsset {
+                asset_path: None,
+                ready_at_ms: None,
+            },
+            render_status: render_status.into(),
+            post_end_state: "activeSession".into(),
+            timing: CaptureTimingMetrics {
+                capture_acknowledged_at_ms: 50,
+                preview_visible_at_ms: preview_ready_at_ms,
+                fast_preview_visible_at_ms: Some(90),
+                xmp_preview_ready_at_ms: preview_ready_at_ms,
+                preset_applied_delta_ms: compute_preset_applied_delta_ms(
+                    Some(90),
+                    preview_ready_at_ms,
+                ),
+                capture_budget_ms: CAPTURE_BUDGET_MS,
+                preview_budget_ms: PREVIEW_BUDGET_MS,
+                preview_budget_state: "withinBudget".into(),
+            },
+        }
+    }
+
+    fn sample_manifest_with_capture(
+        session_id: &str,
+        capture: SessionCaptureRecord,
+    ) -> SessionManifest {
+        SessionManifest {
+            schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+            session_id: session_id.into(),
+            booth_alias: "gangnam-01".into(),
+            customer: SessionCustomer {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            created_at: "2026-04-07T00:00:00Z".into(),
+            updated_at: "2026-04-07T00:00:00Z".into(),
+            lifecycle: SessionLifecycle {
+                status: "active".into(),
+                stage: "capture-ready".into(),
+            },
+            catalog_revision: None,
+            catalog_snapshot: None,
+            active_preset: Some(ActivePresetBinding {
+                preset_id: "preset_daylight".into(),
+                published_version: "2026.03.27".into(),
+            }),
+            active_preset_id: Some("preset_daylight".into()),
+            active_preset_display_name: Some("Daylight".into()),
+            timing: None,
+            captures: vec![capture],
+            post_end: None,
+        }
     }
 
     #[test]
@@ -1944,6 +2055,64 @@ mod tests {
         assert_eq!(
             prepared.cleanup_path, None,
             "reused canonical preview should not be deleted during speculative cleanup"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn superseded_preview_capture_resolves_after_truth_close() {
+        let base_dir = unique_temp_dir("superseded-preview-ready");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture = sample_capture_with_preview_close(
+            session_id,
+            "previewReady",
+            Some("renders/previews/capture_test.jpg"),
+            Some(123),
+        );
+
+        fs::create_dir_all(&paths.session_root).expect("session root should exist");
+        write_session_manifest(
+            &paths.manifest_path,
+            &sample_manifest_with_capture(session_id, capture),
+        )
+        .expect("manifest should write");
+
+        let superseded = resolve_superseded_preview_capture_in_dir(&paths, "capture_test");
+
+        assert!(
+            superseded.is_some(),
+            "truth-closed preview should suppress stale failures"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn superseded_preview_capture_ignores_fast_preview_without_truth_close() {
+        let base_dir = unique_temp_dir("superseded-preview-pending");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture = sample_capture_with_preview_close(
+            session_id,
+            "previewWaiting",
+            Some("renders/previews/capture_test.jpg"),
+            None,
+        );
+
+        fs::create_dir_all(&paths.session_root).expect("session root should exist");
+        write_session_manifest(
+            &paths.manifest_path,
+            &sample_manifest_with_capture(session_id, capture),
+        )
+        .expect("manifest should write");
+
+        let superseded = resolve_superseded_preview_capture_in_dir(&paths, "capture_test");
+
+        assert!(
+            superseded.is_none(),
+            "fast preview alone should not hide a real preview render failure"
         );
 
         let _ = fs::remove_dir_all(base_dir);

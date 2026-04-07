@@ -148,11 +148,16 @@ pub fn request_capture(
                     let preview_elapsed_ms = preview_ready_at_ms
                         .saturating_sub(capture.timing.capture_acknowledged_at_ms);
                     log::info!(
-                        "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={}",
+                        "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={} preset_applied_delta_ms={}",
                         preview_session_id,
                         preview_capture_id,
                         preview_elapsed_ms,
-                        capture.timing.preview_budget_state
+                        capture.timing.preview_budget_state,
+                        capture
+                            .timing
+                            .preset_applied_delta_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "none".into())
                     );
                 } else {
                     let first_visible_at_ms = capture

@@ -223,9 +223,23 @@ pub struct CaptureTimingMetrics {
     pub fast_preview_visible_at_ms: Option<u64>,
     #[serde(default)]
     pub xmp_preview_ready_at_ms: Option<u64>,
+    #[serde(default)]
+    pub preset_applied_delta_ms: Option<u64>,
     pub capture_budget_ms: u64,
     pub preview_budget_ms: u64,
     pub preview_budget_state: String,
+}
+
+pub fn compute_preset_applied_delta_ms(
+    fast_preview_visible_at_ms: Option<u64>,
+    preview_visible_at_ms: Option<u64>,
+) -> Option<u64> {
+    match (fast_preview_visible_at_ms, preview_visible_at_ms) {
+        (Some(fast_preview_visible_at_ms), Some(preview_visible_at_ms)) => {
+            Some(preview_visible_at_ms.saturating_sub(fast_preview_visible_at_ms))
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

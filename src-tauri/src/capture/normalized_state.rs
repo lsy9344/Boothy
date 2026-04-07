@@ -1,9 +1,11 @@
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use serde::{Deserialize, Serialize};
 
 use crate::{
     capture::{
@@ -33,8 +35,9 @@ use crate::{
     render::{is_valid_render_preview_asset, schedule_preview_renderer_warmup_in_dir},
     session::{
         session_manifest::{
-            current_timestamp, rfc3339_to_unix_seconds, ActivePresetBinding, SessionCaptureRecord,
-            SessionManifest, SESSION_POST_END_COMPLETED, SESSION_POST_END_PHONE_REQUIRED,
+            compute_preset_applied_delta_ms, current_timestamp, rfc3339_to_unix_seconds,
+            ActivePresetBinding, SessionCaptureRecord, SessionManifest, SESSION_POST_END_COMPLETED,
+            SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -46,6 +49,8 @@ use crate::{
 };
 
 const CAMERA_HELPER_STATUS_MAX_AGE_SECONDS: u64 = 5;
+const CAPTURE_BLOCK_STATE_SCHEMA_VERSION: &str = "capture-block-state/v1";
+const CAPTURE_BLOCK_STATE_FILE_NAME: &str = "capture-block-state.json";
 static CAPTURE_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +65,15 @@ enum LiveCameraGate {
 struct ProjectedLiveCaptureTruth {
     dto: LiveCaptureTruthDto,
     gate: LiveCameraGate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureBlockStateRecord {
+    schema_version: String,
+    session_id: String,
+    blocked_at: String,
+    reason_code: String,
 }
 
 pub fn get_capture_readiness_in_dir(
@@ -243,7 +257,7 @@ where
             detail: Some(&file_arrived_detail),
         },
     );
-    let (manifest, capture, fast_preview_update) = persist_capture_in_dir(
+    let (manifest, capture, fast_preview_update) = match persist_capture_in_dir(
         base_dir,
         &input,
         round_trip.capture_id,
@@ -252,23 +266,26 @@ where
         round_trip.fast_preview,
         round_trip.capture_accepted_at_ms,
         round_trip.persisted_at_ms,
-    )
-    .map_err(|error| {
-        log::warn!(
-            "capture_persist_failed session={} request_id={} code={} message={}",
-            input.session_id,
-            request_id,
-            error.code,
-            error.message
-        );
+    ) {
+        Ok(result) => {
+            let _ = clear_capture_block_state_in_dir(base_dir, &input.session_id);
+            result
+        }
+        Err(error) => {
+            log::warn!(
+                "capture_persist_failed session={} request_id={} code={} message={}",
+                input.session_id,
+                request_id,
+                error.code,
+                error.message
+            );
 
-        HostErrorEnvelope::capture_not_ready(
-            "방금 사진 저장을 확인하지 못했어요. 가까운 직원에게 알려 주세요.",
-            CaptureReadinessDto::phone_required(input.session_id.clone())
-                .with_timing(manifest.timing.clone())
-                .with_live_capture_truth(project_live_capture_truth(base_dir, &manifest).dto),
-        )
-    })?;
+            return Err(HostErrorEnvelope::capture_not_ready(
+                "방금 사진 저장을 확인하지 못했어요. 가까운 직원에게 알려 주세요.",
+                build_capture_persist_failure_readiness(base_dir, &input.session_id),
+            ));
+        }
+    };
     if let Some(update) = fast_preview_update {
         let should_emit = early_fast_preview_update
             .as_ref()
@@ -369,6 +386,300 @@ fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static st
     }
 }
 
+fn helper_error_allows_session_recovery_after_ready(
+    message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
+) -> bool {
+    if is_retryable_capture_helper_error(message) {
+        return true;
+    }
+
+    matches!(
+        message.detail_code.as_str(),
+        "capture-download-timeout" | "capture-transfer-start-timeout"
+    )
+}
+
+fn sync_recoverable_render_failure_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<bool, HostErrorEnvelope> {
+    if !matches!(
+        manifest.lifecycle.stage.as_str(),
+        "phone-required" | "blocked"
+    ) {
+        return Ok(false);
+    }
+
+    if manifest.post_end.is_some() || timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended {
+        return Ok(false);
+    }
+
+    let Some(latest_capture) = manifest.captures.last() else {
+        return Ok(false);
+    };
+
+    if latest_capture.render_status != "renderFailed" {
+        return Ok(false);
+    }
+
+    let projected_live_capture_truth = project_live_capture_truth(base_dir, manifest);
+    if projected_live_capture_truth.dto.freshness != "fresh"
+        || projected_live_capture_truth.dto.session_match != "matched"
+        || projected_live_capture_truth.gate != LiveCameraGate::Ready
+    {
+        return Ok(false);
+    }
+
+    let Some(latest_helper_error) =
+        read_latest_helper_error_message(base_dir, &manifest.session_id)
+            .ok()
+            .flatten()
+    else {
+        return Ok(false);
+    };
+
+    if !helper_error_allows_session_recovery_after_ready(&latest_helper_error) {
+        return Ok(false);
+    }
+
+    match complete_preview_render_in_dir(base_dir, &manifest.session_id, &latest_capture.capture_id)
+    {
+        Ok(_) => {
+            log::info!(
+                "capture_render_recovered session={} capture_id={} recovery=preview-rerendered",
+                manifest.session_id,
+                latest_capture.capture_id
+            );
+            Ok(true)
+        }
+        Err(error) => {
+            log::warn!(
+                "capture_render_recovery_failed session={} capture_id={} code={} message={}",
+                manifest.session_id,
+                latest_capture.capture_id,
+                error.code,
+                error.message
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn sync_finished_speculative_preview_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<bool, HostErrorEnvelope> {
+    let Some(latest_capture) = manifest.captures.last() else {
+        return Ok(false);
+    };
+
+    if latest_capture.render_status != "previewWaiting"
+        || latest_capture.preview.ready_at_ms.is_some()
+        || latest_capture.preview.asset_path.is_none()
+    {
+        return Ok(false);
+    }
+
+    match sync_completed_speculative_preview_in_dir(
+        base_dir,
+        &manifest.session_id,
+        &latest_capture.capture_id,
+    )? {
+        Some(capture)
+            if matches!(
+                capture.render_status.as_str(),
+                "previewReady" | "finalReady"
+            ) && capture.preview.ready_at_ms.is_some() =>
+        {
+            log::info!(
+                "capture_preview_promoted_from_finished_speculative_close session={} capture_id={}",
+                manifest.session_id,
+                latest_capture.capture_id
+            );
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<String> {
+    let preferred_extensions = ["jpg", "jpeg", "png", "webp", "gif", "bmp"];
+    preferred_extensions
+        .iter()
+        .map(|extension| {
+            paths
+                .renders_previews_dir
+                .join(format!("{capture_id}.{extension}"))
+        })
+        .find(|path| is_valid_render_preview_asset(path))
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn preview_asset_visible_at_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_to_ms)
+}
+
+fn system_time_to_ms(value: SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
+}
+
+fn sync_better_preview_assets_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<(), HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
+    let mut updated = false;
+
+    for capture in &mut manifest.captures {
+        let Some(better_preview_path) =
+            find_better_session_preview_asset(&paths, &capture.capture_id)
+        else {
+            continue;
+        };
+
+        match capture.render_status.as_str() {
+            "previewReady" | "finalReady" => {
+                let Some(current_preview_path) = capture.preview.asset_path.as_deref() else {
+                    continue;
+                };
+
+                if !is_session_scoped_asset_path(&paths, current_preview_path) {
+                    continue;
+                }
+
+                if better_preview_path == current_preview_path {
+                    continue;
+                }
+
+                capture.preview.asset_path = Some(better_preview_path);
+                updated = true;
+            }
+            "captureSaved" | "previewWaiting" => {
+                let current_preview_matches = capture
+                    .preview
+                    .asset_path
+                    .as_deref()
+                    .map(|asset_path| asset_path == better_preview_path.as_str())
+                    .unwrap_or(false);
+                if current_preview_matches {
+                    continue;
+                }
+
+                capture.preview.asset_path = Some(better_preview_path.clone());
+                if capture.timing.fast_preview_visible_at_ms.is_none() {
+                    capture.timing.fast_preview_visible_at_ms =
+                        preview_asset_visible_at_ms(Path::new(&better_preview_path))
+                            .or_else(|| system_time_to_ms(SystemTime::now()));
+                    capture.timing.preset_applied_delta_ms = compute_preset_applied_delta_ms(
+                        capture.timing.fast_preview_visible_at_ms,
+                        capture.timing.preview_visible_at_ms,
+                    );
+                }
+                updated = true;
+            }
+            _ => continue,
+        }
+    }
+
+    if updated {
+        manifest.updated_at = current_timestamp(SystemTime::now())?;
+        write_session_manifest(&paths.manifest_path, manifest)?;
+    }
+
+    Ok(())
+}
+
+fn sync_invalid_preview_truth_in_manifest(
+    base_dir: &Path,
+    manifest: &mut SessionManifest,
+) -> Result<bool, HostErrorEnvelope> {
+    if timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended {
+        return Ok(false);
+    }
+
+    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
+    let mut updated = false;
+    let mut repair_targets = Vec::new();
+
+    for capture in &mut manifest.captures {
+        if capture.post_end_state != "activeSession"
+            || !matches!(
+                capture.render_status.as_str(),
+                "previewReady" | "finalReady"
+            )
+        {
+            continue;
+        }
+
+        let preview_is_valid = capture
+            .preview
+            .asset_path
+            .as_deref()
+            .map(|asset_path| {
+                is_session_scoped_asset_path(&paths, asset_path)
+                    && is_valid_render_preview_asset(Path::new(asset_path))
+            })
+            .unwrap_or(false);
+
+        if preview_is_valid {
+            continue;
+        }
+
+        let Some(better_preview_path) =
+            find_better_session_preview_asset(&paths, &capture.capture_id)
+        else {
+            capture.preview.asset_path = None;
+            capture.preview.ready_at_ms = None;
+            capture.final_asset.asset_path = None;
+            capture.final_asset.ready_at_ms = None;
+            capture.render_status = "previewWaiting".into();
+            updated = true;
+            repair_targets.push(capture.capture_id.clone());
+            continue;
+        };
+
+        capture.preview.asset_path = Some(better_preview_path);
+        updated = true;
+    }
+
+    if !updated {
+        return Ok(false);
+    }
+
+    manifest.lifecycle.stage = derive_capture_lifecycle_stage(manifest);
+    manifest.updated_at = current_timestamp(SystemTime::now())?;
+    write_session_manifest(&paths.manifest_path, manifest)?;
+
+    for capture_id in repair_targets {
+        match complete_preview_render_in_dir(base_dir, &manifest.session_id, &capture_id) {
+            Ok(_) => {
+                log::info!(
+                    "capture_preview_repaired session={} capture_id={} repair=rerendered",
+                    manifest.session_id,
+                    capture_id
+                );
+            }
+            Err(error) => {
+                log::warn!(
+                    "capture_preview_repair_failed session={} capture_id={} code={} message={}",
+                    manifest.session_id,
+                    capture_id,
+                    error.code,
+                    error.message
+                );
+            }
+        }
+    }
+
+    Ok(true)
+}
+
 fn capture_round_trip_failure_reason_code(error: &SidecarClientError) -> &'static str {
     match error {
         SidecarClientError::CaptureTriggerRetryRequired => "capture-trigger-retry-required",
@@ -438,6 +749,12 @@ fn persist_capture_round_trip_failure(
     manifest.post_end = None;
     manifest.updated_at = occurred_at.clone();
     write_session_manifest(&paths.manifest_path, &manifest)?;
+    write_capture_block_state_in_dir(
+        base_dir,
+        session_id,
+        capture_round_trip_failure_reason_code(error),
+        &occurred_at,
+    )?;
 
     try_append_operator_audit_record(
         base_dir,
@@ -492,19 +809,30 @@ fn build_capture_retry_readiness(
     )
 }
 
+pub(crate) fn retry_capture_blocked_session_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<bool, HostErrorEnvelope> {
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let mut manifest = read_session_manifest_with_timing(base_dir, session_id)?;
+    sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest)
+}
+
 fn sync_retryable_capture_failure_recovery_in_manifest(
     base_dir: &Path,
     manifest: &mut SessionManifest,
-) -> Result<(), HostErrorEnvelope> {
+) -> Result<bool, HostErrorEnvelope> {
     if !matches!(
         manifest.lifecycle.stage.as_str(),
         "phone-required" | "blocked"
     ) {
-        return Ok(());
+        return Ok(false);
     }
 
     if manifest.post_end.is_some() || timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended {
-        return Ok(());
+        return Ok(false);
     }
 
     let projected_live_capture_truth = project_live_capture_truth(base_dir, manifest);
@@ -513,7 +841,7 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
         || projected_live_capture_truth.dto.session_match != "matched"
         || projected_live_capture_truth.gate != LiveCameraGate::Ready
     {
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(latest_helper_error) =
@@ -521,16 +849,21 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
             .ok()
             .flatten()
     else {
-        return Ok(());
+        return Ok(false);
     };
 
-    if !helper_error_allows_session_recovery_after_ready(&latest_helper_error) {
-        return Ok(());
+    let capture_block_state = read_capture_block_state_in_dir(base_dir, &manifest.session_id)?;
+    if !helper_error_allows_session_retry_recovery(
+        manifest,
+        capture_block_state.as_ref(),
+        &latest_helper_error,
+    ) {
+        return Ok(false);
     }
 
     let next_stage = derive_capture_lifecycle_stage(manifest);
     if next_stage == manifest.lifecycle.stage {
-        return Ok(());
+        return Ok(false);
     }
 
     let previous_stage = manifest.lifecycle.stage.clone();
@@ -538,6 +871,7 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
     manifest.lifecycle.stage = next_stage.clone();
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     write_session_manifest(&paths.manifest_path, manifest)?;
+    clear_capture_block_state_in_dir(base_dir, &manifest.session_id)?;
 
     log::info!(
         "capture_retry_recovered session={} previous_stage={} next_stage={} detail_code={} live_truth=fresh:matched:ready:healthy",
@@ -547,111 +881,16 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
         latest_helper_error.detail_code
     );
 
-    Ok(())
+    Ok(true)
 }
 
-fn helper_error_allows_session_recovery_after_ready(
+fn helper_error_allows_session_retry_recovery(
+    manifest: &SessionManifest,
+    capture_block_state: Option<&CaptureBlockStateRecord>,
     message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
 ) -> bool {
-    if is_retryable_capture_helper_error(message) {
-        return true;
-    }
-
-    matches!(
-        message.detail_code.as_str(),
-        "capture-download-timeout" | "capture-transfer-start-timeout"
-    )
-}
-
-fn sync_recoverable_render_failure_in_manifest(
-    base_dir: &Path,
-    manifest: &mut SessionManifest,
-) -> Result<bool, HostErrorEnvelope> {
-    if !matches!(
-        manifest.lifecycle.stage.as_str(),
-        "phone-required" | "blocked"
-    ) {
-        return Ok(false);
-    }
-
-    if manifest.post_end.is_some() || timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended {
-        return Ok(false);
-    }
-
-    let Some(latest_capture) = manifest.captures.last() else {
-        return Ok(false);
-    };
-
-    if latest_capture.render_status != "renderFailed" {
-        return Ok(false);
-    }
-
-    let projected_live_capture_truth = project_live_capture_truth(base_dir, manifest);
-    if projected_live_capture_truth.dto.freshness != "fresh"
-        || projected_live_capture_truth.dto.session_match != "matched"
-        || projected_live_capture_truth.gate != LiveCameraGate::Ready
-    {
-        return Ok(false);
-    }
-
-    match complete_preview_render_in_dir(base_dir, &manifest.session_id, &latest_capture.capture_id)
-    {
-        Ok(_) => {
-            log::info!(
-                "capture_render_recovered session={} capture_id={} recovery=preview-rerendered",
-                manifest.session_id,
-                latest_capture.capture_id
-            );
-            Ok(true)
-        }
-        Err(error) => {
-            log::warn!(
-                "capture_render_recovery_failed session={} capture_id={} code={} message={}",
-                manifest.session_id,
-                latest_capture.capture_id,
-                error.code,
-                error.message
-            );
-            Ok(false)
-        }
-    }
-}
-
-fn sync_finished_speculative_preview_in_manifest(
-    base_dir: &Path,
-    manifest: &mut SessionManifest,
-) -> Result<bool, HostErrorEnvelope> {
-    let Some(latest_capture) = manifest.captures.last() else {
-        return Ok(false);
-    };
-
-    if latest_capture.render_status != "previewWaiting"
-        || latest_capture.preview.ready_at_ms.is_some()
-        || latest_capture.preview.asset_path.is_none()
-    {
-        return Ok(false);
-    }
-
-    match sync_completed_speculative_preview_in_dir(
-        base_dir,
-        &manifest.session_id,
-        &latest_capture.capture_id,
-    )? {
-        Some(capture)
-            if matches!(
-                capture.render_status.as_str(),
-                "previewReady" | "finalReady"
-            ) && capture.preview.ready_at_ms.is_some() =>
-        {
-            log::info!(
-                "capture_preview_promoted_from_finished_speculative_close session={} capture_id={}",
-                manifest.session_id,
-                latest_capture.capture_id
-            );
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
+    capture_block_reason_allows_retry_recovery(capture_block_state, message)
+        && helper_error_matches_current_capture_block(manifest, capture_block_state, message)
 }
 
 pub fn delete_capture_in_dir(
@@ -724,6 +963,9 @@ pub fn normalize_capture_readiness(
     let timing_phase = timing_phase(timing.as_ref());
     let live_capture_truth = project_live_capture_truth(base_dir, manifest);
     let live_camera_gate = live_capture_truth.gate;
+    let capture_block_state = read_capture_block_state_in_dir(base_dir, &manifest.session_id)
+        .ok()
+        .flatten();
     let post_end = if timing_phase == TimingPhase::Ended
         && matches!(
             manifest.lifecycle.stage.as_str(),
@@ -733,6 +975,16 @@ pub fn normalize_capture_readiness(
     } else {
         None
     };
+
+    if should_force_phone_required_from_capture_block(manifest, capture_block_state.as_ref()) {
+        return with_projected_live_capture_truth(
+            CaptureReadinessDto::phone_required(manifest.session_id.clone())
+                .with_latest_capture(latest_capture)
+                .with_post_end(post_end)
+                .with_timing(timing),
+            &live_capture_truth,
+        );
+    }
 
     if let Some(post_end_state) = post_end.clone() {
         let readiness = match post_end_state.state() {
@@ -1349,79 +1601,188 @@ fn read_session_manifest_with_timing(
     })
 }
 
-fn sync_better_preview_assets_in_manifest(
+fn build_capture_persist_failure_readiness(
     base_dir: &Path,
-    manifest: &mut SessionManifest,
+    session_id: &str,
+) -> CaptureReadinessDto {
+    let occurred_at = current_timestamp(SystemTime::now()).unwrap_or_else(|_| "".into());
+    let _ = write_capture_block_state_in_dir(
+        base_dir,
+        session_id,
+        "capture-persist-failed",
+        &occurred_at,
+    );
+    let _ = best_effort_force_capture_phone_required_in_dir(
+        base_dir,
+        session_id,
+        &occurred_at,
+        "capture-persist-failed",
+        "촬영 결과를 저장하지 못해 세션을 operator 확인 상태로 유지했어요.",
+    );
+
+    let manifest = SessionPaths::try_new(base_dir, session_id)
+        .ok()
+        .and_then(|paths| read_session_manifest(&paths.manifest_path).ok());
+
+    let readiness = CaptureReadinessDto::phone_required(session_id.to_string())
+        .with_latest_capture(
+            manifest
+                .as_ref()
+                .and_then(|value| value.captures.last().cloned()),
+        )
+        .with_timing(manifest.as_ref().and_then(|value| value.timing.clone()));
+
+    if let Some(manifest) = manifest.as_ref() {
+        return readiness
+            .with_live_capture_truth(project_live_capture_truth(base_dir, manifest).dto);
+    }
+
+    readiness
+}
+
+fn best_effort_force_capture_phone_required_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    occurred_at: &str,
+    reason_code: &str,
+    detail: &str,
 ) -> Result<(), HostErrorEnvelope> {
-    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
-    let mut updated = false;
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
 
-    for capture in &mut manifest.captures {
-        let Some(better_preview_path) =
-            find_better_session_preview_asset(&paths, &capture.capture_id)
-        else {
-            continue;
-        };
+    manifest.lifecycle.stage = "phone-required".into();
+    manifest.post_end = None;
+    manifest.updated_at = occurred_at.to_string();
+    write_session_manifest(&paths.manifest_path, &manifest)?;
+    write_capture_block_state_in_dir(base_dir, session_id, reason_code, occurred_at)?;
 
-        match capture.render_status.as_str() {
-            "previewReady" | "finalReady" => {
-                let Some(current_preview_path) = capture.preview.asset_path.as_deref() else {
-                    continue;
-                };
-
-                if !is_session_scoped_asset_path(&paths, current_preview_path) {
-                    continue;
-                }
-
-                if better_preview_path == current_preview_path {
-                    continue;
-                }
-
-                capture.preview.asset_path = Some(better_preview_path);
-                updated = true;
-            }
-            "captureSaved" | "previewWaiting" => {
-                let current_preview_matches = capture
-                    .preview
-                    .asset_path
-                    .as_deref()
-                    .map(|asset_path| asset_path == better_preview_path.as_str())
-                    .unwrap_or(false);
-                if current_preview_matches {
-                    continue;
-                }
-
-                capture.preview.asset_path = Some(better_preview_path.clone());
-                if capture.timing.fast_preview_visible_at_ms.is_none() {
-                    capture.timing.fast_preview_visible_at_ms =
-                        preview_asset_visible_at_ms(Path::new(&better_preview_path))
-                            .or_else(|| system_time_to_ms(SystemTime::now()));
-                }
-                updated = true;
-            }
-            _ => continue,
-        }
-    }
-
-    if updated {
-        manifest.updated_at = current_timestamp(SystemTime::now())?;
-        write_session_manifest(&paths.manifest_path, manifest)?;
-    }
+    try_append_operator_audit_record(
+        base_dir,
+        OperatorAuditRecordInput {
+            occurred_at: occurred_at.to_string(),
+            session_id: Some(session_id.to_string()),
+            event_category: "critical-failure",
+            event_type: "capture-persist-failed",
+            summary: "촬영 결과를 세션에 저장하지 못했어요.".into(),
+            detail: detail.into(),
+            actor_id: None,
+            source: "capture-boundary",
+            capture_id: None,
+            preset_id: manifest.active_preset_id.clone(),
+            published_version: manifest
+                .active_preset
+                .as_ref()
+                .map(|preset| preset.published_version.clone()),
+            reason_code: Some(reason_code.into()),
+        },
+    );
 
     Ok(())
 }
 
-fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<String> {
-    let preferred_extensions = ["jpg", "jpeg", "png", "webp", "gif", "bmp"];
-    preferred_extensions
-        .iter()
-        .map(|extension| {
-            paths
-                .renders_previews_dir
-                .join(format!("{capture_id}.{extension}"))
-        })
-        .find(|path| is_valid_render_preview_asset(path))
-        .map(|path| path.to_string_lossy().into_owned())
+fn resolve_capture_block_state_path(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<PathBuf, HostErrorEnvelope> {
+    Ok(SessionPaths::try_new(base_dir, session_id)?
+        .diagnostics_dir
+        .join(CAPTURE_BLOCK_STATE_FILE_NAME))
+}
+
+fn read_capture_block_state_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<Option<CaptureBlockStateRecord>, HostErrorEnvelope> {
+    let block_state_path = resolve_capture_block_state_path(base_dir, session_id)?;
+    if !block_state_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = match fs::read_to_string(&block_state_path) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+
+    match serde_json::from_str::<CaptureBlockStateRecord>(&contents) {
+        Ok(value)
+            if value.schema_version == CAPTURE_BLOCK_STATE_SCHEMA_VERSION
+                && value.session_id == session_id =>
+        {
+            Ok(Some(value))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn write_capture_block_state_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    reason_code: &str,
+    blocked_at: &str,
+) -> Result<(), HostErrorEnvelope> {
+    let block_state_path = resolve_capture_block_state_path(base_dir, session_id)?;
+    let parent = block_state_path.parent().ok_or_else(|| {
+        HostErrorEnvelope::persistence("캡처 경계 상태 경로를 준비하지 못했어요.")
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("캡처 경계 상태 경로를 준비하지 못했어요: {error}"))
+    })?;
+    let bytes = serde_json::to_vec_pretty(&CaptureBlockStateRecord {
+        schema_version: CAPTURE_BLOCK_STATE_SCHEMA_VERSION.into(),
+        session_id: session_id.to_string(),
+        blocked_at: blocked_at.to_string(),
+        reason_code: reason_code.to_string(),
+    })
+    .map_err(|error| {
+        HostErrorEnvelope::persistence(format!("캡처 경계 상태를 직렬화하지 못했어요: {error}"))
+    })?;
+    fs::write(block_state_path, bytes).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("캡처 경계 상태를 기록하지 못했어요: {error}"))
+    })
+}
+
+pub(crate) fn clear_capture_block_state_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<(), HostErrorEnvelope> {
+    let block_state_path = resolve_capture_block_state_path(base_dir, session_id)?;
+    if !block_state_path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_file(block_state_path).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("캡처 경계 상태를 정리하지 못했어요: {error}"))
+    })
+}
+
+fn capture_block_reason_allows_retry_recovery(
+    capture_block_state: Option<&CaptureBlockStateRecord>,
+    message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
+) -> bool {
+    if !is_retryable_capture_helper_error(message) {
+        return false;
+    }
+
+    match capture_block_state.map(|value| value.reason_code.as_str()) {
+        Some("camera-busy" | "capture-focus-not-locked" | "capture-trigger-failed") => true,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn should_force_phone_required_from_capture_block(
+    manifest: &SessionManifest,
+    capture_block_state: Option<&CaptureBlockStateRecord>,
+) -> bool {
+    capture_block_state.is_some()
+        && manifest.post_end.is_none()
+        && !matches!(
+            manifest.lifecycle.stage.as_str(),
+            "completed" | "export-waiting"
+        )
 }
 
 fn capture_has_resumable_fast_preview(capture: &SessionCaptureRecord) -> bool {
@@ -1433,103 +1794,32 @@ fn capture_has_resumable_fast_preview(capture: &SessionCaptureRecord) -> bool {
         && capture.timing.fast_preview_visible_at_ms.is_some()
 }
 
-fn preview_asset_visible_at_ms(path: &Path) -> Option<u64> {
-    fs::metadata(path)
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(system_time_to_ms)
-}
+fn helper_error_matches_current_capture_block(
+    manifest: &SessionManifest,
+    capture_block_state: Option<&CaptureBlockStateRecord>,
+    message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
+) -> bool {
+    let Some(observed_at) = message.observed_at.as_deref() else {
+        return false;
+    };
 
-fn system_time_to_ms(value: SystemTime) -> Option<u64> {
-    value
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_millis() as u64)
-}
-
-fn sync_invalid_preview_truth_in_manifest(
-    base_dir: &Path,
-    manifest: &mut SessionManifest,
-) -> Result<bool, HostErrorEnvelope> {
-    if timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended {
-        return Ok(false);
-    }
-
-    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
-    let mut updated = false;
-    let mut repair_targets = Vec::new();
-
-    for capture in &mut manifest.captures {
-        if capture.post_end_state != "activeSession"
-            || !matches!(
-                capture.render_status.as_str(),
-                "previewReady" | "finalReady"
-            )
-        {
-            continue;
-        }
-
-        let preview_is_valid = capture
-            .preview
-            .asset_path
-            .as_deref()
-            .map(|asset_path| {
-                is_session_scoped_asset_path(&paths, asset_path)
-                    && is_valid_render_preview_asset(Path::new(asset_path))
-            })
-            .unwrap_or(false);
-
-        if preview_is_valid {
-            continue;
-        }
-
-        let Some(better_preview_path) =
-            find_better_session_preview_asset(&paths, &capture.capture_id)
-        else {
-            capture.preview.asset_path = None;
-            capture.preview.ready_at_ms = None;
-            capture.final_asset.asset_path = None;
-            capture.final_asset.ready_at_ms = None;
-            capture.render_status = "previewWaiting".into();
-            updated = true;
-            repair_targets.push(capture.capture_id.clone());
-            continue;
-        };
-
-        capture.preview.asset_path = Some(better_preview_path);
-        updated = true;
-    }
-
-    if !updated {
-        return Ok(false);
-    }
-
-    manifest.lifecycle.stage = derive_capture_lifecycle_stage(manifest);
-    manifest.updated_at = current_timestamp(SystemTime::now())?;
-    write_session_manifest(&paths.manifest_path, manifest)?;
-
-    for capture_id in repair_targets {
-        match complete_preview_render_in_dir(base_dir, &manifest.session_id, &capture_id) {
-            Ok(_) => {
-                log::info!(
-                    "capture_preview_repaired session={} capture_id={} repair=rerendered",
-                    manifest.session_id,
-                    capture_id
-                );
+    let helper_error_at = rfc3339_to_unix_seconds(observed_at).ok();
+    let block_updated_at = capture_block_state
+        .and_then(|state| {
+            if state.blocked_at.is_empty() {
+                None
+            } else {
+                rfc3339_to_unix_seconds(&state.blocked_at).ok()
             }
-            Err(error) => {
-                log::warn!(
-                    "capture_preview_repair_failed session={} capture_id={} code={} message={}",
-                    manifest.session_id,
-                    capture_id,
-                    error.code,
-                    error.message
-                );
-            }
-        }
-    }
+        })
+        .or_else(|| rfc3339_to_unix_seconds(&manifest.updated_at).ok());
 
-    Ok(true)
+    match (helper_error_at, block_updated_at) {
+        (Some(helper_error_at), Some(block_updated_at)) => {
+            helper_error_at.saturating_add(1) >= block_updated_at
+        }
+        _ => false,
+    }
 }
 
 fn timing_phase(timing: Option<&crate::session::session_manifest::SessionTiming>) -> TimingPhase {

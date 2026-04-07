@@ -33,6 +33,7 @@ use boothy_lib::{
     },
     preset::default_catalog::ensure_default_preset_catalog_in_dir,
     preset::preset_catalog::resolve_published_preset_catalog_dir,
+    render::render_preview_asset_to_path_in_dir,
     session::{
         session_manifest::{current_timestamp, CompletedPostEnd, SessionManifest, SessionPostEnd},
         session_paths::SessionPaths,
@@ -787,7 +788,7 @@ fn capture_flow_ignores_sidecar_preview_placeholders_and_uses_bundle_render_outp
 }
 
 #[test]
-fn readiness_repairs_a_placeholder_svg_preview_when_a_raster_sidecar_exists() {
+fn readiness_does_not_repair_a_placeholder_svg_preview_when_a_raster_sidecar_exists() {
     let base_dir = unique_test_root("capture-preview-repair-from-sidecar");
     let session = start_session_in_dir(
         &base_dir,
@@ -848,23 +849,23 @@ fn readiness_repairs_a_placeholder_svg_preview_when_a_raster_sidecar_exists() {
             session_id: session.session_id.clone(),
         },
     )
-    .expect("readiness should repair the preview asset path");
+    .expect("readiness should stay readable without repairing the preview asset path");
 
     assert_eq!(
         readiness
             .latest_capture
             .as_ref()
             .and_then(|capture| capture.preview.asset_path.as_ref()),
-        Some(&jpg_preview_path.to_string_lossy().into_owned()),
+        Some(&svg_preview_path.to_string_lossy().into_owned()),
     );
 
     let repaired_manifest: SessionManifest = serde_json::from_str(
         &fs::read_to_string(&manifest_path).expect("manifest should still be readable"),
     )
-    .expect("manifest should deserialize after repair");
+    .expect("manifest should deserialize after readiness lookup");
     assert_eq!(
         repaired_manifest.captures[0].preview.asset_path.as_deref(),
-        Some(jpg_preview_path.to_string_lossy().as_ref()),
+        Some(svg_preview_path.to_string_lossy().as_ref()),
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1687,6 +1688,10 @@ fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
+    assert!(
+        !timing_events.contains("reason=first-capture-cold-start"),
+        "the first capture should not stay on the cold-start skip path once a same-capture preview is already available"
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1867,8 +1872,7 @@ fn readiness_promotes_a_late_canonical_fast_preview_without_marking_preview_read
 }
 
 #[test]
-fn complete_preview_render_keeps_the_first_capture_on_a_single_direct_close_when_fast_preview_arrives_late(
-) {
+fn complete_preview_render_reuses_a_late_first_capture_fast_preview_for_the_truthful_close() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -1929,16 +1933,16 @@ fn complete_preview_render_keeps_the_first_capture_on_a_single_direct_close_when
     )
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=fast-preview-promoted"));
-    assert!(timing_events.contains("event=speculative-preview-skipped"));
-    assert!(timing_events.contains("reason=first-capture-cold-start"));
+    assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
     assert_eq!(
         timing_events.matches("event=preview-render-start").count(),
         1,
-        "the first capture should not start a second competing close when late fast preview arrives"
+        "the first capture should keep a single truthful close even when the fast preview arrives late"
     );
     assert!(
         !timing_events.contains("event=preview-render-queue-saturated"),
-        "the first capture should not hit preview queue saturation from a duplicate close"
+        "the first capture should not hit preview queue saturation while adopting the late same-capture close"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -2106,11 +2110,11 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
 }
 
 #[test]
-fn speculative_preview_close_uses_the_local_renderer_canary_when_policy_matches() {
+fn speculative_preview_render_stays_on_darktable_even_when_truthful_close_canary_matches() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
-    let base_dir = unique_test_root("speculative-local-renderer-canary");
+    let base_dir = unique_test_root("speculative-preview-stays-darktable");
     write_preset_scoped_preview_render_route_policy(&base_dir, false);
     let session = start_session_in_dir(
         &base_dir,
@@ -2135,114 +2139,60 @@ fn speculative_preview_close_uses_the_local_renderer_canary_when_policy_matches(
     .expect("preset should become active");
 
     write_fake_local_renderer_sidecar(&base_dir, "accept");
-    write_ready_helper_status(&base_dir, &session.session_id);
-    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
-    let helper_base_dir = base_dir.clone();
-    let helper_session_id = session.session_id.clone();
-    let helper_thread = thread::spawn(move || {
-        let request = wait_for_latest_capture_request(
-            &helper_base_dir,
-            &helper_session_id,
-            existing_request_count,
-        );
-        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
-        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
-        let raw_path = session_paths
-            .captures_originals_dir
-            .join(format!("{capture_id}.jpg"));
-        let fast_preview_path = session_paths
-            .handoff_dir
-            .join("fast-preview")
-            .join(format!("{capture_id}.camera-thumbnail.jpg"));
-
-        fs::create_dir_all(
-            raw_path
-                .parent()
-                .expect("raw capture path should have a parent directory"),
-        )
-        .expect("raw capture directory should exist");
-        fs::create_dir_all(
-            fast_preview_path
-                .parent()
-                .expect("fast preview path should have a parent directory"),
-        )
-        .expect("fast preview directory should exist");
-        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&fast_preview_path);
-
-        append_helper_event(
-            &helper_base_dir,
-            &helper_session_id,
-            serde_json::json!({
-              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
-              "type": "capture-accepted",
-              "sessionId": helper_session_id,
-              "requestId": request.request_id,
-            }),
-        );
-        append_fast_preview_ready_event(
-            &helper_base_dir,
-            &helper_session_id,
-            &request,
-            &capture_id,
-            &fast_preview_path,
-            Some("camera-thumbnail"),
-        );
-        thread::sleep(Duration::from_millis(40));
-        append_file_arrived_event(
-            &helper_base_dir,
-            &helper_session_id,
-            &request,
-            &capture_id,
-            &raw_path,
-            Some(&fast_preview_path),
-            Some("camera-thumbnail"),
-        );
-    });
-
-    let mut fast_preview_updates = Vec::new();
-    let result = request_capture_in_dir_with_fast_preview(
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path =
+        seed_pending_canonical_preview(&base_dir, &session.session_id, &capture.capture.capture_id);
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_output_path = session_paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        capture.capture.capture_id
+    ));
+    let prepared = render_preview_asset_to_path_in_dir(
         &base_dir,
-        CaptureRequestInputDto {
-            session_id: session.session_id.clone(),
-            request_id: None,
-        },
-        |update| fast_preview_updates.push(update),
+        &session.session_id,
+        &capture.capture.request_id,
+        &capture.capture.capture_id,
+        "preset_soft-glow",
+        "2026.03.20",
+        &canonical_preview_path,
+        &speculative_output_path,
     )
-    .expect("capture should save");
+    .expect("speculative preview should stay on the approved darktable baseline");
 
-    helper_thread
-        .join()
-        .expect("helper capture thread should complete");
-    let ready_capture =
-        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect("speculative close should still close the preview");
-
-    let timing_events = fs::read_to_string(
-        SessionPaths::new(&base_dir, &session.session_id)
-            .diagnostics_dir
-            .join("timing-events.log"),
-    )
-    .expect("timing events should be readable");
-
-    assert_eq!(ready_capture.render_status, "previewReady");
-    assert_eq!(fast_preview_updates.len(), 1);
-    assert!(timing_events.contains("event=renderer-route-selected"));
-    assert!(timing_events.contains("reason=local-renderer-sidecar"));
-    assert!(timing_events.contains("event=renderer-close-owner"));
-    assert!(timing_events.contains("detail=route=local-renderer-sidecar"));
-    assert!(timing_events.contains("binary=local-renderer-sidecar"));
-    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(speculative_output_path.exists());
     assert!(
-        !timing_events.contains("event=renderer-route-fallback"),
-        "accepted speculative local renderer close should not fall back"
+        prepared.detail.contains("selectedRoute=darktable"),
+        "speculative preview should not inherit the truthful close canary route"
+    );
+    assert!(
+        prepared
+            .detail
+            .contains("selectedPolicyReason=speculative-baseline"),
+        "speculative preview should explain why it stayed on darktable"
+    );
+    assert!(
+        prepared.detail.contains("closeOwnerRoute=darktable"),
+        "speculative preview should keep the approved baseline as its close owner"
+    );
+    assert!(
+        !prepared
+            .detail
+            .contains("routeFallbackReasonCode=local-renderer-sidecar-error"),
+        "speculative preview should not invoke the local renderer and then fall back"
+    );
+    let local_renderer_diagnostics_dir = session_paths.diagnostics_dir.join("local-renderer");
+    assert!(
+        fs::read_dir(&local_renderer_diagnostics_dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true),
+        "speculative preview should not create local renderer request/response diagnostics"
     );
 
     let _ = fs::remove_dir_all(base_dir);
 }
 
 #[test]
-fn readiness_promotes_a_finished_speculative_preview_without_needing_another_capture() {
+fn readiness_keeps_a_finished_speculative_preview_pending_until_explicit_retry() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -2295,26 +2245,22 @@ fn readiness_promotes_a_finished_speculative_preview_without_needing_another_cap
             session_id: session.session_id.clone(),
         },
     )
-    .expect("readiness should promote a finished speculative close");
+    .expect("readiness should not promote a finished speculative close by itself");
 
     let latest_capture = readiness
         .latest_capture
         .expect("latest capture should stay attached");
     assert_eq!(readiness.reason_code, "ready");
-    assert_eq!(latest_capture.render_status, "previewReady");
+    assert_eq!(latest_capture.render_status, "previewWaiting");
     assert_eq!(
         latest_capture.preview.asset_path.as_deref(),
         Some(canonical_preview_path.to_string_lossy().as_ref())
     );
-    assert!(
-        latest_capture.preview.ready_at_ms.is_some(),
-        "readiness should stamp the truthful close timing once the speculative output exists"
-    );
+    assert_eq!(latest_capture.preview.ready_at_ms, None);
 
-    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
-        .expect("timing events should be readable");
-    assert!(timing_events.contains("event=preview-render-ready"));
-    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    let timing_events =
+        fs::read_to_string(paths.diagnostics_dir.join("timing-events.log")).unwrap_or_default();
+    assert!(!timing_events.contains("event=preview-render-ready"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -3321,7 +3267,7 @@ fn canonical_same_capture_preview_is_still_seeded_when_fast_preview_handoff_is_i
 }
 
 #[test]
-fn readiness_repairs_a_legacy_text_jpg_preview_by_rerendering_it() {
+fn readiness_does_not_rerender_a_legacy_text_jpg_preview_by_itself() {
     let base_dir = unique_test_root("capture-preview-repair-from-invalid-jpg");
     let session = start_session_in_dir(
         &base_dir,
@@ -3375,18 +3321,21 @@ fn readiness_repairs_a_legacy_text_jpg_preview_by_rerendering_it() {
             session_id: session.session_id.clone(),
         },
     )
-    .expect("invalid legacy preview should be repaired");
+    .expect("readiness lookup should not rerender an invalid preview");
 
     let repaired_preview_path = readiness
         .latest_capture
         .as_ref()
         .and_then(|capture| capture.preview.asset_path.as_deref())
-        .expect("repaired preview path should exist");
+        .expect("preview path should stay attached");
     assert_eq!(
         repaired_preview_path,
         preview_path.to_string_lossy().as_ref()
     );
-    assert_valid_jpeg(repaired_preview_path);
+    assert_eq!(
+        fs::read(repaired_preview_path).expect("preview bytes should stay readable"),
+        b"not-a-real-jpeg"
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -3853,7 +3802,7 @@ fn capture_flow_keeps_session_retryable_when_focus_is_not_locked() {
 }
 
 #[test]
-fn readiness_releases_phone_required_after_retryable_focus_failure_recovers() {
+fn readiness_keeps_phone_required_after_retryable_focus_failure_until_operator_retry() {
     let base_dir = unique_test_root("retryable-focus-failure-unlocks");
     let session = start_session_in_dir(
         &base_dir,
@@ -3897,19 +3846,19 @@ fn readiness_releases_phone_required_after_retryable_focus_failure_recovers() {
             session_id: session.session_id.clone(),
         },
     )
-    .expect("retryable focus failure should recover from phone-required");
+    .expect("retryable focus failure should remain blocked until an explicit retry");
 
-    assert_eq!(readiness.reason_code, "ready");
-    assert!(readiness.can_capture);
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
 
     let manifest = read_manifest(&base_dir, &session.session_id);
-    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
 
     let _ = fs::remove_dir_all(base_dir);
 }
 
 #[test]
-fn readiness_releases_phone_required_after_capture_download_timeout_recovers() {
+fn readiness_keeps_phone_required_after_capture_download_timeout_until_explicit_recovery() {
     let base_dir = unique_test_root("capture-download-timeout-unlocks");
     let session = start_session_in_dir(
         &base_dir,
@@ -3953,19 +3902,19 @@ fn readiness_releases_phone_required_after_capture_download_timeout_recovers() {
             session_id: session.session_id.clone(),
         },
     )
-    .expect("capture-download-timeout should recover from phone-required once helper is ready");
+    .expect("readiness lookup should not auto-recover a capture download timeout");
 
-    assert_eq!(readiness.reason_code, "ready");
-    assert!(readiness.can_capture);
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
 
     let manifest = read_manifest(&base_dir, &session.session_id);
-    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
 
     let _ = fs::remove_dir_all(base_dir);
 }
 
 #[test]
-fn readiness_releases_phone_required_after_capture_transfer_start_timeout_recovers() {
+fn readiness_keeps_phone_required_after_capture_transfer_start_timeout_until_explicit_recovery() {
     let base_dir = unique_test_root("capture-transfer-start-timeout-unlocks");
     let session = start_session_in_dir(
         &base_dir,
@@ -4009,15 +3958,69 @@ fn readiness_releases_phone_required_after_capture_transfer_start_timeout_recove
             session_id: session.session_id.clone(),
         },
     )
-    .expect(
-        "capture-transfer-start-timeout should recover from phone-required once helper is ready",
-    );
+    .expect("readiness lookup should not auto-recover a transfer-start timeout");
 
-    assert_eq!(readiness.reason_code, "ready");
-    assert!(readiness.can_capture);
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
 
     let manifest = read_manifest(&base_dir, &session.session_id);
-    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_when_retryable_helper_error_is_older_than_the_blocked_stage() {
+    let base_dir = unique_test_root("capture-trigger-stale-retry-does-not-unlock");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    append_helper_event(
+        &base_dir,
+        &session.session_id,
+        serde_json::json!({
+          "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+          "type": "helper-error",
+          "sessionId": session.session_id,
+          "observedAt": "2026-03-20T00:00:00Z",
+          "detailCode": "capture-trigger-failed",
+          "message": "이전 세션의 초점 실패 이벤트예요: 0x00008d01",
+        }),
+    );
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("stale retryable helper error should not clear phone-required");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -4155,7 +4158,8 @@ fn capture_flow_escalates_when_manifest_persist_never_recovers() {
     assert_eq!(
         error
             .readiness
-            .expect("persist failure should include readiness")
+            .as_ref()
+            .expect("persist failure should still expose a blocked readiness")
             .reason_code,
         "phone-required",
     );
@@ -4163,6 +4167,16 @@ fn capture_flow_escalates_when_manifest_persist_never_recovers() {
     let manifest = read_manifest(&base_dir, &session.session_id);
     assert!(manifest.captures.is_empty());
     assert_eq!(manifest.lifecycle.stage, "preset-selected");
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("persist failure should keep later readiness blocked");
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -5562,7 +5576,7 @@ fn ended_preview_ready_capture_waits_for_final_render_and_promotes_to_handoff_re
 }
 
 #[test]
-fn readiness_recovers_after_a_legacy_default_bundle_is_upgraded_for_rendering() {
+fn readiness_does_not_recover_render_failure_just_because_the_bundle_is_upgraded() {
     let base_dir = unique_test_root("capture-legacy-default-bundle-recovery");
     let session = start_session_in_dir(
         &base_dir,
@@ -5631,16 +5645,19 @@ fn readiness_recovers_after_a_legacy_default_bundle_is_upgraded_for_rendering() 
             session_id: session.session_id.clone(),
         },
     )
-    .expect("render failure should recover after default bundle upgrade");
+    .expect("readiness lookup should not auto-recover a render failure");
 
-    assert_eq!(readiness.reason_code, "ready");
-    assert!(readiness.can_capture);
-    assert_valid_jpeg(
-        readiness
-            .latest_capture
-            .as_ref()
-            .and_then(|capture| capture.preview.asset_path.as_deref())
-            .expect("recovered preview should exist"),
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+    assert_eq!(
+        manifest
+            .captures
+            .last()
+            .map(|capture| capture.render_status.as_str()),
+        Some("renderFailed")
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -6370,6 +6387,118 @@ fn local_renderer_failure_forces_darktable_for_the_rest_of_the_session() {
 }
 
 #[test]
+fn speculative_preview_baseline_does_not_force_darktable_for_later_truthful_close_canary() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("local-renderer-speculative-session-health");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_fake_local_renderer_sidecar(&base_dir, "error-envelope");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path = seed_pending_canonical_preview(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    );
+    let session_paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_output_path = session_paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        first_capture.capture.capture_id
+    ));
+    let prepared = render_preview_asset_to_path_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.request_id,
+        &first_capture.capture.capture_id,
+        "preset_soft-glow",
+        "2026.03.20",
+        &canonical_preview_path,
+        &speculative_output_path,
+    )
+    .expect("speculative preview should still recover with the direct baseline path");
+
+    assert!(
+        prepared.detail.contains("selectedRoute=darktable"),
+        "speculative preview should stay on the approved darktable baseline"
+    );
+    assert!(
+        prepared
+            .detail
+            .contains("selectedPolicyReason=speculative-baseline"),
+        "speculative preview should document the bounded-scope baseline decision"
+    );
+    assert!(
+        prepared.detail.contains("closeOwnerRoute=darktable"),
+        "speculative fallback should still produce a valid direct-render candidate"
+    );
+    assert!(
+        !prepared
+            .detail
+            .contains("routeFallbackReasonCode=local-renderer-sidecar-error"),
+        "speculative preview should not try the local renderer route anymore"
+    );
+
+    let locked_policy_path = session_paths
+        .diagnostics_dir
+        .join("preview-renderer-policy.lock.json");
+    let locked_policy_before_second_capture =
+        fs::read_to_string(&locked_policy_path).expect("locked policy should be readable");
+    assert!(
+        !locked_policy_before_second_capture.contains("session-sidecar-health-check-failed"),
+        "a speculative-only sidecar miss should not quarantine the whole session"
+    );
+
+    write_fake_local_renderer_sidecar(&base_dir, "accept");
+
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("later captures should still be allowed to retry the local renderer");
+
+    let timing_events = fs::read_to_string(session_paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    let second_capture_section = timing_events
+        .lines()
+        .filter(|line| line.contains(&format!("capture={}", second_capture.capture.capture_id)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(second_capture_section.contains("event=renderer-route-selected"));
+    assert!(second_capture_section.contains("reason=local-renderer-sidecar"));
+    assert!(
+        !second_capture_section.contains("policyReason=forced-fallback"),
+        "speculative misses should not silently force later captures back to darktable"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn preview_route_policy_is_locked_from_session_start_through_the_active_session() {
     let base_dir = unique_test_root("local-renderer-session-policy-lock");
     write_preset_scoped_preview_render_route_policy(&base_dir, false);
@@ -6509,9 +6638,29 @@ fn local_renderer_truthful_close_reuses_an_existing_canonical_preview_slot() {
         before_bytes, after_bytes,
         "truthful close should replace the existing slot instead of leaving the pending bytes"
     );
+    assert_eq!(
+        ready_capture.timing.preset_applied_delta_ms,
+        Some(
+            ready_capture
+                .timing
+                .preview_visible_at_ms
+                .expect("truthful close should stamp preview visible timing")
+                .saturating_sub(
+                    ready_capture
+                        .timing
+                        .fast_preview_visible_at_ms
+                        .expect("same-capture first-visible timing should be preserved"),
+                ),
+        ),
+        "same session evidence should keep the truthful-close delta alongside preview timings"
+    );
     assert!(
         timing_events.contains("sourceAsset=fast-preview-raster"),
         "accepted local renderer close should preserve the actual fast-preview source in diagnostics"
+    );
+    assert!(
+        timing_events.contains("presetAppliedDeltaMs="),
+        "capture preview ready evidence should include the truthful-close delta for canary comparison"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -6819,6 +6968,74 @@ fn real_local_renderer_sidecar_disables_opencl_for_preview_bridge() {
     assert!(
         arguments_log.contains("--disable-opencl"),
         "real local renderer sidecar should disable opencl to avoid first-run kernel compile stalls in the booth"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn real_local_renderer_sidecar_normalizes_windows_paths_for_darktable_bridge() {
+    let base_dir = unique_test_root("local-renderer-normalized-paths");
+    write_preset_scoped_preview_render_route_policy(&base_dir, false);
+    let (argument_logging_darktable, arguments_log_path) =
+        write_powershell_argument_logging_fake_darktable_binary_with_version(&base_dir, "5.4.1");
+    let real_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root should exist")
+        .join("sidecar")
+        .join("local-renderer")
+        .join("local-renderer-sidecar.cmd");
+    let _env_guard = scoped_env_vars(vec![
+        (
+            "BOOTHY_LOCAL_RENDERER_BIN",
+            Some(real_sidecar.into_os_string()),
+        ),
+        (
+            "BOOTHY_DARKTABLE_CLI_BIN",
+            Some(argument_logging_darktable.into_os_string()),
+        ),
+    ]);
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let ready_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("normalized sidecar paths should still let the preview close");
+
+    let arguments_log =
+        fs::read_to_string(&arguments_log_path).expect("argument log should be readable");
+
+    assert_eq!(ready_capture.render_status, "previewReady");
+    assert!(
+        !arguments_log.contains(r"\\?\"),
+        "sidecar should strip extended-length Windows prefixes before calling darktable"
+    );
+    assert!(
+        arguments_log.contains(":/"),
+        "sidecar should hand darktable forward-slash Windows paths so candidate outputs land in the intended session folder"
+    );
+    assert!(
+        !arguments_log.contains(r":\"),
+        "sidecar should not forward raw backslash Windows paths into the darktable bridge"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -7343,6 +7560,41 @@ fn write_argument_logging_fake_darktable_binary_with_version(
     .expect("argument logging fake darktable should be writable");
 
     (binary_path, arguments_log_path)
+}
+
+fn write_powershell_argument_logging_fake_darktable_binary_with_version(
+    base_dir: &PathBuf,
+    version: &str,
+) -> (PathBuf, PathBuf) {
+    let script_path = base_dir.join("fake-darktable-args.ps1");
+    let arguments_log_path = base_dir.join("fake-darktable-args-ps.log");
+    fs::write(
+        &script_path,
+        format!(
+            concat!(
+                "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$argv)\r\n",
+                "$ErrorActionPreference = 'Stop'\r\n",
+                "if ($argv.Count -gt 0 -and $argv[0] -eq '--version') {{\r\n",
+                "  Write-Output 'darktable-cli {version}'\r\n",
+                "  exit 0\r\n",
+                "}}\r\n",
+                "$argsLog = '{args_log}'\r\n",
+                "[System.IO.File]::AppendAllText($argsLog, (($argv -join ' ') + [Environment]::NewLine))\r\n",
+                "$output = if ($argv.Count -ge 3) {{ $argv[2] }} else {{ '' }}\r\n",
+                "if ([string]::IsNullOrWhiteSpace($output)) {{ exit 2 }}\r\n",
+                "$outputDir = [System.IO.Path]::GetDirectoryName($output)\r\n",
+                "if (-not [string]::IsNullOrWhiteSpace($outputDir)) {{ [System.IO.Directory]::CreateDirectory($outputDir) | Out-Null }}\r\n",
+                "$bytes = [Convert]::FromBase64String('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAgEAACAQQCAwAAAAAAAAAAAAABAgMABAURITESQVFh/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAT/xAAZEQADAQEBAAAAAAAAAAAAAAAAARECEiH/2gAMAwEAAhEDEQA/AJ9b0qS2K4wqY5lW9L0L4b2E6b9K1+JrZk3QmY2Dg5Nf/2Q==')\r\n",
+                "[System.IO.File]::WriteAllBytes($output, $bytes)\r\n",
+                "exit 0\r\n"
+            ),
+            version = version,
+            args_log = arguments_log_path.to_string_lossy().replace('\\', "\\\\")
+        ),
+    )
+    .expect("powershell argument logging fake darktable should be writable");
+
+    (script_path, arguments_log_path)
 }
 
 fn create_named_published_bundle(

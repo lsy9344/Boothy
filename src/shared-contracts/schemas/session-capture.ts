@@ -80,6 +80,7 @@ export const captureTimingMetricsSchema = z.object({
   previewVisibleAtMs: captureEventTimeMsSchema.nullable(),
   fastPreviewVisibleAtMs: captureEventTimeMsSchema.nullable().optional(),
   xmpPreviewReadyAtMs: captureEventTimeMsSchema.nullable().optional(),
+  presetAppliedDeltaMs: captureEventTimeMsSchema.nullable().optional(),
   captureBudgetMs: z.literal(1000),
   previewBudgetMs: z.literal(5000),
   previewBudgetState: previewBudgetStateSchema,

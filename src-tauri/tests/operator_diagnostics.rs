@@ -689,6 +689,7 @@ fn preview_waiting_capture(session_id: &str) -> SessionCaptureRecord {
             preview_visible_at_ms: None,
             fast_preview_visible_at_ms: None,
             xmp_preview_ready_at_ms: None,
+            preset_applied_delta_ms: None,
             capture_budget_ms: 1_000,
             preview_budget_ms: 5_000,
             preview_budget_state: "pending".into(),
