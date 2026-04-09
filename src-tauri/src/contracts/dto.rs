@@ -1340,8 +1340,8 @@ impl CaptureReadinessDto {
             "Preparing",
             false,
             "wait",
-            "사진을 아직 찍지 못했어요.",
-            "대상을 다시 맞춘 뒤 잠시 후 다시 시도해 주세요.",
+            "초점이 맞지 않았어요.",
+            "대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.",
             "capture-retry-required",
             latest_capture,
         )
@@ -1693,5 +1693,23 @@ impl HostErrorEnvelope {
             readiness: Some(readiness),
             field_errors: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CaptureReadinessDto;
+
+    #[test]
+    fn capture_retry_required_uses_focus_guidance_copy() {
+        let readiness = CaptureReadinessDto::capture_retry_required("session_01hs6n1r8b8zc5v4ey2x7b9g1m", None);
+
+        assert_eq!(readiness.customer_state, "Preparing");
+        assert_eq!(readiness.customer_message, "초점이 맞지 않았어요.");
+        assert_eq!(
+            readiness.support_message,
+            "대상을 다시 맞춘 뒤 한 번 더 찍어 주세요."
+        );
+        assert_eq!(readiness.reason_code, "capture-retry-required");
     }
 }

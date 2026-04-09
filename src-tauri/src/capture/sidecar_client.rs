@@ -499,7 +499,7 @@ pub fn map_capture_round_trip_error(
 
     match error {
         SidecarClientError::CaptureTriggerRetryRequired => HostErrorEnvelope::capture_not_ready(
-            "사진을 아직 찍지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
+            "초점이 맞지 않았어요. 대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.",
             crate::contracts::dto::CaptureReadinessDto::capture_retry_required(
                 session_id.to_string(),
                 None,

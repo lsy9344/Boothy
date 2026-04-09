@@ -945,14 +945,14 @@ describe('SessionProvider', () => {
           .fn<CaptureRuntimeGateway['requestCapture']>()
           .mockRejectedValue({
             code: 'capture-not-ready',
-            message: '사진을 아직 찍지 못했어요.',
+            message: '초점이 맞지 않았어요.',
             readiness: {
               sessionId,
               customerState: 'Preparing',
               canCapture: false,
               primaryAction: 'wait',
-              customerMessage: '사진을 아직 찍지 못했어요.',
-              supportMessage: '대상을 다시 맞춘 뒤 잠시 후 다시 시도해 주세요.',
+              customerMessage: '초점이 맞지 않았어요.',
+              supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
               reasonCode: 'capture-retry-required',
             },
           }),

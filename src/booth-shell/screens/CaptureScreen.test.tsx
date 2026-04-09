@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -385,6 +386,329 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /촬영 준비 중이에요/i }),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
+  })
+
+  it('shows focus guidance when capture needs a retry because focus was not locked', async () => {
+    renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'blocked',
+          customerState: 'Preparing',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '초점이 맞지 않았어요.',
+          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          reasonCode: 'capture-retry-required',
+          latestCapture: null,
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /초점이 맞지 않았어요\./i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByText(/^대상을 다시 맞춘 뒤 한 번 더 찍어 주세요\.$/),
+    ).not.toHaveLength(0)
+    expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
+  })
+
+  it('shows a centered focus popup first, then fades it out after 2 seconds', async () => {
+    vi.useFakeTimers()
+
+    try {
+      renderCaptureScreen(
+        {},
+        {
+          captureReadiness: {
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'blocked',
+            customerState: 'Preparing',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '초점이 맞지 않았어요.',
+            supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+            reasonCode: 'capture-retry-required',
+            latestCapture: null,
+          },
+        },
+      )
+
+      await Promise.resolve()
+      const popup = screen.getByRole('alert')
+      expect(popup).toHaveTextContent('초점이 맞지 않았어요.')
+      expect(popup).toHaveTextContent('대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.')
+      expect(popup).toHaveClass('focus-retry-overlay--dismissing')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100)
+      })
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the focus popup again on each repeated capture retry failure', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const requestCapture = vi.fn().mockRejectedValue({
+        code: 'capture-not-ready',
+        message: '초점이 맞지 않았어요.',
+        readiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'blocked',
+          customerState: 'Preparing',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '초점이 맞지 않았어요.',
+          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          reasonCode: 'capture-retry-required',
+          latestCapture: null,
+        },
+      })
+
+      renderCaptureScreen({
+        requestCapture,
+      })
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600)
+      })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      expect(requestCapture).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restarts the focus popup as a fresh overlay when retry failure happens again before it disappears', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const requestCapture = vi.fn().mockRejectedValue({
+        code: 'capture-not-ready',
+        message: '초점이 맞지 않았어요.',
+        readiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'blocked',
+          customerState: 'Preparing',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '초점이 맞지 않았어요.',
+          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          reasonCode: 'capture-retry-required',
+          latestCapture: null,
+        },
+      })
+
+      renderCaptureScreen({
+        requestCapture,
+      })
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      const firstPopup = screen.getByRole('alert')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      const restartedPopup = screen.getByRole('alert')
+      expect(restartedPopup).not.toBe(firstPopup)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1700)
+      })
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the focus popup on every repeated retryable failure across real capture state updates', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const readyReadiness: CaptureReadinessSnapshot = {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        surfaceState: 'captureReady',
+        customerState: 'Ready',
+        canCapture: true,
+        primaryAction: 'capture',
+        customerMessage: '지금 촬영할 수 있어요.',
+        supportMessage: '버튼을 누르면 바로 시작돼요.',
+        reasonCode: 'ready',
+        latestCapture: null,
+        postEnd: null,
+        timing: createTimingSnapshot(),
+      }
+      const retryReadiness: CaptureReadinessSnapshot = {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        surfaceState: 'blocked',
+        customerState: 'Preparing',
+        canCapture: false,
+        primaryAction: 'wait',
+        customerMessage: '초점이 맞지 않았어요.',
+        supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+        reasonCode: 'capture-retry-required',
+        latestCapture: null,
+        postEnd: null,
+        timing: createTimingSnapshot(),
+      }
+
+      function RepeatedRetryHarness() {
+        const [isRequestingCapture, setIsRequestingCapture] = useState(false)
+        const [captureReadiness, setCaptureReadiness] =
+          useState<CaptureReadinessSnapshot>(readyReadiness)
+
+        const requestCapture = async () => {
+          setIsRequestingCapture(true)
+          await Promise.resolve()
+          setCaptureReadiness(retryReadiness)
+          setIsRequestingCapture(false)
+          window.setTimeout(() => {
+            setCaptureReadiness(readyReadiness)
+          }, 100)
+          throw {
+            code: 'capture-not-ready',
+            message: '초점이 맞지 않았어요.',
+            readiness: retryReadiness,
+          }
+        }
+
+        const value: SessionStateContextValue = {
+          isStarting: false,
+          isLoadingPresetCatalog: false,
+          isSelectingPreset: false,
+          isLoadingCaptureReadiness: false,
+          isDeletingCapture: false,
+          isRequestingCapture,
+          sessionDraft: {
+            ...DEFAULT_SESSION_DRAFT,
+            flowStep: 'capture',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            boothAlias: 'Kim 4821',
+            selectedPreset: {
+              presetId: 'preset_soft-glow',
+              publishedVersion: '2026.03.20',
+            },
+            presetCatalog: [
+              {
+                presetId: 'preset_soft-glow',
+                displayName: 'Soft Glow',
+                publishedVersion: '2026.03.20',
+                boothStatus: 'booth-safe',
+                preview: {
+                  kind: 'preview-tile',
+                  assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
+                  altText: 'Soft Glow preview',
+                },
+              },
+            ],
+            captureReadiness,
+            manifest: {
+              schemaVersion: 'session-manifest/v1',
+              sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+              boothAlias: 'Kim 4821',
+              customer: {
+                name: 'Kim',
+                phoneLastFour: '4821',
+              },
+              createdAt: '2026-03-20T00:00:00.000Z',
+              updatedAt: '2026-03-20T00:00:00.000Z',
+              lifecycle: {
+                status: 'active',
+                stage: 'preset-selected',
+              },
+              activePreset: {
+                presetId: 'preset_soft-glow',
+                publishedVersion: '2026.03.20',
+              },
+              activePresetDisplayName: 'Soft Glow',
+              activePresetId: 'preset_soft-glow',
+              captures: [],
+              timing: createTimingSnapshot(),
+              postEnd: null,
+            },
+          },
+          startSession: vi.fn(),
+          beginPresetSwitch: vi.fn(),
+          cancelPresetSwitch: vi.fn(),
+          loadPresetCatalog: vi.fn(),
+          selectActivePreset: vi.fn(),
+          getCaptureReadiness: vi.fn(),
+          deleteCapture: vi.fn(),
+          requestCapture,
+        }
+
+        return (
+          <SessionStateContext.Provider value={value}>
+            <CaptureScreen />
+          </SessionStateContext.Provider>
+        )
+      }
+
+      render(<RepeatedRetryHarness />)
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2700)
+      })
+      expect(screen.getByRole('button', { name: /사진 찍기/i })).toBeEnabled()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('blocks capture and guides the customer to ask for help in phone-required state', async () => {

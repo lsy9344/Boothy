@@ -335,7 +335,7 @@ fn ensure_capture_request_id_is_fresh(
 fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static str {
     match error {
         SidecarClientError::CaptureTriggerRetryRequired => {
-            "사진을 아직 찍지 못했어요. 초점을 다시 맞춘 뒤 한 번 더 시도해 주세요."
+            "초점이 맞지 않았어요. 대상을 다시 맞춘 뒤 한 번 더 찍어 주세요."
         }
         SidecarClientError::CaptureTimedOut => {
             "사진 저장을 끝내지 못했어요. 가까운 직원에게 알려 주세요."

@@ -378,6 +378,79 @@ select {
   min-width: 220px;
 }
 
+.focus-retry-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.focus-retry-overlay__card {
+  width: min(460px, calc(100vw - 48px));
+  display: grid;
+  gap: 10px;
+  padding: 22px 24px;
+  border: 1px solid rgba(255, 166, 139, 0.34);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top, rgba(255, 189, 163, 0.22), transparent 52%),
+    rgba(23, 17, 14, 0.92);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  color: #fff3ee;
+  text-align: center;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 600ms ease,
+    transform 600ms ease;
+}
+
+.focus-retry-overlay--dismissing .focus-retry-overlay__card {
+  animation: focus-retry-overlay-fade 600ms ease 2s forwards;
+}
+
+.focus-retry-overlay__badge {
+  width: fit-content;
+  margin: 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 166, 139, 0.18);
+  color: #ffd8cc;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.focus-retry-overlay__card h2,
+.focus-retry-overlay__card p {
+  margin: 0;
+}
+
+.focus-retry-overlay__card h2 {
+  font-size: clamp(1.4rem, 3vw, 1.9rem);
+}
+
+.focus-retry-overlay__card p:last-child {
+  color: #f3d8cf;
+  font-size: 1rem;
+}
+
+@keyframes focus-retry-overlay-fade {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+}
+
 .preview-waiting-panel {
   display: grid;
   gap: 10px;
