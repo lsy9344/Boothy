@@ -90,13 +90,7 @@ export function ReadinessScreen({
         ) : shouldShowPhoneRequiredSupportCard ? (
           <PhoneRequiredSupportCard guidance={postEndGuidance} />
         ) : isExplicitPostEnd ? (
-          <div
-            className={`readiness-screen__post-end${
-              postEndGuidance?.state === 'phone-required'
-                ? ' readiness-screen__post-end--phone-required'
-                : ''
-            }`}
-          >
+          <div className="readiness-screen__post-end">
             <p className="readiness-screen__post-end-label">{stateLabel}</p>
           </div>
         ) : (

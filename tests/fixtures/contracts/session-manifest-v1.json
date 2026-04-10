@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "boothAlias": "Kim 4821",
+  "customer": {
+    "name": "Kim",
+    "phoneLastFour": "4821"
+  },
+  "createdAt": "2026-04-10T01:00:00Z",
+  "updatedAt": "2026-04-10T01:00:12Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 7,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.04.10"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_soft-glow",
+    "publishedVersion": "2026.04.10"
+  },
+  "activePresetId": "preset_soft-glow",
+  "activePresetDisplayName": "Soft Glow",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+    "adjustedEndAt": "2026-04-10T01:01:00Z",
+    "warningAt": "2026-04-10T01:00:30Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "activePresetId": "preset_soft-glow",
+      "activePresetVersion": "2026.04.10",
+      "activePresetDisplayName": "Soft Glow",
+      "captureId": "capture_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "requestId": "request_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "raw": {
+        "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_01hs6n1r8b8zc5v4ey2x7b9g1m.cr3",
+        "persistedAtMs": 120
+      },
+      "preview": {
+        "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_01hs6n1r8b8zc5v4ey2x7b9g1m.jpg",
+        "enqueuedAtMs": 125,
+        "readyAtMs": 640
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 100,
+        "previewVisibleAtMs": 640,
+        "fastPreviewVisibleAtMs": 240,
+        "xmpPreviewReadyAtMs": 640,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "withinBudget"
+      }
+    }
+  ],
+  "postEnd": null
+}

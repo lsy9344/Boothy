@@ -1,0 +1,1191 @@
+diff --git "a/_bmad-output/implementation-artifacts/1-15-canon-helper-profile\352\263\274-publication-contract-\355\231\225\354\240\225.md" "b/_bmad-output/implementation-artifacts/1-15-canon-helper-profile\352\263\274-publication-contract-\355\231\225\354\240\225.md"
+new file mode 100644
+index 0000000..ae07fc6
+--- /dev/null
++++ "b/_bmad-output/implementation-artifacts/1-15-canon-helper-profile\352\263\274-publication-contract-\355\231\225\354\240\225.md"
+@@ -0,0 +1,229 @@
++# Story 1.15: Canon helper profile과 publication contract 확정
++
++Status: review
++
++<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
++
++## Story
++
++owner / brand operator로서,
++capture boundary와 preset publication boundary 계약을 먼저 확정하고 싶다,
++그래서 실카메라 연동과 future-session publication이 구현마다 다르게 해석되지 않도록 할 수 있다.
++
++## Acceptance Criteria
++
++1. `docs/contracts/camera-helper-edsdk-profile.md`가 Boothy의 Canon helper implementation profile authoritative baseline으로 정리되어야 하며, `helper-ready`, `camera-status`, `recovery-status`, `helper-error` 의미가 `src-tauri/src/capture/sidecar_client.rs`, `src-tauri/src/capture/normalized_state.rs`, `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`와 일치해야 한다.
++2. helper truth는 host-normalized truth와 연결되어야 하며, stale/missing/mismatched helper status는 booth `Ready`를 유지시키면 안 된다. operator의 `카메라 연결 상태`와 booth capture readiness는 같은 helper semantics에서 계산되어야 하고, raw helper vocabulary가 그대로 customer copy로 노출되면 안 된다.
++3. `docs/contracts/authoring-publication.md`와 publication payload contract가 필수 publish input, rejection reason, audit record, immutable bundle rule, approval state transition(`validated -> approved -> published`)을 포함해 동결되어야 하며, `src/shared-contracts/schemas/preset-authoring.ts`, `src/shared-contracts/dto/preset.ts`, `src-tauri/src/contracts/dto.rs`, `src-tauri/src/preset/authoring_pipeline.rs`와 같은 의미를 가져야 한다.
++4. future-session-only publication / rollback rule이 계약과 테스트에서 명시적으로 보장되어야 하며, publish/rollback이 active session manifest, current capture binding, existing published bundle을 직접 바꾸지 않고 live catalog pointer + audit history만 변경한다는 점이 검증 가능해야 한다.
++
++## Tasks / Subtasks
++
++- [x] Canon helper implementation profile을 문서/코드/예시에서 같은 기준으로 잠근다. (AC: 1, 2)
++  - [x] `docs/contracts/camera-helper-edsdk-profile.md`, `docs/contracts/camera-helper-sidecar-protocol.md`, `sidecar/canon-helper/README.md`를 기준으로 Windows 10/11 x64, `canon-helper.exe`, `net8.0`, 단일 활성 카메라, 단일 in-flight capture, request/session/capture correlation 규칙을 명시한다.
++  - [x] `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`, `sidecar/canon-helper/src/CanonHelper/Runtime/JsonFileProtocol.cs`, `sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs`와 `src-tauri/src/capture/sidecar_client.rs`의 schema version, message type, 필수 필드를 교차 정렬한다.
++  - [x] 현재 `sidecar/protocol/examples/`에 없는 `helper-ready`, `recovery-status`, `helper-error` durable example을 추가하거나 동등한 fixture/test 경로로 승격한다.
++
++- [x] host-normalized booth/operator truth 연결을 명확히 잠근다. (AC: 1, 2)
++  - [x] `src-tauri/src/capture/normalized_state.rs`에서 freshness, session match, helper/camera degraded semantics가 `Ready`와 `Phone Required`를 어떻게 가르는지 문서 기준과 맞춘다.
++  - [x] stale helper, session mismatch, degraded-after-ready, reconnect-pending이 false-ready로 이어지지 않도록 guardrail을 남긴다.
++  - [x] Story 5.4의 operator `카메라 연결 상태` 기대치와 연결되도록 raw detailCode -> normalized operator state 매핑을 문서화한다.
++
++- [x] publication payload contract와 approval state transition을 authoritative contract로 동결한다. (AC: 3)
++  - [x] `docs/contracts/authoring-publication.md`와 `docs/contracts/authoring-publication-payload.md`의 역할을 재정렬한다. 현재 payload 문서가 validation 중심이면 publication payload contract 문서로 고치거나 validation contract를 별도 문서로 분리해 의미 충돌을 없앤다.
++  - [x] `src/shared-contracts/schemas/preset-authoring.ts`, `src/shared-contracts/dto/preset.ts`, `src-tauri/src/contracts/dto.rs`, `src-tauri/src/preset/authoring_pipeline.rs`의 publish input, rejection reason, audit shape, publication history 규칙을 같은 baseline으로 맞춘다.
++  - [x] `duplicate-version`, `stale-validation`, `metadata-mismatch`, `path-escape`, `future-session-only-violation` 거절 규칙과 `approved -> published` history 기록 순서를 계약 수준으로 잠근다.
++
++- [x] future-session-only publication / rollback semantics를 active session 보호 기준과 함께 잠근다. (AC: 4)
++  - [x] `src-tauri/src/preset/preset_catalog_state.rs`, `src-tauri/tests/preset_authoring.rs`, `src-tauri/tests/operator_audit.rs`, `docs/contracts/preset-bundle.md`, `docs/runbooks/booth-hardware-validation-checklist.md`를 기준으로 live catalog pointer 변경과 active session binding 보존 규칙을 정렬한다.
++  - [x] publish/rollback이 immutable bundle directory를 수정하지 않고, future session catalog와 audit store만 바꾼다는 점을 테스트 가능한 기준으로 남긴다.
++  - [x] operator audit / publication recovery 로그가 publication rejection, publication success, catalog rollback을 남기되 active session truth를 건드리지 않는다는 점을 유지한다.
++
++- [x] 실행 가능한 계약 검증과 회귀 테스트를 보강한다. (AC: 1, 2, 3, 4)
++  - [x] `src/shared-contracts/contracts.test.ts`에 publication input/result, rollback result, helper message fixture 파싱 검증을 추가하거나 보강한다.
++  - [x] `src-tauri/tests/preset_authoring.rs`, `src-tauri/tests/operator_audit.rs`에서 future-session-only, active-session immutability, rejection audit, catalog rollback regression을 잠근다.
++  - [x] `sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs` 또는 동등한 helper test에서 processed request persistence, incomplete JSON-line buffering, new helper event fixture 파싱을 유지한다.
++
++## Dev Notes
++
++### 스토리 범위와 제품 목적
++
++- 이 스토리는 새 booth 기능을 추가하는 작업이 아니라, capture boundary와 publication boundary를 제품 관점에서 더 깊게 잠그는 foundational contract story다.
++- Story 1.14가 session/preset/error/capability/protocol의 공용 baseline을 닫았다면, Story 1.15는 그 위에 Canon helper runtime profile과 publication state machine detail을 닫는 역할이다.
++- Story 1.16의 build/release baseline까지 끌고 가지 말 것. helper packaging/security가 release pipeline 전체 변경으로 번지면, release proof 자체는 1.16의 책임으로 남겨 둔다.
++
++### 왜 지금 필요한가
++
++- `epics.md`와 2026-04-10 correct-course는 implementation sequence 상 shared contract freeze 다음에 helper/publication contract를 닫아야 한다고 명시했다. [Source: _bmad-output/planning-artifacts/epics.md#Story 1.15: Canon helper profile과 publication contract 확정] [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260410-003446.md]
++- implementation readiness review도 foundation-first 순서를 `1.14 -> 1.15 -> 1.16 -> starter setup`으로 본다. [Source: _bmad-output/planning-artifacts/implementation-readiness-report-20260410.md]
++- 현재 저장소는 helper/profile 문서와 publication flow 구현이 이미 존재하지만, contract ownership과 example coverage가 완전히 닫혀 있지는 않다.
++
++### 현재 워크스페이스 상태
++
++- Canon helper 축은 이미 code/doc baseline이 있다.
++  - `docs/contracts/camera-helper-sidecar-protocol.md`
++  - `docs/contracts/camera-helper-edsdk-profile.md`
++  - `sidecar/canon-helper/README.md`
++  - `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`
++  - `sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs`
++  - `src-tauri/src/capture/sidecar_client.rs`
++  - `src-tauri/src/capture/normalized_state.rs`
++- publication 축도 이미 작동하는 흐름이 있다.
++  - `docs/contracts/authoring-publication.md`
++  - `src/shared-contracts/schemas/preset-authoring.ts`
++  - `src/preset-authoring/services/preset-authoring-service.ts`
++  - `src-tauri/src/preset/authoring_pipeline.rs`
++  - `src-tauri/src/preset/preset_catalog_state.rs`
++  - `src-tauri/tests/preset_authoring.rs`
++  - `src-tauri/tests/operator_audit.rs`
++- 다만 `docs/contracts/authoring-publication-payload.md`는 현재 validation artifact 설명에 가깝고 publication payload contract와 이름/역할이 맞지 않는다. 1.15는 이 drift를 그대로 두면 안 된다.
++- `sidecar/protocol/examples/`에는 현재 `camera-status.json`, `file-arrived.json`만 있어 helper-ready / recovery-status / helper-error baseline example이 비어 있다.
++- `src-tauri/tauri.conf.json`은 아직 helper sidecar packaging/security 계약을 드러내지 않는다. 이 부분을 건드릴 경우 contract-driven 최소 범위만 다루고, release proof 자체는 1.16과 충돌하지 않게 유지한다.
++
++### 이전 스토리 인텔리전스
++
++- Story 1.14는 shared contract baseline을 잠그면서 helper deeper runtime profile과 publication deeper behavior는 1.15가 닫도록 범위를 남겨 두었다. [Source: _bmad-output/implementation-artifacts/1-14-공유-계약-동결과-검증-기준-확정.md]
++- recent preview/capture work는 helper correlation, fast preview, operator guidance를 강화했다. 따라서 1.15는 새 vocabulary를 발명하기보다 이미 쓰이는 requestId / captureId / freshness / future-session-only semantics를 authoritative baseline으로 정리하는 쪽이 맞다.
++  - `8c30be7 Improve focus retry guidance`
++  - `2c89c40 Finalize thumbnail latency worker updates and docs`
++  - `9c56c37 Add session seam logging for thumbnail latency reduction`
++  - `b24cfc4 Reduce recent-session preview latency and capture wait blocking`
++  - `12309fa Record thumbnail validation and ship fast preview fallback`
++
++### 제품/아키텍처 가드레일
++
++- camera/helper truth는 계속 host-normalized projection 뒤에 있어야 한다. React가 raw helper state, stdout/stderr, detailCode를 직접 해석해 booth/operator truth를 만들면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Core Architectural Decisions] [Source: docs/contracts/camera-helper-sidecar-protocol.md]
++- `helper-ready`와 `camera-status=ready`는 다른 뜻이다. helper process가 protocol 대화를 시작할 수 있다는 사실과 실제 촬영 가능 카메라 truth를 합치면 안 된다. [Source: docs/contracts/camera-helper-edsdk-profile.md]
++- capture success는 `capture-accepted`가 아니라 `file-arrived` + host file existence recheck 뒤에만 확정돼야 한다. [Source: docs/contracts/camera-helper-edsdk-profile.md] [Source: src-tauri/src/capture/sidecar_client.rs]
++- publication success는 immutable bundle, publication history, live catalog pointer, audit가 함께 닫혀야 하고, active session binding을 직접 바꾸면 안 된다. [Source: _bmad-output/planning-artifacts/prd.md#FR-008 Authorized Preset Authoring, Approval, and Publication] [Source: docs/contracts/authoring-publication.md] [Source: src-tauri/src/preset/preset_catalog_state.rs]
++- publish/rollback은 future sessions only다. rollback은 existing bundle 삭제가 아니라 live pointer 전환이어야 한다. [Source: docs/contracts/preset-bundle.md] [Source: docs/runbooks/booth-hardware-validation-checklist.md]
++
++### 구현 가드레일
++
++- session manifest, preset bundle, error envelope, runtime capability baseline은 1.14에서 이미 잠갔다. 1.15에서 그 범위를 다시 넓히거나 schema version을 가볍게 올리지 말 것.
++- Canon helper profile을 정리한다는 이유로 multi-camera, live view UI, network camera control까지 scope를 넓히지 말 것. 현재 baseline은 Windows-only Canon EDSDK single-camera helper다.
++- publication contract를 닫는 과정에서 Story 4.2/4.3/4.4의 제품 행동을 선행 구현 수준까지 다 끝내려 하지 말 것. 이 스토리의 목적은 state machine contract freeze와 guardrail 강화다.
++- customer copy를 helper vocabulary나 authoring 용어로 오염시키지 말 것.
++
++### 프로젝트 구조 요구사항
++
++- 우선 수정 후보 경로:
++  - `docs/contracts/camera-helper-edsdk-profile.md`
++  - `docs/contracts/camera-helper-sidecar-protocol.md`
++  - `docs/contracts/authoring-publication.md`
++  - `docs/contracts/authoring-publication-payload.md`
++  - `sidecar/canon-helper/README.md`
++  - `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`
++  - `sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs`
++  - `sidecar/canon-helper/src/CanonHelper/Runtime/JsonFileProtocol.cs`
++  - `sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`
++  - `sidecar/protocol/examples/`
++  - `src/shared-contracts/schemas/preset-authoring.ts`
++  - `src/shared-contracts/dto/preset.ts`
++  - `src/shared-contracts/contracts.test.ts`
++  - `src/preset-authoring/services/preset-authoring-service.ts`
++  - `src-tauri/src/contracts/dto.rs`
++  - `src-tauri/src/capture/sidecar_client.rs`
++  - `src-tauri/src/capture/normalized_state.rs`
++  - `src-tauri/src/preset/authoring_pipeline.rs`
++  - `src-tauri/src/preset/preset_catalog_state.rs`
++  - `src-tauri/tests/preset_authoring.rs`
++  - `src-tauri/tests/operator_audit.rs`
++- 필요 시 새로 추가될 가능성이 큰 경로:
++  - `sidecar/protocol/examples/helper-ready.json`
++  - `sidecar/protocol/examples/recovery-status.json`
++  - `sidecar/protocol/examples/helper-error.json`
++  - publication contract용 fixture 또는 test data 경로
++
++### 테스트 요구사항
++
++- helper message contract:
++  - `helper-ready`, `camera-status`, `capture-accepted`, `file-arrived`, `recovery-status`, `helper-error`가 host와 helper에서 모두 같은 schemaVersion/type/field 의미를 가져야 한다.
++  - stale status, mismatched session, recovery-required가 booth `Ready`를 만들지 않는 regression guard가 있어야 한다.
++- publication contract:
++  - validated draft만 publish 가능해야 한다.
++  - `approved -> published` history가 success path에서 순서대로 남아야 한다.
++  - `duplicate-version`, `stale-validation`, `metadata-mismatch`, `path-escape`, `future-session-only-violation`이 typed rejection으로 남아야 한다.
++  - rollback은 live catalog pointer만 바꾸고 active session binding은 유지해야 한다.
++- 권장 실행 게이트:
++  - `pnpm test:run`
++  - `cargo test --test preset_authoring`
++  - `cargo test --test operator_audit`
++  - `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
++
++### 최신 기술 / 제품 컨텍스트
++
++- 저장소 기준선은 현재 `React 19.2.4`, `react-router-dom 7.13.1`, `Zod 4.3.6`, `@tauri-apps/api/cli 2.10.1`, Rust `tauri 2.10.3`, helper `net8.0`, pinned darktable `5.4.1`이다. 새 계층을 추가하기보다 이 baseline을 authoritative contract로 정렬하는 편이 맞다. 이 문장은 현재 저장소 파일을 근거로 한 추론이다. [Source: package.json] [Source: src-tauri/Cargo.toml] [Source: sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj] [Source: src-tauri/src/preset/authoring_pipeline.rs]
++- 2026-04-10 확인 기준 Canon 공식 CAP release note는 EDSDK `Ver.13.20.10`의 공개 일자를 `2025-09-24`로 안내한다. helper profile 문서는 이 기준과 모순되지 않게 유지한다. [Source: https://asia.canon/en/campaign/developerresources/camera/cap/edsdk-eos-digital-camera-sdk-release-note]
++- 2026-04-10 확인 기준 Tauri 공식 sidecar 문서는 sidecar binary entry와 spawn/execute permission을 명시적으로 설정해야 한다고 안내한다. helper launch contract를 바꾸면 이 규칙을 따라야 한다. [Source: https://tauri.app/develop/sidecar/]
++
++### References
++
++- [Source: _bmad-output/planning-artifacts/epics.md#Story 1.15: Canon helper profile과 publication contract 확정]
++- [Source: _bmad-output/planning-artifacts/prd.md#FR-008 Authorized Preset Authoring, Approval, and Publication]
++- [Source: _bmad-output/planning-artifacts/implementation-readiness-report-20260410.md]
++- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260410-003446.md]
++- [Source: _bmad-output/implementation-artifacts/1-14-공유-계약-동결과-검증-기준-확정.md]
++- [Source: docs/contracts/camera-helper-sidecar-protocol.md]
++- [Source: docs/contracts/camera-helper-edsdk-profile.md]
++- [Source: docs/contracts/authoring-publication.md]
++- [Source: docs/contracts/authoring-publication-payload.md]
++- [Source: docs/contracts/preset-bundle.md]
++- [Source: docs/runbooks/booth-hardware-validation-checklist.md]
++- [Source: sidecar/canon-helper/README.md]
++- [Source: sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj]
++- [Source: sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs]
++- [Source: sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs]
++- [Source: src/shared-contracts/schemas/preset-authoring.ts]
++- [Source: src/preset-authoring/services/preset-authoring-service.ts]
++- [Source: src-tauri/src/contracts/dto.rs]
++- [Source: src-tauri/src/capture/sidecar_client.rs]
++- [Source: src-tauri/src/capture/normalized_state.rs]
++- [Source: src-tauri/src/preset/authoring_pipeline.rs]
++- [Source: src-tauri/src/preset/preset_catalog_state.rs]
++- [Source: src-tauri/tests/preset_authoring.rs]
++- [Source: src-tauri/tests/operator_audit.rs]
++- [Source: package.json]
++- [Source: src-tauri/Cargo.toml]
++- [Source: https://asia.canon/en/campaign/developerresources/camera/cap/edsdk-eos-digital-camera-sdk-release-note]
++- [Source: https://tauri.app/develop/sidecar/]
++
++## Dev Agent Record
++
++### Agent Model Used
++
++GPT-5 Codex
++
++### Story Creation Notes
++
++- config, sprint-status, epics, PRD, architecture, UX, implementation-readiness report, sprint change proposal, Story 1.14, helper/publication contract docs, helper C# source, Rust host publication/capture code, contract tests를 교차 분석했다.
++- 현재 저장소는 helper profile과 publication flow의 baseline 구현을 이미 갖고 있으며, 이번 스토리는 greenfield 기능이 아니라 contract ownership 정렬, example 보강, active-session immutability 증명에 초점을 둔다고 판단했다.
++- 최신 외부 확인은 Canon 공식 EDSDK release note와 Tauri 공식 sidecar 문서만 사용했다.
++
++### Completion Notes List
++
++- Canon helper 계약 문서에 Windows 10/11 x64, `canon-helper.exe`, `net8.0`, 단일 활성 카메라, 단일 in-flight capture, correlation 규칙과 durable example baseline을 반영했다.
++- `sidecar/protocol/examples/`에 `helper-ready`, `recovery-status`, `helper-error` fixture를 추가하고 `src/shared-contracts/contracts.test.ts`에서 canonical parse 검증을 보강했다.
++- publication 문서 역할을 `authoring-publication` / `authoring-publication-payload` / `authoring-validation`으로 분리해 publish input/result/audit와 validation baseline의 의미 충돌을 제거했다.
++- `cargo test --test preset_authoring`, `cargo test --test operator_audit`, `cargo test --test capture_readiness`, `pnpm vitest run src/shared-contracts/contracts.test.ts`를 통과했다.
++- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`는 Canon SDK vendor 입력물이 없어 실행하지 못했지만, fixture parse 회귀용 테스트는 추가했다.
++
++### Change Log
++
++- 2026-04-10: Canon helper protocol durable example과 publication payload/validation 문서 역할을 정렬하고 Story 1.15를 `review`로 갱신.
++
++### File List
++
++- _bmad-output/implementation-artifacts/1-15-canon-helper-profile과-publication-contract-확정.md
++- _bmad-output/implementation-artifacts/sprint-status.yaml
++- docs/contracts/authoring-publication.md
++- docs/contracts/authoring-publication-payload.md
++- docs/contracts/authoring-validation.md
++- docs/contracts/camera-helper-edsdk-profile.md
++- docs/contracts/camera-helper-sidecar-protocol.md
++- sidecar/canon-helper/README.md
++- sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs
++- sidecar/protocol/examples/helper-error.json
++- sidecar/protocol/examples/helper-ready.json
++- sidecar/protocol/examples/recovery-status.json
++- src/shared-contracts/contracts.test.ts
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index bb62e72..7a729a0 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-03-20 09:44:49 +09:00
+-# last_updated: 2026-03-28 02:37:25 +09:00
++# last_updated: 2026-04-10 12:20:00 +09:00
+ # project: Boothy
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -35,9 +35,10 @@
+ # - SM typically creates next story after previous one is 'done' to incorporate learnings
+ # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+ # - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
++# - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
+ 
+ generated: "2026-03-20 09:44:49 +09:00"
+-last_updated: "2026-04-04 02:08:56 +09:00"
++last_updated: "2026-04-10 12:20:00 +09:00"
+ project: "Boothy"
+ project_key: "NOKEY"
+ tracking_system: "file-system"
+@@ -46,16 +47,19 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
+ 
+ development_status:
+   epic-1: in-progress
++  1-14-공유-계약-동결과-검증-기준-확정: done
++  1-15-canon-helper-profile과-publication-contract-확정: review
++  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: backlog
+   1-1-set-up-initial-project-from-starter-template: done
+   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
+   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
+   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
+   1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
+-  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: review
++  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
+   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
+   1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
+   1-9-fast-preview-handoff와-xmp-preview-교체: review
+-  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: in-progress
++  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: review
+   epic-1-retrospective: optional
+ 
+   epic-2: in-progress
+@@ -63,11 +67,12 @@ development_status:
+   2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
+   2-3-이후-촬영용-활성-프리셋-변경: done
+   2-4-조정된-종료-시각-표시와-경고-종료-알림: done
++  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: backlog
+   epic-2-retrospective: optional
+ 
+   epic-3: in-progress
+   3-1-종료-직후-명시적-사후-상태-진입: done
+-  3-2-export-waiting과-truthful-completion-안내: review
++  3-2-export-waiting과-truthful-completion-안내: done
+   3-3-handoff-ready와-phone-required-보호-안내: done
+   epic-3-retrospective: optional
+ 
+@@ -85,7 +90,6 @@ development_status:
+   5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: review
+   epic-5-retrospective: optional
+ 
+-  epic-6: in-progress
++  epic-6: done
+   6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
+-  6-2-실장비-hardware-validation-gate와-evidence-기반-done-정책: done
+   epic-6-retrospective: optional
+diff --git a/docs/contracts/authoring-publication.md b/docs/contracts/authoring-publication.md
+index c523d4c..3cc91ad 100644
+--- a/docs/contracts/authoring-publication.md
++++ b/docs/contracts/authoring-publication.md
+@@ -5,6 +5,12 @@
+ 이 문서는 validated draft를 immutable published bundle로 게시할 때 authoring surface와 host가
+ 공유하는 입력, 결과, 거절, 감사 이력 계약을 고정한다.
+ 
++## 문서 역할
++
++- `docs/contracts/authoring-publication.md`: publication state machine, guardrail, approval/published 의미
++- `docs/contracts/authoring-publication-payload.md`: publish input/result/audit payload shape baseline
++- `docs/contracts/authoring-validation.md`: draft validation artifact와 validation result baseline
++
+ ## Publish Input
+ 
+ - `presetId`: 게시할 draft의 stable identifier
+diff --git a/docs/contracts/authoring-publication-payload.md b/docs/contracts/authoring-publication-payload.md
+index 93f344a..22db60d 100644
+--- a/docs/contracts/authoring-publication-payload.md
++++ b/docs/contracts/authoring-publication-payload.md
+@@ -1,73 +1,70 @@
+-# Authoring Validation 계약
++# Authoring Publication Payload 계약
+ 
+ ## 목적
+ 
+-이 문서는 Story 4.2에서 사용하는 internal authoring payload와 validation result 기준을 정리한다.
++이 문서는 publication state machine 자체가 아니라, publish 시점에 authoring UI와 host가
++직접 주고받는 payload shape을 authoritative baseline으로 고정한다.
+ 
+-## Draft Preset Artifact v1
++validation artifact와 validation result baseline은
++`docs/contracts/authoring-validation.md`가 소유한다.
+ 
+-- schemaVersion: `draft-preset-artifact/v1`
+-- presetId
+-- displayName
+-- draftVersion
+-- lifecycleState: `draft` 또는 `validated`
+-- darktableVersion
+-- darktableProjectPath
+-- xmpTemplatePath
+-- previewProfile
+-  - profileId
+-  - displayName
+-  - outputColorSpace
+-- finalProfile
+-  - profileId
+-  - displayName
+-  - outputColorSpace
+-- noisePolicy
+-  - policyId
+-  - displayName
+-  - reductionMode
+-- preview
+-  - assetPath
+-  - altText
+-- sampleCut
+-  - assetPath
+-  - altText
+-- validation
+-  - status: `not-run` | `passed` | `failed`
+-  - latestReport
+-  - history
+-- updatedAt
++## Publish Input v1
+ 
+-## Validation Report v1
++- schemaVersion: command input envelope 없이 typed payload로 전달
++- `presetId`
++- `draftVersion`
++- `validationCheckedAt`
++- `expectedDisplayName`
++- `publishedVersion`
++- `actorId`
++- `actorLabel`
++- `scope`
++- `reviewNote`
+ 
+-- schemaVersion: `draft-preset-validation/v1`
+-- presetId
+-- draftVersion
+-- lifecycleState: `draft` 또는 `validated`
+-- status: `passed` | `failed`
+-- checkedAt
+-- findings[]
+-  - ruleCode
+-  - severity: `error` | `warning`
+-  - fieldPath: nullable
+-  - message
+-  - guidance
++## Publish Result v1
+ 
+-## Host Validation 책임
++- schemaVersion: `draft-preset-publication-result/v1`
++- `status`: `published` | `rejected`
++- 공통 payload:
++  - latest draft snapshot
++  - publication history
++  - audit record
+ 
+-- React는 host가 반환한 validation result를 표시만 한다.
+-- Rust host는 최소 아래 규칙을 평가한다.
+-  - 필수 artifact 존재 여부
+-  - draft root 내부의 안전한 경로 여부
+-  - pinned darktable version 일치 여부
+-  - preview/final profile completeness
+-  - preview/sample-cut asset completeness
+-  - XMP template의 render compatibility 힌트 존재 여부
++### Published result
+ 
+-## 상태 전이 규칙
++- `publishedPreset`
++- `bundlePath`
++- `auditRecord.action = published`
++- same `publishedVersion`에 대해 draft `publicationHistory` 안에
++  `approved`, `published`가 순서대로 존재해야 한다.
+ 
+-- save/create는 항상 `draft` 상태를 쓴다.
+-- validation 통과 시에만 `draft -> validated`
+-- validation 실패 시 lifecycle은 `draft` 유지
+-- 검증 결과는 validation history에 누적한다.
+-- `validated`는 내부 approval 준비 상태이며, published catalog나 active session을 직접 바꾸지 않는다.
++### Rejected result
++
++- `reasonCode`
++  - `draft-not-validated`
++  - `stale-validation`
++  - `metadata-mismatch`
++  - `duplicate-version`
++  - `path-escape`
++  - `future-session-only-violation`
++- `message`
++- `guidance`
++- `auditRecord.action = rejected`
++
++## Publication Audit Record v1
++
++- schemaVersion: `preset-publication-audit/v1`
++- `presetId`, `draftVersion`, `publishedVersion`
++- `actorId`, `actorLabel`
++- `action`: `approved` | `published` | `rejected`
++- `reviewNote`
++- `reasonCode`
++- `guidance`
++- `notedAt`
++
++## Payload Guardrails
++
++- publish payload는 validated draft와 latest validation snapshot을 전제로 한다.
++- rejection payload는 partial bundle 또는 active session mutation을 동반하면 안 된다.
++- publish/rollback 모두 active session manifest와 current capture binding을 직접 수정하지 않는다.
++- immutable bundle rule과 future-session-only rule 위반은 typed rejection으로만 표면화한다.
+diff --git a/docs/contracts/authoring-validation.md b/docs/contracts/authoring-validation.md
+new file mode 100644
+index 0000000..93f344a
+--- /dev/null
++++ b/docs/contracts/authoring-validation.md
+@@ -0,0 +1,73 @@
++# Authoring Validation 계약
++
++## 목적
++
++이 문서는 Story 4.2에서 사용하는 internal authoring payload와 validation result 기준을 정리한다.
++
++## Draft Preset Artifact v1
++
++- schemaVersion: `draft-preset-artifact/v1`
++- presetId
++- displayName
++- draftVersion
++- lifecycleState: `draft` 또는 `validated`
++- darktableVersion
++- darktableProjectPath
++- xmpTemplatePath
++- previewProfile
++  - profileId
++  - displayName
++  - outputColorSpace
++- finalProfile
++  - profileId
++  - displayName
++  - outputColorSpace
++- noisePolicy
++  - policyId
++  - displayName
++  - reductionMode
++- preview
++  - assetPath
++  - altText
++- sampleCut
++  - assetPath
++  - altText
++- validation
++  - status: `not-run` | `passed` | `failed`
++  - latestReport
++  - history
++- updatedAt
++
++## Validation Report v1
++
++- schemaVersion: `draft-preset-validation/v1`
++- presetId
++- draftVersion
++- lifecycleState: `draft` 또는 `validated`
++- status: `passed` | `failed`
++- checkedAt
++- findings[]
++  - ruleCode
++  - severity: `error` | `warning`
++  - fieldPath: nullable
++  - message
++  - guidance
++
++## Host Validation 책임
++
++- React는 host가 반환한 validation result를 표시만 한다.
++- Rust host는 최소 아래 규칙을 평가한다.
++  - 필수 artifact 존재 여부
++  - draft root 내부의 안전한 경로 여부
++  - pinned darktable version 일치 여부
++  - preview/final profile completeness
++  - preview/sample-cut asset completeness
++  - XMP template의 render compatibility 힌트 존재 여부
++
++## 상태 전이 규칙
++
++- save/create는 항상 `draft` 상태를 쓴다.
++- validation 통과 시에만 `draft -> validated`
++- validation 실패 시 lifecycle은 `draft` 유지
++- 검증 결과는 validation history에 누적한다.
++- `validated`는 내부 approval 준비 상태이며, published catalog나 active session을 직접 바꾸지 않는다.
+diff --git a/docs/contracts/camera-helper-edsdk-profile.md b/docs/contracts/camera-helper-edsdk-profile.md
+index aaaa858..bcfe62f 100644
+--- a/docs/contracts/camera-helper-edsdk-profile.md
++++ b/docs/contracts/camera-helper-edsdk-profile.md
+@@ -41,6 +41,7 @@ Boothy에 대한 구현 해석은 아래와 같다.
+ - helper 런타임은 **Windows 전용**이다.
+ - booth 현장 표준은 Windows 10/11 **x64**를 기본으로 본다.
+ - helper 프로세스 이름은 `canon-helper.exe`를 기준으로 한다.
++- helper target framework는 `.NET 8 / net8.0` baseline으로 고정한다.
+ - helper는 app instance당 **하나의 장수명 프로세스**로 두는 것을 기본으로 한다.
+ - booth runtime은 **동시에 1대의 활성 카메라**만 소유하는 것을 기본으로 한다.
+ - helper는 **동시에 1개의 in-flight capture**만 허용하는 것을 기본으로 한다.
+@@ -230,6 +231,14 @@ React는 raw detailCode를 보고 독자적으로 최종 상태를 만들면 안
+ - capture request / file-arrived correlation
+ - recovery 진입/종료 시각
+ 
++durable example baseline:
++
++- `sidecar/protocol/examples/helper-ready.json`
++- `sidecar/protocol/examples/camera-status.json`
++- `sidecar/protocol/examples/file-arrived.json`
++- `sidecar/protocol/examples/recovery-status.json`
++- `sidecar/protocol/examples/helper-error.json`
++
+ HV-00, HV-03, HV-10 evidence에는 최소한 위 항목 일부가 남아야,
+ 문제가 생겼을 때 false-ready와 helper fault를 분리해서 볼 수 있다.
+ 
+diff --git a/docs/contracts/camera-helper-sidecar-protocol.md b/docs/contracts/camera-helper-sidecar-protocol.md
+index d4cee80..afc7725 100644
+--- a/docs/contracts/camera-helper-sidecar-protocol.md
++++ b/docs/contracts/camera-helper-sidecar-protocol.md
+@@ -10,15 +10,29 @@
+ 1. React가 Canon SDK truth를 직접 보지 않게 한다.
+ 2. booth `Ready`와 operator `카메라 연결 상태`가 같은 host-owned truth에서 나오게 한다.
+ 
++## Authoritative Source / 소비 경계
++
++- 문서 기준: 이 문서
++- Rust 기준: `src-tauri/src/capture/sidecar_client.rs`, `src-tauri/src/capture/normalized_state.rs`
++- helper 기준: `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`
++- durable example path:
++  - `sidecar/protocol/examples/helper-ready.json`
++  - `sidecar/protocol/examples/camera-status.json`
++  - `sidecar/protocol/examples/file-arrived.json`
++  - `sidecar/protocol/examples/recovery-status.json`
++  - `sidecar/protocol/examples/helper-error.json`
++
+ ## 현재 채택 결정
+ 
+ - Boothy의 현재 채택안은 Windows 전용 Canon EDSDK 기반 `canon-helper.exe`다.
++- helper target runtime은 Windows 10/11 x64용 `net8.0` baseline이다.
+ - 이 문서의 helper 계약은 위 실행 결정을 전제로, Tauri host와 helper exe 사이의 canonical sidecar protocol을 고정한다.
++- Story 1.14는 protocol 의미와 fixture baseline만 잠그고, helper packaging/runtime deeper profile은 Story 1.15가 계속 소유한다.
++- app instance당 helper는 하나의 활성 카메라와 하나의 in-flight capture만 동시에 소유한다.
+ 
+ ## 구현 프로파일 문서
+ 
+ - 현재 채택된 helper의 구체 구현 기준선은 `docs/contracts/camera-helper-edsdk-profile.md`에 둔다.
+-- 이 문서는 cross-boundary protocol을 고정하고, EDSDK profile 문서는 chosen helper의 런타임/패키징/진단 기준을 고정한다.
+ - generic protocol과 EDSDK profile이 충돌하면, 메시지 의미는 이 문서를 우선하고 구현 세부는 profile 문서를 우선한다.
+ 
+ ## 소유 경계
+@@ -40,116 +54,36 @@ React는 helper raw 메시지나 Canon SDK 상태를 직접 해석하지 않는
+ - binary rule: RAW 이미지 bytes는 JSON payload로 보내지 않고 filesystem handoff로 전달한다
+ - correlation rule: host와 helper는 `sessionId`, `requestId`, `captureId`를 함께 사용한다
+ - ownership rule: `requestId`는 host가 생성해 `request-capture`에 싣고, `captureId`는 helper가 실제 RAW handoff 시점에 확정해 `file-arrived`로 돌려준다
+-- supported trigger rule: booth 제품의 supported capture success path는 host가 booth 앱의 `사진 찍기` 버튼에 응답해 보낸 `request-capture`다. 카메라 본체 셔터 직접 입력은 현재 canonical success path가 아니다.
+-- request log rule: helper는 소비한 `requestId`를 재시작 후에도 기억해 기존 request log의 과거 line을 재실행하면 안 되며, 새로 append된 완전한 line만 소비해야 한다
+-
+-## EDSDK helper 런타임 요약
+-
+-현재 채택된 helper profile 기준으로는 아래 분리가 유지돼야 한다.
+-
+-- helper는 Canon SDK initialize/terminate, camera session open/close, capture trigger, RAW download, reconnect 감지를 소유한다.
+-- host는 session/preset correlation, freshness, booth/operator projection, capture success 최종 확정을 소유한다.
+-- `helper-ready`는 helper process boot 완료를 뜻할 뿐, camera `ready`를 뜻하지 않는다.
+-- `camera-status=ready`가 와도 host가 freshness와 session match를 닫기 전에는 booth `Ready`가 보장되지 않는다.
+-- helper는 한번에 하나의 in-flight capture만 허용하는 보수적 경계를 기본값으로 본다.
+-
+-## host가 Canon 상태를 보는 경로
+-
+-1. Tauri host가 helper 프로세스를 시작하거나 연결한다.
+-2. host는 helper로 runtime/session context를 보낸다.
+-3. helper는 Canon camera 상태를 읽고 `health/status` 메시지를 JSON line으로 보낸다.
+-4. host는 이 raw status를 `camera/helper truth`로 읽되, 바로 UI에 넘기지 않는다.
+-5. `normalized_state.rs`가 freshness, session match, degraded 여부를 확인한 뒤 booth/operator용 DTO로 정규화한다.
+-6. booth는 `Ready`/blocked guidance만 보고, operator는 `카메라 연결 상태`와 bounded diagnostics만 본다.
+-
+-## helper raw 상태 모델 v1
+-
+-helper는 최소 아래 의미 집합을 표현할 수 있어야 한다.
+-
+-- `disconnected`: Canon body를 아직 찾지 못했거나 연결이 끊긴 상태
+-- `connecting`: helper가 장비 연결을 재시도하거나 초기화 중인 상태
+-- `connected-idle`: 장비는 보이지만 아직 촬영 가능 readiness가 닫히지 않은 상태
+-- `ready`: Canon capture boundary와 helper boundary가 모두 촬영 가능 상태
+-- `capturing`: 촬영 요청 처리 중이며 새 촬영 시작을 잠시 막아야 하는 상태
+-- `recovering`: helper restart, cable reseat, USB port change 이후 복구 중인 상태
+-- `degraded`: 이전에는 ready였지만 지금은 false-ready를 막기 위해 차단해야 하는 상태
+-- `error`: bounded recovery 밖의 실패 상태
+-
+-이 raw 상태는 helper vocabulary다. booth UI는 이를 직접 노출하지 않는다.
+-
+-## host 정규화 규칙
+-
+-host는 helper raw 상태를 아래 원칙으로 정규화한다.
+-
+-- `ready`는 helper raw 상태 하나만으로 성립하지 않는다.
+-- host는 최소 `camera state`, `helper state`, `freshness`, `active session`, `active preset`, `blocked post-end 여부`를 함께 본다.
+-- helper 상태가 오래되었거나 `observedAt`/sequence가 stale이면 `Ready`를 만들지 않는다.
+-- reconnect 이벤트 직후에도 fresh `ready` status가 다시 확인되기 전까지는 blocked로 유지한다.
+-- `disconnected`, `connecting`, `recovering`, `degraded`, `error`는 모두 false-ready 방지 관점에서 blocked path다.
+-- booth `canCapture=true`와 operator의 clear camera state는 같은 normalized truth에서 파생되어야 한다.
+-
+-## booth/customer projection
+-
+-booth가 받는 최종 결과는 helper raw 상태가 아니라 customer-safe readiness다.
+-
+-- `Ready`
+-- `Preparing`
+-- `Phone Required`
+-- 필요 시 `Preview Waiting`, `Export Waiting`, `Completed`
+-
+-고객 화면에는 아래를 노출하지 않는다.
+-
+-- Canon SDK 이름
+-- EOS/driver/USB 상태 원문
+-- helper stderr
+-- sidecar restart 세부 원인
+-
+-## operator projection
+-
+-operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operator-safe projection만 본다.
+-
+-최소 의미 집합 예시:
+-
+-- `미연결`
+-- `연결 중`
+-- `연결됨`
+-- `복구 필요`
+-
+-이 projection은 booth readiness와 모순되면 안 된다.
++- session rule: helper가 쓰는 status/event는 현재 바인딩된 `sessionId`와 일치해야 하며 mismatch는 false-ready가 아니라 recovery/error 진단으로만 남긴다
++- supported trigger rule: canonical capture success path는 host가 booth 앱의 `사진 찍기` 버튼에 응답해 보낸 `request-capture`다
++- request log rule: helper는 소비한 `requestId`를 재시작 후에도 기억해 기존 request log의 과거 line을 재실행하면 안 된다
++- in-flight rule: helper는 `capture-accepted` 이후 `file-arrived` 또는 `helper-error`/`recovery-status`로 닫히기 전까지 추가 촬영을 동시에 시작하면 안 된다
+ 
+ ## 메시지 종류 v1
+ 
+ ### host -> helper
+ 
+ - `helper-hello`
+-  - helper version, protocol version 협상
+ - `configure-runtime`
+-  - runtime root, diagnostics path, branch/runtime profile
+ - `bind-session`
+-  - `sessionId`, `boothAlias`, correlation seed
+ - `request-capture`
+-  - `sessionId`, `requestId`, active preset reference
+-  - 현재 제품 기준 booth 앱의 `사진 찍기` 버튼에서만 시작되는 supported capture trigger
+ - `request-recovery`
+-  - approved restart/recovery action
+ - `shutdown`
+ 
+ ### helper -> host
+ 
+ - `helper-ready`
+-  - helper boot 완료와 protocol version 확인
+-  - 현재 profile에서는 helper version, runtime platform, sdk family/version 같은 진단 정보를 함께 남길 수 있어야 한다
+ - `camera-status`
+-  - Canon/camera raw 상태와 freshness 정보
+ - `capture-accepted`
+-  - helper가 host-owned `requestId`를 수락했음을 알림
++- `fast-preview-ready`
++  - RAW handoff 이전 또는 직후에 same-capture first-visible candidate가 있을 때 보내는 advisory event
++- `fast-thumbnail-attempted`
++  - diagnostic-only event
++- `fast-thumbnail-failed`
++  - diagnostic-only event
+ - `file-arrived`
+-  - helper-owned `captureId`, host-owned `requestId`, session-scoped RAW 경로를 함께 보냄
+-  - optional `fastPreviewPath`, `fastPreviewKind`를 같이 보낼 수 있지만, host는 이를 capture success의 필수 조건으로 취급하지 않는다
+ - `recovery-status`
+-  - restart/recovery 진행 상태
+ - `helper-error`
+-  - machine-readable code와 bounded detail
+ 
+ ## camera-status 예시
+ 
+@@ -159,7 +93,7 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
+   "type": "camera-status",
+   "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+   "sequence": 42,
+-  "observedAt": "2026-03-27T10:15:30Z",
++  "observedAt": "2026-04-10T01:00:15Z",
+   "cameraState": "ready",
+   "helperState": "healthy",
+   "cameraModel": "Canon EOS 700D",
+@@ -168,6 +102,20 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
+ }
+ ```
+ 
++## helper-ready 예시
++
++```json
++{
++  "schemaVersion": "canon-helper-ready/v1",
++  "type": "helper-ready",
++  "helperVersion": "0.1.0",
++  "protocolVersion": "v1",
++  "runtimePlatform": "Windows 11 x64 / .NET 8.0",
++  "sdkFamily": "canon-edsdk",
++  "sdkVersion": "13.20.10"
++}
++```
++
+ ## file-arrived 예시
+ 
+ ```json
+@@ -175,36 +123,59 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
+   "schemaVersion": "canon-helper-file-arrived/v1",
+   "type": "file-arrived",
+   "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+-  "requestId": "capture_req_20260327_001",
+-  "captureId": "capture_20260327_001",
+-  "arrivedAt": "2026-03-27T10:15:33Z",
+-  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr3",
+-  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260327_001.jpg",
++  "requestId": "request_20260410_001",
++  "captureId": "capture_20260410_001",
++  "arrivedAt": "2026-04-10T01:00:18Z",
++  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260410_001.cr3",
++  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
+   "fastPreviewKind": "embedded-jpeg"
+ }
+ ```
+ 
+-## freshness 기준
++## recovery-status 예시
++
++```json
++{
++  "schemaVersion": "canon-helper-recovery-status/v1",
++  "type": "recovery-status",
++  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++  "recoveryState": "recovering",
++  "observedAt": "2026-04-10T01:00:17Z",
++  "detailCode": "recovery-reopen-session"
++}
++```
++
++## helper-error 예시
+ 
+-- helper status는 `observedAt` 또는 `sequence` 기준으로 최신성 판단이 가능해야 한다.
+-- host는 최근 fresh status가 없으면 `Ready`를 만들지 않는다.
+-- stale status가 마지막으로 남아 있어도 booth는 blocked guidance로 내려간다.
+-- reconnect 후 첫 fresh `camera-status`가 오기 전에는 `Ready` 복귀가 금지된다.
++```json
++{
++  "schemaVersion": "canon-helper-error/v1",
++  "type": "helper-error",
++  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++  "observedAt": "2026-04-10T01:00:22Z",
++  "detailCode": "capture-download-timeout",
++  "message": "RAW handoff를 기다리다 시간이 초과되었어요."
++}
++```
++
++## host 정규화 규칙
++
++- `ready`는 helper raw 상태 하나만으로 성립하지 않는다.
++- host는 최소 `cameraState`, `helperState`, `freshness`, `active session`, `active preset`, `blocked post-end 여부`를 함께 본다.
++- stale status, reconnect 직후 상태, wrong-session 상태에서는 `Ready`를 만들지 않는다.
++- `fast-preview-ready`와 fast thumbnail 계열 이벤트는 advisory telemetry다.
++  - RAW handoff를 대체하지 않는다.
++  - truthful `previewReady`를 직접 주장하지 않는다.
++- booth `canCapture=true`와 operator의 clear camera state는 같은 normalized truth에서 파생되어야 한다.
+ 
+ ## file handoff 규칙
+ 
+ - Canon helper는 촬영 파일을 session-scoped filesystem root 아래에 전달한다.
+ - host는 `file-arrived` correlation과 실제 파일 존재를 함께 확인한다.
+-- host는 `captures/originals/` 아래 active session root에 들어온 파일만 capture success 후보로 인정한다.
+-- capture success는 helper가 "촬영 버튼을 받았다"가 아니라 host가 파일 도착과 저장 경계를 닫았을 때 확정된다.
+-- helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path, 파일 유효성 검증을 다시 통과한 경우에만 이를 pending preview 후보로 승격할 수 있다.
+-- 현재 구현 기준 allowed fast preview path는 designated handoff 경로(`handoff/fast-preview/...`) 또는 canonical preview path(`renders/previews/{captureId}.jpg`와 동등 경로)로 제한한다.
+-- `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다. 이 경우 host는 RAW handoff만으로 기존 `Preview Waiting` 경로를 계속 유지한다.
+-- `fastPreviewKind`는 helper가 어떤 후보를 보냈는지 설명하는 optional 진단 힌트일 뿐이며, host preview truth를 직접 결정하지 않는다.
++- `captures/originals/` 아래 active session root에 들어온 파일만 capture success 후보로 인정한다.
++- helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path 검증을 다시 통과한 경우에만 pending preview 후보로 승격할 수 있다.
++- `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다.
+ - helper는 partial file이나 아직 close되지 않은 파일을 `file-arrived`로 알리면 안 된다.
+-- 같은 원칙으로 helper는 partial request line이나 restart 이전의 stale request line을 새 촬영으로 재해석하면 안 된다.
+-- 카메라 본체 셔터 직접 입력처럼 active `requestId` 없이 발생한 out-of-band 촬영은 현재 host가 active session success로 승격하는 canonical path가 아니다.
+-- helper가 이런 out-of-band 촬영을 감지하더라도, host는 이를 supported booth capture success나 `Preview Waiting` 시작 근거로 자동 해석하면 안 된다.
+ 
+ ## 에러와 복구 원칙
+ 
+@@ -212,18 +183,11 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
+ - booth는 customer-safe next action만 받는다.
+ - operator는 bounded recovery action과 operator-safe detail만 본다.
+ - helper restart는 allowed recovery path일 수 있지만, restart 중에는 `Ready`가 유지되면 안 된다.
+-- once-ready 이후 USB 분리나 session loss가 오면 helper는 stale `ready`를 붙들지 말고 즉시 blocked path로 내려가야 한다.
+ 
+ ## Story 매핑
+ 
+ - Story 1.4: readiness/capture guard baseline
+ - Story 1.6: 실카메라/helper truth 연결과 false-ready 차단
++- Story 1.14: sidecar protocol fixture와 canonical message baseline 동결
++- Story 1.15: Canon helper profile / deeper runtime detail
+ - Story 5.4: operator `카메라 연결 상태` 전용 항목
+-
+-## 현재 상태 메모
+-
+-아키텍처는 이미 helper 경계를 기대하고 있고, 현재 제품의 실행 결정은 Windows 전용 Canon EDSDK helper exe다.
+-repo 기준으로는 아직 `sidecar/canon-helper/`와 `src-tauri/src/capture/sidecar_client.rs`가 구현 기준선으로 명시된 상태다.
+-
+-따라서 이 문서는 generic draft에 머무르지 않고, 채택된 Canon EDSDK helper exe가 따라야 할
+-canonical contract 기준선으로 본다.
+diff --git a/sidecar/canon-helper/README.md b/sidecar/canon-helper/README.md
+index 675eba5..f4cc1aa 100644
+--- a/sidecar/canon-helper/README.md
++++ b/sidecar/canon-helper/README.md
+@@ -11,6 +11,13 @@
+ 현재 앱은 helper가 남긴 최신 status snapshot을 host에서 읽어 booth/operator readiness truth로 정규화합니다.
+ 실제 `canon-helper.exe`는 이 경계 아래에서 빌드되며, 현재 helper는 파일 기반 session diagnostics 경계를 통해 아래 파일을 읽고 씁니다.
+ 
++현재 baseline은 아래처럼 고정합니다.
++
++- runtime: Windows 10/11 x64, `canon-helper.exe`, `net8.0`
++- ownership: helper 1개가 활성 카메라 1대와 in-flight capture 1개만 동시에 소유
++- correlation: `sessionId` + host-owned `requestId` + helper-owned `captureId`
++- durable examples: `sidecar/protocol/examples/helper-ready.json`, `camera-status.json`, `file-arrived.json`, `recovery-status.json`, `helper-error.json`
++
+ - request input: `sessions/<sessionId>/diagnostics/camera-helper-requests.jsonl`
+ - status output: `sessions/<sessionId>/diagnostics/camera-helper-status.json`
+ - event output: `sessions/<sessionId>/diagnostics/camera-helper-events.jsonl`
+diff --git a/sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs b/sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs
+index 278219a..a98dad4 100644
+--- a/sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs
++++ b/sidecar/canon-helper/tests/CanonHelper.Tests/JsonFileProtocolTests.cs
+@@ -99,6 +99,32 @@ public sealed class JsonFileProtocolTests : IDisposable
+         Assert.Empty(protocol.ReadRequests());
+     }
+ 
++    [Theory]
++    [InlineData("helper-ready.json", typeof(HelperReadyMessage), "helper-ready")]
++    [InlineData("recovery-status.json", typeof(RecoveryStatusMessage), "recovery-status")]
++    [InlineData("helper-error.json", typeof(HelperErrorMessage), "helper-error")]
++    public void CanonicalProtocolExamples_parse_as_current_helper_messages(
++        string fixtureName,
++        Type messageType,
++        string expectedType
++    )
++    {
++        var fixturePath = Path.Combine(
++            FindRepositoryRoot(),
++            "sidecar",
++            "protocol",
++            "examples",
++            fixtureName
++        );
++        var fixtureJson = File.ReadAllText(fixturePath, Encoding.UTF8);
++        var parsed = JsonSerializer.Deserialize(fixtureJson, messageType, JsonOptions);
++
++        Assert.NotNull(parsed);
++        var typeProperty = messageType.GetProperty("Type");
++        Assert.NotNull(typeProperty);
++        Assert.Equal(expectedType, typeProperty!.GetValue(parsed));
++    }
++
+     public void Dispose()
+     {
+         if (Directory.Exists(_runtimeRoot))
+@@ -144,4 +170,21 @@ public sealed class JsonFileProtocolTests : IDisposable
+         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+         File.AppendAllText(path, contents, new UTF8Encoding(false));
+     }
++
++    private static string FindRepositoryRoot()
++    {
++        var current = new DirectoryInfo(AppContext.BaseDirectory);
++
++        while (current is not null)
++        {
++            if (File.Exists(Path.Combine(current.FullName, "package.json")))
++            {
++                return current.FullName;
++            }
++
++            current = current.Parent;
++        }
++
++        throw new DirectoryNotFoundException("Repository root with package.json could not be found.");
++    }
+ }
+diff --git a/sidecar/protocol/examples/helper-error.json b/sidecar/protocol/examples/helper-error.json
+new file mode 100644
+index 0000000..07dde48
+--- /dev/null
++++ b/sidecar/protocol/examples/helper-error.json
+@@ -0,0 +1,8 @@
++{
++  "schemaVersion": "canon-helper-error/v1",
++  "type": "helper-error",
++  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++  "observedAt": "2026-04-10T01:00:22Z",
++  "detailCode": "capture-download-timeout",
++  "message": "RAW handoff를 기다리다 시간이 초과되었어요."
++}
+diff --git a/sidecar/protocol/examples/helper-ready.json b/sidecar/protocol/examples/helper-ready.json
+new file mode 100644
+index 0000000..c9815cc
+--- /dev/null
++++ b/sidecar/protocol/examples/helper-ready.json
+@@ -0,0 +1,9 @@
++{
++  "schemaVersion": "canon-helper-ready/v1",
++  "type": "helper-ready",
++  "helperVersion": "0.1.0",
++  "protocolVersion": "v1",
++  "runtimePlatform": "Windows 11 x64 / .NET 8.0",
++  "sdkFamily": "canon-edsdk",
++  "sdkVersion": "13.20.10"
++}
+diff --git a/sidecar/protocol/examples/recovery-status.json b/sidecar/protocol/examples/recovery-status.json
+new file mode 100644
+index 0000000..9e8db35
+--- /dev/null
++++ b/sidecar/protocol/examples/recovery-status.json
+@@ -0,0 +1,8 @@
++{
++  "schemaVersion": "canon-helper-recovery-status/v1",
++  "type": "recovery-status",
++  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++  "recoveryState": "recovering",
++  "observedAt": "2026-04-10T01:00:17Z",
++  "detailCode": "recovery-reopen-session"
++}
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 1213a71..e92a736 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -1,3 +1,6 @@
++import { readFileSync } from 'node:fs'
++import { dirname, resolve } from 'node:path'
++import { fileURLToPath } from 'node:url'
+ import { describe, expect, it } from 'vitest'
+ 
+ import {
+@@ -32,6 +35,7 @@ import {
+   publishValidatedPresetInputSchema,
+   publishValidatedPresetResultSchema,
+   publishedPresetSummarySchema,
++  publishedPresetBundleSchema,
+   sessionManifestSchema,
+   sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+@@ -41,6 +45,30 @@ import {
+   validateDraftPresetResultSchema,
+ } from './index'
+ 
++function readContractFixture(relativePath: string) {
++  const fixturePath = resolve(
++    dirname(fileURLToPath(import.meta.url)),
++    '../../tests/fixtures/contracts',
++    relativePath,
++  )
++
++  return JSON.parse(
++    readFileSync(fixturePath, 'utf8'),
++  ) as Record<string, unknown>
++}
++
++function readSidecarProtocolFixture(relativePath: string) {
++  const fixturePath = resolve(
++    dirname(fileURLToPath(import.meta.url)),
++    '../../sidecar/protocol/examples',
++    relativePath,
++  )
++
++  return JSON.parse(
++    readFileSync(fixturePath, 'utf8'),
++  ) as Record<string, unknown>
++}
++
+ function createDraftValidationReport(overrides: Record<string, unknown> = {}) {
+   return {
+     schemaVersion: 'draft-preset-validation/v1',
+@@ -327,6 +355,97 @@ function createOperatorRecoveryActionResult(overrides: Record<string, unknown> =
+ }
+ 
+ describe('shared contracts baseline', () => {
++  it('parses the frozen session manifest fixture shared with Rust contract tests', () => {
++    const parsed = sessionManifestSchema.parse(
++      readContractFixture('session-manifest-v1.json'),
++    )
++
++    expect(parsed.timing?.schemaVersion).toBe('session-timing/v1')
++    expect(parsed.activePreset?.publishedVersion).toBe('2026.04.10')
++    expect(parsed.activePresetId).toBe('preset_soft-glow')
++  })
++
++  it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
++    const parsed = publishedPresetBundleSchema.parse(
++      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
++    )
++
++    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
++    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
++    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
++  })
++
++  it('rejects published preset bundles that escape the bundle root or add unknown fields', () => {
++    const fixture = readContractFixture(
++      'preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json',
++    )
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        xmpTemplatePath: '../outside/template.xmp',
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        preview: {
++          ...(fixture.preview as Record<string, unknown>),
++          assetPath: 'C:/outside/preview.jpg',
++        },
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        unexpectedMetadata: true,
++      }),
++    ).toThrow()
++  })
++
++  it('parses the frozen host error envelope and capability snapshot fixtures', () => {
++    const error = hostErrorEnvelopeSchema.parse(
++      readContractFixture('host-error-envelope-capture-not-ready.json'),
++    )
++    const capabilitySnapshot = capabilitySnapshotSchema.parse(
++      readContractFixture('runtime-capability-authoring-enabled.json'),
++    )
++
++    expect(error.code).toBe('capture-not-ready')
++    expect(error.readiness?.reasonCode).toBe('preview-waiting')
++    expect(capabilitySnapshot.allowedSurfaces).toEqual([
++      'booth',
++      'operator',
++      'authoring',
++      'settings',
++    ])
++  })
++
++  it('keeps helper protocol fixtures parseable as canonical json examples', () => {
++    const cameraStatus = readSidecarProtocolFixture('camera-status.json')
++    const fileArrived = readSidecarProtocolFixture('file-arrived.json')
++    const helperReady = readSidecarProtocolFixture('helper-ready.json')
++    const recoveryStatus = readSidecarProtocolFixture('recovery-status.json')
++    const helperError = readSidecarProtocolFixture('helper-error.json')
++
++    expect(helperReady.schemaVersion).toBe('canon-helper-ready/v1')
++    expect(helperReady.type).toBe('helper-ready')
++    expect(helperReady.sdkFamily).toBe('canon-edsdk')
++    expect(cameraStatus.schemaVersion).toBe('canon-helper-status/v1')
++    expect(cameraStatus.type).toBe('camera-status')
++    expect(fileArrived.schemaVersion).toBe('canon-helper-file-arrived/v1')
++    expect(fileArrived.type).toBe('file-arrived')
++    expect(fileArrived.requestId).toBe('request_20260410_001')
++    expect(recoveryStatus.schemaVersion).toBe('canon-helper-recovery-status/v1')
++    expect(recoveryStatus.type).toBe('recovery-status')
++    expect(recoveryStatus.recoveryState).toBe('recovering')
++    expect(helperError.schemaVersion).toBe('canon-helper-error/v1')
++    expect(helperError.type).toBe('helper-error')
++    expect(helperError.detailCode).toBe('capture-download-timeout')
++  })
++
+   it('normalizes booth capability access to always include the booth surface', () => {
+     const parsed = capabilitySnapshotSchema.parse({
+       isAdminAuthenticated: false,
+@@ -440,6 +559,41 @@ describe('shared contracts baseline', () => {
+     expect(parsed.catalogSnapshot).toHaveLength(1)
+   })
+ 
++  it('rejects manifests where the canonical active preset and legacy mirror drift apart', () => {
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-03-20T00:00:00.000Z',
++        updatedAt: '2026-03-20T00:00:00.000Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'capture-ready',
++        },
++        catalogRevision: 3,
++        catalogSnapshot: [
++          {
++            presetId: 'preset_soft-glow',
++            publishedVersion: '2026.03.20',
++          },
++        ],
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.03.20',
++        },
++        activePresetId: 'preset_mono-pop',
++        activePresetDisplayName: 'Soft Glow',
++        captures: [],
++        postEnd: null,
++      }),
++    ).toThrow(/activePresetId/i)
++  })
++
+   it('requires a completion variant before post-end completed truth can be claimed', () => {
+     expect(() =>
+       sessionManifestSchema.parse({
+@@ -642,6 +796,25 @@ describe('shared contracts baseline', () => {
+     expect(parsed.displayName).toBe('Soft Glow')
+   })
+ 
++  it('accepts a booth-safe published preset summary whose preview asset is an absolute filesystem path', () => {
++    const parsed = publishedPresetSummarySchema.parse({
++      presetId: 'preset_soft-glow',
++      displayName: 'Soft Glow',
++      publishedVersion: '2026.03.20',
++      boothStatus: 'booth-safe',
++      preview: {
++        kind: 'preview-tile',
++        assetPath:
++          'C:/Users/KimYS/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
++        altText: 'Soft Glow sample portrait',
++      },
++    })
++
++    expect(parsed.preview.assetPath).toContain(
++      'preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
++    )
++  })
++
+   it('rejects preset summaries that do not expose a booth-safe preview asset', () => {
+     expect(() =>
+       publishedPresetSummarySchema.parse({

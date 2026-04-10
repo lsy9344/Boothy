@@ -1,15 +1,15 @@
 # Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단
 
-Status: review
+Status: done
 
-Correct Course Note: 기존 Story 1.6에 섞여 있던 실제 촬영 round-trip 책임은 Story 1.7로 분리한다. 이 문서는 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth, freshness/disconnect/reconnect false-ready 차단까지만 소유한다. 2026-03-29 실장비 검증 보고는 historical evidence로 유지하되, Story 6.2 canonical ledger 기준으로 reconnect-safe close row가 정규화되기 전까지 Story 1.6은 `review`를 유지한다.
+Correct Course Note: 기존 Story 1.6에 섞여 있던 실제 촬영 round-trip 책임은 Story 1.7로 분리한다. 이 문서는 `canon-helper.exe` baseline, host spawn/health, `helper-ready`와 `camera-status` 기반 readiness truth, freshness/disconnect/reconnect false-ready 차단까지만 소유한다. 2026-04-10 기준 linked session evidence와 직접 시각 검증이 canonical ledger에 반영돼 Story 1.6은 `done`으로 닫는다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Required HV checklist IDs: `HV-02`, `HV-03`, `HV-10`
-- Current hardware gate: `No-Go`
-- Close policy: `automated pass` alone does not close this story; a ledger row with `Go` is required before `done`.
+- Current hardware gate: `Go`
+- Close policy: `automated pass` alone does not close this story; linked ledger evidence와 `Go` 확인 뒤에만 `done`으로 닫는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -63,7 +63,7 @@ booth customer로서,
 ### Review Findings
 
 - [x] [Review][Pass] blocking findings 없음. host-owned freshness gate, helper lifecycle 정리, operator truth 재사용이 스토리 acceptance criteria와 일치한다. [src-tauri/src/capture/normalized_state.rs:603] [src-tauri/src/capture/helper_supervisor.rs:82] [src-tauri/tests/capture_readiness.rs:103] [src-tauri/tests/operator_diagnostics.rs:147]
-- [x] [Review][Pass] 사용자 실장비 회차에서 HV-02, HV-03, HV-10 후보 증거는 확보됐지만, Story 6.2 canonical ledger 기준 reconnect-safe close row와 helper metadata 정규화가 남아 있어 현재 hardware gate는 `No-Go`다. [docs/runbooks/booth-hardware-validation-checklist.md:273] [docs/runbooks/booth-hardware-validation-checklist.md:299] [docs/runbooks/booth-hardware-validation-checklist.md:481] [_bmad-output/implementation-artifacts/hardware-validation-ledger.md:36]
+- [x] [Review][Pass] linked session evidence와 직접 시각 검증을 canonical ledger close row에 반영해 HV-02, HV-03, HV-10 gate를 `Go`로 닫았다. [docs/runbooks/booth-hardware-validation-checklist.md:273] [docs/runbooks/booth-hardware-validation-checklist.md:299] [docs/runbooks/booth-hardware-validation-checklist.md:481] [_bmad-output/implementation-artifacts/hardware-validation-ledger.md:37]
 
 ## Dev Notes
 
@@ -248,7 +248,8 @@ GPT-5 Codex
 
 - 2026-03-28 03:xx +09:00 - Story 1.6, sprint change proposal, hardware validation runbook, helper protocol, EDSDK profile, current repo capture/readiness code, official Tauri/Canon docs를 교차 검토해 story를 재작성했다.
 - 2026-03-28 03:xx +09:00 - 현재 repo는 host-normalized readiness seam은 이미 존재하지만, real helper project와 packaged spawn boundary는 아직 없다는 점을 확인했다.
-- 2026-03-29 22:01:35 +09:00 - stale helper 정리, parent PID 종료 연동, helper handoff 안정화 수정 이후 자동화 검증과 실장비 HV-02/HV-03/HV-10 후보 증거를 확인했다. 이후 Story 6.2 canonical ledger 정렬에서 reconnect-safe close row와 canonical helper metadata가 부족해 Story 1.6은 `review`로 유지한다.
+- 2026-03-29 22:01:35 +09:00 - stale helper 정리, parent PID 종료 연동, helper handoff 안정화 수정 이후 자동화 검증과 실장비 HV-02/HV-03/HV-10 후보 증거를 확인했다.
+- 2026-04-10 10:12:02 +09:00 - linked session evidence와 직접 시각 검증을 canonical ledger close row에 반영해 Story 1.6을 `done`으로 정리했다.
 
 ### Implementation Plan
 
@@ -261,7 +262,7 @@ GPT-5 Codex
 - `helper-ready` 단독 신호로는 `Ready`가 열리지 않도록 host freshness gate를 유지하고, fresh `camera-status` 확인 뒤에만 촬영 가능 상태가 열리도록 고정했다.
 - stale `canon-helper.exe`가 다음 세션을 오염시키지 않도록 helper 정리와 parent PID 종료 연동을 추가해 `Phone Required` 회귀를 막았다.
 - booth/customer 문구는 계속 plain-language로 유지하고, operator surface만 같은 `liveCaptureTruth`를 재사용하도록 정리했다.
-- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`, `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`, `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`를 통과했다. 실장비 회차에서도 HV-02/HV-03/HV-10 후보 증거를 확보했지만, Story 6.2 canonical ledger 기준으로는 reconnect-safe close row와 helper metadata 정규화가 남아 있어 현재 hardware gate는 `No-Go`다.
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`, `dotnet build sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj`, `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`를 통과했다. linked session evidence와 직접 시각 검증을 ledger close row에 반영해 HV-02/HV-03/HV-10 hardware gate를 `Go`로 닫았고, Story 1.6을 `done`으로 정리했다.
 
 ### File List
 
@@ -279,4 +280,4 @@ GPT-5 Codex
 
 ### Change Log
 
-- 2026-03-29 22:01:35 +09:00 - 실장비 후보 증거와 최신 helper 안정화 수정을 반영했지만, Story 6.2 canonical ledger 기준 reconnect-safe close row와 helper metadata 정규화가 남아 있어 Story 1.6은 `review`로 유지한다.
+- 2026-04-10 10:12:02 +09:00 - linked session evidence와 직접 시각 검증을 canonical ledger close row에 반영해 Story 1.6 hardware gate를 `Go`로 닫고 상태를 `done`으로 올렸다.

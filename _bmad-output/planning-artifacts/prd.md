@@ -174,6 +174,7 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 | Self-start session success rate | Unknown | 85% or higher | Sessions that reach first successful current-session raw persistence without operator intervention |
 | Preset selection completion rate | New metric | 95% or higher | Sessions that reach preset selection and choose a preset within 20 seconds without operator intervention |
 | First-visible current-session image latency | New metric | Measured separately on approved booth hardware so the team can improve same-capture first-visible speed against the active hardware baseline | Request-level seam logs and pilot timing review |
+| Original-visible to preset-applied visible close latency | New metric | Architecture corrective target of `<= 2.5s` on approved booth hardware once the dedicated renderer path is enabled | Request-level seam logs and dedicated hardware validation review |
 | Preset-applied preview readiness latency | New metric | Preset-applied current-session preview visible within 5 seconds for 95th-percentile successful captures after raw persistence | Lifecycle logs and pilot timing review |
 | Published preset reproducibility rate | New metric | 99% or higher | Same approved preset version produces expected preview and final output within approved variance across pilot branches |
 | Adjusted end-time visibility correctness | New metric | 99% or higher | Sessions where the displayed end time matches the approved timing policy from session start |
@@ -263,7 +264,8 @@ Each published booth preset is an approved artifact bundle, not just a display n
 - Each preset includes the customer-facing look representation needed for booth selection.
 - Each preset includes the approved booth-safe preview behavior and final render behavior required for downstream use.
 - A same-capture first-visible image may appear earlier to reduce blank waiting, and that first-visible source may come from a fast preview, camera thumbnail, intermediate preview, or approved low-latency worker output.
-- Preset-applied `previewReady` truth still comes only from the published artifact's render behavior for that capture-bound preset version.
+- Preset-applied truthful close is owned by the host-controlled local dedicated renderer lane that executes the capture-bound published preset artifact for that exact capture.
+- The first-visible source is an early customer-visible projection and must not be treated as the owner of preset-applied `previewReady` truth.
 - Only approved published preset artifacts may appear in the customer booth catalog.
 
 ### Booth-Safe Runtime Boundary
@@ -734,16 +736,17 @@ The system shall keep 100% of active branches on the same approved customer pres
 
 ### NFR-003 Booth Responsiveness and Preview Readiness
 
-The system shall acknowledge primary customer actions within 1 second, surface a truthful first-visible current-session image as early as safely possible after source-photo persistence, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking, request-level seam logs, and pilot logs.
+The system shall acknowledge primary customer actions within 1 second, surface a truthful first-visible current-session image as early as safely possible after source-photo persistence, distinguish that first-visible event from the later preset-applied truthful close, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking, request-level seam logs, pilot logs, and dedicated hardware validation.
 
 **Acceptance Criteria**
 - Primary customer actions such as session start, preset selection, delete confirmation, and post-end state entry are acknowledged within 1 second.
-- First-visible current-session image latency is measured separately from preset-applied preview readiness so the product can improve the early customer-visible result without weakening preview truth.
+- First-visible current-session image latency is measured separately from both preset-applied preview readiness and `original-visible -> preset-applied visible` close latency so the product can improve the early customer-visible result without weakening preview truth.
 - When a same-capture fast preview is available, the booth may surface it before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied preview is actually ready.
 - The first-visible source may come from an approved fast preview, camera thumbnail, intermediate preview, or low-latency worker output as long as same-capture correctness is preserved.
+- The approved preset-applied close owner may be a host-owned local dedicated renderer lane as long as it preserves same-capture correctness, preset fidelity, and preview/final truth contracts.
 - 95th-percentile successful captures show preset-applied current-session preview confirmation within 5 seconds after source-photo persistence.
 - If preset-applied preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
-- Performance is measured on approved branch hardware with request-level seam evidence that distinguishes first-visible latency from preset-applied readiness latency.
+- Performance is measured on approved branch hardware with request-level seam evidence that distinguishes first-visible latency, `original-visible -> preset-applied visible` close latency, and preset-applied readiness latency.
 
 **Sources**
 - [KPI Table](#kpi-table)

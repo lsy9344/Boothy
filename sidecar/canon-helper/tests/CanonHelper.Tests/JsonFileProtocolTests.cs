@@ -99,6 +99,62 @@ public sealed class JsonFileProtocolTests : IDisposable
         Assert.Empty(protocol.ReadRequests());
     }
 
+    [Theory]
+    [InlineData(
+        "helper-ready.json",
+        typeof(HelperReadyMessage),
+        "helper-ready",
+        CanonHelperSchemas.HelperReady,
+        new[] { "HelperVersion", "ProtocolVersion", "RuntimePlatform", "SdkFamily", "SdkVersion" }
+    )]
+    [InlineData(
+        "recovery-status.json",
+        typeof(RecoveryStatusMessage),
+        "recovery-status",
+        CanonHelperSchemas.RecoveryStatus,
+        new[] { "SessionId", "RecoveryState", "ObservedAt" }
+    )]
+    [InlineData(
+        "helper-error.json",
+        typeof(HelperErrorMessage),
+        "helper-error",
+        CanonHelperSchemas.HelperError,
+        new[] { "DetailCode" }
+    )]
+    public void CanonicalProtocolExamples_parse_as_current_helper_messages(
+        string fixtureName,
+        Type messageType,
+        string expectedType,
+        string expectedSchemaVersion,
+        string[] requiredProperties
+    )
+    {
+        var fixturePath = Path.Combine(
+            FindRepositoryRoot(),
+            "sidecar",
+            "protocol",
+            "examples",
+            fixtureName
+        );
+        var fixtureJson = File.ReadAllText(fixturePath, Encoding.UTF8);
+        var parsed = JsonSerializer.Deserialize(fixtureJson, messageType, JsonOptions);
+
+        Assert.NotNull(parsed);
+        var schemaVersionProperty = messageType.GetProperty("SchemaVersion");
+        var typeProperty = messageType.GetProperty("Type");
+        Assert.NotNull(schemaVersionProperty);
+        Assert.NotNull(typeProperty);
+        Assert.Equal(expectedSchemaVersion, schemaVersionProperty!.GetValue(parsed));
+        Assert.Equal(expectedType, typeProperty!.GetValue(parsed));
+
+        foreach (var propertyName in requiredProperties)
+        {
+            var property = messageType.GetProperty(propertyName);
+            Assert.NotNull(property);
+            Assert.False(string.IsNullOrWhiteSpace(property!.GetValue(parsed)?.ToString()));
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_runtimeRoot))
@@ -143,5 +199,22 @@ public sealed class JsonFileProtocolTests : IDisposable
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.AppendAllText(path, contents, new UTF8Encoding(false));
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "package.json")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root with package.json could not be found.");
     }
 }

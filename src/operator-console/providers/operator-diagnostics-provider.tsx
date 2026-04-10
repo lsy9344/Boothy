@@ -84,6 +84,7 @@ export function OperatorDiagnosticsProvider({
       const nextAuditHistory =
         await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
           sessionId: nextSummary.sessionId ?? null,
+          eventCategories: [],
           limit: 10,
         })
 
@@ -116,6 +117,7 @@ export function OperatorDiagnosticsProvider({
       const nextAuditHistory =
         await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
           sessionId: result.summary.sessionId ?? null,
+          eventCategories: [],
           limit: 10,
         })
 

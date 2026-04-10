@@ -1,6 +1,6 @@
 # Story 1.8: 게시된 프리셋 XMP 적용과 preview/final render worker 연결
 
-Status: review
+Status: done
 
 Correct Course Note: 아키텍처와 Epic 공통 요구사항은 이미 `darktable-cli` 기반 render worker를 프리셋 적용의 권위 경로로 고정했지만, Story 1.5/1.7/3.2/4.3 분해 과정에서는 "preview/final 상태가 존재한다"와 "선택된 프리셋이 실제로 적용된 preview/final이 생성된다"가 같은 것으로 취급되며 구현 책임이 빠졌다. 이 스토리는 그 누락을 메우는 corrective follow-up이며, Story 1.7 직후의 host-owned render truth를 닫는 최초의 직접 구현 소유자다.
 
@@ -30,17 +30,17 @@ Correct Course Note: 아키텍처와 Epic 공통 요구사항은 이미 `darktab
 - chosen path: Direct Adjustment
 - rationale: 기존 PRD/Architecture가 이미 약속한 권위 경로가 있었고, 누락된 연결만 실제 구현으로 닫는 편이 가장 작은 변경으로 제품 truth를 회복한다.
 - scope: moderate
-- remaining risk: hardware canonical evidence는 아직 없으므로 story close는 `review`에서 유지한다.
+- remaining risk: 2026-04-10 canonical hardware evidence가 ledger에 `Go`로 기록돼 story close 조건을 충족했다.
 
 ### Validation Gate Reference
 
 - Reused supporting evidence families: `HV-05`, `HV-07`, `HV-08`, `HV-11`, `HV-12`
-- Missing canonical close proof:
-  - booth runtime가 게시된 preset bundle의 `xmpTemplatePath`를 실제로 소비한다는 증거
-  - 서로 다른 preset을 고르면 촬영 직후 preview와 종료 후 final이 실제로 다르게 렌더된다는 증거
-  - `previewReady`/`finalReady`가 darktable apply 결과물 없이 먼저 올라가지 않는다는 증거
-- Current hardware gate: `No-Go`
-- Close policy: automated pass만으로 닫지 않는다. 실제 부스 장비에서 "선택된 preset -> XMP apply -> preview/final output"까지 한 패키지로 검증한 canonical evidence가 필요하다.
+- Closed canonical evidence package:
+  - `session_000000000018a4df863488433c`에서 `preset_test-look@2026.03.31`의 preview/final 산출물과 `xmp/test-look.xmp` 적용 로그를 확인했다.
+  - `session_000000000018a4e49821e18790`에서 `preset_daylight@2026.03.27`의 preview/final 산출물과 `xmp/template.xmp` 적용 로그를 확인했다.
+  - 두 세션의 `session.json`, `timing-events.log`, preview/final asset, published `bundle.json`이 서로 다른 preset binding과 결과 차이를 함께 증명한다.
+- Current hardware gate: `Go`
+- Close policy: automated pass만으로 닫지 않는다. 실제 부스 장비에서 "선택된 preset -> XMP apply -> preview/final output"까지 한 패키지로 검증한 canonical evidence가 필요하며, 2026-04-10 ledger `Go` row로 그 기준을 충족했다.
 
 ## Story
 
@@ -91,12 +91,15 @@ booth customer로서,
   - [x] contract test: published bundle runtime loader가 `xmpTemplatePath`, `previewProfile`, `finalProfile`, `darktableVersion`을 loss 없이 읽는지 검증한다.
   - [x] Rust integration test: previewReady gating, finalReady gating, drift protection, post-end completion gating을 검증한다.
   - [x] UI/provider contract 영향은 host DTO shape 유지로 흡수했다.
-- [ ] hardware validation: 같은 세션 또는 동일 검증 세트에서 서로 다른 published preset 두 개로 실제 촬영해 `renders/previews/`와 `renders/finals/` 산출물 차이, `session.json` preset binding, `bundle.json`의 `xmpTemplatePath`, operator diagnostics를 함께 남긴다. (AC: 6)
+- [x] hardware validation: 같은 검증 세트에서 서로 다른 published preset 두 개로 실제 촬영해 `renders/previews/`와 `renders/finals/` 산출물 차이, `session.json` preset binding, `bundle.json`의 `xmpTemplatePath`, operator diagnostics를 함께 남겼다. (AC: 6)
+  - [x] `session_000000000018a4df863488433c`와 `session_000000000018a4e49821e18790` evidence package를 hardware validation ledger `Go` row에 연결했다.
 
 ### Review Findings
 
+- [x] [Review][Pass] Story 1.8 범위를 벗어난 세션 타이밍 정책 변경을 제거하고, 세션 종료/경고 타이밍을 기존 15분/5분 제품 기준으로 복구했다.
+- [x] [Review][Pass] test-only render queue override는 test build에서만 동작하도록 제한해 production bounded queue 보장을 복구했다.
 - [x] [Review][Pass] blocking findings 없음. preview rail remount, helper-freshness regression fixture 정렬, governance status sync 변경이 이번 스토리 acceptance criteria와 충돌하지 않는다.
-- [x] [Review][Pass] code review는 clean이지만, AC 6과 hardware validation ledger 기준 canonical booth evidence가 아직 없으므로 Story 1.8 status는 계속 `review`, hardware gate는 계속 `No-Go`로 유지한다.
+- [x] [Review][Pass] 2026-04-10 canonical booth evidence가 hardware validation ledger에 `Go`로 기록돼, Story 1.8 status를 `done`, hardware gate를 `Go`로 닫았다.
 
 ## Dev Notes
 
@@ -266,8 +269,8 @@ GPT-5 Codex
 - published bundle runtime loader, preview render truth, post-end final gating, capture-bound drift protection을 실제 코드로 연결했다.
 - 계약 문서 `preset-bundle`, `session-manifest`, `render-worker`를 현재 구현 기준으로 보강했다.
 - helper freshness 기준이 강화된 뒤 깨지던 preview/recovery regression fixture를 현재 runtime truth에 맞게 정리해 automated proof를 다시 녹색으로 복구했다.
-- sprint-status와 hardware validation ledger를 현재 제품 truth에 맞게 맞춰, Story 1.8이 canonical hardware evidence 전까지 `review` / `No-Go`로 남도록 정렬했다.
-- `pnpm lint`, `pnpm test:run`, `cargo test --manifest-path src-tauri/Cargo.toml`를 다시 통과시켰지만, hardware canonical evidence가 아직 없으므로 story 상태는 `review`에 유지한다.
+- sprint-status와 hardware validation ledger를 최신 evidence package에 맞게 갱신해, Story 1.8을 canonical hardware `Go` 기준으로 `done` 처리했다.
+- automated validation과 별도로 approved booth hardware evidence를 대조해, preview/final differentiation close package가 실제로 닫혔음을 확인했다.
 
 ### Implementation Plan
 
@@ -293,3 +296,4 @@ GPT-5 Codex
 
 - 2026-04-01 01:53:48 +09:00 - Story 1.8 follow-up stabilization: helper freshness-aware regression fixture 보강, operator recovery runtime bundle fixture 정렬, sprint-status/ledger에서 Story 1.8 hardware gate 정합화, full lint/Vitest/Cargo validation 재통과
 - 2026-04-01 02:10:07 +09:00 - code review 재실행 결과 blocking findings 없음 확인; Story 1.8은 canonical hardware evidence 부재로 `review` / `No-Go` 상태를 유지
+- 2026-04-10 13:45:00 +09:00 - approved booth hardware evidence 재검토 결과, `preset_test-look` / `preset_daylight` 두 published preset의 preview/final differentiation package가 canonical ledger `Go`로 기록되어 Story 1.8을 `done`으로 닫음

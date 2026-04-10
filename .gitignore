@@ -11,7 +11,14 @@ lerna-debug.log*
 node_modules/
 dist/
 dist-ssr/
+coverage/
+*.tsbuildinfo
+.eslintcache
 *.local
+.env
+.env.*
+!.env.example
+!.env.sample
 
 # Editor and OS files
 .vscode/*
@@ -26,11 +33,13 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+.tmp-review-*.diff
 
 # Local Canon SDK payload and helper-generated runtime files
 sidecar/canon-helper/vendor/canon-edsdk/
-sidecar/canon-helper/src/**/bin/
-sidecar/canon-helper/src/**/obj/
+sidecar/canon-helper/**/bin/
+sidecar/canon-helper/**/obj/
+sidecar/canon-helper/**/TestResults/
 sidecar/canon-helper/.tmp-runtime/
 sidecar/canon-helper/.tmp-runtime-publish/
 

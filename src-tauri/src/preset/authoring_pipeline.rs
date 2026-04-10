@@ -59,11 +59,30 @@ pub fn load_authoring_workspace_in_dir(
     for entry in draft_dirs {
         let draft_dir = match entry {
             Ok(entry) => {
+                let draft_folder = entry.file_name().to_string_lossy().trim().to_string();
                 let Ok(file_type) = entry.file_type() else {
                     continue;
                 };
 
-                if !file_type.is_dir() || file_type.is_symlink() {
+                if file_type.is_symlink() {
+                    invalid_drafts.push(InvalidDraftArtifactDto {
+                        draft_folder: if draft_folder.is_empty() {
+                            "unknown-draft".into()
+                        } else {
+                            draft_folder
+                        },
+                        message:
+                            "draft 폴더가 링크로 연결되어 있어 작업공간에서 자동으로 열지 않았어요."
+                                .into(),
+                        guidance:
+                            "자동 삭제 대신 작업공간을 수동 점검해 주세요. 외부 링크 대신 authoring 루트 안의 실제 draft 폴더로 다시 정리한 뒤 불러오면 기록을 보존할 수 있어요."
+                                .into(),
+                        can_repair: false,
+                    });
+                    continue;
+                }
+
+                if !file_type.is_dir() {
                     continue;
                 }
 
@@ -382,25 +401,6 @@ pub fn publish_validated_preset_in_dir(
             )
         }
     };
-    let darktable_source = match resolve_workspace_file_for_publication(
-        draft_dir,
-        &existing_draft.darktable_project_path,
-        "darktableProjectPath",
-    ) {
-        Ok(path) => path,
-        Err((reason_code, message, guidance)) => {
-            return reject_publication(
-                base_dir,
-                &draft_path,
-                existing_draft,
-                &input,
-                reason_code,
-                message,
-                guidance,
-                noted_at,
-            )
-        }
-    };
     let xmp_source = match resolve_workspace_file_for_publication(
         draft_dir,
         &existing_draft.xmp_template_path,
@@ -419,6 +419,28 @@ pub fn publish_validated_preset_in_dir(
                 noted_at,
             )
         }
+    };
+    let darktable_source = match existing_draft.darktable_project_path.as_deref() {
+        Some(relative_path) => match resolve_workspace_file_for_publication(
+            draft_dir,
+            relative_path,
+            "darktableProjectPath",
+        ) {
+            Ok(path) => Some(path),
+            Err((reason_code, message, guidance)) => {
+                return reject_publication(
+                    base_dir,
+                    &draft_path,
+                    existing_draft,
+                    &input,
+                    reason_code,
+                    message,
+                    guidance,
+                    noted_at,
+                )
+            }
+        },
+        None => None,
     };
 
     let catalog_root = resolve_published_preset_catalog_dir(base_dir);
@@ -447,7 +469,7 @@ pub fn publish_validated_preset_in_dir(
         &noted_at,
         &preview_source,
         &sample_cut_source,
-        &darktable_source,
+        darktable_source.as_deref(),
         &xmp_source,
     );
 
@@ -597,6 +619,166 @@ pub fn publish_validated_preset_in_dir(
     })
 }
 
+pub fn preview_publish_validated_preset_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: PublishValidatedPresetInputDto,
+) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
+    ensure_authoring_access(capability_snapshot)?;
+    validate_publish_validated_preset_input(&input)?;
+
+    let drafts_root = resolve_draft_authoring_root(base_dir);
+    let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
+    ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
+    let existing_draft = load_required_draft_summary(
+        base_dir,
+        &draft_path,
+        "게시할 draft를 찾지 못했어요.",
+        "저장된 draft 기록이 손상되어 게시를 이어갈 수 없어요. 새 draft를 만들고 다시 검증해 주세요.",
+    )?;
+    let noted_at = current_timestamp(SystemTime::now())?;
+
+    if input.scope != "future-sessions-only" {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "future-session-only-violation",
+            "게시는 미래 세션 catalog에만 반영할 수 있어요.",
+            "현재 진행 중인 세션이나 활성 바인딩을 직접 바꾸지 말고 future-sessions-only 범위로 다시 게시해 주세요.",
+            &noted_at,
+        ));
+    }
+
+    let Some(latest_report) = existing_draft.validation.latest_report.as_ref() else {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "draft-not-validated",
+            "검증을 통과한 draft만 게시할 수 있어요.",
+            "host validation을 다시 실행해 validated 상태를 만든 뒤 게시해 주세요.",
+            &noted_at,
+        ));
+    };
+
+    if existing_draft.lifecycle_state != "validated"
+        || existing_draft.validation.status != "passed"
+        || latest_report.status != "passed"
+        || latest_report.lifecycle_state != "validated"
+    {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "draft-not-validated",
+            "검증을 통과한 draft만 게시할 수 있어요.",
+            "latest validation이 passed인 validated draft만 승인 후 게시할 수 있어요.",
+            &noted_at,
+        ));
+    }
+
+    if existing_draft.draft_version != input.draft_version
+        || latest_report.draft_version != existing_draft.draft_version
+        || latest_report.checked_at != input.validation_checked_at
+    {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "stale-validation",
+            "게시 기준이 된 validation 결과가 최신 draft와 맞지 않아요.",
+            "draft를 다시 불러와 최신 저장본에서 validation을 다시 실행한 뒤 게시해 주세요.",
+            &noted_at,
+        ));
+    }
+
+    if existing_draft.display_name != input.expected_display_name
+        || existing_draft.darktable_version != PINNED_DARKTABLE_VERSION
+    {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "metadata-mismatch",
+            "승인 검토에 사용한 metadata와 현재 draft metadata가 일치하지 않아요.",
+            "표시 이름과 pinned darktable metadata를 다시 확인한 뒤 최신 상태로 검토해 주세요.",
+            &noted_at,
+        ));
+    }
+
+    let Some(draft_dir) = draft_path.parent() else {
+        return Err(HostErrorEnvelope::persistence(
+            "draft 게시 경로를 준비하지 못했어요.",
+        ));
+    };
+
+    if let Err((reason_code, message, guidance)) = resolve_workspace_file_for_publication(
+        draft_dir,
+        &existing_draft.preview.asset_path,
+        "preview.assetPath",
+    ) {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            reason_code,
+            message,
+            guidance,
+            &noted_at,
+        ));
+    }
+
+    if let Err((reason_code, message, guidance)) = resolve_workspace_file_for_publication(
+        draft_dir,
+        &existing_draft.sample_cut.asset_path,
+        "sampleCut.assetPath",
+    ) {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            reason_code,
+            message,
+            guidance,
+            &noted_at,
+        ));
+    }
+
+    if let Err((reason_code, message, guidance)) = resolve_workspace_file_for_publication(
+        draft_dir,
+        &existing_draft.xmp_template_path,
+        "xmpTemplatePath",
+    ) {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            reason_code,
+            message,
+            guidance,
+            &noted_at,
+        ));
+    }
+
+    let catalog_root = resolve_published_preset_catalog_dir(base_dir);
+    let final_bundle_dir = catalog_root
+        .join(&existing_draft.preset_id)
+        .join(&input.published_version);
+
+    if final_bundle_dir.exists() {
+        return Ok(build_publication_rejection_result(
+            existing_draft,
+            &input,
+            "duplicate-version",
+            "같은 published version이 이미 존재해서 immutable 게시 규칙을 지킬 수 없어요.",
+            "새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.",
+            &noted_at,
+        ));
+    }
+
+    Ok(build_publication_rejection_result(
+        existing_draft,
+        &input,
+        "stage-unavailable",
+        "이 단계에서는 게시를 실행하지 않아요.",
+        "approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.",
+        &noted_at,
+    ))
+}
+
 fn reject_publication(
     base_dir: &Path,
     draft_path: &Path,
@@ -609,15 +791,22 @@ fn reject_publication(
 ) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
     let previous_draft = draft.clone();
     let previous_publication_history = load_publication_history(base_dir, &draft.preset_id);
-    let audit_record = build_publication_audit_record(
-        &draft,
+    let rejection = build_publication_rejection_result(
+        draft.clone(),
         input,
-        "rejected",
-        input.review_note.as_deref(),
-        Some(reason_code),
+        reason_code,
+        message,
         guidance,
         &noted_at,
     );
+    let PublishValidatedPresetResultDto::Rejected {
+        draft: rejected_draft,
+        audit_record,
+        ..
+    } = rejection
+    else {
+        unreachable!("publication rejection builder must return a rejected result");
+    };
     let mut publication_history = previous_publication_history.clone();
     publication_history.push(audit_record.clone());
     if let Err(error) =
@@ -625,6 +814,7 @@ fn reject_publication(
     {
         return Err(error);
     }
+    draft = rejected_draft;
     draft.publication_history = publication_history;
     draft.updated_at = noted_at.clone();
     if let Err(error) = write_draft_summary(draft_path, &draft) {
@@ -664,6 +854,34 @@ fn reject_publication(
         guidance: guidance.into(),
         audit_record,
     })
+}
+
+fn build_publication_rejection_result(
+    draft: DraftPresetSummaryDto,
+    input: &PublishValidatedPresetInputDto,
+    reason_code: &str,
+    message: &str,
+    guidance: &str,
+    noted_at: &str,
+) -> PublishValidatedPresetResultDto {
+    let audit_record = build_publication_audit_record(
+        &draft,
+        input,
+        "rejected",
+        input.review_note.as_deref(),
+        Some(reason_code),
+        guidance,
+        noted_at,
+    );
+
+    PublishValidatedPresetResultDto::Rejected {
+        schema_version: DRAFT_PRESET_PUBLICATION_RESULT_SCHEMA_VERSION.into(),
+        draft,
+        reason_code: reason_code.into(),
+        message: message.into(),
+        guidance: guidance.into(),
+        audit_record,
+    }
 }
 
 fn build_publication_audit_record(
@@ -879,7 +1097,7 @@ fn create_published_bundle_from_draft(
     published_at: &str,
     preview_source: &Path,
     sample_cut_source: &Path,
-    darktable_source: &Path,
+    darktable_source: Option<&Path>,
     xmp_source: &Path,
 ) -> Result<(), HostErrorEnvelope> {
     if bundle_dir.exists() {
@@ -889,7 +1107,8 @@ fn create_published_bundle_from_draft(
     fs::create_dir_all(bundle_dir).map_err(map_fs_error)?;
     let preview_relative = copy_bundle_asset(bundle_dir, "preview", preview_source)?;
     let sample_cut_relative = copy_bundle_asset(bundle_dir, "sample-cut", sample_cut_source)?;
-    let darktable_relative = copy_bundle_asset(bundle_dir, "darktable", darktable_source)?;
+    let darktable_relative =
+        darktable_source.map(|source| copy_bundle_asset(bundle_dir, "darktable", source)).transpose()?;
     let xmp_relative = copy_bundle_asset(bundle_dir, "xmp", xmp_source)?;
     let bundle_value = serde_json::json!({
         "schemaVersion": PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION,
@@ -901,10 +1120,7 @@ fn create_published_bundle_from_draft(
         "darktableVersion": draft.darktable_version,
         "sourceDraftVersion": draft.draft_version,
         "publishedAt": published_at,
-        "publishedBy": {
-            "actorId": input.actor_id,
-            "actorLabel": input.actor_label,
-        },
+        "publishedBy": input.actor_label,
         "previewProfile": {
             "profileId": draft.preview_profile.profile_id,
             "displayName": draft.preview_profile.display_name,
@@ -925,9 +1141,12 @@ fn create_published_bundle_from_draft(
             "assetPath": sample_cut_relative,
             "altText": draft.sample_cut.alt_text,
         },
-        "darktableProjectPath": darktable_relative,
         "xmpTemplatePath": xmp_relative,
     });
+    let mut bundle_value = bundle_value;
+    if let Some(darktable_relative) = darktable_relative {
+        bundle_value["darktableProjectPath"] = serde_json::Value::String(darktable_relative);
+    }
     let bundle_bytes = serde_json::to_vec_pretty(&bundle_value).map_err(|error| {
         HostErrorEnvelope::persistence(format!("published bundle을 직렬화하지 못했어요: {error}"))
     })?;
@@ -1171,7 +1390,11 @@ fn is_valid_draft_summary(draft_path: &Path, summary: &DraftPresetSummaryDto) ->
         || !crate::contracts::dto::is_non_blank(&summary.updated_at)
         || !crate::contracts::dto::is_valid_preset_id(&summary.preset_id)
         || !crate::contracts::dto::is_valid_darktable_version(&summary.darktable_version)
-        || !crate::contracts::dto::is_safe_workspace_reference(&summary.darktable_project_path)
+        || summary
+            .darktable_project_path
+            .as_deref()
+            .map(crate::contracts::dto::is_safe_workspace_reference)
+            == Some(false)
         || !crate::contracts::dto::is_safe_workspace_reference(&summary.xmp_template_path)
         || !is_valid_render_profile(&summary.preview_profile)
         || !is_valid_render_profile(&summary.final_profile)
@@ -1346,7 +1569,9 @@ fn build_draft_summary(
         draft_version,
         lifecycle_state: "draft".into(),
         darktable_version: input.darktable_version.trim().to_string(),
-        darktable_project_path: input.darktable_project_path.trim().to_string(),
+        darktable_project_path: normalize_optional_workspace_reference(
+            input.darktable_project_path.as_deref(),
+        ),
         xmp_template_path: input.xmp_template_path.trim().to_string(),
         preview_profile: normalize_render_profile(&input.preview_profile),
         final_profile: normalize_render_profile(&input.final_profile),
@@ -1398,6 +1623,14 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     })
 }
 
+fn normalize_optional_workspace_reference(value: Option<&str>) -> Option<String> {
+    value.and_then(|value| {
+        let normalized = value.trim();
+
+        (!normalized.is_empty()).then(|| normalized.to_string())
+    })
+}
+
 fn build_validation_report(
     draft_path: &Path,
     draft: &DraftPresetSummaryDto,
@@ -1440,17 +1673,6 @@ fn build_validation_report(
         ));
     }
 
-    validate_required_file(
-        draft_dir,
-        &draft.darktable_project_path,
-        "darktableProjectPath",
-        &[".dtpreset"],
-        "darktable-project-missing",
-        "darktable-project-extension",
-        "darktable project artifact를 찾지 못했어요.",
-        "darktableProjectPath에 draft 작업공간 안의 .dtpreset 파일을 연결해 주세요.",
-        &mut findings,
-    );
     validate_required_file(
         draft_dir,
         &draft.xmp_template_path,

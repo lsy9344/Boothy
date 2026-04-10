@@ -235,7 +235,11 @@ pub fn validate_draft_preset_edit_input(
         ));
     }
 
-    if !is_safe_workspace_reference(&input.darktable_project_path)
+    if input
+        .darktable_project_path
+        .as_deref()
+        .map(is_safe_workspace_reference)
+        == Some(false)
         || !is_safe_workspace_reference(&input.xmp_template_path)
         || !is_non_blank(&input.preview_profile.profile_id)
         || !is_non_blank(&input.preview_profile.display_name)
@@ -592,7 +596,8 @@ pub struct DraftPresetSummaryDto {
     pub draft_version: u32,
     pub lifecycle_state: String,
     pub darktable_version: String,
-    pub darktable_project_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub darktable_project_path: Option<String>,
     pub xmp_template_path: String,
     pub preview_profile: DraftRenderProfileDto,
     pub final_profile: DraftRenderProfileDto,
@@ -614,7 +619,8 @@ pub struct DraftPresetEditPayloadDto {
     pub display_name: String,
     pub lifecycle_state: String,
     pub darktable_version: String,
-    pub darktable_project_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub darktable_project_path: Option<String>,
     pub xmp_template_path: String,
     pub preview_profile: DraftRenderProfileDto,
     pub final_profile: DraftRenderProfileDto,
@@ -1341,7 +1347,7 @@ impl CaptureReadinessDto {
             false,
             "wait",
             "초점이 맞지 않았어요.",
-            "대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.",
+            "대상을 다시 맞추는 동안 잠시 기다려 주세요.",
             "capture-retry-required",
             latest_capture,
         )
@@ -1590,6 +1596,76 @@ pub struct CaptureDeleteResultDto {
     pub readiness: CaptureReadinessDto,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedicatedRendererRenderProfileDto {
+    pub profile_id: String,
+    pub display_name: String,
+    pub output_color_space: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedicatedRendererWarmupRequestDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub darktable_version: String,
+    pub xmp_template_path: String,
+    pub preview_profile: DedicatedRendererRenderProfileDto,
+    pub diagnostics_detail_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedicatedRendererWarmupResultDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub status: String,
+    pub diagnostics_detail_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedicatedRendererPreviewJobRequestDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub darktable_version: String,
+    pub xmp_template_path: String,
+    pub preview_profile: DedicatedRendererRenderProfileDto,
+    pub source_asset_path: String,
+    pub canonical_preview_output_path: String,
+    pub diagnostics_detail_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedicatedRendererPreviewJobResultDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub status: String,
+    pub diagnostics_detail_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostFieldErrors {
@@ -1702,13 +1778,16 @@ mod tests {
 
     #[test]
     fn capture_retry_required_uses_focus_guidance_copy() {
-        let readiness = CaptureReadinessDto::capture_retry_required("session_01hs6n1r8b8zc5v4ey2x7b9g1m", None);
+        let readiness =
+            CaptureReadinessDto::capture_retry_required("session_01hs6n1r8b8zc5v4ey2x7b9g1m", None);
 
         assert_eq!(readiness.customer_state, "Preparing");
+        assert!(!readiness.can_capture);
+        assert_eq!(readiness.primary_action, "wait");
         assert_eq!(readiness.customer_message, "초점이 맞지 않았어요.");
         assert_eq!(
             readiness.support_message,
-            "대상을 다시 맞춘 뒤 한 번 더 찍어 주세요."
+            "대상을 다시 맞추는 동안 잠시 기다려 주세요."
         );
         assert_eq!(readiness.reason_code, "capture-retry-required");
     }

@@ -11,6 +11,13 @@
 현재 앱은 helper가 남긴 최신 status snapshot을 host에서 읽어 booth/operator readiness truth로 정규화합니다.
 실제 `canon-helper.exe`는 이 경계 아래에서 빌드되며, 현재 helper는 파일 기반 session diagnostics 경계를 통해 아래 파일을 읽고 씁니다.
 
+현재 baseline은 아래처럼 고정합니다.
+
+- runtime: Windows 10/11 x64, `canon-helper.exe`, `net8.0`
+- ownership: helper 1개가 활성 카메라 1대와 in-flight capture 1개만 동시에 소유
+- correlation: `sessionId` + host-owned `requestId` + helper-owned `captureId`
+- durable examples: `sidecar/protocol/examples/helper-ready.json`, `camera-status.json`, `file-arrived.json`, `recovery-status.json`, `helper-error.json`
+
 - request input: `sessions/<sessionId>/diagnostics/camera-helper-requests.jsonl`
 - status output: `sessions/<sessionId>/diagnostics/camera-helper-status.json`
 - event output: `sessions/<sessionId>/diagnostics/camera-helper-events.jsonl`

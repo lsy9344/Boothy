@@ -94,6 +94,7 @@ export const publicationRejectionReasonCodeSchema = z.enum([
   'duplicate-version',
   'path-escape',
   'future-session-only-violation',
+  'stage-unavailable',
 ])
 export const catalogVersionHistoryActionSchema = z.enum(['published', 'rollback'])
 export const rollbackPresetCatalogReasonCodeSchema = z.enum([
@@ -101,6 +102,7 @@ export const rollbackPresetCatalogReasonCodeSchema = z.enum([
   'target-incompatible',
   'already-live',
   'stale-catalog-revision',
+  'stage-unavailable',
 ])
 
 const actorIdSchema = z
@@ -375,7 +377,7 @@ export const draftPresetSummarySchema = z
       .string()
       .trim()
       .regex(/^\d+\.\d+\.\d+$/, 'darktable version 형식이 올바르지 않아요.'),
-    darktableProjectPath: workspaceReferenceSchema,
+    darktableProjectPath: workspaceReferenceSchema.optional(),
     xmpTemplatePath: workspaceReferenceSchema,
     previewProfile: draftRenderProfileSchema,
     finalProfile: draftRenderProfileSchema,
@@ -468,7 +470,7 @@ export const draftPresetEditPayloadSchema = z.object({
     .string()
     .trim()
     .regex(/^\d+\.\d+\.\d+$/, 'darktable version 형식이 올바르지 않아요.'),
-  darktableProjectPath: workspaceReferenceSchema,
+  darktableProjectPath: workspaceReferenceSchema.optional(),
   xmpTemplatePath: workspaceReferenceSchema,
   previewProfile: draftRenderProfileSchema,
   finalProfile: draftRenderProfileSchema,

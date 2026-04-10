@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { HostErrorEnvelope } from '../../shared-contracts'
 import {
@@ -16,6 +17,7 @@ import { playTimingCue } from '../../timing-policy/audio'
 import { LatestPhotoRail } from '../components/LatestPhotoRail'
 import { PreviewWaitingPanel } from '../components/PreviewWaitingPanel'
 import { selectCustomerStatusCopy } from '../selectors/customerStatusCopy'
+import { shouldShowFocusRetryOverlay } from './focusRetryOverlay'
 import { ReadinessScreen } from './ReadinessScreen'
 
 const CUSTOMER_SAFE_CAPTURE_FALLBACK_ERROR =
@@ -24,6 +26,39 @@ const CUSTOMER_SAFE_DELETE_FALLBACK_ERROR =
   '사진을 정리하는 중에 다시 확인이 필요해요. 잠시 후 다시 시도해 주세요.'
 const FOCUS_RETRY_OVERLAY_VISIBLE_MS = 2000
 const FOCUS_RETRY_OVERLAY_FADE_MS = 600
+
+function clearFocusRetryOverlayTimers(
+  focusRetryHideTimerRef: MutableRefObject<number | null>,
+) {
+  if (focusRetryHideTimerRef.current !== null) {
+    window.clearTimeout(focusRetryHideTimerRef.current)
+    focusRetryHideTimerRef.current = null
+  }
+}
+
+function showFocusRetryOverlay(
+  focusRetryHideTimerRef: MutableRefObject<number | null>,
+  focusRetryOverlayIdRef: MutableRefObject<number>,
+  setFocusRetryOverlay: Dispatch<
+    SetStateAction<{
+      id: number
+      headline: string
+      detail: string
+    } | null>
+  >,
+  input: {
+    headline: string
+    detail: string
+  },
+) {
+  clearFocusRetryOverlayTimers(focusRetryHideTimerRef)
+  focusRetryOverlayIdRef.current += 1
+  setFocusRetryOverlay({
+    id: focusRetryOverlayIdRef.current,
+    headline: input.headline,
+    detail: input.detail,
+  })
+}
 
 function mergePendingFastPreview(
   previews: CurrentSessionPreview[],
@@ -161,6 +196,7 @@ export function CaptureScreen() {
   const focusRetryHideTimerRef = useRef<number | null>(null)
   const focusRetryOverlayIdRef = useRef(0)
   const lastReadinessReasonCodeRef = useRef<string | null>(null)
+  const focusRetryShownForRequestRef = useRef(false)
   const wasRequestingCaptureRef = useRef(false)
 
   const readiness =
@@ -263,30 +299,6 @@ export function CaptureScreen() {
       ? pendingDeleteCaptureId
       : null
 
-  const playCue = useEffectEvent((phase: 'warning' | 'ended') => {
-    void playTimingCue(phase)
-  })
-
-  const clearFocusRetryOverlayTimers = useEffectEvent(() => {
-    if (focusRetryHideTimerRef.current !== null) {
-      window.clearTimeout(focusRetryHideTimerRef.current)
-      focusRetryHideTimerRef.current = null
-    }
-  })
-
-  const showFocusRetryOverlay = useEffectEvent((input: {
-    headline: string
-    detail: string
-  }) => {
-    clearFocusRetryOverlayTimers()
-    focusRetryOverlayIdRef.current += 1
-    setFocusRetryOverlay({
-      id: focusRetryOverlayIdRef.current,
-      headline: input.headline,
-      detail: input.detail,
-    })
-  })
-
   useEffect(() => {
     if (timing === null) {
       playedTimingCueKeyRef.current = null
@@ -305,46 +317,46 @@ export function CaptureScreen() {
     }
 
     playedTimingCueKeyRef.current = cueKey
-    playCue(timing.phase)
+    void playTimingCue(timing.phase)
   }, [timing])
 
   useEffect(() => {
     const previousReasonCode = lastReadinessReasonCodeRef.current
-    lastReadinessReasonCodeRef.current = readiness.reasonCode
+    const wasRequestingCapture = wasRequestingCaptureRef.current
+    const overlayDecision = shouldShowFocusRetryOverlay({
+      previousReasonCode,
+      nextReasonCode: readiness.reasonCode,
+      wasRequestingCapture,
+      isRequestingCapture,
+      alreadyShownForCurrentRequest: focusRetryShownForRequestRef.current,
+    })
 
-    if (
-      readiness.reasonCode !== 'capture-retry-required' ||
-      previousReasonCode === 'capture-retry-required'
-    ) {
-      return
+    if (overlayDecision.resetShownForCurrentRequest) {
+      focusRetryShownForRequestRef.current = false
     }
 
-    showFocusRetryOverlay({
-      headline: copy.headline,
-      detail: copy.detail,
-    })
-  }, [copy.detail, copy.headline, readiness.reasonCode, showFocusRetryOverlay])
-
-  useEffect(() => {
-    const wasRequestingCapture = wasRequestingCaptureRef.current
-    wasRequestingCaptureRef.current = isRequestingCapture
-
-    if (
-      wasRequestingCapture &&
-      !isRequestingCapture &&
-      readiness.reasonCode === 'capture-retry-required'
-    ) {
-      showFocusRetryOverlay({
+    if (overlayDecision.shouldShow) {
+      showFocusRetryOverlay(
+        focusRetryHideTimerRef,
+        focusRetryOverlayIdRef,
+        setFocusRetryOverlay,
+        {
         headline: copy.headline,
         detail: copy.detail,
-      })
+        },
+      )
     }
+    if (overlayDecision.markShownForCurrentRequest) {
+      focusRetryShownForRequestRef.current = true
+    }
+
+    lastReadinessReasonCodeRef.current = readiness.reasonCode
+    wasRequestingCaptureRef.current = isRequestingCapture
   }, [
     copy.detail,
     copy.headline,
     isRequestingCapture,
     readiness.reasonCode,
-    showFocusRetryOverlay,
   ])
 
   useEffect(() => {
@@ -352,22 +364,22 @@ export function CaptureScreen() {
       return
     }
 
-    clearFocusRetryOverlayTimers()
+    clearFocusRetryOverlayTimers(focusRetryHideTimerRef)
     focusRetryHideTimerRef.current = window.setTimeout(() => {
       setFocusRetryOverlay(null)
       focusRetryHideTimerRef.current = null
     }, FOCUS_RETRY_OVERLAY_VISIBLE_MS + FOCUS_RETRY_OVERLAY_FADE_MS)
 
     return () => {
-      clearFocusRetryOverlayTimers()
+      clearFocusRetryOverlayTimers(focusRetryHideTimerRef)
     }
-  }, [clearFocusRetryOverlayTimers, focusRetryOverlay])
+  }, [focusRetryOverlay])
 
   useEffect(() => {
     return () => {
-      clearFocusRetryOverlayTimers()
+      clearFocusRetryOverlayTimers(focusRetryHideTimerRef)
     }
-  }, [clearFocusRetryOverlayTimers])
+  }, [])
 
   async function handlePrimaryAction() {
     if (!copy.canCapture || sessionDraft.sessionId === null) {
@@ -375,6 +387,7 @@ export function CaptureScreen() {
     }
 
     setFallbackError(null)
+    focusRetryShownForRequestRef.current = false
 
     try {
       await requestCapture({
@@ -384,11 +397,20 @@ export function CaptureScreen() {
       const hostError = error as HostErrorEnvelope
 
       if (hostError.readiness?.sessionId === sessionDraft.sessionId) {
-        if (hostError.readiness.reasonCode === 'capture-retry-required') {
-          showFocusRetryOverlay({
-            headline: hostError.readiness.customerMessage,
-            detail: hostError.readiness.supportMessage,
-          })
+        if (
+          hostError.readiness.reasonCode === 'capture-retry-required' &&
+          !focusRetryShownForRequestRef.current
+        ) {
+          showFocusRetryOverlay(
+            focusRetryHideTimerRef,
+            focusRetryOverlayIdRef,
+            setFocusRetryOverlay,
+            {
+              headline: hostError.readiness.customerMessage,
+              detail: hostError.readiness.supportMessage,
+            },
+          )
+          focusRetryShownForRequestRef.current = true
         }
         return
       }

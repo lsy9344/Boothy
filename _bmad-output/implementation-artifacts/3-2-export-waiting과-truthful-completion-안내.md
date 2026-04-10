@@ -1,15 +1,15 @@
 # Story 3.2: Export Waiting과 truthful completion 안내
 
-Status: review
+Status: done
 
-Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다. Story 6.2 canonical ledger 기준으로 end-of-session hardware evidence가 아직 없으므로 Story 3.2는 `review`를 유지한다.
+Correct Course Note: 2026-04-10 실장비 검증에서 HV-08/HV-11 close package가 canonical ledger에 `Go`로 기록됐다. `Export Waiting` failure isolation session과 `Completed / Local Deliverable Ready` 4-capture session evidence를 바탕으로 Story 3.2를 `done`으로 닫는다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Required HV checklist IDs: `HV-08`, `HV-11`
-- Current hardware gate: `No-Go`
-- Close policy: `automated pass` alone does not close this story; a ledger row with `Go` is required before `done`.
+- Current hardware gate: `Go`
+- Close policy: `automated pass` alone does not close this story; canonical ledger `Go` row가 기록되어 `done` 기준을 충족했다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -212,12 +212,15 @@ GPT-5 Codex
 - 2026-03-26 02:00:05 +09:00 - Story 3.2 context 생성: Epic 3 / FR-007 / Post-End Completion Taxonomy, UX post-end guidance, 현재 workspace의 timing/post-end foundation, shared contracts, Rust normalized readiness, React provider/selectors, 공식 React/Tauri/Zod 문서를 함께 분석했다.
 - 2026-03-26 02:44:12 +09:00 - shared contracts, adapter, provider, selector, CaptureScreen 테스트 헬퍼를 정리해 `postEnd`/`timing` optionality와 completion variant 타입 불일치를 해소하고 `pnpm build`, `pnpm test:run`을 통과시켰다.
 - 2026-03-26 02:47:44 +09:00 - Rust host의 종료 직후 `export-waiting` durable truth 저장과 preset switch 차단을 보강하고 `cargo test --test capture_readiness --test session_manifest`를 통과시켰다.
+- 2026-04-10 12:01:55 +09:00 - 실장비 세션 `session_000000000018a4df139592b950`와 `session_000000000018a4df863488433c`를 검토해 HV-11 failure isolation과 HV-08 completed/local-deliverable-ready close evidence를 canonical ledger에 반영했다.
 
 ### Completion Notes List
 
 - 종료 직후 `ended`에 오래 머무르지 않고 host가 `export-waiting` 또는 truthful `completed`를 durable post-end truth로 기록하도록 정리했다.
 - 고객 화면은 `Export Waiting`과 `Completed`를 분리해 안내하고, 완료 주장은 host post-end truth가 확인된 뒤에만 노출되도록 고정했다.
 - 종료 후 preset 변경 차단, same-session post-end 병합, 저장된 현재 세션 캡처 자산 보존, post-end audit 로그 기록까지 함께 검증했다.
+- 2026-04-10 실장비 failure-isolation 세션에서 `Completed` 오인 없이 `Export Waiting`이 유지되고 RAW/preview evidence가 보존됨을 확인했다.
+- 2026-04-10 실장비 completed 세션에서 4회 촬영 후 종료 직후 `Completed / Local Deliverable Ready`로 수렴하고 final deliverable이 남는 것을 확인했다.
 
 ### File List
 
@@ -251,6 +254,7 @@ GPT-5 Codex
 
 - 2026-03-26: Story 3.2 구현 완료 후 상태를 `review`로 변경하고, post-end truth 계약/호스트 평가/UI 안내/회귀 테스트 결과를 기록했다.
 - 2026-03-26: 코드 리뷰에서 확인된 handoff truth 강등, 3.3 범위 UI 조기 노출, handoff 제목 라벨 버그를 수정했다. Story 6.2 canonical ledger 정렬 이후에는 end-of-session hardware evidence가 아직 없어 상태를 `review`로 유지한다.
+- 2026-04-10: HV-08/HV-11 실장비 evidence package를 canonical ledger에 `Go`로 기록하고 Story 3.2 상태를 `done`으로 올렸다.
 
 ### Review Findings
 

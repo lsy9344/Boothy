@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "canon-helper-error/v1",
+  "type": "helper-error",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "observedAt": "2026-04-10T01:00:22Z",
+  "detailCode": "capture-download-timeout",
+  "message": "RAW handoff를 기다리다 시간이 초과되었어요."
+}

@@ -1,8 +1,11 @@
 # Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
 
-Status: in-progress
+Status: review
 
 Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Story 1.9는 `review / No-Go` 상태로 유지하고 Story 1.10이 다음 truth-critical corrective follow-up을 소유한다. 이번 스토리의 목적은 UI 표현을 다시 만지는 것이 아니라, booth hardware에서 검증된 known-good preview invocation으로 correctness를 복구하고, per-session seam 계측을 다시 닫으며, first-visible 경로를 per-capture one-shot spawn이 아닌 상주형 worker 중심 topology로 승격하는 것이다.
+
+Architecture Pivot Note: 2026-04-09 승인된 preset-applied preview architecture decision에 따라, Story 1.10은 dedicated renderer cutover의 target story가 아니다. 이 스토리는 known-good baseline, seam 계측, truthful waiting guard를 보존하는 review baseline으로 남고, next structure인 `local dedicated renderer + different close topology`는 후속 Story 1.11-1.13이 소유한다.
+
 
 ### Validation Gate Reference
 

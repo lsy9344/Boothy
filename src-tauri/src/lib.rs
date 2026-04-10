@@ -23,6 +23,8 @@ pub fn run() {
                 )?;
             }
 
+            app.handle().plugin(tauri_plugin_shell::init())?;
+
             let app_local_data_dir = app
                 .path()
                 .app_local_data_dir()

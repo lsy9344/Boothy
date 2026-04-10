@@ -59,42 +59,42 @@ fn normalize_optional_label(value: Option<String>) -> Option<String> {
     })
 }
 
-fn build_safe_handoff_ready_post_end(
+fn has_handoff_destination_in_guidance(guidance: &HandoffGuidanceFile) -> bool {
+    guidance.approved_recipient_label.is_some() || guidance.next_location_label.is_some()
+}
+
+fn has_handoff_destination_in_completed(record: &CompletedPostEnd) -> bool {
+    record.approved_recipient_label.is_some() || record.next_location_label.is_some()
+}
+
+fn build_local_deliverable_ready_post_end(
     evaluated_at: &str,
     guidance: Option<&HandoffGuidanceFile>,
-    existing_completed: Option<&CompletedPostEnd>,
+    existing_completed: Option<CompletedPostEnd>,
 ) -> CompletedPostEnd {
-    let existing_handoff = existing_completed
-        .filter(|record| record.completion_variant == SESSION_POST_END_HANDOFF_READY);
-    let approved_recipient_label = guidance
-        .and_then(|value| value.approved_recipient_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.approved_recipient_label.clone()));
-    let next_location_label = guidance
-        .and_then(|value| value.next_location_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.next_location_label.clone()))
-        .or_else(|| Some("안내된 곳".into()));
-    let primary_action_label = guidance
-        .and_then(|value| value.primary_action_label.clone())
-        .or_else(|| existing_handoff.map(|value| value.primary_action_label.clone()))
-        .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into());
-    let support_action_label = guidance
-        .and_then(|value| value.support_action_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.support_action_label.clone()));
-    let show_booth_alias = guidance
-        .and_then(|value| value.show_booth_alias)
-        .or_else(|| existing_handoff.map(|value| value.show_booth_alias))
-        .unwrap_or(false);
+    if let Some(existing) = existing_completed {
+        if existing.completion_variant == SESSION_POST_END_LOCAL_DELIVERABLE_READY {
+            return CompletedPostEnd {
+                evaluated_at: evaluated_at.into(),
+                ..existing
+            };
+        }
+    }
 
     CompletedPostEnd {
         state: SESSION_POST_END_COMPLETED.into(),
         evaluated_at: evaluated_at.into(),
-        completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
-        approved_recipient_label,
-        next_location_label,
-        primary_action_label,
-        support_action_label,
-        show_booth_alias,
-        handoff: existing_handoff.and_then(|value| value.handoff.clone()),
+        completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
+        approved_recipient_label: None,
+        next_location_label: None,
+        primary_action_label: guidance
+            .and_then(|value| value.primary_action_label.clone())
+            .unwrap_or_else(|| "안내가 끝났어요. 천천히 이동해 주세요.".into()),
+        support_action_label: guidance.and_then(|value| value.support_action_label.clone()),
+        show_booth_alias: guidance
+            .and_then(|value| value.show_booth_alias)
+            .unwrap_or(false),
+        handoff: None,
     }
 }
 
@@ -116,7 +116,7 @@ pub fn sync_post_end_state_in_dir(
 
     manifest = attempt_final_render_if_needed(base_dir, manifest_path, manifest)?;
 
-    let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
+    let Some(evaluation) = resolve_explicit_post_end(base_dir, &manifest)? else {
         return Ok(manifest);
     };
     let current = manifest.post_end.as_ref().map(|record| PostEndEvaluation {
@@ -182,7 +182,7 @@ pub fn project_post_end_state_in_dir(
         return Ok(manifest);
     }
 
-    let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
+    let Some(evaluation) = resolve_explicit_post_end(base_dir, &manifest)? else {
         return Ok(manifest);
     };
     let current = manifest.post_end.as_ref().map(|record| PostEndEvaluation {
@@ -228,8 +228,11 @@ pub fn project_post_end_state_in_dir(
     Ok(manifest)
 }
 
-fn resolve_explicit_post_end(manifest: &SessionManifest) -> Option<PostEndEvaluation> {
-    let evaluation = evaluate_post_end(manifest);
+fn resolve_explicit_post_end(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+) -> Result<Option<PostEndEvaluation>, HostErrorEnvelope> {
+    let evaluation = evaluate_post_end(base_dir, manifest)?;
     let explicit_state =
         manifest.post_end.as_ref().map(|record| record.state()).or(
             match manifest.lifecycle.stage.as_str() {
@@ -241,18 +244,18 @@ fn resolve_explicit_post_end(manifest: &SessionManifest) -> Option<PostEndEvalua
         );
 
     match explicit_state {
-        Some(SESSION_POST_END_COMPLETED) | Some(SESSION_POST_END_PHONE_REQUIRED) => Some(
+        Some(SESSION_POST_END_COMPLETED) | Some(SESSION_POST_END_PHONE_REQUIRED) => Ok(Some(
             resolve_locked_post_end(manifest, evaluation, explicit_state.unwrap()),
-        ),
+        )),
         Some(SESSION_POST_END_EXPORT_WAITING) => match evaluation.state.as_str() {
-            SESSION_POST_END_COMPLETED | SESSION_POST_END_PHONE_REQUIRED => Some(evaluation),
-            _ => Some(PostEndEvaluation {
+            SESSION_POST_END_COMPLETED | SESSION_POST_END_PHONE_REQUIRED => Ok(Some(evaluation)),
+            _ => Ok(Some(PostEndEvaluation {
                 state: SESSION_POST_END_EXPORT_WAITING.into(),
                 completion_variant: None,
-            }),
+            })),
         },
-        None => Some(evaluation),
-        _ => None,
+        None => Ok(Some(evaluation)),
+        _ => Ok(None),
     }
 }
 
@@ -276,15 +279,18 @@ fn resolve_locked_post_end(
     evaluation
 }
 
-fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
+fn evaluate_post_end(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+) -> Result<PostEndEvaluation, HostErrorEnvelope> {
     let Some(latest_capture) = manifest.captures.last() else {
-        return PostEndEvaluation {
+        return Ok(PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
-        };
+        });
     };
 
-    match latest_capture.render_status.as_str() {
+    let evaluation = match latest_capture.render_status.as_str() {
         "previewWaiting" | "captureSaved" => PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
@@ -295,7 +301,7 @@ fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
         },
         "finalReady" => PostEndEvaluation {
             state: SESSION_POST_END_COMPLETED.into(),
-            completion_variant: Some(SESSION_POST_END_HANDOFF_READY.into()),
+            completion_variant: Some(resolve_completed_variant(base_dir, manifest)?),
         },
         "renderFailed" => PostEndEvaluation {
             state: SESSION_POST_END_PHONE_REQUIRED.into(),
@@ -305,7 +311,38 @@ fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
         },
-    }
+    };
+
+    Ok(evaluation)
+}
+
+fn resolve_completed_variant(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+) -> Result<String, HostErrorEnvelope> {
+    let file_guidance = read_handoff_guidance_file(base_dir, &manifest.session_id)?;
+    let has_guidance_destination = file_guidance
+        .as_ref()
+        .map(has_handoff_destination_in_guidance)
+        .unwrap_or(false);
+    let has_existing_handoff_destination = manifest
+        .post_end
+        .as_ref()
+        .and_then(|record| match record {
+            SessionPostEnd::Completed(value) => Some(value),
+            _ => None,
+        })
+        .filter(|record| record.completion_variant == SESSION_POST_END_HANDOFF_READY)
+        .map(has_handoff_destination_in_completed)
+        .unwrap_or(false);
+
+    Ok(
+        if has_guidance_destination || has_existing_handoff_destination {
+            SESSION_POST_END_HANDOFF_READY.into()
+        } else {
+            SESSION_POST_END_LOCAL_DELIVERABLE_READY.into()
+        },
+    )
 }
 
 fn attempt_final_render_if_needed(
@@ -396,9 +433,7 @@ fn build_completed_post_end(
         let file_guidance = read_handoff_guidance_file(base_dir, session_id)?;
 
         if let Some(file_guidance) = file_guidance.as_ref() {
-            if file_guidance.approved_recipient_label.is_some()
-                || file_guidance.next_location_label.is_some()
-            {
+            if has_handoff_destination_in_guidance(file_guidance) {
                 return Ok(CompletedPostEnd {
                     state: SESSION_POST_END_COMPLETED.into(),
                     evaluated_at: evaluated_at.into(),
@@ -414,18 +449,11 @@ fn build_completed_post_end(
                     handoff: None,
                 });
             }
-
-            return Ok(build_safe_handoff_ready_post_end(
-                evaluated_at,
-                Some(file_guidance),
-                existing_completed.as_ref(),
-            ));
         }
 
         if let Some(existing) = existing_completed.as_ref() {
             if existing.completion_variant == variant
-                && (existing.approved_recipient_label.is_some()
-                    || existing.next_location_label.is_some())
+                && has_handoff_destination_in_completed(existing)
             {
                 return Ok(CompletedPostEnd {
                     evaluated_at: evaluated_at.into(),
@@ -434,33 +462,20 @@ fn build_completed_post_end(
             }
         }
 
-        return Ok(build_safe_handoff_ready_post_end(
+        return Ok(build_local_deliverable_ready_post_end(
             evaluated_at,
-            None,
-            existing_completed.as_ref(),
+            file_guidance.as_ref(),
+            existing_completed,
         ));
     }
 
-    if let Some(existing) = existing_completed {
-        if existing.completion_variant == variant {
-            return Ok(CompletedPostEnd {
-                evaluated_at: evaluated_at.into(),
-                ..existing
-            });
-        }
-    }
+    let file_guidance = read_handoff_guidance_file(base_dir, session_id)?;
 
-    Ok(CompletedPostEnd {
-        state: SESSION_POST_END_COMPLETED.into(),
-        evaluated_at: evaluated_at.into(),
-        completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
-        approved_recipient_label: None,
-        next_location_label: None,
-        primary_action_label: "안내가 끝났어요. 천천히 이동해 주세요.".into(),
-        support_action_label: None,
-        show_booth_alias: false,
-        handoff: None,
-    })
+    Ok(build_local_deliverable_ready_post_end(
+        evaluated_at,
+        file_guidance.as_ref(),
+        existing_completed,
+    ))
 }
 
 fn read_handoff_guidance_file(

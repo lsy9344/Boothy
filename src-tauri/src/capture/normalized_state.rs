@@ -129,7 +129,7 @@ where
         message_type: "request-capture".into(),
         session_id: input.session_id.clone(),
         request_id: request_id.clone(),
-        requested_at,
+        requested_at: requested_at.clone(),
         active_preset_id: active_preset.preset_id.clone(),
         active_preset_version: active_preset.published_version.clone(),
     };
@@ -160,6 +160,7 @@ where
         base_dir,
         &input.session_id,
         &request_id,
+        &requested_at,
         starting_event_count,
         |fast_preview| {
             if early_fast_preview_update.is_none() {
@@ -335,7 +336,7 @@ fn ensure_capture_request_id_is_fresh(
 fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static str {
     match error {
         SidecarClientError::CaptureTriggerRetryRequired => {
-            "초점이 맞지 않았어요. 대상을 다시 맞춘 뒤 한 번 더 찍어 주세요."
+            "초점이 맞지 않았어요. 대상을 다시 맞추는 동안 잠시 기다려 주세요."
         }
         SidecarClientError::CaptureTimedOut => {
             "사진 저장을 끝내지 못했어요. 가까운 직원에게 알려 주세요."

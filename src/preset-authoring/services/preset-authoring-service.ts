@@ -265,7 +265,8 @@ function ensureMatchingPublicationResult(
     }
   } else if (
     response.auditRecord.action !== 'rejected' ||
-    response.auditRecord.reasonCode !== response.reasonCode
+    response.auditRecord.reasonCode !== response.reasonCode ||
+    response.auditRecord.draftVersion !== response.draft.draftVersion
   ) {
     throw {
       code: 'host-unavailable',
@@ -354,7 +355,6 @@ function buildBrowserDraftSummary(
     draftVersion,
     lifecycleState: 'draft',
     darktableVersion: input.darktableVersion,
-    darktableProjectPath: input.darktableProjectPath,
     xmpTemplatePath: input.xmpTemplatePath,
     previewProfile: input.previewProfile,
     finalProfile: input.finalProfile,

@@ -3,5 +3,30 @@
   "identifier": "authoring-window",
   "description": "Capability boundary for the internal preset authoring surface.",
   "windows": ["authoring-window"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "../sidecar/dedicated-renderer/boothy-dedicated-renderer",
+          "sidecar": true,
+          "args": [
+            "--protocol",
+            {
+              "validator": "^(preview-job-v1|warmup-v1)$"
+            },
+            "--request",
+            {
+              "validator": "^.+\\.json$"
+            },
+            "--result",
+            {
+              "validator": "^.+\\.json$"
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

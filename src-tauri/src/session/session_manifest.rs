@@ -11,8 +11,8 @@ pub const SESSION_POST_END_COMPLETED: &str = "completed";
 pub const SESSION_POST_END_PHONE_REQUIRED: &str = "phone-required";
 pub const SESSION_POST_END_LOCAL_DELIVERABLE_READY: &str = "local-deliverable-ready";
 pub const SESSION_POST_END_HANDOFF_READY: &str = "handoff-ready";
-pub const DEFAULT_SESSION_DURATION_SECONDS: u64 = 15 * 60;
-pub const WARNING_LEAD_SECONDS: u64 = 5 * 60;
+pub const DEFAULT_SESSION_DURATION_SECONDS: u64 = 60;
+pub const WARNING_LEAD_SECONDS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -396,14 +396,20 @@ pub fn build_default_session_timing(
     session_id: String,
     started_at: &str,
 ) -> Result<SessionTiming, HostErrorEnvelope> {
+    build_default_session_timing_for_mode(session_id, started_at, false)
+}
+
+pub fn build_default_session_timing_for_mode(
+    session_id: String,
+    started_at: &str,
+    _use_local_test_timing: bool,
+) -> Result<SessionTiming, HostErrorEnvelope> {
     let started_at_seconds = rfc3339_to_unix_seconds(started_at)?;
-    let adjusted_end_at = unix_seconds_to_rfc3339(
-        started_at_seconds.saturating_add(DEFAULT_SESSION_DURATION_SECONDS),
-    );
+    let adjusted_end_at_seconds =
+        started_at_seconds.saturating_add(DEFAULT_SESSION_DURATION_SECONDS);
+    let adjusted_end_at = unix_seconds_to_rfc3339(adjusted_end_at_seconds);
     let warning_at = unix_seconds_to_rfc3339(
-        started_at_seconds
-            .saturating_add(DEFAULT_SESSION_DURATION_SECONDS)
-            .saturating_sub(WARNING_LEAD_SECONDS),
+        adjusted_end_at_seconds.saturating_sub(WARNING_LEAD_SECONDS),
     );
 
     Ok(SessionTiming {
@@ -418,6 +424,10 @@ pub fn build_default_session_timing(
         warning_triggered_at: None,
         ended_triggered_at: None,
     })
+}
+
+pub fn resolve_warning_lead_seconds(_use_local_test_timing: bool) -> u64 {
+    WARNING_LEAD_SECONDS
 }
 
 pub fn current_timestamp(now: SystemTime) -> Result<String, HostErrorEnvelope> {

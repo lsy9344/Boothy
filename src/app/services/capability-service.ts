@@ -15,9 +15,10 @@ export interface CapabilityService {
   getSnapshot(): CapabilitySnapshot
 }
 
-const SURFACE_WINDOW_LABELS: Partial<Record<SurfaceCapability, string>> = {
-  operator: 'operator-window',
-  authoring: 'authoring-window',
+const SURFACE_WINDOW_LABELS: Partial<Record<SurfaceCapability, readonly string[]>> = {
+  operator: ['operator-window'],
+  authoring: ['authoring-window'],
+  settings: ['operator-window', 'authoring-window'],
 }
 
 class StaticCapabilityService implements CapabilityService {
@@ -34,12 +35,12 @@ class StaticCapabilityService implements CapabilityService {
       return true
     }
 
-    const requiredWindowLabel = SURFACE_WINDOW_LABELS[surface]
+    const requiredWindowLabels = SURFACE_WINDOW_LABELS[surface]
 
     if (
-      requiredWindowLabel !== undefined &&
+      requiredWindowLabels !== undefined &&
       this.currentWindowLabel !== null &&
-      this.currentWindowLabel !== requiredWindowLabel
+      !requiredWindowLabels.includes(this.currentWindowLabel)
     ) {
       return false
     }

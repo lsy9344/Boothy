@@ -112,4 +112,46 @@ describe('browser preset catalog gateway', () => {
       message: '요청한 세션과 다른 프리셋 카탈로그 응답을 받았어요. 다시 시도해 주세요.',
     })
   })
+
+  it('accepts host responses whose preview assets resolve to absolute filesystem paths', async () => {
+    const service = createPresetCatalogService({
+      gateway: {
+        async loadPresetCatalog() {
+          return {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            state: 'ready',
+            presets: [
+              {
+                presetId: 'preset_soft-glow',
+                displayName: 'Soft Glow',
+                publishedVersion: '2026.03.20',
+                boothStatus: 'booth-safe',
+                preview: {
+                  kind: 'preview-tile',
+                  assetPath:
+                    'C:/Users/KimYS/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
+                  altText: 'Soft Glow sample portrait',
+                },
+              },
+            ],
+          }
+        },
+      },
+    })
+
+    await expect(
+      service.loadPresetCatalog({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      }),
+    ).resolves.toMatchObject({
+      presets: [
+        {
+          preview: {
+            assetPath:
+              'C:/Users/KimYS/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
+          },
+        },
+      ],
+    })
+  })
 })

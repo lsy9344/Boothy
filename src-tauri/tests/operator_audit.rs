@@ -756,7 +756,7 @@ fn sample_draft_payload(preset_id: &str, display_name: &str) -> DraftPresetEditP
         display_name: display_name.into(),
         lifecycle_state: "draft".into(),
         darktable_version: "5.4.1".into(),
-        darktable_project_path: "darktable/soft-glow.dtpreset".into(),
+        darktable_project_path: Some("darktable/soft-glow.dtpreset".into()),
         xmp_template_path: "xmp/soft-glow.xmp".into(),
         preview_profile: render_profile("preview-standard", "Preview Standard"),
         final_profile: render_profile("final-standard", "Final Standard"),

@@ -3,5 +3,30 @@
   "identifier": "booth-window",
   "description": "Default customer booth window permissions.",
   "windows": ["booth-window"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "../sidecar/dedicated-renderer/boothy-dedicated-renderer",
+          "sidecar": true,
+          "args": [
+            "--protocol",
+            {
+              "validator": "^(preview-job-v1|warmup-v1)$"
+            },
+            "--request",
+            {
+              "validator": "^.+\\.json$"
+            },
+            "--result",
+            {
+              "validator": "^.+\\.json$"
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

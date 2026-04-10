@@ -952,7 +952,7 @@ describe('SessionProvider', () => {
               canCapture: false,
               primaryAction: 'wait',
               customerMessage: '초점이 맞지 않았어요.',
-              supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+              supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
               reasonCode: 'capture-retry-required',
             },
           }),
@@ -5623,6 +5623,112 @@ describe('SessionProvider', () => {
       state: 'completed',
       completionVariant: 'handoff-ready',
       approvedRecipientLabel: 'Front Desk',
+    })
+  })
+
+  it('does not let a weaker same-session export-waiting update overwrite completed guidance', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(
+              createReadinessSnapshot({
+                sessionId,
+                surfaceState: 'blocked',
+                customerState: 'Completed',
+                canCapture: false,
+                primaryAction: 'wait',
+                customerMessage: '부스 준비가 끝났어요.',
+                supportMessage: '마지막 안내를 확인해 주세요.',
+                reasonCode: 'completed',
+                postEnd: {
+                  state: 'completed',
+                  evaluatedAt: '2026-03-20T00:00:10.000Z',
+                  completionVariant: 'local-deliverable-ready',
+                  primaryActionLabel: '안내를 확인해 주세요.',
+                  supportActionLabel: null,
+                  showBoothAlias: false,
+                },
+              }),
+            ),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockImplementation(async ({ onReadiness }) => {
+              emitReadiness = onReadiness
+              return () => undefined
+            }),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    act(() => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'blocked',
+          customerState: 'Export Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '촬영은 끝났고 결과를 준비하고 있어요.',
+          supportMessage: '다음 안내가 나올 때까지 잠시만 기다려 주세요.',
+          reasonCode: 'export-waiting',
+          postEnd: {
+            state: 'export-waiting',
+            evaluatedAt: '2026-03-20T00:00:20.000Z',
+          },
+        }),
+      )
+    })
+
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
+    expect(latestState!.sessionDraft.captureReadiness?.postEnd).toMatchObject({
+      state: 'completed',
+      completionVariant: 'local-deliverable-ready',
     })
   })
 

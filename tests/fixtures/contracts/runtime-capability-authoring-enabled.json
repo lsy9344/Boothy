@@ -1,0 +1,9 @@
+{
+  "isAdminAuthenticated": true,
+  "allowedSurfaces": [
+    "booth",
+    "operator",
+    "authoring",
+    "settings"
+  ]
+}

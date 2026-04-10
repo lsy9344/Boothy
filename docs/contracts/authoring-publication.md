@@ -5,6 +5,12 @@
 이 문서는 validated draft를 immutable published bundle로 게시할 때 authoring surface와 host가
 공유하는 입력, 결과, 거절, 감사 이력 계약을 고정한다.
 
+## 문서 역할
+
+- `docs/contracts/authoring-publication.md`: publication state machine, guardrail, approval/published 의미
+- `docs/contracts/authoring-publication-payload.md`: publish input/result/audit payload shape baseline
+- `docs/contracts/authoring-validation.md`: draft validation artifact와 validation result baseline
+
 ## Publish Input
 
 - `presetId`: 게시할 draft의 stable identifier
@@ -22,7 +28,7 @@
 - `schemaVersion`: `draft-preset-publication-result/v1`
 - `status`:
   - `published`: immutable bundle 생성 완료
-  - `rejected`: bundle 생성 없이 no-op 거절
+  - `rejected`: publish side effect 없이 멈춘 typed rejection
 - 공통 draft payload는 최신 draft snapshot과 publication history를 포함한다.
 
 ### Published
@@ -42,9 +48,13 @@
   - `duplicate-version`
   - `path-escape`
   - `future-session-only-violation`
+  - `stage-unavailable`
 - `message`: authoring 상단 상태 문구
 - `guidance`: 사용자가 바로 조치할 수 있는 수정 가이드
 - `auditRecord.action`: `rejected`
+
+`stage-unavailable`는 preview/inspection 단계에서만 허용되는 typed rejection이다.
+이 경우 bundle 생성, live pointer 변경, rejection audit 저장을 수행하지 않는다.
 
 ## Audit Record
 
@@ -64,5 +74,9 @@
 - duplicate version은 기존 bundle directory를 절대 수정하지 않고 거절해야 한다.
 - stale validation이나 metadata mismatch는 partial bundle 없이 거절해야 한다.
 - rejection audit는 bundle truth와 분리된 host-owned store에 남아야 한다.
+- typed rejection은 bundle 생성, live pointer 변경, active session mutation 없이 끝나야 한다.
 - publish 성공도 active session manifest나 current capture binding을 직접 갱신하면 안 되고,
   audit/draft 저장이 실패하면 live bundle도 함께 롤백되어야 한다.
+- rollback은 immutable bundle 삭제가 아니라 live catalog pointer 전환으로만 성공할 수 있다.
+- rollback 성공/거절 payload는 `preset-catalog-rollback-result/v1`를 따르고,
+  active session manifest나 current capture binding을 직접 수정하면 안 된다.

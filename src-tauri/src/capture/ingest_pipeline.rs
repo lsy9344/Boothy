@@ -510,13 +510,7 @@ pub fn complete_preview_render_in_dir(
         }
     };
 
-    finish_preview_render_in_dir(
-        base_dir,
-        &paths,
-        session_id,
-        capture_id,
-        rendered_preview,
-    )
+    finish_preview_render_in_dir(base_dir, &paths, session_id, capture_id, rendered_preview)
 }
 
 fn wait_for_speculative_preview_completion_in_dir(
@@ -784,7 +778,7 @@ fn has_in_flight_capture_for_runtime(base_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn finish_preview_render_in_dir(
+pub(crate) fn finish_preview_render_in_dir(
     base_dir: &Path,
     paths: &SessionPaths,
     session_id: &str,
@@ -827,10 +821,14 @@ fn finish_preview_render_in_dir(
                 "exceededBudget".into()
             };
         } else {
-            capture.timing.preview_visible_at_ms =
-                capture.timing.preview_visible_at_ms.or(capture.preview.ready_at_ms);
-            capture.timing.xmp_preview_ready_at_ms =
-                capture.timing.xmp_preview_ready_at_ms.or(capture.preview.ready_at_ms);
+            capture.timing.preview_visible_at_ms = capture
+                .timing
+                .preview_visible_at_ms
+                .or(capture.preview.ready_at_ms);
+            capture.timing.xmp_preview_ready_at_ms = capture
+                .timing
+                .xmp_preview_ready_at_ms
+                .or(capture.preview.ready_at_ms);
         }
 
         (capture.clone(), first_truth_close)
@@ -1590,6 +1588,7 @@ mod tests {
 
     static SPECULATIVE_WAIT_TEST_MUTEX: std::sync::LazyLock<std::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+    const SPECULATIVE_WAIT_ASSERTION_SLACK_MS: u64 = 400;
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1627,9 +1626,12 @@ mod tests {
             &base_dir, &paths, capture_id, request_id,
         );
         let waited_for = wait_started.elapsed();
+        let expected_upper_bound_ms = SPECULATIVE_PREVIEW_WAIT_MS
+            + SPECULATIVE_PREVIEW_DRAIN_WAIT_MS
+            + SPECULATIVE_WAIT_ASSERTION_SLACK_MS;
 
         assert!(
-            waited_for < Duration::from_millis(2400),
+            waited_for < Duration::from_millis(expected_upper_bound_ms),
             "speculative wait should fall through quickly even if another capture is in flight, actual wait: {waited_for:?}"
         );
 
@@ -1662,9 +1664,12 @@ mod tests {
             &base_dir, &paths, capture_id, request_id,
         );
         let waited_for = wait_started.elapsed();
+        let expected_upper_bound_ms = SPECULATIVE_PREVIEW_WAIT_MS
+            + SPECULATIVE_PREVIEW_DRAIN_WAIT_MS
+            + SPECULATIVE_WAIT_ASSERTION_SLACK_MS;
 
         assert!(
-            waited_for < Duration::from_millis(2400),
+            waited_for < Duration::from_millis(expected_upper_bound_ms),
             "speculative wait should fall through quickly when no capture is in flight, actual wait: {waited_for:?}"
         );
 

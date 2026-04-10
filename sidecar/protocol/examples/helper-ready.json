@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "canon-helper-ready/v1",
+  "type": "helper-ready",
+  "helperVersion": "0.1.0",
+  "protocolVersion": "v1",
+  "runtimePlatform": "Windows 11 x64 / .NET 8.0",
+  "sdkFamily": "canon-edsdk",
+  "sdkVersion": "13.20.10"
+}

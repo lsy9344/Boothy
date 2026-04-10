@@ -1,0 +1,1528 @@
+diff --git a/_bmad-output/planning-artifacts/architecture.md b/_bmad-output/planning-artifacts/architecture.md
+index a26db8c..78b6379 100644
+--- a/_bmad-output/planning-artifacts/architecture.md
++++ b/_bmad-output/planning-artifacts/architecture.md
+@@ -1,75 +1,77 @@
+ ---
+ stepsCompleted:
+   - 1
+   - 2
+   - 3
+   - 4
+   - 5
+   - 6
+   - 7
+   - 8
+ inputDocuments:
+   - '_bmad-output/planning-artifacts/prd.md'
+   - '_bmad-output/planning-artifacts/ux-design-specification.md'
++  - '_bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md'
+   - '_bmad-output/planning-artifacts/prd-validation-report-20260320-015539.md'
+   - 'docs/release-baseline.md'
+   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
+   - 'reference/darktable/README.md'
+ workflowType: 'architecture'
+ documentType: 'architecture-decision-document'
+ project_name: 'Boothy'
+ user_name: 'Noah Lee'
+-date: '2026-03-20'
++date: '2026-04-10'
+ lastStep: 8
+-status: 'complete'
+-completedAt: '2026-03-20'
++status: 'complete-updated-for-preview-architecture-decision'
++completedAt: '2026-04-10'
+ ---
+ 
+ # Architecture Decision Document
+ 
+ This document defines the implementation-shaping technical decisions for Boothy and records the system boundaries that downstream stories must preserve.
+ 
+ ## Source Inputs
+ 
+ - [Product requirements document](./prd.md)
+ - [UX design specification](./ux-design-specification.md)
++- [Preset-applied preview architecture research](./research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md)
+ - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
+ - [Darktable reference](../../reference/darktable/README.md)
+ 
+ ## System Overview
+ 
+ Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration and darktable rendering remain isolated execution boundaries so booth UI never interprets raw helper or render-engine output directly.
+ 
+ ```mermaid
+ flowchart LR
+     Customer["Booth Customer"] --> BoothUI["Booth Surface<br/>React + TypeScript"]
+     Operator["Remote Operator"] --> OperatorUI["Operator Console<br/>React + TypeScript"]
+     Author["Authorized Preset Manager"] --> AuthorUI["Authoring Surface<br/>React + TypeScript"]
+ 
+     BoothUI --> Host["Tauri Host<br/>Rust orchestration"]
+     OperatorUI --> Host
+     AuthorUI --> Host
+ 
+     Host --> SessionFS["Session Storage<br/>session.json + captures + renders + post-end"]
+     Host --> AuditDB["SQLite Audit Store<br/>lifecycle + interventions + rollout"]
+     Host --> Config["Local Branch Config"]
+     Host --> CameraSidecar["Camera Sidecar / Helper"]
+     Host --> RenderWorker["darktable Render Worker"]
+     AuthorUI --> PresetArtifacts["Published Preset Artifacts"]
+     Host --> PresetArtifacts
+     RenderWorker --> PresetArtifacts
+     CameraSidecar --> SessionFS
+     RenderWorker --> SessionFS
+ ```
+ 
+ ## Project Context Analysis
+ 
+ ### Requirements Overview
+ 
+ **Functional Requirements:**
+ Boothy currently defines 9 functional requirements. Architecturally, they cluster into seven capability groups. First, the booth must support a very low-friction session start based on a customer-facing booth alias composed of name plus phone-last-four and a bounded preset choice. Second, it must normalize readiness and capture eligibility so customers only see preparation, ready, waiting, or phone-required states rather than device internals. Third, it must persist captures into the active session and show latest-photo confidence while preserving strict current-session scope. Fourth, it must support bounded in-session cleanup behavior: current-session review, deletion, and forward-only preset changes for future captures. Fifth, it must run a timing and completion model that includes adjusted end time, warning and end alerts, and explicit post-end outcome states. Sixth, it must provide an internal preset-authoring and publication workflow for authorized users. Seventh, it must expose bounded operator diagnostics, recovery, and lifecycle visibility. Architecturally, this is a booth-first, preset-driven Windows product with three distinct user surfaces: booth customer, operator, and authorized preset management.
+ 
+ **Non-Functional Requirements:**
+ Six NFRs strongly shape the architecture. The customer surface must stay copy-light and free of technical or authoring language. Branches must remain consistent in preset catalog, timing rules, and booth journey except for tightly approved local settings. The booth must acknowledge customer actions quickly and show latest-photo feedback within a defined budget on approved hardware. Session isolation is strict: cross-session asset leakage is unacceptable. Timing rules and post-end transitions must be reliable enough to preserve customer trust. Release behavior must support staged rollout, rollback, and zero forced updates during active sessions. In addition, the loaded UX specification still contributes useful non-functional constraints around touch-friendly capture layouts, separate operator density, WCAG 2.2 AA accessibility targets, and deployment-oriented responsive behavior where those constraints do not conflict with the approved PRD and architecture baseline.
+ 
+ **Scale & Complexity:**
+@@ -181,194 +183,195 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
+ 
+ **Note:** Project initialization is a bootstrap prerequisite that must be satisfied before corrected epic execution begins. It is not part of Epic 1 customer-value completion.
+ 
+ ## Core Architectural Decisions
+ 
+ ### Decision Priority Analysis
+ 
+ **Critical Decisions (Block Implementation):**
+ - Boothy remains one packaged Tauri application, but it is split into three capability-gated surfaces: `booth customer shell`, `operator console`, and `internal preset-authoring`.
+ - The durable source of truth for active booth work is a session-scoped filesystem root, not route state, UI memory, or SQLite.
+ - The customer-facing booth alias is distinct from the durable `sessionId`; the alias is used for booth guidance and approved handoff while the filesystem and contracts rely on the opaque session identifier.
+ - darktable-backed preset authoring and apply are the authoritative preset truth path; detailed module control stays only inside internal preset-authoring, not as a customer-facing editing workspace.
+ - The Rust host is the single normalization point for camera/helper truth, timing truth, and post-end workflow truth before those states are translated to UI.
+ - Camera integration is isolated behind a bundled helper/sidecar boundary with versioned messages and filesystem handoff; camera SDK truth does not leak into React.
+ - The first approved camera implementation profile is a Windows-only Canon EDSDK helper exe; generic multi-vendor abstraction is deferred until hardware evidence justifies it.
+ - Session timing rules, warning alerts, exact-end behavior, and post-end state transitions are host-owned workflow rules.
+ - Release behavior must preserve staged rollout, rollback, and zero forced update during active customer sessions.
+ 
+ **Important Decisions (Shape Architecture):**
+ - SQLite stores lifecycle, timing, intervention, publication, and rollout audit data, but it does not own photo or session artifact truth.
+ - Presets are stored as versioned approved bundles and published into a bounded booth catalog; active sessions reference preset versions explicitly.
+ - Tauri Store or equivalent local config keeps only minimal branch-local settings and runtime profile flags.
+ - One packaged app exposes booth flow by default and unlocks operator controls, and where enabled authoring controls, only after successful admin-password authentication plus capability checks.
+ - Boundary validation uses `Zod 4` in TypeScript and revalidation in Rust before file mutation, helper control, or preset publication.
+ - React Router `7.x` is limited to top-level surfaces such as `/booth`, `/operator`, `/authoring`, and `/settings`.
+ - The React frontend remains domain-first, and all host interaction stays behind typed adapter/service modules.
+ 
+ **Deferred Decisions (Post-MVP):**
+ - Centralized preset distribution service
+ - Stronger authoring authentication such as SSO or hardware-backed identity
+ - Remote log export and centralized observability
+ - Promotion from sidecar stdio to named pipes or a longer-lived local service if hardware evidence requires it
+ 
+ ### Darktable Capability Scope
+ 
+ This section locks which darktable capabilities Boothy adopts as product truth, which capabilities Boothy only emulates in its own surfaces, and which capabilities remain explicitly out of scope. The goal is to prevent AI agents from drifting back toward a general-purpose editor or letting darktable internals leak into booth customer or operator workflows.
+ 
+ | Darktable capability or module | Decision | Rust host and booth-safe pipeline mapping | Surface and boundary mapping |
+ | --- | --- | --- | --- |
+ | XMP sidecar plus history stack | Adopt | The preset manifest stores `xmpTemplatePath`, `darktableVersion`, preview/final profiles, and render policies as the authoritative preset artifact. The Rust host validates that artifact, then records `raw`, `preview`, `final`, and render status separately in the session manifest. | Authoring exports approved XMP-backed presets. Customers never see history stacks or XMP. Operators see preset version, publish status, and render status only. |
+-| `darktable-cli` headless apply | Adopt | A dedicated Rust render worker invokes `darktable-cli` after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied output even when a fast same-capture preview appeared earlier. | Authoring publishes artifacts that the worker consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, fast-preview miss, and failure diagnostics. |
++| `darktable-cli` headless apply | Adopt | The approved direction is a host-owned local dedicated renderer lane that invokes the darktable truth path after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied truthful close even when a same-capture first-visible image appeared earlier. | Authoring publishes artifacts that the renderer consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, saturation, and failure diagnostics. |
+ | Core look modules: `input color profile`, `exposure`, `filmic rgb`, `color balance rgb`, `diffuse or sharpen`, and denoise modules | Adopt | Module parameters stay opaque inside approved XMP artifacts; the Rust host does not reinterpret individual slider semantics. Preview and final profiles may diverge on detail/noise policy, but both remain pinned to the same approved preset version. | Authoring uses these modules to craft and review looks. Booth customers choose preset names/previews only. Operators manage publish/rollback, not per-session grading. |
+ | Geometry and optical correction: `lens correction`, `orientation`, `crop`, and `rotate and perspective` | Adopt with bounded use | These are allowed only when baked into an approved preset artifact or a host-owned normalization policy. The pipeline applies them deterministically during render and never exposes ad hoc per-session edits. | Authoring may use them to normalize lens/body output and framing. Customers never adjust geometry. Operators may inspect the active preset version but do not get live booth-floor geometry controls. |
+ | Styles and `.dtstyle` | Emulate for publication UX, exclude as runtime truth | Runtime apply never depends on style names or a shared darktable `data.db`. If a style is used during authoring convenience, it must be converted into an approved XMP-backed preset artifact before publication. | Authoring may offer style-like duplication/import/export workflows. Customers and booth operators select published Boothy presets, not raw darktable styles. |
+ | OpenCL/GPU capability and `--hq` quality modes | Adopt operationally | The Rust host probes capability during diagnostics, chooses preview/final execution profiles, and falls back safely when GPU support is unavailable. Preview favors latency; final export may use higher-quality settings and a heavier module path. | No GPU/OpenCL terminology reaches customers. Operators can see capability mismatches, fallback mode, and export performance diagnostics. |
+ | Darkroom UI, workspaces, and per-module panels | Emulate only inside internal authoring tools | The host cares about approved artifacts, not about reproducing the full darktable GUI contract. Boothy may wrap or launch constrained authoring flows, but the booth runtime never embeds a general editor. | Rich controls belong only to authorized preset authors. Customer and operator surfaces stay task-focused around selection, diagnostics, approval, and publication. |
+ | Library/lighttable asset management, collections, tagging, map/print/slideshow/book workflows | Exclude | Session filesystem roots and SQLite audit tables remain Boothy's system of record. If darktable uses its own library/config state during authoring or worker execution, that state is isolated support data and never business truth. | No customer or operator workflow relies on a darktable photo-library model. `PresetLibraryScreen` means a Boothy preset catalog, not a darktable-style asset browser. |
+ | Tethering, import, and camera/device control in darktable | Reference candidate only, not current runtime truth | darktable and its gphoto2-backed tethering path may be evaluated as a Canon 700D camera-boundary reference, but camera detection, readiness, capture, transfer, stale-process cleanup, and recovery remain owned by the stateful camera service and Rust host boundary in the approved baseline. Darktable execution begins only after raw transfer completes unless a later validated architecture revision promotes its camera path. | Customers and operators rely on host-normalized camera truth; darktable state never becomes the booth readiness signal without a dedicated camera-boundary validation and approval pass. |
+ | Watermark and export-adornment modules | Exclude from the MVP booth contract | The Rust host keeps handoff naming/packaging separate from look definition. If later approved, watermarking is an output policy layered onto final export only, not part of preview truth or customer choice. | Customers never control adornments. Operators would manage them, if ever enabled, as a bounded publication setting rather than an editing tool. |
+ 
+ ### Data Architecture
+ 
+ - **Primary session truth:** Every active booth session owns one local session root that contains manifest metadata, captured originals, derived booth-facing images, handoff-ready outputs, and diagnostics snapshots.
+ - **Suggested session structure:** `session.json`, `captures/originals/`, `renders/previews/`, `renders/finals/`, `handoff/`, and optional `diagnostics/` under one session boundary.
+ - **Session identity split:** The booth-start flow captures a customer-facing `boothAlias` built from name plus phone-last-four, while the host creates an opaque durable `sessionId` for contracts, storage, and correlation.
+ - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
+ - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
+ - **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
+-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The host may promote an approved same-capture first-visible image into the session's canonical preview path before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker.
+-- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement produced from the capture-bound published preset artifact.
++- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The approved next structure is `local dedicated renderer + different close topology`, where the host owns one local dedicated renderer lane for preset-applied close and may still promote an approved same-capture first-visible image into the canonical preview path earlier.
++- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later preset-applied truthful close produced from the capture-bound published preset artifact by the host-owned dedicated renderer lane.
++- **Alternative-path rule:** `edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge` and `lighter truthful renderer` are not the default booth architecture.
+ - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
+ - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
+ - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
+ - **Validation strategy:** Shared boundary schemas are validated with `Zod 4` in TypeScript and revalidated in Rust.
+ - **Migration strategy:** `session.json` and preset bundles carry explicit schema versions; SQLite uses forward-only migrations; no migration may mutate active session artifacts in place.
+ - **Caching strategy:** In-memory caches may accelerate active screens, but no cache is allowed to outrank session folders or approved preset bundles.
+ 
+ ### Authentication & Security
+ 
+ - **Booth customer authentication:** None. The booth customer flow is intentionally login-free.
+ - **Operator authentication:** Operator and authoring controls are unlocked with a locally managed admin password before any privileged surface or action becomes visible.
+ - **Authorization model:** Access is enforced through Tauri capabilities, runtime profile gating, window/surface separation, and host command boundaries.
+ - **Surface restriction rule:** Booth customers cannot access diagnostics, recovery controls, helper process management, or preset-authoring capabilities.
+ - **Authoring restriction rule:** Internal preset-authoring is enabled only for approved authoring profiles or installations and still requires successful admin authentication; it must not appear as part of the normal booth runtime path.
+ - **Data minimization:** Persist only the minimum session-identifying data approved by the PRD and operating model.
+ - **PII protection:** Logs, diagnostics, and handoff surfaces must not expose cross-session references or unnecessary customer identifiers.
+ - **Host authority:** Only the Rust host may spawn or control the helper, mutate session files, publish preset bundles, or apply rollout-sensitive actions.
+ - **Credential handling:** The admin password or its verification material must live outside customer-facing branch config in an OS-appropriate secure secret store or equivalent protected host-managed location.
+ - **Security posture:** MVP security is based on local least privilege, admin-password-gated privileged surfaces, bounded local profiles, and strict session separation rather than network-style account auth for the customer path.
+ 
+ ### API & Communication Patterns
+ 
+ - **Frontend to host:** Tauri commands are the request-response path for session start, preset selection, capture, delete, timing updates, completion transitions, diagnostics queries, operator actions, and preset publication.
+ - **Host to frontend streaming:** Tauri channels carry ordered state changes for readiness, capture progress, latest-photo availability, timing transitions, completion state, and operator diagnostics.
+ - **Host to helper:** The camera/helper boundary uses bundled sidecar stdio with versioned JSON-line messages.
+ - **Helper contract shape:** The first contract should cover session configuration, capture request, health/status, restart/recovery, correlation of file arrival back to the host, and optional fast-preview handoff metadata.
+ - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
+ - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
+ - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
+-- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later render-backed output still replaces it at the same canonical path and only then advances `previewReady`.
++- **Preset/render core rule:** The host-owned local dedicated renderer lane executes approved darktable-backed preset artifacts through `darktable-cli` or the same approved darktable truth path; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. If an early same-capture image was already promoted, the later preset-applied truthful output still replaces it at the same canonical path and only then advances `previewReady`.
+ - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
+ - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
+ - **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
+ - **Session seam logging rule:** Approved hardware validation must be able to close the preview seam from one recent session log containing `request-capture`, `file-arrived`, `fast-preview-visible` or equivalent first-visible event, `preview-render-start`, `capture_preview_ready`, and `recent-session-visible`.
+ 
+ ### Frontend Architecture
+ 
+ - **Top-level app model:** One React application with top-level surfaces such as `/booth`, `/operator`, `/authoring`, and `/settings`.
+ - **Routing strategy:** React Router `7.x` is used only for surface entry and separation. Workflow truth remains state-driven.
+ - **State management:** Use explicit reducers and React Context by domain: `session-domain`, `preset-catalog`, `capture-adapter`, `timing-policy`, `completion-handoff`, `operator-console`, and `preset-authoring`.
+ - **Component architecture:** Keep a domain-first structure so booth customer flow, operator flow, and authoring flow do not blur together.
+ - **Booth shell rule:** The customer UI stays low-choice, touch-friendly, and confidence-oriented. It never expands into a general editor workspace.
+ - **Privilege-gating rule:** Operator navigation and any authoring or settings controls remain hidden until admin authentication succeeds and the current machine profile permits those surfaces.
+ - **Authoring rule:** Internal preset-authoring may wrap or launch darktable-based editing/review flows and Boothy publication controls, but only inside the authoring surface.
+ - **Performance strategy:** Keep the booth shell light, preload bounded preset previews, lazy-load operator and authoring surfaces, and use React `19.x` async patterns for non-blocking transitions.
+ - **Boundary rule:** React components do not call Tauri directly. Typed adapters and services own all `invoke`, channel subscriptions, and host orchestration.
+ 
+ ### Infrastructure & Deployment
+ 
+ - **Runtime hosting:** Approved Windows booth PCs run the same packaged app with the booth surface visible by default; admin authentication can unlock operator controls, and approved internal machines may additionally enable the authoring surface.
+ - **Package strategy:** One package family and one codebase ship every deployment, while capability/profile differences and admin authentication together determine which privileged surfaces are enabled on a given machine and for a given session.
+ - **Build and release:** GitHub Actions plus `tauri-action` handle build, packaging, and signing-ready Windows release flow.
+ - **Release safety:** Branch rollout is staged, rollback-capable, and must preserve last-approved installers plus active-session compatibility.
+ - **Update policy:** No forced update may interrupt an active booth session.
+ - **Environment configuration:** Branch-local configuration stays minimal, explicit, and auditable.
+ - **Monitoring and logging:** Structured local logs plus SQLite audit tables provide the MVP observability base.
+ - **Scaling strategy:** The system scales by booth instance, preset publication discipline, and rollout control rather than centralized backend throughput.
+ 
+ ## Deployment Architecture
+ 
+ Boothy deploys as a packaged Windows desktop application. The booth runtime, operator console, and optional authoring surface share one codebase and package, but capability flags determine which privileged surfaces are available on a given machine and admin authentication determines when those surfaces become visible. Customer-session truth stays local on the booth PC. Operator and authoring workflows consume the same host contracts rather than bypassing them.
+ 
+ ```mermaid
+ flowchart TB
+     subgraph Branch["Branch Environment"]
+         subgraph BoothPC["Booth PC"]
+             BoothApp["Boothy Desktop App<br/>Booth + Operator profiles"]
+             BoothStorage["Local Session Storage"]
+             BoothAudit["Local SQLite Audit DB"]
+             Camera["Bundled Camera Sidecar"]
+             Renderer["Bundled darktable Worker"]
+         end
+ 
+         subgraph AuthoringPC["Authorized Authoring PC"]
+             AuthoringApp["Boothy Desktop App<br/>Authoring-enabled profile"]
+             PresetWorkspace["Preset Draft Workspace"]
+         end
+ 
+         PresetCatalog["Approved Preset Artifact Catalog"]
+     end
+ 
+     BoothApp --> BoothStorage
+     BoothApp --> BoothAudit
+     BoothApp --> Camera
+     BoothApp --> Renderer
+     Renderer --> BoothStorage
+     AuthoringApp --> PresetWorkspace
+     AuthoringApp --> PresetCatalog
+     BoothApp --> PresetCatalog
+ ```
+ 
+ ### Deployment Responsibilities
+ 
+-- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and render worker.
++- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and the host-owned local dedicated renderer lane.
+ - Authoring-enabled machines create and publish new preset artifacts without mutating booth sessions already in progress.
+ - The preset artifact catalog is the only approved bridge between internal authoring and future booth sessions.
+ - Rollout and rollback act on approved app builds plus approved preset stacks, and they must preserve active-session compatibility.
+ 
+ ### Decision Impact Analysis
+ 
+ **Implementation Sequence:**
+ 1. Freeze the shared contracts: session manifest, preset bundle schema, error envelope, helper protocol, and runtime profile/capability model.
+ 2. Define the session folder structure and preset publication structure.
+ 3. Build the Rust host state model for readiness, capture, timing, completion, and diagnostics.
+ 4. Implement the booth shell against mocked host and mocked helper behavior.
+ 5. Implement operator diagnostics and bounded recovery against the same normalized host truth.
+ 6. Implement internal preset-authoring and publication on top of the darktable-backed preset artifact workflow without exposing module-level controls to booth routes.
+ 7. Integrate the real camera/helper boundary and prove `capture request -> file arrival -> latest-photo confirmation -> handoff state`.
+ 8. Add rollout, rollback, and signing-ready release guardrails.
+ 
+ **Cross-Component Dependencies:**
+ - Session manifest and capture correlation rules affect booth review, deletion, handoff, diagnostics, and privacy guarantees.
+ - Preset bundle format affects authoring, booth preset selection, preview rendering, and cross-branch consistency.
+ - Runtime profile and capability boundaries affect security, packaging, and which UI surfaces exist in each deployment.
+ - Error envelope and normalized state model affect booth guidance, operator recovery, and helper integration.
+ - Release safety depends on config discipline, schema compatibility, and preserving active-session behavior across versions.
+ 
+ ## Implementation Patterns & Consistency Rules
+ 
+ ### Pattern Categories Defined
+ 
+ **Critical Conflict Points Identified:**
+ 9 areas where AI agents could make different choices and silently break compatibility across React, Tauri/Rust, sidecar, and session storage boundaries.
+ 
+ ### Naming Patterns
+ 
+ **Database Naming Conventions:**
+ - SQLite tables use `snake_case` plural names such as `session_events`, `preset_publications`, `operator_interventions`.
+ - Columns use `snake_case` such as `session_id`, `occurred_at`, `preset_version`.
+ - Indexes use `idx_<table>_<columns>` such as `idx_session_events_session_id_occurred_at`.
+ 
+ **API Naming Conventions:**
+ - Rust Tauri command identifiers use `snake_case` such as `start_session`, `select_preset`, `request_capture`.
+ - TypeScript never hardcodes raw command strings outside the host adapter layer; exported wrapper functions use `camelCase`.
+@@ -781,153 +784,154 @@ boothy/
+ - `docs/contracts/`: durable contract documentation
+ 
+ **Source Organization:**
+ - Frontend is domain-first.
+ - Rust host is boundary-first and domain-backed.
+ - Sidecar is isolated as its own implementation boundary.
+ 
+ **Test Organization:**
+ - Unit tests close to domain code
+ - Contract tests at the top level
+ - E2E tests by product flow
+ - Rust host tests under `src-tauri/tests/`
+ 
+ **Asset Organization:**
+ - Session/sample assets under `storage/` and `tests/fixtures/`
+ - Protocol fixtures under `sidecar/protocol/examples/`
+ 
+ ### Build and Local Development
+ 
+ **Local development loop:**
+ - `pnpm dev` for Vite frontend loop
+ - `pnpm tauri dev` for integrated desktop loop
+ - Helper fixtures or mock sidecar selected through environment/config
+ 
+ **Build pipeline:**
+ - Frontend build to `dist/`
+ - Tauri packaging from `src-tauri/`
+ - Sidecar bundled during desktop packaging
+ 
+ **Release packaging:**
+ - GitHub Actions builds signing-ready Windows installers
+ - Branch rollout and rollback artifacts remain compatible with the local config and session data model
+ 
+ ## Closed Contract Freeze Baseline
+ 
+ The architecture is now ready to support regenerated implementation stories against the following frozen contract surfaces.
+ 
+ - Session manifest contract: exact `session.json` schema including capture correlation IDs, preset version references, raw/preview/final fields, render-status correlation, and post-end state fields.
+ - Preset bundle contract: immutable published preset artifact schema including approved compatibility metadata, preview/final render profiles, rollback-safe identifiers, and catalog-facing metadata required for future-session publication only.
+ - Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery, with booth `Ready` and operator `카메라 연결 상태` both derived from the same host-normalized camera/helper truth.
++- Shared contract freeze scope: Story 1.14 owns the authoritative session/preset/error/capability/protocol baseline, Story 1.15 owns deeper Canon helper and publication detail, and Story 1.16 owns build/release proof.
+ - Canon helper implementation profile: the chosen Windows-only Canon EDSDK helper packaging, ownership split, diagnostics expectations, and recovery semantics that refine the generic sidecar contract for the current product decision.
+ - Authoring publication contract: required publication payload fields, approval-state transitions, immutable published artifact requirements, audit metadata, and future-session-only application rules.
+ - Release runbooks, fixture naming conventions, and sample datasets may continue to expand, but they no longer block regeneration of the corrected implementation-story baseline for preset publication, operator recovery, and release-governance tracks.
+ 
+ ## Initial Implementation Priorities
+ 
+-1. Regenerate the implementation story artifacts for Epic 4-6 against the frozen contract baseline and the approved corrected epic map.
+-2. Implement the authorized-user publication flow and the truthful preview/final-render outcome flow around the frozen publication, manifest, render-status, and sidecar contracts.
+-3. Wire the booth, operator, and authoring surfaces through typed adapters so UI never bypasses host normalization.
+-4. Implement timing/completion and release-governance work as separate downstream epic tracks with their own verification gates.
++1. Align preview architecture implementation stories to the approved `local dedicated renderer + different close topology` decision, starting with dedicated renderer ownership, dual-close model, and cutover validation gates.
++2. Freeze and expand the dedicated renderer, session-manifest, and sidecar-adjacent contracts so preview truth closes through one host-owned local runtime boundary.
++3. Implement the preview architecture pivot behind a safe booth fallback path and prove `original visible -> preset-applied visible` against approved hardware validation.
++4. Continue publication, timing/completion, and release-governance tracks without weakening the approved preview/final truth model.
+ 
+ ## Architecture Validation Results
+ 
+ ### Coherence Validation
+ 
+ **Decision Compatibility:**
+ The selected architecture is internally coherent. The Tauri + React + Rust host boundary aligns with the booth-first Windows runtime requirements, and the darktable-backed preset pipeline fits the preset artifact model without conflicting with the stateful camera boundary. Session filesystem truth, SQLite audit scope, and sidecar responsibility are clearly separated.
+ 
+ **Pattern Consistency:**
+ Implementation patterns support the architecture well. Naming rules, event rules, DTO and error-envelope rules, and host-boundary rules are consistent with the chosen technology stack and reduce the main areas where AI agents could diverge.
+ 
+ **Structure Alignment:**
+ The project structure supports the architectural decisions directly. Domain-first frontend organization, boundary-first Rust host organization, and the isolated sidecar folder all reinforce the intended runtime boundaries and implementation flow.
+ 
+ ### Requirements Coverage Validation
+ 
+ **Functional Requirements Coverage:**
+ All functional requirements from FR-001 through FR-009 are architecturally supported through explicit module ownership, boundary rules, or structure mapping.
+ 
+ **Non-Functional Requirements Coverage:**
+ All non-functional requirements from NFR-001 through NFR-006 are supported at the architectural level through copy-safe UI boundaries, session isolation, timing policy ownership, rollout and rollback controls, and booth-runtime-safe performance and deployment constraints.
+ 
+ ### Implementation Readiness Validation
+ 
+ **Decision Completeness:**
+ Critical architectural decisions are documented clearly enough to guide implementation. The main runtime, data, boundary, preset, timing, and rollout decisions are all present.
+ 
+ **Structure Completeness:**
+ The directory structure is specific and implementation-oriented rather than generic. Major modules, test locations, contracts, sidecar boundaries, and release-related files are all identified.
+ 
+ **Pattern Completeness:**
+ The document defines enough consistency rules for multiple AI agents to implement compatible code without inventing conflicting naming, communication, or state-management approaches.
+ 
+ ### Gap Analysis Results
+ 
+ **Critical Gaps:**
+ - None identified.
+ 
+ **Important Gaps:**
+ - None identified. Source-input hygiene has been reconciled against the approved current artifact set.
+ 
+ **Nice-to-Have Gaps:**
+ - Future implementation artifacts may benefit from separate contract example files for `session.json`, preset bundles, and sidecar protocol messages if they are not created alongside the first stories.
+ 
+ ### Validation Issues Addressed
+ 
+ - No blocking compatibility issues were found.
+ - The architecture is suitable for downstream implementation planning and story regeneration.
+ - Minor source-reference cleanup remains optional but recommended.
+ 
+ ### Architecture Completeness Checklist
+ 
+ **Requirements Analysis**
+ - [x] Project context thoroughly analyzed
+ - [x] Scale and complexity assessed
+ - [x] Technical constraints identified
+ - [x] Cross-cutting concerns mapped
+ 
+ **Architectural Decisions**
+ - [x] Critical decisions documented
+ - [x] Technology stack fully specified
+ - [x] Integration patterns defined
+ - [x] Performance and rollout constraints addressed
+ 
+ **Implementation Patterns**
+ - [x] Naming conventions established
+ - [x] Structure patterns defined
+ - [x] Communication patterns specified
+ - [x] Process patterns documented
+ 
+ **Project Structure**
+ - [x] Complete directory structure defined
+ - [x] Component boundaries established
+ - [x] Integration points mapped
+ - [x] Requirements-to-structure mapping completed
+ 
+ ### Architecture Readiness Assessment
+ 
+-**Overall Status:** READY FOR IMPLEMENTATION
++**Overall Status:** READY FOR IMPLEMENTATION WITH APPROVED PREVIEW ARCHITECTURE PIVOT
+ 
+ **Confidence Level:** High
+ 
+ **Key Strengths:**
+ - Clear runtime and data-boundary separation
+ - Strong protection against AI-agent implementation drift
+ - Direct traceability from PRD requirements to modules and contracts
+ - Good operational alignment for booth-safe rollout and recovery
+ 
+ **Areas for Future Enhancement:**
+ - Keep source-input wording aligned with the approved artifact set if future revisions change the input baseline
+ - Add concrete contract example artifacts during early implementation
+ - Revalidate sidecar transport choices later if hardware evidence changes
+ 
+ ### Implementation Handoff
+ 
+ **AI Agent Guidelines:**
+ - Follow the documented boundaries exactly.
+ - Treat the session folder as the durable source of truth.
+ - Keep React out of direct host and helper orchestration.
+ - Reuse the documented event, DTO, and error-envelope rules consistently.
+ 
+ **First Implementation Priority:**
+ Regenerate implementation stories and contract artifacts against this frozen architecture baseline, then begin with the session, preset, and sidecar contract surface.
+diff --git a/docs/contracts/camera-helper-sidecar-protocol.md b/docs/contracts/camera-helper-sidecar-protocol.md
+index d4cee80..1f4415c 100644
+--- a/docs/contracts/camera-helper-sidecar-protocol.md
++++ b/docs/contracts/camera-helper-sidecar-protocol.md
+@@ -1,229 +1,146 @@
+ # Canon Camera Helper Sidecar Protocol
+ 
+ ## 목적
+ 
+ 이 문서는 Boothy가 Canon 계열 실카메라 상태를 Tauri/Rust host에서 어떻게 관찰하고 정규화하는지에 대한
+ 최소 계약 기준을 고정한다.
+ 
+ 이 계약의 목표는 두 가지다.
+ 
+ 1. React가 Canon SDK truth를 직접 보지 않게 한다.
+ 2. booth `Ready`와 operator `카메라 연결 상태`가 같은 host-owned truth에서 나오게 한다.
+ 
++## Authoritative Source / 소비 경계
++
++- 문서 기준: 이 문서
++- Rust 기준: `src-tauri/src/capture/sidecar_client.rs`, `src-tauri/src/capture/normalized_state.rs`
++- helper 기준: `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs`
++- durable example path:
++  - `sidecar/protocol/examples/camera-status.json`
++  - `sidecar/protocol/examples/file-arrived.json`
++
+ ## 현재 채택 결정
+ 
+ - Boothy의 현재 채택안은 Windows 전용 Canon EDSDK 기반 `canon-helper.exe`다.
+ - 이 문서의 helper 계약은 위 실행 결정을 전제로, Tauri host와 helper exe 사이의 canonical sidecar protocol을 고정한다.
++- Story 1.14는 protocol 의미와 fixture baseline만 잠그고, helper packaging/runtime deeper profile은 Story 1.15가 계속 소유한다.
+ 
+ ## 구현 프로파일 문서
+ 
+ - 현재 채택된 helper의 구체 구현 기준선은 `docs/contracts/camera-helper-edsdk-profile.md`에 둔다.
+-- 이 문서는 cross-boundary protocol을 고정하고, EDSDK profile 문서는 chosen helper의 런타임/패키징/진단 기준을 고정한다.
+ - generic protocol과 EDSDK profile이 충돌하면, 메시지 의미는 이 문서를 우선하고 구현 세부는 profile 문서를 우선한다.
+ 
+ ## 소유 경계
+ 
+ - Canon/camera helper 실행 경계: `sidecar/canon-helper/`
+ - Tauri host 진입 경계: `src-tauri/src/capture/sidecar_client.rs`
+ - 최종 정규화 경계: `src-tauri/src/capture/normalized_state.rs`
+ - booth/operator 소비 경계:
+   - booth: `src/shared-contracts/schemas/capture-readiness.ts`
+   - operator: `src/shared-contracts/schemas/operator-diagnostics.ts`
+ 
+ React는 helper raw 메시지나 Canon SDK 상태를 직접 해석하지 않는다.
+ 
+ ## 전송 규칙
+ 
+ - transport: bundled sidecar stdio
+ - framing: BOM 없는 UTF-8 JSON Lines, 메시지 1개당 1줄
+ - versioning: 모든 메시지는 `schemaVersion`을 가진다
+ - binary rule: RAW 이미지 bytes는 JSON payload로 보내지 않고 filesystem handoff로 전달한다
+ - correlation rule: host와 helper는 `sessionId`, `requestId`, `captureId`를 함께 사용한다
+ - ownership rule: `requestId`는 host가 생성해 `request-capture`에 싣고, `captureId`는 helper가 실제 RAW handoff 시점에 확정해 `file-arrived`로 돌려준다
+-- supported trigger rule: booth 제품의 supported capture success path는 host가 booth 앱의 `사진 찍기` 버튼에 응답해 보낸 `request-capture`다. 카메라 본체 셔터 직접 입력은 현재 canonical success path가 아니다.
+-- request log rule: helper는 소비한 `requestId`를 재시작 후에도 기억해 기존 request log의 과거 line을 재실행하면 안 되며, 새로 append된 완전한 line만 소비해야 한다
+-
+-## EDSDK helper 런타임 요약
+-
+-현재 채택된 helper profile 기준으로는 아래 분리가 유지돼야 한다.
+-
+-- helper는 Canon SDK initialize/terminate, camera session open/close, capture trigger, RAW download, reconnect 감지를 소유한다.
+-- host는 session/preset correlation, freshness, booth/operator projection, capture success 최종 확정을 소유한다.
+-- `helper-ready`는 helper process boot 완료를 뜻할 뿐, camera `ready`를 뜻하지 않는다.
+-- `camera-status=ready`가 와도 host가 freshness와 session match를 닫기 전에는 booth `Ready`가 보장되지 않는다.
+-- helper는 한번에 하나의 in-flight capture만 허용하는 보수적 경계를 기본값으로 본다.
+-
+-## host가 Canon 상태를 보는 경로
+-
+-1. Tauri host가 helper 프로세스를 시작하거나 연결한다.
+-2. host는 helper로 runtime/session context를 보낸다.
+-3. helper는 Canon camera 상태를 읽고 `health/status` 메시지를 JSON line으로 보낸다.
+-4. host는 이 raw status를 `camera/helper truth`로 읽되, 바로 UI에 넘기지 않는다.
+-5. `normalized_state.rs`가 freshness, session match, degraded 여부를 확인한 뒤 booth/operator용 DTO로 정규화한다.
+-6. booth는 `Ready`/blocked guidance만 보고, operator는 `카메라 연결 상태`와 bounded diagnostics만 본다.
+-
+-## helper raw 상태 모델 v1
+-
+-helper는 최소 아래 의미 집합을 표현할 수 있어야 한다.
+-
+-- `disconnected`: Canon body를 아직 찾지 못했거나 연결이 끊긴 상태
+-- `connecting`: helper가 장비 연결을 재시도하거나 초기화 중인 상태
+-- `connected-idle`: 장비는 보이지만 아직 촬영 가능 readiness가 닫히지 않은 상태
+-- `ready`: Canon capture boundary와 helper boundary가 모두 촬영 가능 상태
+-- `capturing`: 촬영 요청 처리 중이며 새 촬영 시작을 잠시 막아야 하는 상태
+-- `recovering`: helper restart, cable reseat, USB port change 이후 복구 중인 상태
+-- `degraded`: 이전에는 ready였지만 지금은 false-ready를 막기 위해 차단해야 하는 상태
+-- `error`: bounded recovery 밖의 실패 상태
+-
+-이 raw 상태는 helper vocabulary다. booth UI는 이를 직접 노출하지 않는다.
+-
+-## host 정규화 규칙
+-
+-host는 helper raw 상태를 아래 원칙으로 정규화한다.
+-
+-- `ready`는 helper raw 상태 하나만으로 성립하지 않는다.
+-- host는 최소 `camera state`, `helper state`, `freshness`, `active session`, `active preset`, `blocked post-end 여부`를 함께 본다.
+-- helper 상태가 오래되었거나 `observedAt`/sequence가 stale이면 `Ready`를 만들지 않는다.
+-- reconnect 이벤트 직후에도 fresh `ready` status가 다시 확인되기 전까지는 blocked로 유지한다.
+-- `disconnected`, `connecting`, `recovering`, `degraded`, `error`는 모두 false-ready 방지 관점에서 blocked path다.
+-- booth `canCapture=true`와 operator의 clear camera state는 같은 normalized truth에서 파생되어야 한다.
+-
+-## booth/customer projection
+-
+-booth가 받는 최종 결과는 helper raw 상태가 아니라 customer-safe readiness다.
+-
+-- `Ready`
+-- `Preparing`
+-- `Phone Required`
+-- 필요 시 `Preview Waiting`, `Export Waiting`, `Completed`
+-
+-고객 화면에는 아래를 노출하지 않는다.
+-
+-- Canon SDK 이름
+-- EOS/driver/USB 상태 원문
+-- helper stderr
+-- sidecar restart 세부 원인
+-
+-## operator projection
+-
+-operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operator-safe projection만 본다.
+-
+-최소 의미 집합 예시:
+-
+-- `미연결`
+-- `연결 중`
+-- `연결됨`
+-- `복구 필요`
+-
+-이 projection은 booth readiness와 모순되면 안 된다.
++- supported trigger rule: canonical capture success path는 host가 booth 앱의 `사진 찍기` 버튼에 응답해 보낸 `request-capture`다
++- request log rule: helper는 소비한 `requestId`를 재시작 후에도 기억해 기존 request log의 과거 line을 재실행하면 안 된다
+ 
+ ## 메시지 종류 v1
+ 
+ ### host -> helper
+ 
+ - `helper-hello`
+-  - helper version, protocol version 협상
+ - `configure-runtime`
+-  - runtime root, diagnostics path, branch/runtime profile
+ - `bind-session`
+-  - `sessionId`, `boothAlias`, correlation seed
+ - `request-capture`
+-  - `sessionId`, `requestId`, active preset reference
+-  - 현재 제품 기준 booth 앱의 `사진 찍기` 버튼에서만 시작되는 supported capture trigger
+ - `request-recovery`
+-  - approved restart/recovery action
+ - `shutdown`
+ 
+ ### helper -> host
+ 
+ - `helper-ready`
+-  - helper boot 완료와 protocol version 확인
+-  - 현재 profile에서는 helper version, runtime platform, sdk family/version 같은 진단 정보를 함께 남길 수 있어야 한다
+ - `camera-status`
+-  - Canon/camera raw 상태와 freshness 정보
+ - `capture-accepted`
+-  - helper가 host-owned `requestId`를 수락했음을 알림
++- `fast-preview-ready`
++  - RAW handoff 이전 또는 직후에 same-capture first-visible candidate가 있을 때 보내는 advisory event
++- `fast-thumbnail-attempted`
++  - diagnostic-only event
++- `fast-thumbnail-failed`
++  - diagnostic-only event
+ - `file-arrived`
+-  - helper-owned `captureId`, host-owned `requestId`, session-scoped RAW 경로를 함께 보냄
+-  - optional `fastPreviewPath`, `fastPreviewKind`를 같이 보낼 수 있지만, host는 이를 capture success의 필수 조건으로 취급하지 않는다
+ - `recovery-status`
+-  - restart/recovery 진행 상태
+ - `helper-error`
+-  - machine-readable code와 bounded detail
+ 
+ ## camera-status 예시
+ 
+ ```json
+ {
+   "schemaVersion": "canon-helper-status/v1",
+   "type": "camera-status",
+   "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+   "sequence": 42,
+-  "observedAt": "2026-03-27T10:15:30Z",
++  "observedAt": "2026-04-10T01:00:15Z",
+   "cameraState": "ready",
+   "helperState": "healthy",
+   "cameraModel": "Canon EOS 700D",
+   "requestId": null,
+   "detailCode": "camera-ready"
+ }
+ ```
+ 
+ ## file-arrived 예시
+ 
+ ```json
+ {
+   "schemaVersion": "canon-helper-file-arrived/v1",
+   "type": "file-arrived",
+   "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+-  "requestId": "capture_req_20260327_001",
+-  "captureId": "capture_20260327_001",
+-  "arrivedAt": "2026-03-27T10:15:33Z",
+-  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr3",
+-  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260327_001.jpg",
++  "requestId": "request_20260410_001",
++  "captureId": "capture_20260410_001",
++  "arrivedAt": "2026-04-10T01:00:18Z",
++  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260410_001.cr3",
++  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
+   "fastPreviewKind": "embedded-jpeg"
+ }
+ ```
+ 
+-## freshness 기준
++## host 정규화 규칙
+ 
+-- helper status는 `observedAt` 또는 `sequence` 기준으로 최신성 판단이 가능해야 한다.
+-- host는 최근 fresh status가 없으면 `Ready`를 만들지 않는다.
+-- stale status가 마지막으로 남아 있어도 booth는 blocked guidance로 내려간다.
+-- reconnect 후 첫 fresh `camera-status`가 오기 전에는 `Ready` 복귀가 금지된다.
++- `ready`는 helper raw 상태 하나만으로 성립하지 않는다.
++- host는 최소 `cameraState`, `helperState`, `freshness`, `active session`, `active preset`, `blocked post-end 여부`를 함께 본다.
++- stale status, reconnect 직후 상태, wrong-session 상태에서는 `Ready`를 만들지 않는다.
++- `fast-preview-ready`와 fast thumbnail 계열 이벤트는 advisory telemetry다.
++  - RAW handoff를 대체하지 않는다.
++  - truthful `previewReady`를 직접 주장하지 않는다.
++- booth `canCapture=true`와 operator의 clear camera state는 같은 normalized truth에서 파생되어야 한다.
+ 
+ ## file handoff 규칙
+ 
+ - Canon helper는 촬영 파일을 session-scoped filesystem root 아래에 전달한다.
+ - host는 `file-arrived` correlation과 실제 파일 존재를 함께 확인한다.
+-- host는 `captures/originals/` 아래 active session root에 들어온 파일만 capture success 후보로 인정한다.
+-- capture success는 helper가 "촬영 버튼을 받았다"가 아니라 host가 파일 도착과 저장 경계를 닫았을 때 확정된다.
+-- helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path, 파일 유효성 검증을 다시 통과한 경우에만 이를 pending preview 후보로 승격할 수 있다.
+-- 현재 구현 기준 allowed fast preview path는 designated handoff 경로(`handoff/fast-preview/...`) 또는 canonical preview path(`renders/previews/{captureId}.jpg`와 동등 경로)로 제한한다.
+-- `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다. 이 경우 host는 RAW handoff만으로 기존 `Preview Waiting` 경로를 계속 유지한다.
+-- `fastPreviewKind`는 helper가 어떤 후보를 보냈는지 설명하는 optional 진단 힌트일 뿐이며, host preview truth를 직접 결정하지 않는다.
++- `captures/originals/` 아래 active session root에 들어온 파일만 capture success 후보로 인정한다.
++- helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path 검증을 다시 통과한 경우에만 pending preview 후보로 승격할 수 있다.
++- `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다.
+ - helper는 partial file이나 아직 close되지 않은 파일을 `file-arrived`로 알리면 안 된다.
+-- 같은 원칙으로 helper는 partial request line이나 restart 이전의 stale request line을 새 촬영으로 재해석하면 안 된다.
+-- 카메라 본체 셔터 직접 입력처럼 active `requestId` 없이 발생한 out-of-band 촬영은 현재 host가 active session success로 승격하는 canonical path가 아니다.
+-- helper가 이런 out-of-band 촬영을 감지하더라도, host는 이를 supported booth capture success나 `Preview Waiting` 시작 근거로 자동 해석하면 안 된다.
+ 
+ ## 에러와 복구 원칙
+ 
+ - helper raw 에러는 host error envelope로 다시 포장된 뒤에만 frontend로 간다.
+ - booth는 customer-safe next action만 받는다.
+ - operator는 bounded recovery action과 operator-safe detail만 본다.
+ - helper restart는 allowed recovery path일 수 있지만, restart 중에는 `Ready`가 유지되면 안 된다.
+-- once-ready 이후 USB 분리나 session loss가 오면 helper는 stale `ready`를 붙들지 말고 즉시 blocked path로 내려가야 한다.
+ 
+ ## Story 매핑
+ 
+ - Story 1.4: readiness/capture guard baseline
+ - Story 1.6: 실카메라/helper truth 연결과 false-ready 차단
++- Story 1.14: sidecar protocol fixture와 canonical message baseline 동결
++- Story 1.15: Canon helper profile / deeper runtime detail
+ - Story 5.4: operator `카메라 연결 상태` 전용 항목
+-
+-## 현재 상태 메모
+-
+-아키텍처는 이미 helper 경계를 기대하고 있고, 현재 제품의 실행 결정은 Windows 전용 Canon EDSDK helper exe다.
+-repo 기준으로는 아직 `sidecar/canon-helper/`와 `src-tauri/src/capture/sidecar_client.rs`가 구현 기준선으로 명시된 상태다.
+-
+-따라서 이 문서는 generic draft에 머무르지 않고, 채택된 Canon EDSDK helper exe가 따라야 할
+-canonical contract 기준선으로 본다.
+diff --git a/docs/contracts/preset-bundle.md b/docs/contracts/preset-bundle.md
+index 318d25e..61eaadd 100644
+--- a/docs/contracts/preset-bundle.md
++++ b/docs/contracts/preset-bundle.md
+@@ -1,76 +1,78 @@
+ # 프리셋 번들 계약
+ 
+ ## 목적
+ 
+-이 문서는 현재 booth runtime이 읽는 `published-preset-bundle/v1`의 닫힌 기준을 기록한다.
+-Story 4.3의 publish flow도 이 published bundle을 그대로 canonical output으로 사용한다.
++이 문서는 booth runtime과 authoring publication flow가 함께 참조하는 `published-preset-bundle/v1`의 authoritative baseline을 고정한다.
++Story 1.14는 닫힌 published bundle baseline만 고정하고, publication workflow의 deeper state machine은 Story 1.15 / 4.x가 계속 소유한다.
++
++## Authoritative Source / 소비 경계
++
++- 문서 기준: 이 문서
++- TypeScript 기준: `src/shared-contracts/schemas/preset-core.ts`
++- Rust 기준: `src-tauri/src/preset/preset_bundle.rs`
++- 대표 fixture:
++  - `tests/fixtures/contracts/preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json`
++- 소비 surface:
++  - booth는 catalog summary와 runtime loader를 통해 읽는다.
++  - authoring/publish host는 동일한 bundle shape를 canonical output으로 만든다.
++  - operator는 preset identity / publishedVersion / booth-safe 여부를 같은 baseline으로 본다.
+ 
+ ## Published Preset Bundle v1
+ 
+-- schemaVersion: `published-preset-bundle/v1`
+-- presetId: `preset_*` 형식의 stable identifier
+-- displayName: booth 고객에게 보이는 이름
+-- publishedVersion: `YYYY.MM.DD`
+-- lifecycleStatus: `published`
+-- boothStatus: `booth-safe`
++- `schemaVersion`: `published-preset-bundle/v1`
++- `presetId`: `preset_*` 형식의 stable identifier
++- `displayName`: booth 고객에게 보이는 이름
++- `publishedVersion`: `YYYY.MM.DD`
++- `lifecycleStatus`: `published`
++- `boothStatus`: `booth-safe`
+ - runtime render metadata:
+-  - darktableVersion: pinned runtime version, 현재 기준 `5.4.1`
+-  - xmpTemplatePath: bundle root 내부 XMP sidecar template
+-  - previewProfile:
+-    - profileId
+-    - displayName
+-    - outputColorSpace
+-  - finalProfile:
+-    - profileId
+-    - displayName
+-    - outputColorSpace
+-- preview:
+-  - kind: `preview-tile` 또는 `sample-cut`
+-  - assetPath: bundle root 내부 파일
+-  - altText: 고객에게 보여 줄 설명
+-- 확장 metadata:
+-  - publish host는 `sourceDraftVersion`, `publishedAt`, `publishedBy`,
+-    `sampleCut`, `darktableProjectPath` 같은 추가 필드를 기록할 수 있다.
+-  - 이 추가 필드는 booth loader의 필수 판정 기준이 아니며, `published-preset-bundle/v1`
+-    schemaVersion을 바꾸지 않는다.
++  - `darktableVersion`: pinned runtime version, 현재 기준 `5.4.1`
++  - `xmpTemplatePath`: bundle root 내부 XMP sidecar template
++  - `previewProfile`: `{ profileId, displayName, outputColorSpace }`
++  - `finalProfile`: `{ profileId, displayName, outputColorSpace }`
++- `preview`:
++  - `kind`: `preview-tile` 또는 `sample-cut`
++  - `assetPath`: bundle root 내부 파일
++  - `altText`: 고객에게 보여 줄 설명
++- optional publish metadata:
++  - `darktableProjectPath`
++  - `sourceDraftVersion`
++  - `publishedAt`
++  - `publishedBy`
++  - `sampleCut`
+ 
+ ## 런타임 로더 규칙
+ 
+ - booth catalog loader는 `preset-catalog/published/**/bundle.json`만 읽는다.
+ - `lifecycleStatus != published` 또는 `boothStatus != booth-safe`면 무시한다.
+-- preview 자산이 bundle root 밖으로 벗어나면 무시한다.
+-- runtime render loader는 catalog summary와 별도로 `darktableVersion`, `xmpTemplatePath`,
+-  `previewProfile`, `finalProfile`까지 모두 읽을 수 있어야 한다.
+-- runtime render loader는 위 필드 중 하나라도 비어 있거나 bundle root 밖을 가리키면 실패해야 한다.
++- `preview.assetPath` 또는 `xmpTemplatePath`가 bundle root 밖으로 벗어나면 무시한다.
++- runtime render loader는 `darktableVersion`, `xmpTemplatePath`, `previewProfile`, `finalProfile`이 모두 채워져 있어야 한다.
++- preview asset은 booth catalog summary와 customer-visible top-6 selection에 사용되고, render metadata는 runtime render loader가 그대로 재사용한다.
+ - draft 또는 validated artifact는 이 로더 경계에 들어오면 안 된다.
+ - publish host는 기존 `presetId/publishedVersion` 디렉터리를 in-place 수정하면 안 된다.
+-  같은 version이 이미 존재하면 새 bundle을 만들지 않고 거절해야 한다.
+ 
+-## Catalog State v1
++## Catalog State v1 관계
+ 
+-- live future-session catalog truth는 immutable bundle 디렉터리와 별도의
+-  `preset-catalog/catalog-state.json`이 소유한다.
++- live future-session catalog truth는 immutable bundle directory와 별도의 `preset-catalog/catalog-state.json`이 소유한다.
+ - `catalog-state.json`은 preset identity별 현재 live published version과 `catalogRevision`을 기록한다.
+-- publish와 rollback은 bundle directory를 지우거나 수정하지 않고 이 live pointer만 갱신한다.
+-- active session은 `session.json.catalogSnapshot`에 고정된 version만 사용하고, 새로 시작한 session만
+-  최신 `catalog-state.json`을 본다.
+-- catalog audit는 `preset-catalog/catalog-audit/{presetId}.json`에 `published`/`rollback` action,
+-  actor, timestamp, from/to version을 남긴다.
++- active session은 `session.json.catalogSnapshot`에 고정된 version만 사용한다.
++- publish와 rollback은 immutable bundle을 지우지 않고 live pointer만 갱신한다.
+ 
+-## Story 4.3과의 관계
++## 범위 경계
+ 
+-- Story 4.2는 draft artifact를 host에서 검증해 `validated` 내부 상태를 만든다.
+-- Story 4.3은 그 validated draft를 `approved -> published` publish flow로 승격하지만,
+-  output format은 여전히 `published-preset-bundle/v1`이다.
+-- publish host는 bundle을 live catalog에 노출한 뒤 audit/draft 저장이 실패하면, 그 bundle을
+-  다시 제거해 반쯤 완료된 published artifact를 남기지 않아야 한다.
+-- publish 성공은 future session catalog에만 반영되고, active session manifest나 existing
+-  capture binding을 직접 바꾸면 안 된다.
++- Story 1.14가 닫는 범위:
++  - booth runtime이 읽는 published bundle 필수 필드
++  - preview/final render profile baseline
++  - booth/operator/authoring이 같은 bundle identity와 publishedVersion을 참조하는 기준
++- Story 1.15 / 4.x가 닫는 범위:
++  - approval, publication, rollback state machine의 deeper behavior
++  - future-session-only publication governance 세부
++- Story 1.16이 닫는 범위:
++  - build/release packaging baseline
+ 
+-## Story 4.4와의 관계
++## 검증 기준
+ 
+-- Story 4.4는 same preset identity의 이전 승인 버전으로 rollback할 수 있게 하되, immutable bundle
+-  자체는 그대로 유지한다.
+-- rollback target은 이미 승인된 published booth-safe bundle이어야 한다.
+-- rollback 성공은 live catalog pointer와 catalog audit만 바꾸고, 진행 중인 세션의 `activePreset`이나
+-  기존 capture binding은 바꾸지 않는다.
++- TypeScript fixture parse: `publishedPresetBundleSchema`
++- Rust runtime loader parse: `load_published_preset_runtime_bundle`
++- representative fixture path:
++  - `tests/fixtures/contracts/preset-bundle-v1/preset_soft-glow/2026.04.10/`
+diff --git a/docs/contracts/session-manifest.md b/docs/contracts/session-manifest.md
+index 942f838..1ef79b6 100644
+--- a/docs/contracts/session-manifest.md
++++ b/docs/contracts/session-manifest.md
+@@ -1,92 +1,138 @@
+ # `session.json` v1 계약
+ 
+ ## 목적
+ 
+-Story 1.2에서 고객 세션 시작 직후 생성되는 durable manifest의 최소 기준선을 고정한다.
++이 문서는 booth, operator, authoring, host가 함께 참조하는 `session-manifest/v1`의 authoritative baseline을 고정한다.
++Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세부 profile은 Story 1.15가, build/release baseline은 Story 1.16이 닫는다.
++
++## Authoritative Source / 소비 경계
++
++- 문서 기준: 이 문서
++- TypeScript 기준: `src/shared-contracts/schemas/session-manifest.ts`, `src/shared-contracts/schemas/session-capture.ts`
++- Rust 기준: `src-tauri/src/session/session_manifest.rs`
++- 대표 fixture: `tests/fixtures/contracts/session-manifest-v1.json`
++- 소비 surface:
++  - booth/operator/authoring React는 host가 반환한 DTO와 shared schema만 소비한다.
++  - durable `session.json` 자체는 Rust host만 생성/수정한다.
+ 
+ ## 저장 위치
+ 
+ - 세션 루트: `Pictures/dabi_shoot/sessions/{sessionId}/`
+ - 매니페스트: `Pictures/dabi_shoot/sessions/{sessionId}/session.json`
+ 
+ ## 디렉터리 구조
+ 
+ ```text
+ {sessionId}/
+   session.json
+   captures/
+     originals/
+   renders/
+     previews/
+     finals/
+   handoff/
+   diagnostics/
+ ```
+ 
+ ## JSON shape
+ 
+ ```json
+ {
+   "schemaVersion": "session-manifest/v1",
+   "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+   "boothAlias": "Kim 4821",
+   "customer": {
+     "name": "Kim",
+     "phoneLastFour": "4821"
+   },
+-  "createdAt": "2026-03-20T00:00:00Z",
+-  "updatedAt": "2026-03-20T00:00:00Z",
++  "createdAt": "2026-04-10T01:00:00Z",
++  "updatedAt": "2026-04-10T01:00:12Z",
+   "lifecycle": {
+     "status": "active",
+-    "stage": "session-started"
++    "stage": "capture-ready"
++  },
++  "catalogRevision": 7,
++  "catalogSnapshot": [
++    {
++      "presetId": "preset_soft-glow",
++      "publishedVersion": "2026.04.10"
++    }
++  ],
++  "activePreset": {
++    "presetId": "preset_soft-glow",
++    "publishedVersion": "2026.04.10"
++  },
++  "activePresetId": "preset_soft-glow",
++  "activePresetDisplayName": "Soft Glow",
++  "timing": {
++    "schemaVersion": "session-timing/v1",
++    "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++    "adjustedEndAt": "2026-04-10T01:01:00Z",
++    "warningAt": "2026-04-10T01:00:30Z",
++    "phase": "active",
++    "captureAllowed": true,
++    "approvedExtensionMinutes": 0,
++    "approvedExtensionAuditRef": null,
++    "warningTriggeredAt": null,
++    "endedTriggeredAt": null
+   },
+-  "catalogRevision": null,
+-  "catalogSnapshot": null,
+-  "activePreset": null,
+-  "activePresetId": null,
+   "captures": [],
+   "postEnd": null
+ }
+ ```
+ 
+ ## 필드 규칙
+ 
+ - `schemaVersion`: 현재 baseline은 반드시 `session-manifest/v1`
+-- `sessionId`: 고객에게 노출하지 않는 opaque durable 식별자
+-- `boothAlias`: 고객 화면에서 재사용 가능한 표시용 별칭
++- `sessionId`: 고객에게 직접 노출하지 않는 opaque durable 식별자
++- `boothAlias`: 고객 화면과 handoff copy에서 재사용 가능한 표시용 별칭
+ - `customer.name`: trim 및 공백 정규화 이후의 이름
+ - `customer.phoneLastFour`: 숫자 4자리 suffix
+ - `createdAt`, `updatedAt`: UTC RFC3339 문자열
+-- `lifecycle.status`: 초기값은 `active`
+-- `lifecycle.stage`: 초기값은 `session-started`
+-- `catalogRevision`, `catalogSnapshot`: 현재 세션이 처음 booth catalog를 읽거나 preset을 고를 때 고정되는
+-  future-session-safe catalog baseline. 새 live catalog change가 있더라도 이미 진행 중인 세션은 이
+-  snapshot 안의 버전만 본다.
+-- `activePreset`: Story 1.3부터 `{ presetId, publishedVersion }` binding 또는 `null`
+-- `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror. Story 1.2에서는 `null`
+-- `captures`: Story 1.2에서는 빈 배열
+-- `postEnd`: post-end truth가 아직 확정되지 않았으면 `null`, 확정되면 아래 셋 중 하나
++- `lifecycle.status`: `active`
++- `lifecycle.stage`: session progress를 표현하는 host-owned 단계 문자열
++- `catalogRevision`, `catalogSnapshot`: 함께 기록되거나 함께 `null`이어야 한다.
++- `activePreset`: canonical preset binding
++- `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
++- `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
++- `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.
++- `captures[*]`는 `session-capture/v1`을 따른다.
++- `captures[*].sessionId`, `requestId`, `captureId`: capture correlation baseline
++- `captures[*].activePresetId + activePresetVersion`: capture-bound preset identity baseline
++- `captures[*].renderStatus`:
++  - `previewWaiting`: RAW persistence는 끝났지만 truthful preview close가 아직 안 됨
++  - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 preview truth가 닫힘
++  - `finalReady`: published bundle의 `xmpTemplatePath + finalProfile`로 만든 final truth가 닫힘
++  - `renderFailed`: preview/final truth를 닫지 못한 bounded failure
++- `captures[*].timing.fastPreviewVisibleAtMs`: same-capture first-visible lane 시각
++- `captures[*].timing.xmpPreviewReadyAtMs`: preset-applied truthful preview close 시각
++- `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 현재 세션 root 아래 절대경로만 허용
++- `postEnd`는 아래 셋 중 하나 또는 `null`
+   - `export-waiting`: `{ state, evaluatedAt }`
+-  - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel? , nextLocationLabel?, supportActionLabel? }`
++  - `completed`: `{ state, evaluatedAt, completionVariant, primaryActionLabel, showBoothAlias, approvedRecipientLabel?, nextLocationLabel?, supportActionLabel? }`
+   - `phone-required`: `{ state, evaluatedAt, primaryActionLabel, unsafeActionWarning, showBoothAlias, supportActionLabel? }`
+-- `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 반드시 OS가 제공한 사용자 Pictures 경로 아래의 현재 세션 루트(`.../Pictures/dabi_shoot/sessions/{sessionId}/`)를 가리켜야 한다. 프런트엔드 session guard는 절대경로 안의 `pictures/dabi_shoot/sessions/{sessionId}/` anchor를 기준으로 현재 세션 자산 여부를 판정한다. `fixtures/...` 같은 상대경로는 Vitest/unit test fixture에서만 허용한다.
+-- `captures[*].preview.assetPath`: `renderStatus=previewWaiting` 중에도 same-capture fast preview가 canonical preview path에 안전하게 승격됐다면 채워질 수 있다. 이 경우에도 `preview.readyAtMs`가 `null`이면 아직 truthful `previewReady`가 아니다.
+-- `captures[*].renderStatus`:
+-  - `previewWaiting`: RAW persistence는 끝났지만 preset-applied preview render가 아직 닫히지 않음
+-  - `previewReady`: published bundle의 `xmpTemplatePath + previewProfile`로 만든 실제 preview file이 존재함. source는 RAW 원본이거나 approved same-capture raster worker output일 수 있다.
+-  - `finalReady`: published bundle의 `xmpTemplatePath + finalProfile`로 만든 실제 final file이 존재함
+-  - `renderFailed`: preview 또는 final render truth를 닫지 못해 bounded failure 상태로 잠김
+-- `captures[*].timing.fastPreviewVisibleAtMs`: pending same-capture first-visible source가 고객 rail에 처음 보일 수 있게 된 시점을 기록한다. source는 fast preview, camera thumbnail, resident first-visible worker output 중 approved same-capture 자산이어야 하며, 아직 truthful `previewReady`를 의미하지 않는다.
+-- `captures[*].timing.xmpPreviewReadyAtMs`: render worker가 처음 truthful `previewReady`를 기록한 시점을 남긴다. later quality refresh가 있더라도 최초 close 시각은 덮어쓰지 않는다.
+-- `captures[*].timing.previewVisibleAtMs`: render-backed preview truth가 처음 닫힌 시점을 유지하는 비교 지표다. first-visible lane은 별도 `fastPreviewVisibleAtMs`로 분리해 기록한다.
+-- RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady`나 `finalReady`의 근거가 될 수 없다.
++
++## Canonical / Legacy Guardrail
++
++- 새 구현은 `activePreset`을 canonical field로 사용한다.
++- `activePresetId`와 capture-level legacy field는 읽기 호환용으로 유지하되, canonical preset binding과 drift하면 안 된다.
++- `session-manifest/v1`은 가볍게 `v2`로 올리지 않는다. Story 1.14의 목적은 schema bump가 아니라 현재 의미를 고정하는 것이다.
++
++## 범위 경계
++
++- Story 1.14가 닫는 범위:
++  - session manifest field names, nullability, timing semantics
++  - capture correlation / preset binding / post-end variant baseline
++  - 문서 + shared schema + Rust serialization alignment
++- Story 1.15가 닫는 범위:
++  - Canon helper deeper runtime profile
++  - publication contract deeper runtime behavior
++- Story 1.16이 닫는 범위:
++  - build, packaging, release, CI proof baseline
+ 
+ ## 변경 규칙
+ 
+ - Rust host만 이 파일을 생성/수정한다.
+-- React는 host가 반환한 DTO만 소비하고 durable truth를 직접 만들지 않는다.
+-- 후속 스토리는 기존 필드를 유지한 채 확장한다.
+-- 새 구현은 `activePreset`을 canonical field로 사용하고, `activePresetId`는 구버전 호환을 위해 함께 유지한다.
+-- `catalogSnapshot`은 customer-visible top 6 preset만 고정하고, rollback이나 publish 이후에도 기존
+-  active session manifest를 다시 쓰지 않는다.
+-- post-end `completed`는 `finalReady`가 없는 capture에서 먼저 올라가면 안 된다.
++- React는 host DTO만 소비하고 durable truth를 직접 만들지 않는다.
++- fixture 및 테스트는 `tests/fixtures/contracts/session-manifest-v1.json`을 기준 예시로 사용한다.
++- post-end `completed`는 `finalReady` 근거 없이 먼저 올라가면 안 된다.
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 1213a71..bd527a3 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -1,83 +1,111 @@
++import { readFileSync } from 'node:fs'
++import { dirname, resolve } from 'node:path'
++import { fileURLToPath } from 'node:url'
+ import { describe, expect, it } from 'vitest'
+ 
+ import {
+   authoringWorkspaceResultSchema,
+   catalogStateResultSchema,
+   catalogStateSummarySchema,
+   catalogVersionHistoryItemSchema,
+   captureDeleteResultSchema,
+   activePresetBindingSchema,
+   boothSessionStubSchema,
+   captureReadinessSnapshotSchema,
+   captureRequestResultSchema,
+   capabilitySnapshotSchema,
+   draftPresetEditPayloadSchema,
+   draftPresetSummarySchema,
+   draftValidationReportSchema,
+   hostErrorEnvelopeSchema,
+   operatorBlockedStateCategorySchema,
+   operatorRecoveryActionRequestSchema,
+   operatorRecoveryActionResultSchema,
+   operatorRecoveryActionSchema,
+   operatorRecoveryBlockedCategorySchema,
+   operatorRecoverySummarySchema,
+   operatorSessionSummarySchema,
+   publicationAuditRecordSchema,
+   presetCatalogResultSchema,
+   presetLifecycleStateSchema,
+   presetSelectionInputSchema,
+   repairInvalidDraftInputSchema,
+   rollbackPresetCatalogInputSchema,
+   rollbackPresetCatalogResultSchema,
+   publishValidatedPresetInputSchema,
+   publishValidatedPresetResultSchema,
+   publishedPresetSummarySchema,
++  publishedPresetBundleSchema,
+   sessionManifestSchema,
+   sessionCaptureRecordSchema,
+   sessionStartInputSchema,
+   sessionStartResultSchema,
+   sessionTimingSnapshotSchema,
+   validateDraftPresetInputSchema,
+   validateDraftPresetResultSchema,
+ } from './index'
+ 
++function readContractFixture(relativePath: string) {
++  const fixturePath = resolve(
++    dirname(fileURLToPath(import.meta.url)),
++    '../../tests/fixtures/contracts',
++    relativePath,
++  )
++
++  return JSON.parse(
++    readFileSync(fixturePath, 'utf8'),
++  ) as Record<string, unknown>
++}
++
++function readSidecarProtocolFixture(relativePath: string) {
++  const fixturePath = resolve(
++    dirname(fileURLToPath(import.meta.url)),
++    '../../sidecar/protocol/examples',
++    relativePath,
++  )
++
++  return JSON.parse(
++    readFileSync(fixturePath, 'utf8'),
++  ) as Record<string, unknown>
++}
++
+ function createDraftValidationReport(overrides: Record<string, unknown> = {}) {
+   return {
+     schemaVersion: 'draft-preset-validation/v1',
+     presetId: 'preset_soft-glow-draft',
+     draftVersion: 2,
+     lifecycleState: 'draft',
+     status: 'failed',
+     checkedAt: '2026-03-26T00:10:00.000Z',
+     findings: [
+       {
+         ruleCode: 'missing-sample-cut',
+         severity: 'error',
+         fieldPath: 'sampleCut.assetPath',
+         message: 'sample-cut 대표 자산이 없어요.',
+         guidance: 'sampleCut.assetPath에 draft 작업공간 안의 대표 샘플 이미지를 추가해 주세요.',
+       },
+     ],
+     ...overrides,
+   }
+ }
+ 
+ function createDraftPresetSummary(overrides: Record<string, unknown> = {}) {
+   return {
+     schemaVersion: 'draft-preset-artifact/v1',
+     presetId: 'preset_soft-glow-draft',
+     displayName: 'Soft Glow Draft',
+     draftVersion: 2,
+     lifecycleState: 'draft',
+     darktableVersion: '5.4.1',
+     darktableProjectPath: 'darktable/soft-glow.dtpreset',
+     xmpTemplatePath: 'xmp/soft-glow.xmp',
+     previewProfile: {
+       profileId: 'preview-standard',
+       displayName: 'Preview Standard',
+       outputColorSpace: 'sRGB',
+     },
+     finalProfile: {
+       profileId: 'final-standard',
+       displayName: 'Final Standard',
+       outputColorSpace: 'sRGB',
+@@ -290,80 +318,129 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+   }
+ }
+ 
+ function createOperatorRecoveryActionResult(overrides: Record<string, unknown> = {}) {
+   return {
+     schemaVersion: 'operator-recovery-action-result/v1',
+     sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+     action: 'retry',
+     status: 'applied',
+     message: '현재 막힌 preview/render 경계를 다시 시도했어요.',
+     rejectionReason: null,
+     diagnosticsSummary: {
+       title: '프리뷰/렌더 결과 준비 지연',
+       detail: '가장 최근 촬영본은 저장되었지만 결과 준비가 아직 끝나지 않았어요.',
+       observedAt: '2026-03-26T00:10:01.000Z',
+     },
+     nextState: {
+       customerState: 'Ready',
+       reasonCode: 'ready',
+       lifecycleStage: 'capture-ready',
+       timingPhase: 'active',
+       postEndState: null,
+     },
+     summary: createOperatorRecoverySummary({
+       blockedStateCategory: 'not-blocked',
+       blockedCategory: null,
+       diagnosticsSummary: null,
+       allowedActions: [],
+       lifecycleStage: 'capture-ready',
+       previewRenderBoundary: {
+         status: 'clear',
+         title: '프리뷰/렌더 경계 정상',
+         detail: '가장 최근 촬영본의 결과 준비가 끝나 있어요.',
+       },
+     }),
+     ...overrides,
+   }
+ }
+ 
+ describe('shared contracts baseline', () => {
++  it('parses the frozen session manifest fixture shared with Rust contract tests', () => {
++    const parsed = sessionManifestSchema.parse(
++      readContractFixture('session-manifest-v1.json'),
++    )
++
++    expect(parsed.timing?.schemaVersion).toBe('session-timing/v1')
++    expect(parsed.activePreset?.publishedVersion).toBe('2026.04.10')
++    expect(parsed.activePresetId).toBe('preset_soft-glow')
++  })
++
++  it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
++    const parsed = publishedPresetBundleSchema.parse(
++      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
++    )
++
++    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
++    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
++    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
++  })
++
++  it('parses the frozen host error envelope and capability snapshot fixtures', () => {
++    const error = hostErrorEnvelopeSchema.parse(
++      readContractFixture('host-error-envelope-capture-not-ready.json'),
++    )
++    const capabilitySnapshot = capabilitySnapshotSchema.parse(
++      readContractFixture('runtime-capability-authoring-enabled.json'),
++    )
++
++    expect(error.code).toBe('capture-not-ready')
++    expect(error.readiness?.reasonCode).toBe('preview-waiting')
++    expect(capabilitySnapshot.allowedSurfaces).toEqual([
++      'booth',
++      'operator',
++      'authoring',
++      'settings',
++    ])
++  })
++
++  it('keeps helper protocol fixtures parseable as canonical json examples', () => {
++    const cameraStatus = readSidecarProtocolFixture('camera-status.json')
++    const fileArrived = readSidecarProtocolFixture('file-arrived.json')
++
++    expect(cameraStatus.schemaVersion).toBe('canon-helper-status/v1')
++    expect(cameraStatus.type).toBe('camera-status')
++    expect(fileArrived.schemaVersion).toBe('canon-helper-file-arrived/v1')
++    expect(fileArrived.type).toBe('file-arrived')
++    expect(fileArrived.requestId).toBe('request_20260410_001')
++  })
++
+   it('normalizes booth capability access to always include the booth surface', () => {
+     const parsed = capabilitySnapshotSchema.parse({
+       isAdminAuthenticated: false,
+       allowedSurfaces: [],
+     })
+ 
+     expect(parsed.allowedSurfaces).toContain('booth')
+     expect(parsed.allowedSurfaces).toHaveLength(1)
+   })
+ 
+   it('parses a placeholder booth session DTO', () => {
+     const parsed = boothSessionStubSchema.parse({
+       sessionId: 'session_001',
+       boothAlias: 'KIM-4821',
+       presetId: 'preset_neutral',
+     })
+ 
+     expect(parsed.sessionId).toBe('session_001')
+     expect(parsed.boothAlias).toBe('KIM-4821')
+     expect(parsed.presetId).toBe('preset_neutral')
+   })
+ 
+   it('accepts a valid session start input payload', () => {
+     const parsed = sessionStartInputSchema.parse({
+       name: 'Kim Noah',
+       phoneLastFour: '4821',
+     })
+ 
+     expect(parsed.name).toBe('Kim Noah')
+     expect(parsed.phoneLastFour).toBe('4821')
+   })
+ 
+   it('rejects invalid session start input payloads', () => {
+     expect(() =>
+       sessionStartInputSchema.parse({
+         name: '   ',
+         phoneLastFour: '12a4',
+       }),
+     ).toThrow()
+ 
+diff --git a/src/shared-contracts/dto/preset.ts b/src/shared-contracts/dto/preset.ts
+index 5d043a5..382e79f 100644
+--- a/src/shared-contracts/dto/preset.ts
++++ b/src/shared-contracts/dto/preset.ts
+@@ -1,97 +1,103 @@
+ import type { z } from 'zod'
+ 
+ import {
+   authoringWorkspaceResultSchema,
+   catalogStateResultSchema,
+   catalogStateSummarySchema,
+   catalogVersionHistoryActionSchema,
+   catalogVersionHistoryItemSchema,
+   activePresetBindingSchema,
+   draftPresetEditPayloadSchema,
+   draftPresetSummarySchema,
+   draftValidationFindingSchema,
+   draftValidationReportSchema,
+   draftValidationSnapshotSchema,
+   invalidDraftArtifactSchema,
+   publicationAuditRecordSchema,
+   publicationAuditActionSchema,
+   publicationRejectionReasonCodeSchema,
+   publicationScopeSchema,
+   loadPresetCatalogInputSchema,
+   publishValidatedPresetInputSchema,
+   publishValidatedPresetResultSchema,
+   publishValidatedPresetRejectionSchema,
+   publishValidatedPresetSuccessSchema,
+   repairInvalidDraftInputSchema,
+   presetLifecycleStateSchema,
+   presetCatalogResultSchema,
++  publishedPresetBundleSchema,
++  publishedPresetRenderProfileSchema,
+   presetSelectionInputSchema,
+   presetSelectionResultSchema,
+   publishedPresetSummarySchema,
+   rollbackPresetCatalogInputSchema,
+   rollbackPresetCatalogReasonCodeSchema,
+   rollbackPresetCatalogResultSchema,
+   rollbackPresetCatalogRejectionSchema,
+   rollbackPresetCatalogSuccessSchema,
+   validateDraftPresetInputSchema,
+   validateDraftPresetResultSchema,
+ } from '../schemas'
+ 
+ export type PresetLifecycleState = z.infer<typeof presetLifecycleStateSchema>
+ export type DraftPresetSummary = z.infer<typeof draftPresetSummarySchema>
+ export type DraftPresetEditPayload = z.infer<typeof draftPresetEditPayloadSchema>
+ export type DraftValidationFinding = z.infer<typeof draftValidationFindingSchema>
+ export type DraftValidationReport = z.infer<typeof draftValidationReportSchema>
+ export type DraftValidationSnapshot = z.infer<typeof draftValidationSnapshotSchema>
+ export type InvalidDraftArtifact = z.infer<typeof invalidDraftArtifactSchema>
+ export type AuthoringWorkspaceResult = z.infer<typeof authoringWorkspaceResultSchema>
+ export type ValidateDraftPresetInput = z.infer<typeof validateDraftPresetInputSchema>
+ export type RepairInvalidDraftInput = z.infer<typeof repairInvalidDraftInputSchema>
+ export type ValidateDraftPresetResult = z.infer<typeof validateDraftPresetResultSchema>
+ export type PublicationAuditAction = z.infer<typeof publicationAuditActionSchema>
+ export type PublicationScope = z.infer<typeof publicationScopeSchema>
+ export type PublicationRejectionReasonCode = z.infer<
+   typeof publicationRejectionReasonCodeSchema
+ >
+ export type PublicationAuditRecord = z.infer<typeof publicationAuditRecordSchema>
+ export type CatalogVersionHistoryAction = z.infer<
+   typeof catalogVersionHistoryActionSchema
+ >
+ export type CatalogVersionHistoryItem = z.infer<
+   typeof catalogVersionHistoryItemSchema
+ >
+ export type CatalogStateSummary = z.infer<typeof catalogStateSummarySchema>
+ export type CatalogStateResult = z.infer<typeof catalogStateResultSchema>
+ export type PublishValidatedPresetInput = z.infer<
+   typeof publishValidatedPresetInputSchema
+ >
+ export type PublishValidatedPresetSuccess = z.infer<
+   typeof publishValidatedPresetSuccessSchema
+ >
+ export type PublishValidatedPresetRejection = z.infer<
+   typeof publishValidatedPresetRejectionSchema
+ >
+ export type PublishValidatedPresetResult = z.infer<
+   typeof publishValidatedPresetResultSchema
+ >
++export type PublishedPresetRenderProfile = z.infer<
++  typeof publishedPresetRenderProfileSchema
++>
++export type PublishedPresetBundle = z.infer<typeof publishedPresetBundleSchema>
+ export type PublishedPresetSummary = z.infer<typeof publishedPresetSummarySchema>
+ export type LoadPresetCatalogInput = z.infer<typeof loadPresetCatalogInputSchema>
+ export type PresetCatalogResult = z.infer<typeof presetCatalogResultSchema>
+ export type ActivePresetBinding = z.infer<typeof activePresetBindingSchema>
+ export type PresetSelectionInput = z.infer<typeof presetSelectionInputSchema>
+ export type PresetSelectionResult = z.infer<typeof presetSelectionResultSchema>
+ export type RollbackPresetCatalogReasonCode = z.infer<
+   typeof rollbackPresetCatalogReasonCodeSchema
+ >
+ export type RollbackPresetCatalogInput = z.infer<
+   typeof rollbackPresetCatalogInputSchema
+ >
+ export type RollbackPresetCatalogSuccess = z.infer<
+   typeof rollbackPresetCatalogSuccessSchema
+ >
+ export type RollbackPresetCatalogRejection = z.infer<
+   typeof rollbackPresetCatalogRejectionSchema
+ >
+ export type RollbackPresetCatalogResult = z.infer<
+   typeof rollbackPresetCatalogResultSchema
+ >
+diff --git a/src/shared-contracts/schemas/preset-core.ts b/src/shared-contracts/schemas/preset-core.ts
+index f03a595..186f083 100644
+--- a/src/shared-contracts/schemas/preset-core.ts
++++ b/src/shared-contracts/schemas/preset-core.ts
+@@ -1,68 +1,96 @@
+ import { z } from 'zod'
+ 
+ import { sessionIdSchema } from './ids'
+ 
+ export const presetIdSchema = z
+   .string()
+   .regex(/^preset_[a-z0-9-]+$/i, '유효한 프리셋 식별자가 아니에요.')
+ 
+ export const publishedVersionSchema = z
+   .string()
+   .regex(/^\d{4}\.\d{2}\.\d{2}$/, '게시 버전 형식이 올바르지 않아요.')
+ 
+ export const catalogRevisionSchema = z
+   .number()
+   .int()
+   .nonnegative('catalog revision은 0 이상의 정수여야 해요.')
+ 
+ export const presetPreviewAssetSchema = z.object({
+   kind: z.enum(['preview-tile', 'sample-cut']),
+   assetPath: z.string().min(1),
+   altText: z.string().min(1),
+ })
+ 
++export const publishedPresetRenderProfileSchema = z.object({
++  profileId: z.string().trim().min(1),
++  displayName: z.string().trim().min(1),
++  outputColorSpace: z.string().trim().min(1),
++})
++
+ export const publishedPresetSummarySchema = z.object({
+   presetId: presetIdSchema,
+   displayName: z.string().trim().min(1),
+   publishedVersion: publishedVersionSchema,
+   boothStatus: z.literal('booth-safe'),
+   preview: presetPreviewAssetSchema,
+ })
+ 
++export const publishedPresetBundleSchema = z.object({
++  schemaVersion: z.literal('published-preset-bundle/v1'),
++  presetId: presetIdSchema,
++  displayName: z.string().trim().min(1),
++  publishedVersion: publishedVersionSchema,
++  lifecycleStatus: z.literal('published'),
++  boothStatus: z.literal('booth-safe'),
++  darktableVersion: z
++    .string()
++    .trim()
++    .regex(/^\d+\.\d+\.\d+$/, 'darktable version 형식이 올바르지 않아요.'),
++  darktableProjectPath: z.string().trim().min(1).optional(),
++  xmpTemplatePath: z.string().trim().min(1),
++  previewProfile: publishedPresetRenderProfileSchema,
++  finalProfile: publishedPresetRenderProfileSchema,
++  preview: presetPreviewAssetSchema,
++  sampleCut: presetPreviewAssetSchema.optional(),
++  sourceDraftVersion: z.number().int().positive().optional(),
++  publishedAt: z.string().trim().min(1).optional(),
++  publishedBy: z.string().trim().min(1).optional(),
++})
++
+ export const presetDisplayNameSchema = z.string().trim().min(1)
+ 
+ export const loadPresetCatalogInputSchema = z.object({
+   sessionId: sessionIdSchema,
+ })
+ 
+ export const presetCatalogResultSchema = z.object({
+   sessionId: sessionIdSchema,
+   state: z.enum(['ready', 'empty']),
+   presets: z.array(publishedPresetSummarySchema).max(6),
+ }).superRefine((catalog, context) => {
+   if (catalog.state === 'ready' && catalog.presets.length === 0) {
+     context.addIssue({
+       code: 'custom',
+       message: '표시할 프리셋이 하나 이상 필요해요.',
+       path: ['presets'],
+     })
+   }
+ 
+   if (catalog.state === 'empty' && catalog.presets.length > 0) {
+     context.addIssue({
+       code: 'custom',
+       message: '빈 카탈로그 상태에는 프리셋을 담을 수 없어요.',
+       path: ['presets'],
+     })
+   }
+ })
+ 
+ export const activePresetBindingSchema = z.object({
+   presetId: presetIdSchema,
+   publishedVersion: publishedVersionSchema,
+ })
+ 
+ export const presetSelectionInputSchema = z.object({
+   sessionId: sessionIdSchema,
+   preset: activePresetBindingSchema,
+ })
+diff --git a/src/shared-contracts/schemas/presets.ts b/src/shared-contracts/schemas/presets.ts
+index 82f71c2..b67a16c 100644
+--- a/src/shared-contracts/schemas/presets.ts
++++ b/src/shared-contracts/schemas/presets.ts
+@@ -1,30 +1,34 @@
+ import { z } from 'zod'
+ 
+ import {
+   activePresetBindingSchema,
+   loadPresetCatalogInputSchema,
+   presetCatalogResultSchema,
+   presetIdSchema,
+   presetPreviewAssetSchema,
++  publishedPresetBundleSchema,
++  publishedPresetRenderProfileSchema,
+   presetSelectionInputSchema,
+   publishedPresetSummarySchema,
+   publishedVersionSchema,
+ } from './preset-core'
+ import { sessionManifestSchema } from './session-manifest'
+ 
+ export {
+   activePresetBindingSchema,
+   loadPresetCatalogInputSchema,
+   presetCatalogResultSchema,
+   presetIdSchema,
+   presetPreviewAssetSchema,
++  publishedPresetBundleSchema,
++  publishedPresetRenderProfileSchema,
+   presetSelectionInputSchema,
+   publishedPresetSummarySchema,
+   publishedVersionSchema,
+ }
+ 
+ export const presetSelectionResultSchema = z.object({
+   sessionId: sessionManifestSchema.shape.sessionId,
+   activePreset: activePresetBindingSchema,
+   manifest: sessionManifestSchema,
+ })

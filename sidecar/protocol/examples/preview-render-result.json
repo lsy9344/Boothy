@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "dedicated-renderer-preview-job-result/v1",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "requestId": "request_20260410_001",
+  "captureId": "capture_20260410_001",
+  "status": "fallback-suggested",
+  "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/capture_20260410_001-request_20260410_001.preview-result.json",
+  "detailCode": "sidecar-unavailable",
+  "detailMessage": "Story 1.11 baseline keeps the truthful close on the host-owned inline path until the dedicated renderer cutover is approved."
+}

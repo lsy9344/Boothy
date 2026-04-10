@@ -12,8 +12,9 @@ use boothy_lib::{
     },
     session::{
         session_manifest::{
-            build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
-            rfc3339_to_unix_seconds, SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
+            build_default_session_timing_for_mode, build_session_manifest_at, current_timestamp,
+            normalize_legacy_manifest, rfc3339_to_unix_seconds, SessionManifest,
+            SESSION_MANIFEST_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
         session_repository::{select_active_preset_in_dir, start_session_in_dir},
@@ -128,6 +129,32 @@ fn fails_manifest_build_when_system_time_precedes_unix_epoch() {
 
     assert_eq!(error.code, "session-persistence-failed");
     assert!(error.message.contains("시스템 시계"));
+}
+
+#[test]
+fn default_session_timing_uses_a_one_minute_window() {
+    let timing = build_default_session_timing_for_mode(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
+        "2026-04-10T10:37:00Z",
+        false,
+    )
+    .expect("default timing should resolve");
+
+    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:38:00Z");
+    assert_eq!(timing.warning_at, "2026-04-10T10:37:30Z");
+}
+
+#[test]
+fn session_timing_does_not_change_when_test_mode_flag_is_true() {
+    let timing = build_default_session_timing_for_mode(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
+        "2026-04-10T10:37:00Z",
+        true,
+    )
+    .expect("timing should stay aligned with durable product defaults");
+
+    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:38:00Z");
+    assert_eq!(timing.warning_at, "2026-04-10T10:37:30Z");
 }
 
 #[test]
@@ -1006,7 +1033,7 @@ fn published_runtime_bundle_loader_reads_render_critical_metadata() {
 }
 
 #[test]
-fn published_runtime_bundle_loader_accepts_legacy_bundles_without_render_profiles() {
+fn published_runtime_bundle_loader_backfills_render_profiles_for_legacy_bundles() {
     let base_dir = unique_test_root("published-runtime-bundle-legacy");
     let bundle_dir = resolve_published_preset_catalog_dir(&base_dir)
         .join("preset_test-look")
@@ -1038,14 +1065,15 @@ fn published_runtime_bundle_loader_accepts_legacy_bundles_without_render_profile
     .expect("legacy bundle should write");
 
     let bundle = load_published_preset_runtime_bundle(&bundle_dir)
-        .expect("legacy runtime bundle should load with default render profiles");
+        .expect("legacy runtime bundle should remain renderable");
 
-    assert_eq!(
-        bundle.preview_profile.profile_id,
-        "preset_test-look-preview"
-    );
-    assert_eq!(bundle.final_profile.profile_id, "preset_test-look-final");
+    assert_eq!(bundle.preset_id, "preset_test-look");
+    assert_eq!(bundle.published_version, "2026.03.31");
+    assert_eq!(bundle.preview_profile.profile_id, "preset_test-look-preview");
+    assert_eq!(bundle.preview_profile.display_name, "Test Look Preview");
     assert_eq!(bundle.preview_profile.output_color_space, "sRGB");
+    assert_eq!(bundle.final_profile.profile_id, "preset_test-look-final");
+    assert_eq!(bundle.final_profile.display_name, "Test Look Final");
     assert_eq!(bundle.final_profile.output_color_space, "sRGB");
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1106,6 +1134,63 @@ fn published_preset_catalog_skips_malformed_bundle_fields_without_failing_the_wh
     assert_eq!(result.state, "ready");
     assert_eq!(result.presets.len(), 1);
     assert_eq!(result.presets[0].preset_id, "preset_soft-glow");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn published_preset_catalog_keeps_showing_bundles_with_legacy_published_by_actor_objects() {
+    let base_dir = unique_test_root("preset-catalog-legacy-published-by");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should exist before loading the preset catalog");
+    let bundle_dir = resolve_published_preset_catalog_dir(&base_dir)
+        .join("preset_test-look")
+        .join("2026.03.31");
+    fs::create_dir_all(bundle_dir.join("preview")).expect("preview directory should exist");
+    fs::write(bundle_dir.join("preview").join("test-look.jpg"), b"preview")
+        .expect("preview should write");
+    fs::write(
+        bundle_dir.join("bundle.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "published-preset-bundle/v1",
+          "presetId": "preset_test-look",
+          "displayName": "Test Look",
+          "publishedVersion": "2026.03.31",
+          "lifecycleStatus": "published",
+          "boothStatus": "booth-safe",
+          "publishedAt": "2026-03-31T13:07:45Z",
+          "publishedBy": {
+            "actorId": "noah",
+            "actorLabel": "noah"
+          },
+          "preview": {
+            "kind": "preview-tile",
+            "assetPath": "preview/test-look.jpg",
+            "altText": "Test Look preview"
+          }
+        }))
+        .expect("bundle should serialize"),
+    )
+    .expect("bundle should write");
+
+    let result = load_preset_catalog_in_dir(
+        &base_dir,
+        LoadPresetCatalogInputDto {
+            session_id: session.session_id,
+        },
+    )
+    .expect("legacy published-by metadata should not hide an otherwise valid bundle");
+
+    assert_eq!(result.state, "ready");
+    assert_eq!(result.presets.len(), 1);
+    assert_eq!(result.presets[0].preset_id, "preset_test-look");
+    assert_eq!(result.presets[0].display_name, "Test Look");
 
     let _ = fs::remove_dir_all(base_dir);
 }

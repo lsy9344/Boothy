@@ -133,6 +133,25 @@ describe('app routing baseline', () => {
     expect(router.state.location.pathname).toBe('/settings')
   })
 
+  it('blocks settings on the booth window even when the runtime snapshot includes settings capability', async () => {
+    const router = renderRoute(
+      ['/settings'],
+      createCapabilityService({
+        isAdminAuthenticated: true,
+        allowedSurfaces: ['booth', 'settings'],
+        currentWindowLabel: 'booth-window',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /이름을 확인할게요/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /Settings Governance/i }),
+    ).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/booth')
+  })
+
   it('still blocks authoring on the booth window even when the runtime snapshot includes authoring capability', async () => {
     const router = renderRoute(
       ['/authoring'],

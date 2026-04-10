@@ -2,12 +2,15 @@
 
 ## 목적
 
-이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때 지켜야 하는 `render worker` 기준선을 고정한다.
+이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때 지켜야 하는 기준선을 고정한다. 현재 승인된 다음 구조는 host-owned `local dedicated renderer`이며, 이 문서는 그 구조의 booth-safe contract를 설명한다.
 
 ## Runtime 입력 기준
 
-- render worker는 live catalog pointer가 아니라 capture record에 저장된
+- local dedicated renderer는 live catalog pointer가 아니라 capture record에 저장된
   `activePresetId + activePresetVersion`을 사용한다.
+- host는 dedicated renderer를 임의 executable 경로로 직접 띄우지 않는다.
+  bundle에 포함된 sidecar 이름 `../sidecar/dedicated-renderer/boothy-dedicated-renderer`와
+  승인된 `--protocol`, `--request`, `--result` 인수만 사용한다.
 - runtime bundle loader는 최소 아래 필드를 읽어야 한다.
   - `presetId`
   - `publishedVersion`
@@ -22,16 +25,19 @@
 
 ## Preview 규칙
 
-- first-visible preview 경로는 가능하면 warm 상태를 유지하는 resident worker를 우선 사용하고, per-capture one-shot spawn은 fallback 또는 비교 기준으로만 남긴다.
-- preset 선택 또는 세션 시작 시 preview worker warm-up, preset preload, cache priming을 허용할 수 있지만 capture truth를 막으면 안 된다.
-- resident first-visible worker가 queue saturation, warm-state loss, restart, invalid output에 부딪히면 booth는 false-ready 없이 기존 truthful `Preview Waiting`과 normal render follow-up으로 내려가야 한다.
+- first-visible preview 경로는 booth UX 보호를 위해 별도 lane으로 존재할 수 있지만, preset-applied truthful close의 owner는 host-owned local dedicated renderer다.
+- preset 선택 또는 세션 시작 시 dedicated renderer warm-up, preset preload, cache priming을 허용할 수 있지만 capture truth를 막으면 안 된다.
+- dedicated renderer가 queue saturation, warm-state loss, restart, invalid output에 부딪히면 booth는 false-ready 없이 기존 truthful `Preview Waiting`과 approved fallback path로 내려가야 한다.
+- preview result의 `schemaVersion`, typed `status`, `sessionId`, `requestId`, `captureId`,
+  `diagnosticsDetailPath`, canonical preview output path 검증이 실패하면 host는 이를
+  `protocol-mismatch` 또는 `invalid-output`으로 기록하고 inline truthful fallback을 유지한다.
 - preview render는 `renders/previews/{captureId}.jpg`를 실제로 만든 뒤에만 `previewReady`를 기록한다.
-- 같은 capture의 pending fast preview가 이미 canonical preview path에 있어도, render worker는 그 경로를 same-path preset-applied output으로 직접 교체할 수 있어야 한다.
-- fast preview가 먼저 보였더라도 render worker만이 truthful `previewReady`와 `preview.readyAtMs`를 올릴 수 있다.
-- resident/speculative worker가 같은 capture의 preset-applied preview file을 성공적으로 만들었다면, 그 시점이 곧 truthful `previewReady` close다. 이후 RAW 기반 재렌더는 필수 close owner가 아니다.
+- 같은 capture의 pending first-visible image가 이미 canonical preview path에 있어도, dedicated renderer는 그 경로를 same-path preset-applied output으로 직접 교체할 수 있어야 한다.
+- first-visible image가 먼저 보였더라도 dedicated renderer만이 truthful `previewReady`와 `preview.readyAtMs`를 올릴 수 있다.
+- dedicated renderer가 같은 capture의 preset-applied preview file을 성공적으로 만들었다면, 그 시점이 곧 truthful `previewReady` close다.
 - same-path 교체가 실패하더라도 runtime은 기존 canonical preview를 먼저 잃어버리는 방식으로 downgrade하면 안 된다.
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
-- booth는 render worker가 실제 preset-applied preview를 만들기 전까지 `Preview Waiting`을 유지해야 한다.
+- booth는 dedicated renderer가 실제 preset-applied preview를 만들기 전까지 `Preview Waiting`을 유지해야 한다.
 
 ## Final 규칙
 
@@ -60,4 +66,6 @@
   - `final-render-ready`
   - `final-render-failed`
   - `final-render-queue-saturated`
+- warm-up 결과는 최소 `fallback-suggested`, `warmed-up`, `restarted`, `protocol-mismatch`
+  typed 상태로 남겨 host integration과 seam review에서 구분 가능해야 한다.
 - preview/final failure는 저장된 RAW와 기존 session asset을 보존한 채 bounded failure truth로 기록한다.

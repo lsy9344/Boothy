@@ -44,8 +44,7 @@ use boothy_lib::{
 };
 
 static FAKE_DARKTABLE_SETUP: Once = Once::new();
-static SPECULATIVE_PREVIEW_TEST_MUTEX: LazyLock<Mutex<()>> =
-    LazyLock::new(|| Mutex::new(()));
+static SPECULATIVE_PREVIEW_TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn unique_test_root(test_name: &str) -> PathBuf {
     ensure_fake_darktable_cli();
@@ -64,6 +63,7 @@ fn ensure_fake_darktable_cli() {
             .join("support")
             .join("fake-darktable-cli.cmd");
         std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", script_path);
+        std::env::set_var("BOOTHY_TEST_RENDER_QUEUE_LIMIT", "unbounded");
     });
 }
 
@@ -385,7 +385,7 @@ fn readiness_surfaces_camera_connecting_guidance_when_helper_detects_powered_dev
 #[test]
 fn readiness_stays_blocked_when_helper_truth_is_absent_even_in_runtime_dir() {
     let local_app_data_root = unique_test_root("runtime-probe-localappdata");
-    let base_dir = local_app_data_root.join("com.tauri.dev").join("dabi_shoot");
+    let base_dir = local_app_data_root.join("com.boothy.desktop").join("dabi_shoot");
     let _env_guard = scoped_env_vars(vec![(
         "LOCALAPPDATA",
         Some(std::ffi::OsString::from(local_app_data_root.clone())),
@@ -1962,9 +1962,10 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
     let canonical_preview_path = paths
         .renders_previews_dir
         .join(format!("{}.jpg", result.capture.capture_id));
-    let speculative_output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let speculative_detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -1996,10 +1997,7 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
         initial_capture.timing.xmp_preview_ready_at_ms
     );
     assert!(
-        initial_capture
-            .timing
-            .fast_preview_visible_at_ms
-            .is_some(),
+        initial_capture.timing.fast_preview_visible_at_ms.is_some(),
         "speculative close should preserve first-visible timing"
     );
 
@@ -2045,9 +2043,10 @@ fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fall
         "{}.{}.preview-speculative.lock",
         result.capture.capture_id, result.capture.request_id
     ));
-    let output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -2138,9 +2137,10 @@ fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_c
         "{}.{}.preview-speculative.lock",
         result.capture.capture_id, result.capture.request_id
     ));
-    let output_path = paths
-        .renders_previews_dir
-        .join(format!("{}.preview-speculative.jpg", result.capture.capture_id));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
     let detail_path = paths.renders_previews_dir.join(format!(
         "{}.{}.preview-speculative.detail",
         result.capture.capture_id, result.capture.request_id
@@ -4487,8 +4487,7 @@ fn completed_post_end_uses_handoff_guidance_when_final_handoff_metadata_is_prese
 }
 
 #[test]
-fn handoff_ready_completion_preserves_variant_with_generic_destination_without_destination_metadata(
-) {
+fn completed_post_end_without_handoff_destination_resolves_as_local_deliverable_ready() {
     let base_dir = unique_test_root("handoff-ready-fallback");
     let session = start_session_in_dir(
         &base_dir,
@@ -4540,14 +4539,18 @@ fn handoff_ready_completion_preserves_variant_with_generic_destination_without_d
             session_id: session.session_id.clone(),
         },
     )
-    .expect("handoff-ready completion should resolve with a safe fallback");
+    .expect("completed readiness should resolve");
 
     let post_end = readiness.post_end.expect("completed guidance should exist");
     assert_eq!(post_end.state(), "completed");
-    assert_eq!(post_end.completion_variant(), Some("handoff-ready"));
+    assert_eq!(
+        post_end.completion_variant(),
+        Some("local-deliverable-ready")
+    );
     match post_end {
         SessionPostEnd::Completed(value) => {
-            assert_eq!(value.next_location_label.as_deref(), Some("안내된 곳"));
+            assert_eq!(value.approved_recipient_label, None);
+            assert_eq!(value.next_location_label, None);
             assert_eq!(value.primary_action_label, "안내를 확인해 주세요.");
         }
         _ => panic!("expected completed post-end"),
@@ -4557,7 +4560,7 @@ fn handoff_ready_completion_preserves_variant_with_generic_destination_without_d
 }
 
 #[test]
-fn invalid_existing_handoff_ready_record_is_rebuilt_with_safe_destination_guidance() {
+fn invalid_existing_handoff_ready_record_is_rebuilt_as_local_deliverable_ready() {
     let base_dir = unique_test_root("handoff-ready-invalid-existing");
     let session = start_session_in_dir(
         &base_dir,
@@ -4619,14 +4622,21 @@ fn invalid_existing_handoff_ready_record_is_rebuilt_with_safe_destination_guidan
             session_id: session.session_id.clone(),
         },
     )
-    .expect("handoff-ready completion should be repaired safely");
+    .expect("completed readiness should be repaired safely");
 
     let post_end = readiness.post_end.expect("completed guidance should exist");
-    assert_eq!(post_end.completion_variant(), Some("handoff-ready"));
+    assert_eq!(
+        post_end.completion_variant(),
+        Some("local-deliverable-ready")
+    );
     match post_end {
         SessionPostEnd::Completed(value) => {
-            assert_eq!(value.next_location_label.as_deref(), Some("안내된 곳"));
-            assert_eq!(value.primary_action_label, "안내된 곳으로 이동해 주세요.");
+            assert_eq!(value.approved_recipient_label, None);
+            assert_eq!(value.next_location_label, None);
+            assert_eq!(
+                value.primary_action_label,
+                "안내가 끝났어요. 천천히 이동해 주세요."
+            );
         }
         _ => panic!("expected completed post-end"),
     }
@@ -5081,7 +5091,7 @@ fn ended_readiness_does_not_fall_back_to_preset_missing_after_end() {
 }
 
 #[test]
-fn ended_preview_ready_capture_waits_for_final_render_and_promotes_to_handoff_ready() {
+fn ended_preview_ready_capture_waits_for_final_render_and_promotes_to_local_deliverable_ready() {
     let base_dir = unique_test_root("timing-completed-local");
     let session = start_session_in_dir(
         &base_dir,
@@ -5150,7 +5160,7 @@ fn ended_preview_ready_capture_waits_for_final_render_and_promotes_to_handoff_re
             .post_end
             .as_ref()
             .and_then(|post_end| post_end.completion_variant()),
-        Some("handoff-ready")
+        Some("local-deliverable-ready")
     );
 
     let manifest = read_manifest(&base_dir, &session.session_id);
@@ -5160,7 +5170,7 @@ fn ended_preview_ready_capture_waits_for_final_render_and_promotes_to_handoff_re
             .captures
             .last()
             .map(|latest_capture| latest_capture.post_end_state.as_str()),
-        Some("handoff-ready")
+        Some("local-deliverable-ready")
     );
     assert_eq!(
         manifest

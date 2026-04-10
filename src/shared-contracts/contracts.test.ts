@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -11,6 +14,8 @@ import {
   captureReadinessSnapshotSchema,
   captureRequestResultSchema,
   capabilitySnapshotSchema,
+  dedicatedRendererPreviewJobRequestSchema,
+  dedicatedRendererPreviewJobResultSchema,
   draftPresetEditPayloadSchema,
   draftPresetSummarySchema,
   draftValidationReportSchema,
@@ -32,6 +37,7 @@ import {
   publishValidatedPresetInputSchema,
   publishValidatedPresetResultSchema,
   publishedPresetSummarySchema,
+  publishedPresetBundleSchema,
   sessionManifestSchema,
   sessionCaptureRecordSchema,
   sessionStartInputSchema,
@@ -40,6 +46,30 @@ import {
   validateDraftPresetInputSchema,
   validateDraftPresetResultSchema,
 } from './index'
+
+function readContractFixture(relativePath: string) {
+  const fixturePath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../tests/fixtures/contracts',
+    relativePath,
+  )
+
+  return JSON.parse(
+    readFileSync(fixturePath, 'utf8'),
+  ) as Record<string, unknown>
+}
+
+function readSidecarProtocolFixture(relativePath: string) {
+  const fixturePath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../sidecar/protocol/examples',
+    relativePath,
+  )
+
+  return JSON.parse(
+    readFileSync(fixturePath, 'utf8'),
+  ) as Record<string, unknown>
+}
 
 function createDraftValidationReport(overrides: Record<string, unknown> = {}) {
   return {
@@ -70,7 +100,6 @@ function createDraftPresetSummary(overrides: Record<string, unknown> = {}) {
     draftVersion: 2,
     lifecycleState: 'draft',
     darktableVersion: '5.4.1',
-    darktableProjectPath: 'darktable/soft-glow.dtpreset',
     xmpTemplatePath: 'xmp/soft-glow.xmp',
     previewProfile: {
       profileId: 'preview-standard',
@@ -327,6 +356,148 @@ function createOperatorRecoveryActionResult(overrides: Record<string, unknown> =
 }
 
 describe('shared contracts baseline', () => {
+  it('parses the frozen session manifest fixture shared with Rust contract tests', () => {
+    const parsed = sessionManifestSchema.parse(
+      readContractFixture('session-manifest-v1.json'),
+    )
+
+    expect(parsed.timing?.schemaVersion).toBe('session-timing/v1')
+    expect(parsed.activePreset?.publishedVersion).toBe('2026.04.10')
+    expect(parsed.activePresetId).toBe('preset_soft-glow')
+  })
+
+  it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
+    const parsed = publishedPresetBundleSchema.parse(
+      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
+    )
+
+    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
+    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
+    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
+  })
+
+  it('rejects published preset bundles that escape the bundle root or add unknown fields', () => {
+    const fixture = readContractFixture(
+      'preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json',
+    )
+
+    expect(() =>
+      publishedPresetBundleSchema.parse({
+        ...fixture,
+        xmpTemplatePath: '../outside/template.xmp',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      publishedPresetBundleSchema.parse({
+        ...fixture,
+        preview: {
+          ...(fixture.preview as Record<string, unknown>),
+          assetPath: 'C:/outside/preview.jpg',
+        },
+      }),
+    ).toThrow()
+
+    expect(() =>
+      publishedPresetBundleSchema.parse({
+        ...fixture,
+        unexpectedMetadata: true,
+      }),
+    ).toThrow()
+  })
+
+  it('parses the frozen host error envelope and capability snapshot fixtures', () => {
+    const error = hostErrorEnvelopeSchema.parse(
+      readContractFixture('host-error-envelope-capture-not-ready.json'),
+    )
+    const capabilitySnapshot = capabilitySnapshotSchema.parse(
+      readContractFixture('runtime-capability-authoring-enabled.json'),
+    )
+
+    expect(error.code).toBe('capture-not-ready')
+    expect(error.readiness?.reasonCode).toBe('preview-waiting')
+    expect(capabilitySnapshot.allowedSurfaces).toEqual([
+      'booth',
+      'operator',
+      'authoring',
+      'settings',
+    ])
+  })
+
+  it('keeps helper protocol fixtures parseable as canonical json examples', () => {
+    const cameraStatus = readSidecarProtocolFixture('camera-status.json')
+    const fileArrived = readSidecarProtocolFixture('file-arrived.json')
+    const helperReady = readSidecarProtocolFixture('helper-ready.json')
+    const recoveryStatus = readSidecarProtocolFixture('recovery-status.json')
+    const helperError = readSidecarProtocolFixture('helper-error.json')
+
+    expect(helperReady).toEqual({
+      schemaVersion: 'canon-helper-ready/v1',
+      type: 'helper-ready',
+      helperVersion: '0.1.0',
+      protocolVersion: 'v1',
+      runtimePlatform: 'Windows 11 x64 / .NET 8.0',
+      sdkFamily: 'canon-edsdk',
+      sdkVersion: '13.20.10',
+    })
+    expect(cameraStatus).toEqual({
+      schemaVersion: 'canon-helper-status/v1',
+      type: 'camera-status',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      sequence: 42,
+      observedAt: '2026-04-10T01:00:15Z',
+      cameraState: 'ready',
+      helperState: 'healthy',
+      cameraModel: 'Canon EOS 700D',
+      requestId: null,
+      detailCode: 'camera-ready',
+    })
+    expect(fileArrived).toEqual({
+      schemaVersion: 'canon-helper-file-arrived/v1',
+      type: 'file-arrived',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      requestId: 'request_20260410_001',
+      captureId: 'capture_20260410_001',
+      arrivedAt: '2026-04-10T01:00:18Z',
+      rawPath:
+        'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260410_001.cr3',
+      fastPreviewPath:
+        'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg',
+      fastPreviewKind: 'embedded-jpeg',
+    })
+    expect(recoveryStatus).toEqual({
+      schemaVersion: 'canon-helper-recovery-status/v1',
+      type: 'recovery-status',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      recoveryState: 'recovering',
+      observedAt: '2026-04-10T01:00:17Z',
+      detailCode: 'recovery-reopen-session',
+    })
+    expect(helperError).toEqual({
+      schemaVersion: 'canon-helper-error/v1',
+      type: 'helper-error',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      observedAt: '2026-04-10T01:00:22Z',
+      detailCode: 'capture-download-timeout',
+      message: 'RAW handoff를 기다리다 시간이 초과되었어요.',
+    })
+  })
+
+  it('parses dedicated renderer preview protocol fixtures as frozen capture-bound contracts', () => {
+    const request = dedicatedRendererPreviewJobRequestSchema.parse(
+      readSidecarProtocolFixture('preview-render-request.json'),
+    )
+    const result = dedicatedRendererPreviewJobResultSchema.parse(
+      readSidecarProtocolFixture('preview-render-result.json'),
+    )
+
+    expect(request.captureId).toBe('capture_20260410_001')
+    expect(request.presetId).toBe('preset_soft-glow')
+    expect(request.publishedVersion).toBe('2026.04.10')
+    expect(result.status).toBe('fallback-suggested')
+    expect(result.detailCode).toBe('sidecar-unavailable')
+  })
+
   it('normalizes booth capability access to always include the booth surface', () => {
     const parsed = capabilitySnapshotSchema.parse({
       isAdminAuthenticated: false,
@@ -438,6 +609,41 @@ describe('shared contracts baseline', () => {
     expect(parsed.lifecycle.stage).toBe('capture-ready')
     expect(parsed.catalogRevision).toBe(3)
     expect(parsed.catalogSnapshot).toHaveLength(1)
+  })
+
+  it('rejects manifests where the canonical active preset and legacy mirror drift apart', () => {
+    expect(() =>
+      sessionManifestSchema.parse({
+        schemaVersion: 'session-manifest/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        boothAlias: 'Kim 4821',
+        customer: {
+          name: 'Kim',
+          phoneLastFour: '4821',
+        },
+        createdAt: '2026-03-20T00:00:00.000Z',
+        updatedAt: '2026-03-20T00:00:00.000Z',
+        lifecycle: {
+          status: 'active',
+          stage: 'capture-ready',
+        },
+        catalogRevision: 3,
+        catalogSnapshot: [
+          {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        ],
+        activePreset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.03.20',
+        },
+        activePresetId: 'preset_mono-pop',
+        activePresetDisplayName: 'Soft Glow',
+        captures: [],
+        postEnd: null,
+      }),
+    ).toThrow(/activePresetId/i)
   })
 
   it('requires a completion variant before post-end completed truth can be claimed', () => {
@@ -642,6 +848,25 @@ describe('shared contracts baseline', () => {
     expect(parsed.displayName).toBe('Soft Glow')
   })
 
+  it('accepts a booth-safe published preset summary whose preview asset is an absolute filesystem path', () => {
+    const parsed = publishedPresetSummarySchema.parse({
+      presetId: 'preset_soft-glow',
+      displayName: 'Soft Glow',
+      publishedVersion: '2026.03.20',
+      boothStatus: 'booth-safe',
+      preview: {
+        kind: 'preview-tile',
+        assetPath:
+          'C:/Users/KimYS/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
+        altText: 'Soft Glow sample portrait',
+      },
+    })
+
+    expect(parsed.preview.assetPath).toContain(
+      'preset-catalog/published/preset_soft-glow/2026.03.20/preview.svg',
+    )
+  })
+
   it('rejects preset summaries that do not expose a booth-safe preview asset', () => {
     expect(() =>
       publishedPresetSummarySchema.parse({
@@ -694,7 +919,18 @@ describe('shared contracts baseline', () => {
 
     expect(parsed.lifecycleState).toBe('draft')
     expect(parsed.xmpTemplatePath).toBe('xmp/soft-glow.xmp')
+    expect(parsed.darktableProjectPath).toBeUndefined()
     expect(parsed.validation.status).toBe('not-run')
+  })
+
+  it('keeps legacy draft artifacts with darktable project metadata parseable', () => {
+    const parsed = draftPresetSummarySchema.parse(
+      createDraftPresetSummary({
+        darktableProjectPath: 'darktable/soft-glow.dtpreset',
+      }),
+    )
+
+    expect(parsed.darktableProjectPath).toBe('darktable/soft-glow.dtpreset')
   })
 
   it('rejects lifecycle and validation combinations that cannot both be true', () => {
@@ -770,7 +1006,6 @@ describe('shared contracts baseline', () => {
         displayName: 'Soft Glow Draft',
         lifecycleState: 'approved',
         darktableVersion: '5.4.1',
-        darktableProjectPath: 'darktable/soft-glow.dtpreset',
         xmpTemplatePath: 'xmp/soft-glow.xmp',
         previewProfile: {
           profileId: 'preview-standard',
@@ -1164,6 +1399,17 @@ describe('shared contracts baseline', () => {
         },
       }),
     ).toThrow()
+  })
+
+  it('accepts draft payloads without darktable project metadata', () => {
+    const parsed = draftPresetEditPayloadSchema.parse({
+      ...createDraftPresetSummary({
+        validation: undefined,
+        updatedAt: undefined,
+      }),
+    })
+
+    expect(parsed.darktableProjectPath).toBeUndefined()
   })
 
   it('parses customer-safe readiness snapshots and capture-saved request responses', () => {

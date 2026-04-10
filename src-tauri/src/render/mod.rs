@@ -1,3 +1,5 @@
+pub mod dedicated_renderer;
+
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
@@ -28,6 +30,8 @@ const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 const MAX_IN_FLIGHT_RENDER_JOBS: usize = if cfg!(test) { 64 } else { 2 };
 const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
+#[cfg(test)]
+const TEST_RENDER_QUEUE_LIMIT_ENV: &str = "BOOTHY_TEST_RENDER_QUEUE_LIMIT";
 // The truthful recent-session rail preview does not need the old 512px cap.
 // Keep the render-backed close accurate, but shrink the booth-safe preview
 // artifact so preset-applied replacement lands materially sooner.
@@ -1038,18 +1042,19 @@ fn restore_replaced_output(backup_path: &Path, output_path: &Path) -> Result<(),
 }
 
 fn acquire_render_queue_slot() -> Result<RenderQueueGuard, RenderWorkerError> {
+    let max_in_flight_render_jobs = max_in_flight_render_jobs();
     let mut depth = RENDER_QUEUE_DEPTH.lock().map_err(|_| RenderWorkerError {
         reason_code: "render-queue-unavailable",
         customer_message: "결과 사진을 준비하지 못했어요. 가까운 직원에게 알려 주세요.".into(),
         operator_detail: "render queue mutex를 잠그지 못했어요.".into(),
     })?;
 
-    if *depth >= MAX_IN_FLIGHT_RENDER_JOBS {
+    if *depth >= max_in_flight_render_jobs {
         return Err(RenderWorkerError {
             reason_code: "render-queue-saturated",
             customer_message: "결과 사진을 준비하지 못했어요. 가까운 직원에게 알려 주세요.".into(),
             operator_detail: format!(
-                "bounded render queue가 가득 찼어요. inFlight={}, max={MAX_IN_FLIGHT_RENDER_JOBS}",
+                "bounded render queue가 가득 찼어요. inFlight={}, max={max_in_flight_render_jobs}",
                 *depth
             ),
         });
@@ -1074,11 +1079,12 @@ fn try_acquire_background_render_queue_slot() -> Option<RenderQueueGuard> {
 }
 
 fn try_acquire_resident_preview_render_queue_slot() -> Option<RenderQueueGuard> {
+    let max_in_flight_render_jobs = max_in_flight_render_jobs();
     let Ok(mut depth) = RENDER_QUEUE_DEPTH.lock() else {
         return None;
     };
 
-    if *depth >= MAX_IN_FLIGHT_RENDER_JOBS {
+    if *depth >= max_in_flight_render_jobs {
         return None;
     }
 
@@ -1126,6 +1132,24 @@ fn current_time_ms() -> Result<u64, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "render worker가 시스템 시계를 읽지 못했어요.".to_string())?
         .as_millis() as u64)
+}
+
+fn max_in_flight_render_jobs() -> usize {
+    #[cfg(test)]
+    {
+        if let Ok(value) = std::env::var(TEST_RENDER_QUEUE_LIMIT_ENV) {
+            let normalized = value.trim();
+            if normalized == "0" || normalized.eq_ignore_ascii_case("unbounded") {
+                return usize::MAX;
+            }
+
+            if let Ok(parsed) = normalized.parse::<usize>() {
+                return parsed.max(1);
+            }
+        }
+    }
+
+    MAX_IN_FLIGHT_RENDER_JOBS
 }
 
 fn append_render_event(
@@ -2167,8 +2191,14 @@ mod tests {
     #[test]
     fn fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview() {
         let temp_dir = unique_temp_dir("fast-preview-raster-cap");
-        let output_path = temp_dir.join("renders").join("previews").join("capture_test.jpg");
-        let source_path = temp_dir.join("renders").join("previews").join("capture_test.source.jpg");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.source.jpg");
 
         fs::create_dir_all(
             output_path

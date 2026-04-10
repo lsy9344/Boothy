@@ -2,16 +2,11 @@ import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   AuthoringWorkspaceResult,
-  CatalogStateResult,
-  CatalogStateSummary,
-  CatalogVersionHistoryItem,
-  PublicationAuditRecord,
   DraftPresetEditPayload,
   DraftPresetSummary,
   DraftValidationFinding,
   DraftValidationReport,
   HostErrorEnvelope,
-  RollbackPresetCatalogInput,
 } from '../../shared-contracts'
 import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 import { usePresetAuthoringService } from '../providers/use-preset-authoring-service'
@@ -32,7 +27,6 @@ type ScreenState =
     }
 
 type EditorMode = 'create' | 'edit'
-
 type PublicationFormState = {
   publishedVersion: string
   actorId: string
@@ -40,18 +34,11 @@ type PublicationFormState = {
   reviewNote: string
 }
 
-type RollbackFormState = {
-  targetPublishedVersion: string
-  actorId: string
-  actorLabel: string
-}
-
 const EMPTY_DRAFT_FORM: DraftPresetEditPayload = {
   presetId: 'preset_new-draft',
   displayName: '',
   lifecycleState: 'draft',
   darktableVersion: '5.4.1',
-  darktableProjectPath: 'darktable/project.dtpreset',
   xmpTemplatePath: 'xmp/template.xmp',
   previewProfile: {
     profileId: 'preview-standard',
@@ -97,32 +84,12 @@ function createPublicationFormState(): PublicationFormState {
   }
 }
 
-function createRollbackFormState(
-  summary: CatalogStateSummary | null,
-  previous?: RollbackFormState,
-): RollbackFormState {
-  const defaultTarget =
-    summary?.publishedPresets.find(
-      (preset) => preset.publishedVersion !== summary.livePublishedVersion,
-    )?.publishedVersion ?? ''
-
-  return {
-    targetPublishedVersion:
-      previous?.targetPublishedVersion && previous.targetPublishedVersion.length > 0
-        ? previous.targetPublishedVersion
-        : defaultTarget,
-    actorId: previous?.actorId ?? '',
-    actorLabel: previous?.actorLabel ?? '',
-  }
-}
-
 function mapDraftToForm(draft: DraftPresetSummary): DraftPresetEditPayload {
   return {
     presetId: draft.presetId,
     displayName: draft.displayName,
     lifecycleState: 'draft',
     darktableVersion: draft.darktableVersion,
-    darktableProjectPath: draft.darktableProjectPath,
     xmpTemplatePath: draft.xmpTemplatePath,
     previewProfile: draft.previewProfile,
     finalProfile: draft.finalProfile,
@@ -138,6 +105,10 @@ function isMutableAuthoringLifecycle(
   lifecycleState: DraftPresetSummary['lifecycleState'],
 ) {
   return lifecycleState === 'draft' || lifecycleState === 'validated'
+}
+
+function isValidPublishedVersion(value: string) {
+  return /^\d{4}\.\d{2}\.\d{2}$/.test(value.trim())
 }
 
 function isSameDraftPayload(
@@ -156,6 +127,103 @@ function findDraftById(
   }
 
   return workspace.drafts.find((draft) => draft.presetId === presetId) ?? null
+}
+
+function upsertDraftInWorkspace(
+  workspace: AuthoringWorkspaceResult | null,
+  draft: DraftPresetSummary,
+): AuthoringWorkspaceResult {
+  const currentDrafts = workspace?.drafts ?? []
+  const nextDrafts = [...currentDrafts]
+  const draftIndex = nextDrafts.findIndex((entry) => entry.presetId === draft.presetId)
+
+  if (draftIndex >= 0) {
+    nextDrafts[draftIndex] = draft
+  } else {
+    nextDrafts.unshift(draft)
+  }
+
+  nextDrafts.sort((left, right) => {
+    if (left.updatedAt !== right.updatedAt) {
+      return right.updatedAt.localeCompare(left.updatedAt)
+    }
+
+    if (left.displayName !== right.displayName) {
+      return left.displayName.localeCompare(right.displayName)
+    }
+
+    return left.presetId.localeCompare(right.presetId)
+  })
+
+  return {
+    schemaVersion: workspace?.schemaVersion ?? 'preset-authoring-workspace/v1',
+    supportedLifecycleStates:
+      workspace?.supportedLifecycleStates ?? ['draft', 'validated', 'approved', 'published'],
+    drafts: nextDrafts,
+    invalidDrafts: workspace?.invalidDrafts ?? [],
+  }
+}
+
+function getLifecycleRank(lifecycleState: DraftPresetSummary['lifecycleState']) {
+  switch (lifecycleState) {
+    case 'published':
+      return 3
+    case 'approved':
+      return 2
+    case 'validated':
+      return 1
+    default:
+      return 0
+  }
+}
+
+function isDraftAtLeastAsFresh(
+  candidate: DraftPresetSummary,
+  reference: DraftPresetSummary,
+) {
+  if (candidate.presetId !== reference.presetId) {
+    return false
+  }
+
+  if (candidate.draftVersion !== reference.draftVersion) {
+    return candidate.draftVersion > reference.draftVersion
+  }
+
+  if (candidate.updatedAt !== reference.updatedAt) {
+    return candidate.updatedAt >= reference.updatedAt
+  }
+
+  const candidateValidationCheckedAt =
+    candidate.validation.latestReport?.checkedAt ?? ''
+  const referenceValidationCheckedAt =
+    reference.validation.latestReport?.checkedAt ?? ''
+
+  if (candidateValidationCheckedAt !== referenceValidationCheckedAt) {
+    return candidateValidationCheckedAt >= referenceValidationCheckedAt
+  }
+
+  const candidateLifecycleRank = getLifecycleRank(candidate.lifecycleState)
+  const referenceLifecycleRank = getLifecycleRank(reference.lifecycleState)
+
+  if (candidateLifecycleRank !== referenceLifecycleRank) {
+    return candidateLifecycleRank > referenceLifecycleRank
+  }
+
+  return false
+}
+
+function mergeRefreshedWorkspace(
+  refreshed: AuthoringWorkspaceResult,
+  optimisticDraft: DraftPresetSummary,
+) {
+  const refreshedDraft =
+    refreshed.drafts.find((draft) => draft.presetId === optimisticDraft.presetId) ?? null
+
+  if (refreshedDraft && isDraftAtLeastAsFresh(refreshedDraft, optimisticDraft)) {
+    return refreshed
+  }
+
+  return upsertDraftInWorkspace(refreshed, optimisticDraft)
 }
 
 function normalizeHostMessage(error: unknown) {
@@ -198,12 +266,31 @@ function formatFindingTone(finding: DraftValidationFinding) {
   return finding.severity === 'error' ? '조치 필요' : '참고'
 }
 
-function findLatestPublicationRecord(draft: DraftPresetSummary | null) {
+type PublicationAuditRecord = DraftPresetSummary['publicationHistory'][number]
+
+function findLatestPublicationRecord(
+  draft: DraftPresetSummary | null,
+): PublicationAuditRecord | null {
   if (!draft || draft.publicationHistory.length === 0) {
     return null
   }
 
   return draft.publicationHistory[draft.publicationHistory.length - 1] ?? null
+}
+
+function hasBlockingFollowUpReview(draft: DraftPresetSummary | null) {
+  const latestRecord = findLatestPublicationRecord(draft)
+  const latestValidationCheckedAt = draft?.validation.latestReport?.checkedAt ?? ''
+
+  if (!latestRecord || latestRecord.action !== 'rejected') {
+    return false
+  }
+
+  if (latestValidationCheckedAt.length === 0) {
+    return true
+  }
+
+  return latestRecord.notedAt >= latestValidationCheckedAt
 }
 
 function formatPublicationActionLabel(action: PublicationAuditRecord['action']) {
@@ -212,44 +299,15 @@ function formatPublicationActionLabel(action: PublicationAuditRecord['action']) 
       return '승인 완료'
     case 'published':
       return '게시 완료'
-    case 'rejected':
-      return '게시 거절'
     default:
       return action
   }
-}
-
-function formatPublicationReasonLabel(
-  reasonCode: PublicationAuditRecord['reasonCode'],
-) {
-  switch (reasonCode) {
-    case 'draft-not-validated':
-      return '검증 상태 확인 필요'
-    case 'stale-validation':
-      return '검증 결과가 오래됨'
-    case 'metadata-mismatch':
-      return '승인 메타데이터 불일치'
-    case 'duplicate-version':
-      return '중복 게시 버전'
-    case 'path-escape':
-      return '작업공간 바깥 경로 차단'
-    case 'future-session-only-violation':
-      return 'future-session-only 규칙 위반'
-    default:
-      return null
-  }
-}
-
-function formatCatalogActionLabel(actionType: CatalogVersionHistoryItem['actionType']) {
-  return actionType
 }
 
 export function PresetLibraryScreen() {
   const presetAuthoringService = usePresetAuthoringService()
   const loadRequestVersionRef = useRef(0)
   const [workspace, setWorkspace] = useState<AuthoringWorkspaceResult | null>(null)
-  const [catalogState, setCatalogState] = useState<CatalogStateResult | null>(null)
-  const [rollbackForms, setRollbackForms] = useState<Record<string, RollbackFormState>>({})
   const [mode, setMode] = useState<EditorMode>('create')
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null)
   const [draftForm, setDraftForm] = useState<DraftPresetEditPayload>(EMPTY_DRAFT_FORM)
@@ -274,10 +332,7 @@ export function PresetLibraryScreen() {
       })
 
       try {
-        const [workspaceResult, catalogStateResult] = await Promise.all([
-          presetAuthoringService.loadAuthoringWorkspace(),
-          presetAuthoringService.loadPresetCatalogState(),
-        ])
+        const workspaceResult = await presetAuthoringService.loadAuthoringWorkspace()
 
         if (!active || loadRequestVersionRef.current !== requestVersion) {
           return
@@ -285,15 +340,6 @@ export function PresetLibraryScreen() {
 
         setHostAccessDenied(false)
         setWorkspace(workspaceResult)
-        setCatalogState(catalogStateResult)
-        setRollbackForms((current) =>
-          Object.fromEntries(
-            catalogStateResult.presets.map((summary) => [
-              summary.presetId,
-              createRollbackFormState(summary, current[summary.presetId]),
-            ]),
-          ),
-        )
 
         const firstDraft = workspaceResult.drafts[0] ?? null
 
@@ -326,8 +372,6 @@ export function PresetLibraryScreen() {
         setHostAccessDenied(denied)
         if (denied) {
           setWorkspace(null)
-          setCatalogState(null)
-          setRollbackForms({})
           setSelectedDraftId(null)
           setPublicationForm(createPublicationFormState())
         }
@@ -357,7 +401,9 @@ export function PresetLibraryScreen() {
     (mode === 'create' && !isSameDraftPayload(draftForm, EMPTY_DRAFT_FORM)) ||
     hasUnsavedChanges
   const latestValidation = selectedDraft?.validation.latestReport ?? null
-  const latestPublicationRecord = findLatestPublicationRecord(selectedDraft)
+  const followUpHistory =
+    selectedDraft?.publicationHistory.filter((record) => record.action !== 'rejected') ?? []
+  const blocksNextStepUntilRevalidated = hasBlockingFollowUpReview(selectedDraft)
   const canEditSelectedDraft =
     selectedDraft !== null && isMutableAuthoringLifecycle(selectedDraft.lifecycleState)
   const canEditDraftForm = mode === 'create' || canEditSelectedDraft
@@ -366,12 +412,16 @@ export function PresetLibraryScreen() {
     selectedDraft !== null &&
     selectedDraft.lifecycleState === 'validated' &&
     latestValidation?.status === 'passed' &&
-    !hasUnsavedChanges
+    !hasUnsavedChanges &&
+    !blocksNextStepUntilRevalidated
+  const hasPublicationMetadata =
+    isValidPublishedVersion(publicationForm.publishedVersion) &&
+    publicationForm.actorId.trim() !== '' &&
+    publicationForm.actorLabel.trim() !== ''
   const isBusy =
     screenState.tone === 'loading' ||
     screenState.tone === 'saving' ||
     screenState.tone === 'validating'
-  const hasPublishedCatalogEntries = (catalogState?.presets.length ?? 0) > 0
 
   function updateForm<K extends keyof DraftPresetEditPayload>(
     key: K,
@@ -455,23 +505,6 @@ export function PresetLibraryScreen() {
     setPublicationForm((current) => ({
       ...current,
       [key]: value,
-    }))
-  }
-
-  function updateRollbackForm<K extends keyof RollbackFormState>(
-    presetId: string,
-    key: K,
-    value: RollbackFormState[K],
-  ) {
-    setRollbackForms((current) => ({
-      ...current,
-      [presetId]: {
-        ...createRollbackFormState(
-          catalogState?.presets.find((summary) => summary.presetId === presetId) ?? null,
-          current[presetId],
-        ),
-        [key]: value,
-      },
     }))
   }
 
@@ -591,9 +624,8 @@ export function PresetLibraryScreen() {
       setHostAccessDenied(denied)
       if (denied) {
         setWorkspace(null)
-        setCatalogState(null)
-        setRollbackForms({})
         setSelectedDraftId(null)
+        setPublicationForm(createPublicationFormState())
       }
       setScreenState({
         tone: 'error',
@@ -628,108 +660,44 @@ export function PresetLibraryScreen() {
         mode === 'create'
           ? await presetAuthoringService.createDraftPreset(draftForm)
           : await presetAuthoringService.saveDraftPreset(draftForm)
-      const [refreshedWorkspace, refreshedCatalogState] = await Promise.all([
-        presetAuthoringService.loadAuthoringWorkspace(),
-        presetAuthoringService.loadPresetCatalogState(),
-      ])
 
       setHostAccessDenied(false)
-      setWorkspace(refreshedWorkspace)
-      setCatalogState(refreshedCatalogState)
-      setRollbackForms((current) =>
-        Object.fromEntries(
-          refreshedCatalogState.presets.map((summary) => [
-            summary.presetId,
-            createRollbackFormState(summary, current[summary.presetId]),
-          ]),
-        ),
-      )
+      setWorkspace((current) => upsertDraftInWorkspace(current, savedDraft))
       setMode('edit')
       setSelectedDraftId(savedDraft.presetId)
       setDraftForm(mapDraftToForm(savedDraft))
+      setPublicationForm(createPublicationFormState())
       setScreenState({
         tone: 'success',
         message: `${savedDraft.displayName} draft가 저장되었어요. booth catalog는 계속 unchanged 상태예요.`,
       })
+
+      try {
+        const refreshedWorkspace = await presetAuthoringService.loadAuthoringWorkspace()
+        setHostAccessDenied(false)
+        setWorkspace(mergeRefreshedWorkspace(refreshedWorkspace, savedDraft))
+      } catch (error) {
+        const denied = isCapabilityDenied(error)
+
+        if (denied) {
+          setHostAccessDenied(true)
+          setWorkspace(null)
+          setSelectedDraftId(null)
+          setScreenState({
+            tone: 'error',
+            message: normalizeHostMessage(error),
+          })
+        }
+
+        // Keep the optimistic draft state when the post-save refresh is temporarily unavailable.
+      }
     } catch (error) {
       const denied = isCapabilityDenied(error)
       setHostAccessDenied(denied)
       if (denied) {
         setWorkspace(null)
-        setCatalogState(null)
-        setRollbackForms({})
         setSelectedDraftId(null)
-      }
-      setScreenState({
-        tone: 'error',
-        message: normalizeHostMessage(error),
-      })
-    }
-  }
-
-  async function handlePublishValidatedDraft() {
-    if (isBusy || !selectedDraft || !latestValidation || !canPublishValidatedDraft) {
-      return
-    }
-
-    setScreenState({
-      tone: 'saving',
-      message: '승인 검토를 잠그고 immutable 게시 아티팩트를 만들고 있어요.',
-    })
-
-    try {
-      const result = await presetAuthoringService.publishValidatedPreset({
-        presetId: selectedDraft.presetId,
-        draftVersion: selectedDraft.draftVersion,
-        validationCheckedAt: latestValidation.checkedAt,
-        expectedDisplayName: selectedDraft.displayName,
-        publishedVersion: publicationForm.publishedVersion,
-        actorId: publicationForm.actorId,
-        actorLabel: publicationForm.actorLabel,
-        scope: 'future-sessions-only',
-        reviewNote: publicationForm.reviewNote,
-      })
-      const [refreshedWorkspace, refreshedCatalogState] = await Promise.all([
-        presetAuthoringService.loadAuthoringWorkspace(),
-        presetAuthoringService.loadPresetCatalogState(),
-      ])
-
-      setHostAccessDenied(false)
-      setWorkspace(refreshedWorkspace)
-      setCatalogState(refreshedCatalogState)
-      setRollbackForms((current) =>
-        Object.fromEntries(
-          refreshedCatalogState.presets.map((summary) => [
-            summary.presetId,
-            createRollbackFormState(summary, current[summary.presetId]),
-          ]),
-        ),
-      )
-      setSelectedDraftId(result.draft.presetId)
-      setDraftForm(mapDraftToForm(result.draft))
-      setMode('edit')
-
-      if (result.status === 'published') {
         setPublicationForm(createPublicationFormState())
-        setScreenState({
-          tone: 'success',
-          message: `${result.draft.displayName} 승인 게시가 완료되었어요. 새 버전은 미래 세션 catalog에만 반영되고 현재 세션은 그대로 유지돼요.`,
-        })
-        return
-      }
-
-      setScreenState({
-        tone: 'error',
-        message: result.message,
-      })
-    } catch (error) {
-      const denied = isCapabilityDenied(error)
-      setHostAccessDenied(denied)
-      if (denied) {
-        setWorkspace(null)
-        setCatalogState(null)
-        setRollbackForms({})
-        setSelectedDraftId(null)
       }
       setScreenState({
         tone: 'error',
@@ -769,25 +737,13 @@ export function PresetLibraryScreen() {
       const result = await presetAuthoringService.validateDraftPreset({
         presetId: selectedDraftId,
       })
-      const [refreshedWorkspace, refreshedCatalogState] = await Promise.all([
-        presetAuthoringService.loadAuthoringWorkspace(),
-        presetAuthoringService.loadPresetCatalogState(),
-      ])
 
       setHostAccessDenied(false)
-      setWorkspace(refreshedWorkspace)
-      setCatalogState(refreshedCatalogState)
-      setRollbackForms((current) =>
-        Object.fromEntries(
-          refreshedCatalogState.presets.map((summary) => [
-            summary.presetId,
-            createRollbackFormState(summary, current[summary.presetId]),
-          ]),
-        ),
-      )
+      setWorkspace((current) => upsertDraftInWorkspace(current, result.draft))
       setSelectedDraftId(result.draft.presetId)
       setDraftForm(mapDraftToForm(result.draft))
       setMode('edit')
+      setPublicationForm(createPublicationFormState())
       setScreenState({
         tone: result.report.status === 'passed' ? 'success' : 'error',
         message:
@@ -795,14 +751,33 @@ export function PresetLibraryScreen() {
             ? `${result.draft.displayName} draft가 approval 준비 완료 상태로 전환되었어요. published booth catalog와 active session은 그대로 유지돼요.`
             : `${result.draft.displayName} draft는 아직 draft 상태예요. 아래 수정 가이드를 확인해 주세요.`,
       })
+
+      try {
+        const refreshedWorkspace = await presetAuthoringService.loadAuthoringWorkspace()
+        setHostAccessDenied(false)
+        setWorkspace(mergeRefreshedWorkspace(refreshedWorkspace, result.draft))
+      } catch (error) {
+        const denied = isCapabilityDenied(error)
+
+        if (denied) {
+          setHostAccessDenied(true)
+          setWorkspace(null)
+          setSelectedDraftId(null)
+          setScreenState({
+            tone: 'error',
+            message: normalizeHostMessage(error),
+          })
+        }
+
+        // Keep the optimistic validation result when the post-validate refresh is temporarily unavailable.
+      }
     } catch (error) {
       const denied = isCapabilityDenied(error)
       setHostAccessDenied(denied)
       if (denied) {
         setWorkspace(null)
-        setCatalogState(null)
-        setRollbackForms({})
         setSelectedDraftId(null)
+        setPublicationForm(createPublicationFormState())
       }
       setScreenState({
         tone: 'error',
@@ -811,59 +786,70 @@ export function PresetLibraryScreen() {
     }
   }
 
-  async function handleRollbackPresetCatalog(summary: CatalogStateSummary) {
-    if (isBusy) {
+  async function handlePublishValidatedDraft() {
+    if (isBusy || !selectedDraft || !latestValidation || !canPublishValidatedDraft) {
       return
     }
 
-    const rollbackForm = createRollbackFormState(
-      summary,
-      rollbackForms[summary.presetId],
-    )
-    if (!catalogState || rollbackForm.targetPublishedVersion.length === 0) {
+    if (!hasPublicationMetadata) {
       setScreenState({
         tone: 'error',
-        message: 'rollback target version을 먼저 선택해 주세요.',
+        message: '게시 승인 전에 published version과 승인자 정보를 모두 입력해 주세요.',
       })
       return
     }
 
     setScreenState({
       tone: 'saving',
-      message: '선택한 승인 버전으로 future-session live catalog를 되돌리고 있어요.',
+      message: '승인 검토를 잠그고 immutable 게시 아티팩트를 만들고 있어요.',
     })
 
     try {
-      const result = await presetAuthoringService.rollbackPresetCatalog({
-        presetId: summary.presetId,
-        targetPublishedVersion: rollbackForm.targetPublishedVersion,
-        expectedCatalogRevision: catalogState.catalogRevision,
-        actorId: rollbackForm.actorId,
-        actorLabel: rollbackForm.actorLabel,
-      } satisfies RollbackPresetCatalogInput)
-
-      const [workspaceResult, catalogStateResult] = await Promise.all([
-        presetAuthoringService.loadAuthoringWorkspace(),
-        presetAuthoringService.loadPresetCatalogState(),
-      ])
+      const result = await presetAuthoringService.publishValidatedPreset({
+        presetId: selectedDraft.presetId,
+        draftVersion: selectedDraft.draftVersion,
+        validationCheckedAt: latestValidation.checkedAt,
+        expectedDisplayName: selectedDraft.displayName,
+        publishedVersion: publicationForm.publishedVersion.trim(),
+        actorId: publicationForm.actorId.trim(),
+        actorLabel: publicationForm.actorLabel.trim(),
+        scope: 'future-sessions-only',
+        reviewNote: publicationForm.reviewNote.trim(),
+      })
 
       setHostAccessDenied(false)
-      setWorkspace(workspaceResult)
-      setCatalogState(catalogStateResult)
-      setRollbackForms((current) =>
-        Object.fromEntries(
-          catalogStateResult.presets.map((nextSummary) => [
-            nextSummary.presetId,
-            createRollbackFormState(nextSummary, current[nextSummary.presetId]),
-          ]),
-        ),
-      )
+      setWorkspace((current) => upsertDraftInWorkspace(current, result.draft))
+      setSelectedDraftId(result.draft.presetId)
+      setDraftForm(mapDraftToForm(result.draft))
+      setMode('edit')
 
-      if (result.status === 'rolled-back') {
+      if (result.status === 'published') {
+        setPublicationForm(createPublicationFormState())
         setScreenState({
           tone: 'success',
-          message: result.message,
+          message:
+            `${result.draft.displayName} 승인 게시가 완료되었어요. 새 버전은 미래 세션 catalog에만 반영되고 현재 세션은 그대로 유지돼요.`,
         })
+
+        try {
+          const refreshedWorkspace = await presetAuthoringService.loadAuthoringWorkspace()
+          setHostAccessDenied(false)
+          setWorkspace(mergeRefreshedWorkspace(refreshedWorkspace, result.draft))
+        } catch (error) {
+          const denied = isCapabilityDenied(error)
+
+          if (denied) {
+            setHostAccessDenied(true)
+            setWorkspace(null)
+            setSelectedDraftId(null)
+            setPublicationForm(createPublicationFormState())
+            setScreenState({
+              tone: 'error',
+              message: normalizeHostMessage(error),
+            })
+          }
+        }
+
         return
       }
 
@@ -876,9 +862,8 @@ export function PresetLibraryScreen() {
       setHostAccessDenied(denied)
       if (denied) {
         setWorkspace(null)
-        setCatalogState(null)
-        setRollbackForms({})
         setSelectedDraftId(null)
+        setPublicationForm(createPublicationFormState())
       }
       setScreenState({
         tone: 'error',
@@ -891,7 +876,7 @@ export function PresetLibraryScreen() {
     <SurfaceLayout
       eyebrow="Authoring"
       title="Draft Preset Workspace"
-      description="내부 프리셋 저작 작업공간에서 draft를 준비하고, host 검증 뒤 approval-ready 상태 확인과 승인/게시 검토까지 진행할 수 있어요. 이 단계에서도 booth catalog와 현재 세션 binding은 즉시 바뀌지 않아요."
+      description="내부 프리셋 저작 작업공간에서 draft를 준비하고, host 검증 뒤 future-session용 게시까지 진행할 수 있어요. 이 단계에서도 booth catalog와 현재 세션 binding은 즉시 바뀌지 않아요."
     >
       <section className="authoring-shell">
         <article className="surface-card authoring-card authoring-card--emphasis">
@@ -899,9 +884,9 @@ export function PresetLibraryScreen() {
           <h2>Draft Validation Boundary</h2>
           <p>
             이 화면은 <strong>draft 작성</strong>, <strong>booth compatibility 검증</strong>,
-            <strong>approval 준비 완료 확인</strong>, 그리고 <strong>승인/게시 검토</strong>를
-            함께 다뤄요. 그래도 여기서 실행하는 게시 작업은 진행 중인 booth session과 이미
-            저장된 capture binding을 바꾸지 않고 미래 세션 catalog에만 반영돼요.
+            <strong>approval 준비 완료 확인</strong>, <strong>future-session 게시</strong>
+            까지 다뤄요. 게시를 완료해도 현재 세션과 이미 저장된 capture binding은 그대로
+            유지돼요.
           </p>
           <p className={`authoring-status authoring-status--${screenState.tone}`}>
             {screenState.message}
@@ -1000,168 +985,6 @@ export function PresetLibraryScreen() {
               </div>
             </article>
 
-            <article className="surface-card authoring-card">
-              <div className="authoring-card__header">
-                <div>
-                  <p className="authoring-card__eyebrow">Catalog Versions</p>
-                  <h2>미래 세션 live catalog 관리</h2>
-                </div>
-                {catalogState ? (
-                  <p className="authoring-card__badge">
-                    revision {catalogState.catalogRevision}
-                  </p>
-                ) : null}
-              </div>
-
-              {hasPublishedCatalogEntries ? (
-                <div className="authoring-stack">
-                  {catalogState?.presets.map((summary) => {
-                    const rollbackForm = createRollbackFormState(
-                      summary,
-                      rollbackForms[summary.presetId],
-                    )
-                    const livePreset =
-                      summary.publishedPresets.find(
-                        (preset) =>
-                          preset.publishedVersion === summary.livePublishedVersion,
-                      ) ?? summary.publishedPresets[0]
-                    const rollbackCandidates = summary.publishedPresets.filter(
-                      (preset) =>
-                        preset.publishedVersion !== summary.livePublishedVersion,
-                    )
-
-                    return (
-                      <div key={summary.presetId} className="authoring-validation">
-                        <p className="authoring-validation__summary">
-                          <strong>{livePreset.displayName}</strong>
-                        </p>
-                        <p className="authoring-card__support">
-                          현재 future session live version: {summary.livePublishedVersion}
-                        </p>
-                        <p className="authoring-card__support">
-                          진행 중인 세션은 지금 바인딩된 preset version을 그대로 유지하고, 새로
-                          시작한 세션부터만 이 live catalog를 봐요.
-                        </p>
-
-                        {rollbackCandidates.length > 0 ? (
-                          <>
-                            <div className="authoring-form__group">
-                              <label className="session-start-form__field">
-                                <span className="session-start-form__label">
-                                  Rollback target version
-                                </span>
-                                <select
-                                  className="session-start-form__input"
-                                  value={rollbackForm.targetPublishedVersion}
-                                  onChange={(event) =>
-                                    updateRollbackForm(
-                                      summary.presetId,
-                                      'targetPublishedVersion',
-                                      event.target.value,
-                                    )
-                                  }
-                                  disabled={isBusy}
-                                >
-                                  <option value="">선택해 주세요</option>
-                                  {rollbackCandidates.map((preset) => (
-                                    <option
-                                      key={preset.publishedVersion}
-                                      value={preset.publishedVersion}
-                                    >
-                                      {preset.publishedVersion}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-
-                              <label className="session-start-form__field">
-                                <span className="session-start-form__label">롤백 승인자 ID</span>
-                                <input
-                                  className="session-start-form__input"
-                                  value={rollbackForm.actorId}
-                                  onChange={(event) =>
-                                    updateRollbackForm(
-                                      summary.presetId,
-                                      'actorId',
-                                      event.target.value,
-                                    )
-                                  }
-                                  disabled={isBusy}
-                                />
-                              </label>
-                            </div>
-
-                            <div className="authoring-form__group">
-                              <label className="session-start-form__field">
-                                <span className="session-start-form__label">롤백 승인자 이름</span>
-                                <input
-                                  className="session-start-form__input"
-                                  value={rollbackForm.actorLabel}
-                                  onChange={(event) =>
-                                    updateRollbackForm(
-                                      summary.presetId,
-                                      'actorLabel',
-                                      event.target.value,
-                                    )
-                                  }
-                                  disabled={isBusy}
-                                />
-                              </label>
-                            </div>
-
-                            <div className="authoring-form__actions">
-                              <button
-                                className="surface-card__action surface-card__action--secondary"
-                                type="button"
-                                onClick={() => void handleRollbackPresetCatalog(summary)}
-                                disabled={
-                                  isBusy ||
-                                  rollbackForm.targetPublishedVersion.length === 0
-                                }
-                              >
-                                선택한 버전으로 롤백
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="authoring-card__support">
-                            이 preset은 아직 rollback 가능한 이전 승인 버전이 없어요.
-                          </p>
-                        )}
-
-                        {summary.versionHistory.length > 0 ? (
-                          <ul className="authoring-validation__list">
-                            {summary.versionHistory
-                              .slice()
-                              .reverse()
-                              .map((entry) => (
-                                <li
-                                  key={`${entry.actionType}-${entry.toPublishedVersion}-${entry.happenedAt}`}
-                                  className="authoring-validation__item"
-                                >
-                                  <p className="authoring-validation__meta">
-                                    {formatCatalogActionLabel(entry.actionType)} ·{' '}
-                                    {entry.toPublishedVersion} · {entry.actorLabel}
-                                  </p>
-                                  <p className="authoring-validation__message">
-                                    {entry.happenedAt}
-                                  </p>
-                                </li>
-                              ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <p className="authoring-card__support">
-                  아직 live catalog를 관리할 published preset이 없어요. 승인 게시가 끝나면 여기에서
-                  현재 live version과 rollback 가능한 승인 버전을 함께 볼 수 있어요.
-                </p>
-              )}
-            </article>
-
             <div className="authoring-stack">
               <article className="surface-card authoring-card">
                 <div className="authoring-card__header">
@@ -1226,19 +1049,6 @@ export function PresetLibraryScreen() {
                       />
                     </label>
                   </div>
-
-                  <label className="session-start-form__field">
-                    <span className="session-start-form__label">darktable project 참조</span>
-                    <input
-                      className="session-start-form__input"
-                      name="darktableProjectPath"
-                      value={draftForm.darktableProjectPath}
-                      onChange={(event) =>
-                        updateForm('darktableProjectPath', event.target.value)
-                      }
-                      disabled={isBusy || !canEditDraftForm}
-                    />
-                  </label>
 
                   <div className="authoring-form__group">
                     <label className="session-start-form__field">
@@ -1468,26 +1278,46 @@ export function PresetLibraryScreen() {
                 <div className="authoring-card__header">
                   <div>
                     <p className="authoring-card__eyebrow">Next Step</p>
-                    <h2>승인 및 게시 검토</h2>
+                    <h2>다음 승인 단계 안내</h2>
                   </div>
                   {selectedDraft ? (
                     <p className="authoring-card__badge">
                       {selectedDraft.lifecycleState === 'validated'
-                        ? 'handoff 준비'
+                        ? 'approval 준비 완료'
                         : formatLifecycleLabel(selectedDraft)}
                     </p>
                   ) : null}
                 </div>
 
                 {selectedDraft ? (
-                  <div className="authoring-form">
+                  <div className="authoring-validation">
                     <p className="authoring-card__support">
-                      승인 게시는 future session catalog에만 반영되고, 현재 세션과 이미 저장된
-                      capture binding은 계속 그대로 유지돼요.
+                      validated draft를 미래 세션 catalog에 게시할 수 있지만, 현재 진행 중인
+                      세션과 기존 capture binding은 그대로 유지돼요.
                     </p>
-
-                    {canPublishValidatedDraft ? (
+                    {selectedDraft.lifecycleState === 'approved' ||
+                    selectedDraft.lifecycleState === 'published' ? (
+                      <p className="authoring-card__support">
+                        이 기록은 이미 승인/게시 단계를 지난 상태예요. 이 화면에서는 읽기 전용으로만
+                        확인하고, 후속 수정이 필요하면 새 draft를 만들어 별도 검증 흐름으로 이어가
+                        주세요.
+                      </p>
+                    ) : selectedDraft.lifecycleState !== 'validated' ? (
+                      <p className="authoring-card__support">
+                        다음 승인 단계로 넘기려면 먼저 저장된 draft를 host validation으로 통과시켜
+                        approval 준비 완료 상태를 만들어 주세요.
+                      </p>
+                    ) : hasUnsavedChanges ? (
+                      <p className="authoring-card__support">
+                        저장되지 않은 변경이 있어요. approval 준비 완료 상태를 신뢰하려면 최신
+                        draft를 먼저 저장해 주세요.
+                      </p>
+                    ) : canPublishValidatedDraft ? (
                       <>
+                        <p className="authoring-card__support">
+                          이 draft는 approval 준비 완료 상태예요. 게시 승인을 실행하면 다음 새
+                          세션부터 preset 선택 화면에 나타나요.
+                        </p>
                         <div className="authoring-form__group">
                           <label className="session-start-form__field">
                             <span className="session-start-form__label">Published version</span>
@@ -1500,7 +1330,6 @@ export function PresetLibraryScreen() {
                               disabled={isBusy}
                             />
                           </label>
-
                           <label className="session-start-form__field">
                             <span className="session-start-form__label">승인자 ID</span>
                             <input
@@ -1513,7 +1342,6 @@ export function PresetLibraryScreen() {
                             />
                           </label>
                         </div>
-
                         <div className="authoring-form__group">
                           <label className="session-start-form__field">
                             <span className="session-start-form__label">승인자 이름</span>
@@ -1526,7 +1354,6 @@ export function PresetLibraryScreen() {
                               disabled={isBusy}
                             />
                           </label>
-
                           <label className="session-start-form__field">
                             <span className="session-start-form__label">검토 메모</span>
                             <input
@@ -1539,81 +1366,42 @@ export function PresetLibraryScreen() {
                             />
                           </label>
                         </div>
-
                         <p className="authoring-form__note">
-                          승인 후 host가 {'approved -> published'} 전이를 잠그고 immutable
-                          bundle을 생성해요. 이 작업은 미래 세션 catalog에만 반영돼요.
+                          게시 성공은 future-session catalog에만 반영돼요. 이미 시작된 세션에는
+                          새 preset이 나타나지 않아요.
                         </p>
-
+                        {!hasPublicationMetadata ? (
+                          <p className="authoring-form__note">
+                            게시 승인을 실행하려면 published version과 승인자 정보를 모두 입력해
+                            주세요.
+                          </p>
+                        ) : null}
                         <div className="authoring-form__actions">
                           <button
                             className="surface-card__action"
                             type="button"
-                            onClick={handlePublishValidatedDraft}
-                            disabled={isBusy}
+                            onClick={() => void handlePublishValidatedDraft()}
+                            disabled={isBusy || !canPublishValidatedDraft}
                           >
                             게시 승인 실행
                           </button>
                         </div>
                       </>
-                    ) : selectedDraft.lifecycleState !== 'validated' ? (
-                      selectedDraft.lifecycleState === 'approved' ||
-                      selectedDraft.lifecycleState === 'published' ? (
-                        <p className="authoring-card__support">
-                          이 기록은 이미 승인/게시 단계를 지난 상태예요. 이 화면에서는 읽기 전용으로만
-                          확인하고, 후속 수정이 필요하면 새 draft를 만들어 별도 검증 흐름으로 이어가
-                          주세요.
-                        </p>
-                      ) : (
-                        <p className="authoring-card__support">
-                          승인 게시를 시작하려면 host validation을 통과해 approval-ready 상태를
-                          먼저 만들어 주세요.
-                        </p>
-                      )
-                    ) : hasUnsavedChanges ? (
+                    ) : blocksNextStepUntilRevalidated ? (
                       <p className="authoring-card__support">
-                        저장되지 않은 변경이 있어요. approval-ready 상태를 신뢰하려면 최신 draft를
-                        먼저 저장해 주세요.
+                        후속 승인 단계에서 다시 확인이 필요한 상태예요. 최신 draft를 다시 검토하고
+                        host 검증을 실행한 뒤 다음 단계로 넘겨 주세요.
                       </p>
                     ) : (
                       <p className="authoring-card__support">
-                        이 draft는 approval 준비 완료 상태예요. 승인자 정보와 버전을 확인한 뒤
-                        게시를 실행할 수 있어요.
+                        host 검증을 통과한 draft는 approval 준비 완료 상태를 유지하고, 게시에
+                        필요한 메타데이터를 다시 확인한 뒤 승인 절차를 이어가면 돼요.
                       </p>
                     )}
-
-                    {latestPublicationRecord?.action === 'rejected' ? (
-                      <div className="authoring-validation">
-                        <p className="authoring-validation__summary">
-                          최근 게시 시도는 거절되었어요.
-                          {formatPublicationReasonLabel(latestPublicationRecord.reasonCode)
-                            ? ` ${formatPublicationReasonLabel(latestPublicationRecord.reasonCode)} 사유를 먼저 해결해 주세요.`
-                            : ''}
-                        </p>
-                        <ul className="authoring-validation__list">
-                          <li className="authoring-validation__item authoring-validation__item--error">
-                            <p className="authoring-validation__meta">
-                              게시 거절
-                              {latestPublicationRecord.reasonCode
-                                ? ` · ${latestPublicationRecord.reasonCode}`
-                                : ''}
-                            </p>
-                            <p className="authoring-validation__message">
-                              {screenState.tone === 'error'
-                                ? screenState.message
-                                : '최근 승인 게시 요청이 거절되었어요.'}
-                            </p>
-                            <p className="authoring-validation__guidance">
-                              {latestPublicationRecord.guidance}
-                            </p>
-                          </li>
-                        </ul>
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
                   <p className="authoring-card__support">
-                    승인 게시 검토를 보려면 저장된 draft를 먼저 선택해 주세요.
+                    다음 승인 단계 안내를 보려면 저장된 draft를 먼저 선택해 주세요.
                   </p>
                 )}
               </article>
@@ -1665,8 +1453,9 @@ export function PresetLibraryScreen() {
                         </ul>
                       ) : (
                         <p className="authoring-validation__summary">
-                          필수 booth compatibility rule을 모두 통과했어요. 이번 단계에서는
-                          approval 준비 완료까지만 확인하고 다음 승인 단계로 넘길 수 있어요.
+                          필수 booth compatibility rule을 모두 통과했어요. 이번 화면에서는
+                          approval 준비 완료 상태까지 확인했고, 후속 승인 절차는 다음 단계에서
+                          이어가면 돼요.
                         </p>
                       )}
                     </div>
@@ -1683,54 +1472,41 @@ export function PresetLibraryScreen() {
                 )}
               </article>
 
-              <article className="surface-card authoring-card">
-                <div className="authoring-card__header">
-                  <div>
-                    <p className="authoring-card__eyebrow">Publication History</p>
-                    <h2>승인/게시 이력</h2>
+              {selectedDraft &&
+              (selectedDraft.lifecycleState === 'approved' ||
+                selectedDraft.lifecycleState === 'published') &&
+              followUpHistory.length ? (
+                <article className="surface-card authoring-card">
+                  <div className="authoring-card__header">
+                    <div>
+                      <p className="authoring-card__eyebrow">Follow-up History</p>
+                      <h2>후속 단계 이력</h2>
+                    </div>
+                    <p className="authoring-card__badge">{followUpHistory.length} entries</p>
                   </div>
-                  {selectedDraft ? (
-                    <p className="authoring-card__badge">
-                      {selectedDraft.publicationHistory.length} entries
-                    </p>
-                  ) : null}
-                </div>
 
-                {selectedDraft?.publicationHistory.length ? (
                   <ul className="authoring-validation__list">
-                    {selectedDraft.publicationHistory.map((record) => (
+                    {followUpHistory.map((record) => (
                       <li
                         key={`${record.action}-${record.publishedVersion}-${record.notedAt}`}
-                        className={`authoring-validation__item authoring-validation__item--${
-                          record.action === 'rejected' ? 'error' : 'warning'
-                        }`}
+                        className="authoring-validation__item"
                       >
                         <p className="authoring-validation__meta">
-                          {formatPublicationActionLabel(record.action)} · {record.publishedVersion} ·{' '}
-                          {record.actorLabel}
+                          {formatPublicationActionLabel(record.action)} · {record.publishedVersion}{' '}
+                          · {record.actorLabel}
                         </p>
                         <p className="authoring-validation__message">{record.notedAt}</p>
-                        <p className="authoring-validation__guidance">{record.guidance}</p>
                         {record.reviewNote ? (
                           <p className="authoring-card__support">
                             검토 메모: {record.reviewNote}
                           </p>
                         ) : null}
-                        {formatPublicationReasonLabel(record.reasonCode) ? (
-                          <p className="authoring-card__support">
-                            사유: {formatPublicationReasonLabel(record.reasonCode)}
-                          </p>
-                        ) : null}
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <p className="authoring-card__support">
-                    아직 승인/게시 이력이 없어요. approval-ready draft를 게시하면 여기에서 승인과
-                    게시 경계를 추적할 수 있어요.
-                  </p>
-                )}
-              </article>
+                </article>
+              ) : null}
+
             </div>
           </div>
         )}

@@ -6,8 +6,8 @@ use std::{
 use serde::Deserialize;
 
 use crate::contracts::dto::{
-    is_non_blank, is_valid_preset_id, is_valid_published_version, PresetPreviewAssetDto,
-    PublishedPresetSummaryDto,
+    is_non_blank, is_valid_darktable_version, is_valid_preset_id, is_valid_published_version,
+    PresetPreviewAssetDto, PublishedPresetSummaryDto,
 };
 
 const PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION: &str = "published-preset-bundle/v1";
@@ -32,6 +32,8 @@ pub struct PublishedPresetRuntimeBundle {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct PublishedPresetBundle {
     schema_version: String,
     preset_id: String,
@@ -43,15 +45,26 @@ struct PublishedPresetBundle {
     #[serde(default)]
     darktable_version: Option<String>,
     #[serde(default)]
+    darktable_project_path: Option<String>,
+    #[serde(default)]
     xmp_template_path: Option<String>,
     #[serde(default)]
     preview_profile: Option<BundleRenderProfile>,
     #[serde(default)]
     final_profile: Option<BundleRenderProfile>,
+    #[serde(default)]
+    sample_cut: Option<BundlePreviewAsset>,
+    #[serde(default)]
+    source_draft_version: Option<u32>,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    published_by: Option<PublishedByMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct BundlePreviewAsset {
     kind: String,
     asset_path: String,
@@ -60,10 +73,28 @@ struct BundlePreviewAsset {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct BundleRenderProfile {
     profile_id: String,
     display_name: String,
     output_color_space: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[serde(untagged)]
+enum PublishedByMetadata {
+    Label(String),
+    Actor(PublishedByActorMetadata),
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct PublishedByActorMetadata {
+    actor_id: String,
+    actor_label: String,
 }
 
 pub fn load_published_preset_summary(bundle_dir: &Path) -> Option<PublishedPresetSummaryDto> {
@@ -151,7 +182,7 @@ pub fn load_published_preset_runtime_bundle(
     }
 
     let darktable_version = bundle.darktable_version?;
-    if !is_non_blank(&darktable_version) {
+    if !is_valid_darktable_version(&darktable_version) {
         return None;
     }
 
@@ -233,4 +264,43 @@ fn normalize_render_profile(profile: BundleRenderProfile) -> Option<PublishedPre
         display_name: profile.display_name,
         output_color_space: profile.output_color_space,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PublishedPresetBundle;
+
+    #[test]
+    fn published_bundle_contract_rejects_unknown_top_level_fields() {
+        let json = r#"{
+          "schemaVersion": "published-preset-bundle/v1",
+          "presetId": "preset_soft-glow",
+          "displayName": "Soft Glow",
+          "publishedVersion": "2026.04.10",
+          "lifecycleStatus": "published",
+          "boothStatus": "booth-safe",
+          "darktableVersion": "5.4.1",
+          "xmpTemplatePath": "xmp/template.xmp",
+          "previewProfile": {
+            "profileId": "soft-glow-preview",
+            "displayName": "Soft Glow Preview",
+            "outputColorSpace": "sRGB"
+          },
+          "finalProfile": {
+            "profileId": "soft-glow-final",
+            "displayName": "Soft Glow Final",
+            "outputColorSpace": "sRGB"
+          },
+          "preview": {
+            "kind": "preview-tile",
+            "assetPath": "preview.jpg",
+            "altText": "Soft Glow sample portrait"
+          },
+          "unexpectedMetadata": true
+        }"#;
+
+        let result = serde_json::from_str::<PublishedPresetBundle>(json);
+
+        assert!(result.is_err(), "unknown bundle fields should be rejected");
+    }
 }

@@ -275,6 +275,12 @@ pub fn read_latest_status_message(
         .or_else(|_| serde_json::from_str::<CanonHelperStatusMessage>(last_non_empty_line))
         .map_err(|_| SidecarClientError::InvalidStatus)?;
 
+    if message.schema_version != CANON_HELPER_STATUS_SCHEMA_VERSION
+        || message.message_type.as_deref() != Some("camera-status")
+    {
+        return Err(SidecarClientError::InvalidStatus);
+    }
+
     Ok(Some(message))
 }
 
@@ -360,6 +366,7 @@ pub fn wait_for_capture_round_trip<F>(
     base_dir: &Path,
     session_id: &str,
     request_id: &str,
+    requested_at: &str,
     starting_event_count: usize,
     mut on_fast_preview_ready: F,
 ) -> Result<CompletedCaptureRoundTrip, SidecarClientError>
@@ -469,6 +476,10 @@ where
                         continue;
                     }
 
+                    if helper_error_predates_request(message, requested_at) {
+                        continue;
+                    }
+
                     return if is_retryable_capture_helper_error(message) {
                         Err(SidecarClientError::CaptureTriggerRetryRequired)
                     } else {
@@ -499,7 +510,7 @@ pub fn map_capture_round_trip_error(
 
     match error {
         SidecarClientError::CaptureTriggerRetryRequired => HostErrorEnvelope::capture_not_ready(
-            "초점이 맞지 않았어요. 대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.",
+            "초점이 맞지 않았어요. 대상을 다시 맞추는 동안 잠시 기다려 주세요.",
             crate::contracts::dto::CaptureReadinessDto::capture_retry_required(
                 session_id.to_string(),
                 None,
@@ -544,6 +555,22 @@ pub fn is_retryable_capture_helper_error(message: &CanonHelperErrorMessage) -> b
     }
 }
 
+fn helper_error_predates_request(message: &CanonHelperErrorMessage, requested_at: &str) -> bool {
+    let Some(observed_at) = message.observed_at.as_deref() else {
+        return false;
+    };
+
+    let requested_at = crate::session::session_manifest::rfc3339_to_unix_seconds(requested_at);
+    let observed_at = crate::session::session_manifest::rfc3339_to_unix_seconds(observed_at);
+
+    match (observed_at, requested_at) {
+        (Ok(observed_at_seconds), Ok(requested_at_seconds)) => {
+            observed_at_seconds < requested_at_seconds
+        }
+        _ => false,
+    }
+}
+
 fn is_legacy_focus_failure_message(message: &str) -> bool {
     message.to_ascii_lowercase().contains("0x00008d01")
 }
@@ -579,34 +606,97 @@ fn parse_capture_event(line: &str) -> Result<CanonHelperEvent, SidecarClientErro
         .get("type")
         .and_then(|field| field.as_str())
         .ok_or(SidecarClientError::InvalidEvents)?;
+    let schema_version = value
+        .get("schemaVersion")
+        .and_then(|field| field.as_str())
+        .ok_or(SidecarClientError::InvalidEvents)?;
 
-    match message_type {
-        "capture-accepted" => serde_json::from_value::<CanonHelperCaptureAcceptedMessage>(value)
-            .map(CanonHelperEvent::CaptureAccepted)
-            .map_err(|_| SidecarClientError::InvalidEvents),
-        "fast-thumbnail-attempted" => {
+    match (message_type, schema_version) {
+        ("capture-accepted", CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION) => {
+            serde_json::from_value::<CanonHelperCaptureAcceptedMessage>(value)
+                .map(CanonHelperEvent::CaptureAccepted)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        ("fast-thumbnail-attempted", CANON_HELPER_FAST_THUMBNAIL_ATTEMPTED_SCHEMA_VERSION) => {
             serde_json::from_value::<CanonHelperFastThumbnailAttemptedMessage>(value)
                 .map(CanonHelperEvent::FastThumbnailAttempted)
                 .map_err(|_| SidecarClientError::InvalidEvents)
         }
-        "fast-preview-ready" => serde_json::from_value::<CanonHelperFastPreviewReadyMessage>(value)
-            .map(CanonHelperEvent::FastPreviewReady)
-            .map_err(|_| SidecarClientError::InvalidEvents),
-        "fast-thumbnail-failed" => {
+        ("fast-preview-ready", CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION) => {
+            serde_json::from_value::<CanonHelperFastPreviewReadyMessage>(value)
+                .map(CanonHelperEvent::FastPreviewReady)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        ("fast-thumbnail-failed", CANON_HELPER_FAST_THUMBNAIL_FAILED_SCHEMA_VERSION) => {
             serde_json::from_value::<CanonHelperFastThumbnailFailedMessage>(value)
                 .map(CanonHelperEvent::FastThumbnailFailed)
                 .map_err(|_| SidecarClientError::InvalidEvents)
         }
-        "file-arrived" => serde_json::from_value::<CanonHelperFileArrivedMessage>(value)
-            .map(CanonHelperEvent::FileArrived)
-            .map_err(|_| SidecarClientError::InvalidEvents),
-        "recovery-status" => serde_json::from_value::<CanonHelperRecoveryStatusMessage>(value)
-            .map(CanonHelperEvent::RecoveryStatus)
-            .map_err(|_| SidecarClientError::InvalidEvents),
-        "helper-error" => serde_json::from_value::<CanonHelperErrorMessage>(value)
-            .map(CanonHelperEvent::HelperError)
-            .map_err(|_| SidecarClientError::InvalidEvents),
+        ("file-arrived", CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION) => {
+            serde_json::from_value::<CanonHelperFileArrivedMessage>(value)
+                .map(CanonHelperEvent::FileArrived)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        ("recovery-status", CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION) => {
+            serde_json::from_value::<CanonHelperRecoveryStatusMessage>(value)
+                .map(CanonHelperEvent::RecoveryStatus)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        ("helper-error", CANON_HELPER_ERROR_SCHEMA_VERSION) => {
+            serde_json::from_value::<CanonHelperErrorMessage>(value)
+                .map(CanonHelperEvent::HelperError)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
         _ => Err(SidecarClientError::InvalidEvents),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_capture_event, read_latest_status_message, SidecarClientError,
+        CAMERA_HELPER_STATUS_FILE_NAME,
+    };
+    use crate::session::session_paths::SessionPaths;
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    fn unique_test_root(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("boothy-sidecar-client-{name}-{stamp}"))
+    }
+
+    #[test]
+    fn parse_capture_event_rejects_helper_events_with_mismatched_schema_versions() {
+        let event = r#"{"schemaVersion":"canon-helper-error/v2","type":"helper-error","sessionId":"session_01hs6n1r8b8zc5v4ey2x7b9g1m","detailCode":"capture-download-timeout"}"#;
+
+        let error = parse_capture_event(event)
+            .expect_err("mismatched helper event schemaVersion should be rejected");
+
+        assert!(matches!(error, SidecarClientError::InvalidEvents));
+    }
+
+    #[test]
+    fn read_latest_status_message_rejects_status_with_mismatched_schema_version() {
+        let base_dir = unique_test_root("status-schema-version");
+        let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1m";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
+        fs::write(
+            paths.diagnostics_dir.join(CAMERA_HELPER_STATUS_FILE_NAME),
+            r#"{"schemaVersion":"canon-helper-status/v2","type":"camera-status","sessionId":"session_01hs6n1r8b8zc5v4ey2x7b9g1m","observedAt":"2026-04-10T01:00:15Z","cameraState":"ready","helperState":"healthy"}"#,
+        )
+        .expect("status fixture should write");
+
+        let error = read_latest_status_message(&base_dir, session_id)
+            .expect_err("mismatched status schemaVersion should be rejected");
+
+        assert!(matches!(error, SidecarClientError::InvalidStatus));
+
+        let _ = fs::remove_dir_all(base_dir);
     }
 }
 

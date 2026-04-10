@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "published-preset-bundle/v1",
+  "presetId": "preset_soft-glow",
+  "displayName": "Soft Glow",
+  "publishedVersion": "2026.04.10",
+  "lifecycleStatus": "published",
+  "boothStatus": "booth-safe",
+  "darktableVersion": "5.4.1",
+  "darktableProjectPath": "darktable/soft-glow.dtpreset",
+  "xmpTemplatePath": "xmp/template.xmp",
+  "previewProfile": {
+    "profileId": "soft-glow-preview",
+    "displayName": "Soft Glow Preview",
+    "outputColorSpace": "sRGB"
+  },
+  "finalProfile": {
+    "profileId": "soft-glow-final",
+    "displayName": "Soft Glow Final",
+    "outputColorSpace": "sRGB"
+  },
+  "preview": {
+    "kind": "preview-tile",
+    "assetPath": "preview.jpg",
+    "altText": "Soft Glow sample portrait"
+  },
+  "sourceDraftVersion": 3,
+  "publishedAt": "2026-04-10T01:20:00Z",
+  "publishedBy": "Kim Manager"
+}

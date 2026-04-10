@@ -1,0 +1,419 @@
+diff --git a/.github/workflows/release-windows.yml b/.github/workflows/release-windows.yml
+index f86ba54..3d32cc3 100644
+--- a/.github/workflows/release-windows.yml
++++ b/.github/workflows/release-windows.yml
+@@ -11,7 +11,9 @@ on:
+ 
+ jobs:
+   windows-baseline:
+-    runs-on: windows-latest
++    runs-on: windows-2025
++    env:
++      CI: true
+     steps:
+       - name: Checkout
+         uses: actions/checkout@v4
+@@ -19,7 +21,7 @@ jobs:
+       - name: Setup Node
+         uses: actions/setup-node@v4
+         with:
+-          node-version: 22
++          node-version: 22.12.0
+ 
+       - name: Setup pnpm
+         uses: pnpm/action-setup@v4
+@@ -28,14 +30,85 @@ jobs:
+ 
+       - name: Setup Rust
+         uses: dtolnay/rust-toolchain@stable
++        with:
++          toolchain: 1.77.2
+ 
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+ 
+-      - name: Run desktop baseline build
+-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/')
++      - name: Run unsigned Windows baseline build
++        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/main')
+         run: pnpm build:desktop
+ 
+       - name: Run signing-ready draft build
+         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')
+         run: pnpm release:desktop
++
++      - name: Capture release proof summary
++        if: always()
++        shell: pwsh
++        run: |
++          New-Item -ItemType Directory -Force -Path release-proof | Out-Null
++
++          $artifactRoot = if (Test-Path 'src-tauri/target/release/bundle') {
++            'src-tauri/target/release/bundle/'
++          } elseif (Test-Path 'src-tauri/target/debug/bundle') {
++            'src-tauri/target/debug/bundle/'
++          } else {
++            'bundle-not-produced'
++          }
++
++          $signingMode = if ($env:BOOTHY_WINDOWS_SIGNING_MODE) {
++            $env:BOOTHY_WINDOWS_SIGNING_MODE
++          } else {
++            'unsigned-baseline'
++          }
++
++          $signingSource = if ($env:BOOTHY_WINDOWS_SIGNING_SOURCE) {
++            $env:BOOTHY_WINDOWS_SIGNING_SOURCE
++          } else {
++            'none'
++          }
++
++          $summary = @"
++          ## Windows release proof
++          - Runner baseline: windows-2025
++          - Trigger: ${{ github.event_name }}
++          - Ref: ${{ github.ref }}
++          - Signing mode: $signingMode
++          - Signing source: $signingSource
++          - Artifact root: $artifactRoot
++          - Hardware proof ledger: _bmad-output/implementation-artifacts/hardware-validation-ledger.md
++          "@
++
++          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
++
++          $proof = @{
++            runner = 'windows-2025'
++            trigger = '${{ github.event_name }}'
++            ref = '${{ github.ref }}'
++            signingMode = $signingMode
++            signingSource = $signingSource
++            artifactRoot = $artifactRoot
++            hardwareLedger = '_bmad-output/implementation-artifacts/hardware-validation-ledger.md'
++          } | ConvertTo-Json -Depth 4
++
++          Set-Content -Path 'release-proof/release-proof.json' -Value $proof
++
++      - name: Upload release proof
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: windows-release-proof-${{ github.run_id }}
++          path: release-proof
++          if-no-files-found: error
++
++      - name: Upload Windows bundle outputs
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: windows-bundle-${{ github.run_id }}
++          path: |
++            src-tauri/target/debug/bundle
++            src-tauri/target/release/bundle
++          if-no-files-found: warn
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index bb62e72..78c5985 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-03-20 09:44:49 +09:00
+-# last_updated: 2026-03-28 02:37:25 +09:00
++# last_updated: 2026-04-10 13:48:00 +09:00
+ # project: Boothy
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -35,9 +35,10 @@
+ # - SM typically creates next story after previous one is 'done' to incorporate learnings
+ # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+ # - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
++# - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
+ 
+ generated: "2026-03-20 09:44:49 +09:00"
+-last_updated: "2026-04-04 02:08:56 +09:00"
++last_updated: "2026-04-10 13:48:00 +09:00"
+ project: "Boothy"
+ project_key: "NOKEY"
+ tracking_system: "file-system"
+@@ -46,16 +47,19 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
+ 
+ development_status:
+   epic-1: in-progress
++  1-14-공유-계약-동결과-검증-기준-확정: done
++  1-15-canon-helper-profile과-publication-contract-확정: done
++  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: in-progress
+   1-1-set-up-initial-project-from-starter-template: done
+   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
+   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
+   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
+   1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
+-  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: review
++  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
+   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
+-  1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
++  1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done
+   1-9-fast-preview-handoff와-xmp-preview-교체: review
+-  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: in-progress
++  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: review
+   epic-1-retrospective: optional
+ 
+   epic-2: in-progress
+@@ -63,11 +67,12 @@ development_status:
+   2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
+   2-3-이후-촬영용-활성-프리셋-변경: done
+   2-4-조정된-종료-시각-표시와-경고-종료-알림: done
++  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: backlog
+   epic-2-retrospective: optional
+ 
+   epic-3: in-progress
+   3-1-종료-직후-명시적-사후-상태-진입: done
+-  3-2-export-waiting과-truthful-completion-안내: review
++  3-2-export-waiting과-truthful-completion-안내: done
+   3-3-handoff-ready와-phone-required-보호-안내: done
+   epic-3-retrospective: optional
+ 
+@@ -85,7 +90,6 @@ development_status:
+   5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: review
+   epic-5-retrospective: optional
+ 
+-  epic-6: in-progress
++  epic-6: done
+   6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
+-  6-2-실장비-hardware-validation-gate와-evidence-기반-done-정책: done
+   epic-6-retrospective: optional
+diff --git a/docs/release-baseline.md b/docs/release-baseline.md
+index 65bdf94..962968e 100644
+--- a/docs/release-baseline.md
++++ b/docs/release-baseline.md
+@@ -8,21 +8,21 @@ Boothy keeps an explicit Windows release baseline even before production signing
+ - Node.js 20.19+ or 22.12+
+ - `pnpm` 10.x
+ - Rust 1.77.2+
++- Microsoft Visual Studio C++ Build Tools for the MSVC toolchain
++- Microsoft Edge WebView2 runtime
+ - Signing secrets provided outside the repository through CI secrets or local environment variables only
+ 
+-## Commands
++## Canonical Commands
+ 
+ - `pnpm build:desktop`
++  - Canonical unsigned local proof path
++  - Runs `pnpm tauri build --debug --no-sign`
++  - Intended to prove packaging prerequisites and bundle generation without enabling updater or signing behavior
+ - `pnpm release:desktop`
+-
+-Both commands now exist in `package.json` and wrap the current Vite + Tauri desktop build path.
+-
+-## Release Workflow
+-
+-The draft workflow lives at `.github/workflows/release-windows.yml`.
+-
+-- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path through `pnpm build:desktop`.
+-- `workflow_dispatch` and `boothy-v*` tags run the signing-ready draft release path through `pnpm release:desktop`.
++  - Canonical release-draft proof path
++  - Runs the same frontend build, then validates `BOOTHY_WINDOWS_CERT_*` inputs if they are present
++  - If no signing inputs are present, the command remains an unsigned draft proof
++  - Current baseline keeps this path at input validation only; production signing activation is still operationally gated
+ 
+ ## Signing Inputs
+ 
+@@ -30,19 +30,43 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
+ - `BOOTHY_WINDOWS_CERT_PASSWORD`
+ - Optional: `BOOTHY_WINDOWS_TIMESTAMP_URL`
+ 
+-## Artifact Path
++`release:desktop` and `.github/workflows/release-windows.yml` use the same rules:
++
++- Provide exactly one certificate source: file path or base64 PFX
++- Provide a password whenever a certificate source is provided
++- `BOOTHY_WINDOWS_TIMESTAMP_URL` is recorded as release-proof context only in the current draft baseline
++- Missing signing inputs do not block the unsigned draft proof path
+ 
+-The exact NSIS output path depends on how `tauri build` is invoked (`debug` vs release) and the current Tauri workspace layout, so this document treats the bundle location as build-output-dependent rather than hard-coding a single canonical path.
++## Output Expectations
+ 
+-## Expected Outputs
++- Unsigned local proof output root: `src-tauri/target/debug/bundle/`
++- Release-draft proof output root: `src-tauri/target/release/bundle/`
++- CI proof summary is appended to `GITHUB_STEP_SUMMARY`
++- CI evidence artifact is uploaded from `release-proof/`
+ 
+-- Local unsigned baseline proof: `pnpm build:desktop` completes successfully on Windows and emits a Tauri desktop bundle.
+-- CI signing-ready proof: `.github/workflows/release-windows.yml` runs the draft release build path for manual verification.
+-- Installer naming and signing verification are still manual follow-up checks; the current workflow does not yet enforce an automated identity assertion.
++## Packaging Failure Checklist
++
++If `pnpm build:desktop` or `pnpm release:desktop` fails, check these first:
++
++- Node.js version still matches `20.19+` or `22.12+`
++- `pnpm -v` still reports 10.x
++- `rustc -V` still reports `1.77.2+`
++- MSVC Build Tools and WebView2 runtime are installed on the Windows machine
++- `src-tauri/tauri.conf.json` still keeps `bundle.createUpdaterArtifacts: false`
++- No forced-update or updater activation was introduced outside the rollout contract
++
++## Release Workflow
++
++The draft workflow lives at `.github/workflows/release-windows.yml`.
++
++- The workflow is pinned to `windows-2025` to reduce runner-image drift in release proof evidence.
++- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path through `pnpm build:desktop`.
++- `workflow_dispatch` and `boothy-v*` tags run the canonical draft release path through `pnpm release:desktop`.
++- The workflow uploads a proof artifact and records the automated proof summary in `GITHUB_STEP_SUMMARY`.
+ 
+ ## Release Behavior Guardrails
+ 
+-- The Tauri baseline keeps `createUpdaterArtifacts: false`
++- `src-tauri/tauri.conf.json` keeps `bundle.createUpdaterArtifacts: false`
+ - No updater auto-install path is enabled in this story
+ - Release promotion remains outside the active booth session path
+ - Branch rollout governance applies build and preset-stack baselines only at safe transition points and never force-updates an active customer session
+@@ -57,6 +81,6 @@ The exact NSIS output path depends on how `tauri build` is invoked (`debug` vs r
+ 
+ ## Current State
+ 
+-Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The local and CI signing-ready paths now accept either a materialized certificate path or a base64-encoded PFX supplied through environment variables.
++Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The current baseline keeps `release:desktop` and CI on an unsigned draft proof unless `BOOTHY_WINDOWS_CERT_*` inputs are deliberately supplied for validation.
+ 
+-The repo now also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.
++The repo also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.
+diff --git a/package.json b/package.json
+index da8a8c9..a5e2b10 100644
+--- a/package.json
++++ b/package.json
+@@ -8,10 +8,10 @@
+     "dev:desktop": "pnpm tauri dev",
+     "dev:desktop:stable": "pnpm tauri dev --no-watch",
+     "build": "tsc -b && vite build",
+-    "build:desktop": "pnpm build && pnpm tauri build --debug",
++    "build:desktop": "pnpm build && pnpm tauri build --debug --no-sign",
+     "lint": "eslint .",
+     "preview": "vite preview",
+-    "release:desktop": "pnpm build && pnpm tauri build",
++    "release:desktop": "pnpm build && node scripts/prepare-windows-signing.mjs --allow-unsigned -- pnpm tauri build",
+     "tauri": "tauri",
+     "test": "vitest",
+     "test:run": "vitest run"
+diff --git a/release-baseline.md b/release-baseline.md
+index f1d5ee7..962968e 100644
+--- a/release-baseline.md
++++ b/release-baseline.md
+@@ -8,19 +8,21 @@ Boothy keeps an explicit Windows release baseline even before production signing
+ - Node.js 20.19+ or 22.12+
+ - `pnpm` 10.x
+ - Rust 1.77.2+
++- Microsoft Visual Studio C++ Build Tools for the MSVC toolchain
++- Microsoft Edge WebView2 runtime
+ - Signing secrets provided outside the repository through CI secrets or local environment variables only
+ 
+-## Commands
++## Canonical Commands
+ 
+ - `pnpm build:desktop`
++  - Canonical unsigned local proof path
++  - Runs `pnpm tauri build --debug --no-sign`
++  - Intended to prove packaging prerequisites and bundle generation without enabling updater or signing behavior
+ - `pnpm release:desktop`
+-
+-## Release Workflow
+-
+-The draft workflow lives at `.github/workflows/release-windows.yml`.
+-
+-- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path.
+-- `workflow_dispatch` and `boothy-v*` tags run the signing-ready draft release path.
++  - Canonical release-draft proof path
++  - Runs the same frontend build, then validates `BOOTHY_WINDOWS_CERT_*` inputs if they are present
++  - If no signing inputs are present, the command remains an unsigned draft proof
++  - Current baseline keeps this path at input validation only; production signing activation is still operationally gated
+ 
+ ## Signing Inputs
+ 
+@@ -28,22 +30,57 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
+ - `BOOTHY_WINDOWS_CERT_PASSWORD`
+ - Optional: `BOOTHY_WINDOWS_TIMESTAMP_URL`
+ 
+-## Artifact Path
++`release:desktop` and `.github/workflows/release-windows.yml` use the same rules:
++
++- Provide exactly one certificate source: file path or base64 PFX
++- Provide a password whenever a certificate source is provided
++- `BOOTHY_WINDOWS_TIMESTAMP_URL` is recorded as release-proof context only in the current draft baseline
++- Missing signing inputs do not block the unsigned draft proof path
++
++## Output Expectations
++
++- Unsigned local proof output root: `src-tauri/target/debug/bundle/`
++- Release-draft proof output root: `src-tauri/target/release/bundle/`
++- CI proof summary is appended to `GITHUB_STEP_SUMMARY`
++- CI evidence artifact is uploaded from `release-proof/`
+ 
+-The NSIS installer is expected under `target/release/bundle/nsis` or `src-tauri/target/release/bundle/nsis`, depending on how the build is invoked.
++## Packaging Failure Checklist
+ 
+-## Expected Outputs
++If `pnpm build:desktop` or `pnpm release:desktop` fails, check these first:
+ 
+-- Local unsigned baseline proof: `src-tauri/target/release/bundle/nsis/Boothy_0.1.0_x64-setup.exe`
+-- CI signing-ready proof: draft release created by `.github/workflows/release-windows.yml`
+-- CI identity check: the workflow verifies that the produced installer matches `Boothy_${version}_x64-setup.exe`
++- Node.js version still matches `20.19+` or `22.12+`
++- `pnpm -v` still reports 10.x
++- `rustc -V` still reports `1.77.2+`
++- MSVC Build Tools and WebView2 runtime are installed on the Windows machine
++- `src-tauri/tauri.conf.json` still keeps `bundle.createUpdaterArtifacts: false`
++- No forced-update or updater activation was introduced outside the rollout contract
++
++## Release Workflow
++
++The draft workflow lives at `.github/workflows/release-windows.yml`.
++
++- The workflow is pinned to `windows-2025` to reduce runner-image drift in release proof evidence.
++- Pull requests to `main` and pushes to `main` run the unsigned Windows baseline validation path through `pnpm build:desktop`.
++- `workflow_dispatch` and `boothy-v*` tags run the canonical draft release path through `pnpm release:desktop`.
++- The workflow uploads a proof artifact and records the automated proof summary in `GITHUB_STEP_SUMMARY`.
+ 
+ ## Release Behavior Guardrails
+ 
+-- The Tauri baseline keeps `createUpdaterArtifacts: false`
++- `src-tauri/tauri.conf.json` keeps `bundle.createUpdaterArtifacts: false`
+ - No updater auto-install path is enabled in this story
+ - Release promotion remains outside the active booth session path
++- Branch rollout governance applies build and preset-stack baselines only at safe transition points and never force-updates an active customer session
++
++## Release Truth Gates
++
++- `automated proof` and `hardware proof` are separate release gates.
++- The canonical hardware close record lives in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
++- Automated build/test success can prove implementation readiness, but booth `Ready` / `Completed` truth is not release-claimable until the ledger records `Go`.
++- Any `No-Go`, missing evidence package, or unresolved blocker in the ledger keeps the branch on `release hold`.
++- Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
+ 
+ ## Current State
+ 
+-Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The local and CI signing-ready paths now accept either a materialized certificate path or a base64-encoded PFX supplied through environment variables.
++Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The current baseline keeps `release:desktop` and CI on an unsigned draft proof unless `BOOTHY_WINDOWS_CERT_*` inputs are deliberately supplied for validation.
++
++The repo also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 729152a..7040f88 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -33,6 +33,7 @@
+   },
+   "bundle": {
+     "active": true,
++    "createUpdaterArtifacts": false,
+     "targets": "all",
+     "icon": [
+       "icons/32x32.png",
+diff --git a/tsconfig.app.json b/tsconfig.app.json
+index 20ef633..4ab412e 100644
+--- a/tsconfig.app.json
++++ b/tsconfig.app.json
+@@ -5,7 +5,7 @@
+     "useDefineForClassFields": true,
+     "lib": ["ES2023", "DOM", "DOM.Iterable"],
+     "module": "ESNext",
+-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
++    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"],
+     "skipLibCheck": true,
+ 
+     /* Bundler mode */

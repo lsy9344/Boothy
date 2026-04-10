@@ -1,0 +1,16 @@
+{
+  "code": "capture-not-ready",
+  "message": "사진이 아직 준비되지 않았어요.",
+  "readiness": {
+    "schemaVersion": "capture-readiness/v1",
+    "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+    "surfaceState": "previewWaiting",
+    "customerState": "Preview Waiting",
+    "canCapture": false,
+    "primaryAction": "wait",
+    "customerMessage": "사진이 안전하게 저장되었어요.",
+    "supportMessage": "확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.",
+    "reasonCode": "preview-waiting",
+    "latestCapture": null
+  }
+}

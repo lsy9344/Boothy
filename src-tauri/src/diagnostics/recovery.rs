@@ -22,8 +22,9 @@ use crate::{
     handoff::sync_post_end_state_in_dir,
     session::{
         session_manifest::{
-            current_timestamp, rfc3339_to_unix_seconds, unix_seconds_to_rfc3339, SessionManifest,
-            SessionPostEnd, SESSION_POST_END_PHONE_REQUIRED, WARNING_LEAD_SECONDS,
+            current_timestamp, resolve_warning_lead_seconds, rfc3339_to_unix_seconds,
+            unix_seconds_to_rfc3339, SessionManifest, SessionPostEnd,
+            SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -349,7 +350,8 @@ fn execute_time_extension(
             .saturating_add((APPROVED_EXTENSION_MINUTES as u64) * 60),
     );
     let new_warning_at = unix_seconds_to_rfc3339(
-        rfc3339_to_unix_seconds(&new_adjusted_end_at)?.saturating_sub(WARNING_LEAD_SECONDS),
+        rfc3339_to_unix_seconds(&new_adjusted_end_at)?
+            .saturating_sub(resolve_warning_lead_seconds(cfg!(debug_assertions))),
     );
     let event_timestamp = current_timestamp(SystemTime::now())?;
     let mut next_timing = timing.clone();

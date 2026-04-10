@@ -5,6 +5,9 @@ use std::{
 };
 
 #[cfg(windows)]
+use std::os::windows::fs::symlink_dir;
+
+#[cfg(windows)]
 use std::os::windows::fs::symlink_file;
 
 use boothy_lib::{
@@ -19,14 +22,17 @@ use boothy_lib::{
     preset::{
         authoring_pipeline::{
             create_draft_preset_in_dir, ensure_authoring_window_label,
-            load_authoring_workspace_in_dir, publish_validated_preset_in_dir,
-            repair_invalid_draft_in_dir, resolve_draft_authoring_root, save_draft_preset_in_dir,
-            validate_draft_preset_in_dir,
+            load_authoring_workspace_in_dir, preview_publish_validated_preset_in_dir,
+            publish_validated_preset_in_dir, repair_invalid_draft_in_dir,
+            resolve_draft_authoring_root, save_draft_preset_in_dir, validate_draft_preset_in_dir,
         },
         default_catalog::ensure_default_preset_catalog_in_dir,
         preset_bundle::load_published_preset_runtime_bundle,
         preset_catalog::{load_preset_catalog_in_dir, resolve_published_preset_catalog_dir},
-        preset_catalog_state::{load_preset_catalog_state_in_dir, rollback_preset_catalog_in_dir},
+        preset_catalog_state::{
+            load_preset_catalog_state_in_dir, preview_rollback_preset_catalog_in_dir,
+            rollback_preset_catalog_in_dir,
+        },
     },
     session::{
         session_manifest::SessionManifest,
@@ -450,11 +456,6 @@ fn draft_validation_fails_when_required_artifacts_are_missing() {
         .report
         .findings
         .iter()
-        .any(|finding| finding.rule_code == "darktable-project-missing"));
-    assert!(validation_result
-        .report
-        .findings
-        .iter()
         .any(|finding| finding.rule_code == "xmp-template-missing"));
     assert!(validation_result
         .report
@@ -466,6 +467,71 @@ fn draft_validation_fails_when_required_artifacts_are_missing() {
         .findings
         .iter()
         .any(|finding| finding.rule_code == "sample-cut-missing"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn draft_validation_and_publish_allow_missing_darktable_project_artifacts() {
+    let base_dir = unique_test_root("xmp-only-authoring");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        DraftPresetEditPayloadDto {
+            darktable_project_path: None,
+            ..sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft")
+        },
+    )
+    .expect("draft creation should succeed without darktable project metadata");
+    scaffold_xmp_only_draft_assets(&base_dir, "preset_soft-glow-draft");
+
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should pass with xmp-only artifacts");
+
+    assert_eq!(validation_result.report.status, "passed");
+    assert!(validation_result
+        .report
+        .findings
+        .iter()
+        .all(|finding| finding.rule_code != "darktable-project-missing"));
+
+    let publish_result = publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect("publish should succeed without darktable project metadata");
+
+    match publish_result {
+        PublishValidatedPresetResultDto::Published { bundle_path, .. } => {
+            let bundle_path = PathBuf::from(bundle_path);
+            let bundle_value: serde_json::Value = serde_json::from_slice(
+                &fs::read(bundle_path.join("bundle.json")).expect("bundle should exist"),
+            )
+            .expect("bundle should deserialize");
+            assert!(bundle_value.get("darktableProjectPath").is_none());
+        }
+        PublishValidatedPresetResultDto::Rejected { .. } => {
+            panic!("publish should not be rejected")
+        }
+    }
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -696,6 +762,35 @@ fn authoring_workspace_surfaces_corrupted_drafts_as_repair_needed_entries() {
     assert!(workspace.invalid_drafts[0].message.contains("손상"));
     assert!(workspace.invalid_drafts[0].guidance.contains("새 draft"));
     assert!(workspace.invalid_drafts[0].can_repair);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[cfg(windows)]
+#[test]
+fn authoring_workspace_surfaces_symlinked_draft_dirs_as_manual_inspection_entries() {
+    let base_dir = unique_test_root("workspace-symlink-draft");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    let drafts_root = resolve_draft_authoring_root(&base_dir);
+    let outside_target = base_dir.join("outside-linked-draft");
+    let symlink_dir_path = drafts_root.join("preset_linked-draft");
+
+    fs::create_dir_all(&outside_target).expect("symlink target directory should exist");
+    fs::create_dir_all(&drafts_root).expect("draft root should exist");
+    symlink_dir(&outside_target, &symlink_dir_path).expect("draft symlink should be created");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still load");
+
+    assert!(workspace.drafts.is_empty());
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert_eq!(
+        workspace.invalid_drafts[0].draft_folder,
+        "preset_linked-draft"
+    );
+    assert!(!workspace.invalid_drafts[0].can_repair);
+    assert!(workspace.invalid_drafts[0].message.contains("링크"));
+    assert!(workspace.invalid_drafts[0].guidance.contains("수동 점검"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1031,6 +1126,63 @@ fn validated_draft_publishes_an_immutable_bundle_and_future_sessions_can_select_
         .any(
             |entry| entry.action_type == "published" && entry.to_published_version == "2026.03.26"
         ));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn published_bundle_uses_string_published_by_metadata() {
+    let base_dir = unique_test_root("publish-string-published-by");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_test-look", "Test Look"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_test-look");
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_test-look".into(),
+        },
+    )
+    .expect("validation should pass before publish");
+
+    publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_test-look".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Test Look".into(),
+            published_version: "2026.03.31".into(),
+            actor_id: "noah".into(),
+            actor_label: "Noah".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect("publish should succeed");
+
+    let bundle: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            resolve_published_preset_catalog_dir(&base_dir)
+                .join("preset_test-look")
+                .join("2026.03.31")
+                .join("bundle.json"),
+        )
+        .expect("published bundle should exist"),
+    )
+    .expect("bundle should deserialize");
+
+    assert_eq!(
+        bundle.get("publishedBy"),
+        Some(&serde_json::Value::String("Noah".into()))
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1689,6 +1841,105 @@ fn publication_rejects_metadata_mismatch_and_future_session_scope_violations() {
     let _ = fs::remove_dir_all(base_dir);
 }
 
+#[test]
+fn publication_preview_keeps_host_rejection_reasons_before_stage_unavailable() {
+    let base_dir = unique_test_root("publish-preview-reasons");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_soft-glow-draft");
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should pass before preview checks");
+
+    let metadata_rejection = preview_publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft Renamed".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect("metadata mismatch should still be surfaced");
+    match metadata_rejection {
+        PublishValidatedPresetResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "metadata-mismatch");
+        }
+        PublishValidatedPresetResultDto::Published { .. } => {
+            panic!("metadata mismatch preview should not succeed")
+        }
+    }
+
+    let scope_rejection = preview_publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.27".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "active-session".into(),
+            review_note: None,
+        },
+    )
+    .expect("scope violation should still be surfaced");
+    match scope_rejection {
+        PublishValidatedPresetResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "future-session-only-violation");
+        }
+        PublishValidatedPresetResultDto::Published { .. } => {
+            panic!("scope violation preview should not succeed")
+        }
+    }
+
+    let stage_rejection = preview_publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.28".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect("valid publish preview should stop at the stage boundary");
+    match stage_rejection {
+        PublishValidatedPresetResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "stage-unavailable");
+        }
+        PublishValidatedPresetResultDto::Published { .. } => {
+            panic!("stage-limited preview should not publish")
+        }
+    }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
 #[cfg(windows)]
 #[test]
 fn publication_rejects_workspace_symlink_escapes_without_creating_a_bundle() {
@@ -1754,13 +2005,107 @@ fn publication_rejects_workspace_symlink_escapes_without_creating_a_bundle() {
     let _ = fs::remove_dir_all(base_dir);
 }
 
+#[test]
+fn rollback_preview_keeps_catalog_rejection_reasons_before_stage_unavailable() {
+    let base_dir = unique_test_root("rollback-preview-reasons");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.20", "Soft Glow");
+    create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.21", "Soft Glow");
+    let active_session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("active session should start");
+    select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: active_session.session_id,
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.21".into(),
+        },
+    )
+    .expect("current live version should be selected");
+    let catalog_state = load_preset_catalog_state_in_dir(&base_dir, &capability_snapshot)
+        .expect("catalog state should be readable");
+
+    let stale_rejection = preview_rollback_preset_catalog_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RollbackPresetCatalogInputDto {
+            preset_id: "preset_soft-glow".into(),
+            target_published_version: "2026.03.20".into(),
+            expected_catalog_revision: catalog_state.catalog_revision + 1,
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+        },
+    )
+    .expect("stale revision should still be surfaced");
+    match stale_rejection {
+        RollbackPresetCatalogResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "stale-catalog-revision");
+        }
+        RollbackPresetCatalogResultDto::RolledBack { .. } => {
+            panic!("stale revision preview should not succeed")
+        }
+    }
+
+    let missing_rejection = preview_rollback_preset_catalog_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RollbackPresetCatalogInputDto {
+            preset_id: "preset_missing".into(),
+            target_published_version: "2026.03.20".into(),
+            expected_catalog_revision: catalog_state.catalog_revision,
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+        },
+    )
+    .expect("missing target should still be surfaced");
+    match missing_rejection {
+        RollbackPresetCatalogResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "target-missing");
+        }
+        RollbackPresetCatalogResultDto::RolledBack { .. } => {
+            panic!("missing target preview should not succeed")
+        }
+    }
+
+    let stage_rejection = preview_rollback_preset_catalog_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        RollbackPresetCatalogInputDto {
+            preset_id: "preset_soft-glow".into(),
+            target_published_version: "2026.03.20".into(),
+            expected_catalog_revision: catalog_state.catalog_revision,
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+        },
+    )
+    .expect("valid rollback preview should stop at the stage boundary");
+    match stage_rejection {
+        RollbackPresetCatalogResultDto::Rejected { reason_code, .. } => {
+            assert_eq!(reason_code, "stage-unavailable");
+        }
+        RollbackPresetCatalogResultDto::RolledBack { .. } => {
+            panic!("stage-limited rollback preview should not succeed")
+        }
+    }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
 fn sample_draft_payload(preset_id: &str, display_name: &str) -> DraftPresetEditPayloadDto {
     DraftPresetEditPayloadDto {
         preset_id: preset_id.into(),
         display_name: display_name.into(),
         lifecycle_state: "draft".into(),
         darktable_version: "5.4.1".into(),
-        darktable_project_path: "darktable/soft-glow.dtpreset".into(),
+        darktable_project_path: Some("darktable/soft-glow.dtpreset".into()),
         xmp_template_path: "xmp/soft-glow.xmp".into(),
         preview_profile: render_profile("preview-standard", "Preview Standard"),
         final_profile: render_profile("final-standard", "Final Standard"),
@@ -1799,6 +2144,21 @@ fn scaffold_valid_draft_assets(base_dir: &Path, preset_id: &str) {
     fs::create_dir_all(draft_root.join("samples")).expect("sample directory should exist");
     fs::write(draft_root.join("darktable/soft-glow.dtpreset"), "project")
         .expect("project should write");
+    fs::write(
+        draft_root.join("xmp/soft-glow.xmp"),
+        "<darktable><history><item operation=\"exposure\"></item></history></darktable>",
+    )
+    .expect("xmp should write");
+    fs::write(draft_root.join("previews/soft-glow.jpg"), "preview").expect("preview should write");
+    fs::write(draft_root.join("samples/soft-glow-cut.jpg"), "sample").expect("sample should write");
+}
+
+fn scaffold_xmp_only_draft_assets(base_dir: &Path, preset_id: &str) {
+    let draft_root = resolve_draft_authoring_root(base_dir).join(preset_id);
+
+    fs::create_dir_all(draft_root.join("xmp")).expect("xmp directory should exist");
+    fs::create_dir_all(draft_root.join("previews")).expect("preview directory should exist");
+    fs::create_dir_all(draft_root.join("samples")).expect("sample directory should exist");
     fs::write(
         draft_root.join("xmp/soft-glow.xmp"),
         "<darktable><history><item operation=\"exposure\"></item></history></darktable>",

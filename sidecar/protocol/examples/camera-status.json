@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "canon-helper-status/v1",
+  "type": "camera-status",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "sequence": 42,
+  "observedAt": "2026-04-10T01:00:15Z",
+  "cameraState": "ready",
+  "helperState": "healthy",
+  "cameraModel": "Canon EOS 700D",
+  "requestId": null,
+  "detailCode": "camera-ready"
+}

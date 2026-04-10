@@ -13,6 +13,7 @@ import type { SessionStateContextValue } from '../../session-domain/state/sessio
 import { SessionStateContext } from '../../session-domain/state/session-context'
 import { DEFAULT_SESSION_DRAFT } from '../../session-domain/state/session-draft'
 import { CaptureScreen } from './CaptureScreen'
+import { shouldShowFocusRetryOverlay } from './focusRetryOverlay'
 
 const { playTimingCueMock } = vi.hoisted(() => ({
   playTimingCueMock: vi.fn().mockResolvedValue(undefined),
@@ -267,6 +268,54 @@ function renderCaptureScreen(
 }
 
 describe('CaptureScreen', () => {
+  it('triggers the focus overlay only once when retry readiness lands as a capture request ends', () => {
+    expect(
+      shouldShowFocusRetryOverlay({
+        previousReasonCode: 'ready',
+        nextReasonCode: 'capture-retry-required',
+        wasRequestingCapture: true,
+        isRequestingCapture: false,
+        alreadyShownForCurrentRequest: false,
+      }),
+    ).toEqual({
+      shouldShow: true,
+      markShownForCurrentRequest: true,
+      resetShownForCurrentRequest: false,
+    })
+  })
+
+  it('does not re-trigger the focus overlay for the same retry failure after it was already shown', () => {
+    expect(
+      shouldShowFocusRetryOverlay({
+        previousReasonCode: 'capture-retry-required',
+        nextReasonCode: 'capture-retry-required',
+        wasRequestingCapture: true,
+        isRequestingCapture: false,
+        alreadyShownForCurrentRequest: true,
+      }),
+    ).toEqual({
+      shouldShow: false,
+      markShownForCurrentRequest: false,
+      resetShownForCurrentRequest: false,
+    })
+  })
+
+  it('does not restart the focus overlay when the current request already showed the retry guidance', () => {
+    expect(
+      shouldShowFocusRetryOverlay({
+        previousReasonCode: 'ready',
+        nextReasonCode: 'capture-retry-required',
+        wasRequestingCapture: true,
+        isRequestingCapture: false,
+        alreadyShownForCurrentRequest: true,
+      }),
+    ).toEqual({
+      shouldShow: false,
+      markShownForCurrentRequest: false,
+      resetShownForCurrentRequest: false,
+    })
+  })
+
   it('shows the adjusted end time as soon as the capture flow opens', async () => {
     renderCaptureScreen()
 
@@ -400,7 +449,7 @@ describe('CaptureScreen', () => {
           canCapture: false,
           primaryAction: 'wait',
           customerMessage: '초점이 맞지 않았어요.',
-          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
           reasonCode: 'capture-retry-required',
           latestCapture: null,
         },
@@ -411,7 +460,7 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { level: 1, name: /초점이 맞지 않았어요\./i }),
     ).toBeInTheDocument()
     expect(
-      screen.getAllByText(/^대상을 다시 맞춘 뒤 한 번 더 찍어 주세요\.$/),
+      screen.getAllByText(/^대상을 다시 맞추는 동안 잠시 기다려 주세요\.$/),
     ).not.toHaveLength(0)
     expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
   })
@@ -431,7 +480,7 @@ describe('CaptureScreen', () => {
             canCapture: false,
             primaryAction: 'wait',
             customerMessage: '초점이 맞지 않았어요.',
-            supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+            supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
             reasonCode: 'capture-retry-required',
             latestCapture: null,
           },
@@ -441,7 +490,7 @@ describe('CaptureScreen', () => {
       await Promise.resolve()
       const popup = screen.getByRole('alert')
       expect(popup).toHaveTextContent('초점이 맞지 않았어요.')
-      expect(popup).toHaveTextContent('대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.')
+      expect(popup).toHaveTextContent('대상을 다시 맞추는 동안 잠시 기다려 주세요.')
       expect(popup).toHaveClass('focus-retry-overlay--dismissing')
 
       await act(async () => {
@@ -453,6 +502,146 @@ describe('CaptureScreen', () => {
         await vi.advanceTimersByTimeAsync(600)
       })
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not remount the focus popup multiple times for one retry failure lifecycle', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const retryReadiness: CaptureReadinessSnapshot = {
+        schemaVersion: 'capture-readiness/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        surfaceState: 'blocked',
+        customerState: 'Preparing',
+        canCapture: false,
+        primaryAction: 'wait',
+        customerMessage: '초점이 맞지 않았어요.',
+        supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
+        reasonCode: 'capture-retry-required',
+        latestCapture: null,
+        postEnd: null,
+        timing: createTimingSnapshot(),
+      }
+
+      function SingleRetryHarness() {
+        const [isRequestingCapture, setIsRequestingCapture] = useState(false)
+        const [captureReadiness, setCaptureReadiness] =
+          useState<CaptureReadinessSnapshot>({
+            schemaVersion: 'capture-readiness/v1',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            surfaceState: 'captureReady',
+            customerState: 'Ready',
+            canCapture: true,
+            primaryAction: 'capture',
+            customerMessage: '지금 촬영할 수 있어요.',
+            supportMessage: '버튼을 누르면 바로 시작돼요.',
+            reasonCode: 'ready',
+            latestCapture: null,
+            postEnd: null,
+            timing: createTimingSnapshot(),
+          })
+
+        const requestCapture = async () => {
+          setIsRequestingCapture(true)
+          await Promise.resolve()
+          setCaptureReadiness(retryReadiness)
+          setIsRequestingCapture(false)
+          throw {
+            code: 'capture-not-ready',
+            message: '초점이 맞지 않았어요.',
+            readiness: retryReadiness,
+          }
+        }
+
+        const value: SessionStateContextValue = {
+          isStarting: false,
+          isLoadingPresetCatalog: false,
+          isSelectingPreset: false,
+          isLoadingCaptureReadiness: false,
+          isDeletingCapture: false,
+          isRequestingCapture,
+          sessionDraft: {
+            ...DEFAULT_SESSION_DRAFT,
+            flowStep: 'capture',
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            boothAlias: 'Kim 4821',
+            selectedPreset: {
+              presetId: 'preset_soft-glow',
+              publishedVersion: '2026.03.20',
+            },
+            presetCatalog: [
+              {
+                presetId: 'preset_soft-glow',
+                displayName: 'Soft Glow',
+                publishedVersion: '2026.03.20',
+                boothStatus: 'booth-safe',
+                preview: {
+                  kind: 'preview-tile',
+                  assetPath: 'published/preset_soft-glow/2026.03.20/preview.jpg',
+                  altText: 'Soft Glow preview',
+                },
+              },
+            ],
+            captureReadiness,
+            manifest: {
+              schemaVersion: 'session-manifest/v1',
+              sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+              boothAlias: 'Kim 4821',
+              customer: {
+                name: 'Kim',
+                phoneLastFour: '4821',
+              },
+              createdAt: '2026-03-20T00:00:00.000Z',
+              updatedAt: '2026-03-20T00:00:00.000Z',
+              lifecycle: {
+                status: 'active',
+                stage: 'preset-selected',
+              },
+              activePreset: {
+                presetId: 'preset_soft-glow',
+                publishedVersion: '2026.03.20',
+              },
+              activePresetDisplayName: 'Soft Glow',
+              activePresetId: 'preset_soft-glow',
+              captures: [],
+              timing: createTimingSnapshot(),
+              postEnd: null,
+            },
+          },
+          startSession: vi.fn(),
+          beginPresetSwitch: vi.fn(),
+          cancelPresetSwitch: vi.fn(),
+          loadPresetCatalog: vi.fn(),
+          selectActivePreset: vi.fn(),
+          getCaptureReadiness: vi.fn(),
+          deleteCapture: vi.fn(),
+          requestCapture,
+        }
+
+        return (
+          <SessionStateContext.Provider value={value}>
+            <CaptureScreen />
+          </SessionStateContext.Provider>
+        )
+      }
+
+      render(<SingleRetryHarness />)
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /사진 찍기/i }))
+        await Promise.resolve()
+      })
+
+      const popup = screen.getByRole('alert')
+
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('alert')).toBe(popup)
     } finally {
       vi.useRealTimers()
     }
@@ -473,7 +662,7 @@ describe('CaptureScreen', () => {
           canCapture: false,
           primaryAction: 'wait',
           customerMessage: '초점이 맞지 않았어요.',
-          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
           reasonCode: 'capture-retry-required',
           latestCapture: null,
         },
@@ -522,7 +711,7 @@ describe('CaptureScreen', () => {
           canCapture: false,
           primaryAction: 'wait',
           customerMessage: '초점이 맞지 않았어요.',
-          supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+          supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
           reasonCode: 'capture-retry-required',
           latestCapture: null,
         },
@@ -586,7 +775,7 @@ describe('CaptureScreen', () => {
         canCapture: false,
         primaryAction: 'wait',
         customerMessage: '초점이 맞지 않았어요.',
-        supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+        supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
         reasonCode: 'capture-retry-required',
         latestCapture: null,
         postEnd: null,
@@ -1477,8 +1666,11 @@ describe('CaptureScreen', () => {
       </SessionStateContext.Provider>,
     )
 
-    expect(await screen.findByText(/곧 종료돼요/i)).toBeInTheDocument()
-    expect(screen.getByText(/종료 5분 전이에요\./i)).toBeInTheDocument()
+    expect(await screen.findAllByText(/곧 종료돼요/i)).toHaveLength(2)
+    expect(
+      screen.getByRole('heading', { level: 1, name: /종료가 얼마 남지 않았어요\./i }),
+    ).toBeInTheDocument()
+    expect(screen.getAllByText(/종료가 얼마 남지 않았어요\./i)).toHaveLength(2)
     expect(playTimingCueMock).toHaveBeenCalledTimes(1)
     expect(playTimingCueMock).toHaveBeenCalledWith('warning')
 

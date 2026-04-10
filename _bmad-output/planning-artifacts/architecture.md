@@ -11,6 +11,7 @@ stepsCompleted:
 inputDocuments:
   - '_bmad-output/planning-artifacts/prd.md'
   - '_bmad-output/planning-artifacts/ux-design-specification.md'
+  - '_bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md'
   - '_bmad-output/planning-artifacts/prd-validation-report-20260320-015539.md'
   - 'docs/release-baseline.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
@@ -19,10 +20,10 @@ workflowType: 'architecture'
 documentType: 'architecture-decision-document'
 project_name: 'Boothy'
 user_name: 'Noah Lee'
-date: '2026-03-20'
+date: '2026-04-10'
 lastStep: 8
-status: 'complete'
-completedAt: '2026-03-20'
+status: 'complete-updated-for-preview-architecture-decision'
+completedAt: '2026-04-10'
 ---
 
 # Architecture Decision Document
@@ -33,6 +34,7 @@ This document defines the implementation-shaping technical decisions for Boothy 
 
 - [Product requirements document](./prd.md)
 - [UX design specification](./ux-design-specification.md)
+- [Preset-applied preview architecture research](./research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md)
 - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
 - [Darktable reference](../../reference/darktable/README.md)
 
@@ -218,7 +220,7 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 | Darktable capability or module | Decision | Rust host and booth-safe pipeline mapping | Surface and boundary mapping |
 | --- | --- | --- | --- |
 | XMP sidecar plus history stack | Adopt | The preset manifest stores `xmpTemplatePath`, `darktableVersion`, preview/final profiles, and render policies as the authoritative preset artifact. The Rust host validates that artifact, then records `raw`, `preview`, `final`, and render status separately in the session manifest. | Authoring exports approved XMP-backed presets. Customers never see history stacks or XMP. Operators see preset version, publish status, and render status only. |
-| `darktable-cli` headless apply | Adopt | A dedicated Rust render worker invokes `darktable-cli` after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied output even when a fast same-capture preview appeared earlier. | Authoring publishes artifacts that the worker consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, fast-preview miss, and failure diagnostics. |
+| `darktable-cli` headless apply | Adopt | The approved direction is a host-owned local dedicated renderer lane that invokes the darktable truth path after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied truthful close even when a same-capture first-visible image appeared earlier. | Authoring publishes artifacts that the renderer consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, saturation, and failure diagnostics. |
 | Core look modules: `input color profile`, `exposure`, `filmic rgb`, `color balance rgb`, `diffuse or sharpen`, and denoise modules | Adopt | Module parameters stay opaque inside approved XMP artifacts; the Rust host does not reinterpret individual slider semantics. Preview and final profiles may diverge on detail/noise policy, but both remain pinned to the same approved preset version. | Authoring uses these modules to craft and review looks. Booth customers choose preset names/previews only. Operators manage publish/rollback, not per-session grading. |
 | Geometry and optical correction: `lens correction`, `orientation`, `crop`, and `rotate and perspective` | Adopt with bounded use | These are allowed only when baked into an approved preset artifact or a host-owned normalization policy. The pipeline applies them deterministically during render and never exposes ad hoc per-session edits. | Authoring may use them to normalize lens/body output and framing. Customers never adjust geometry. Operators may inspect the active preset version but do not get live booth-floor geometry controls. |
 | Styles and `.dtstyle` | Emulate for publication UX, exclude as runtime truth | Runtime apply never depends on style names or a shared darktable `data.db`. If a style is used during authoring convenience, it must be converted into an approved XMP-backed preset artifact before publication. | Authoring may offer style-like duplication/import/export workflows. Customers and booth operators select published Boothy presets, not raw darktable styles. |
@@ -236,8 +238,9 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
 - **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The host may promote an approved same-capture first-visible image into the session's canonical preview path before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker.
-- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement produced from the capture-bound published preset artifact.
+- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The approved next structure is `local dedicated renderer + different close topology`, where the host owns one local dedicated renderer lane for preset-applied close and may still promote an approved same-capture first-visible image into the canonical preview path earlier.
+- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later preset-applied truthful close produced from the capture-bound published preset artifact by the host-owned dedicated renderer lane.
+- **Alternative-path rule:** `edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge` and `lighter truthful renderer` are not the default booth architecture.
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
 - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
 - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
@@ -267,7 +270,7 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
 - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
-- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later render-backed output still replaces it at the same canonical path and only then advances `previewReady`.
+- **Preset/render core rule:** The host-owned local dedicated renderer lane executes approved darktable-backed preset artifacts through `darktable-cli` or the same approved darktable truth path; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. If an early same-capture image was already promoted, the later preset-applied truthful output still replaces it at the same canonical path and only then advances `previewReady`.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
 - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
 - **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
@@ -331,7 +334,7 @@ flowchart TB
 
 ### Deployment Responsibilities
 
-- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and render worker.
+- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and the host-owned local dedicated renderer lane.
 - Authoring-enabled machines create and publish new preset artifacts without mutating booth sessions already in progress.
 - The preset artifact catalog is the only approved bridge between internal authoring and future booth sessions.
 - Rollout and rollback act on approved app builds plus approved preset stacks, and they must preserve active-session compatibility.
@@ -808,7 +811,8 @@ boothy/
 - Sidecar bundled during desktop packaging
 
 **Release packaging:**
-- GitHub Actions builds signing-ready Windows installers
+- GitHub Actions keeps one Windows release-proof lane: unsigned baseline validation on PR/main, draft release proof only from `main` manual dispatch or `boothy-v*` tags
+- Release proof summaries must record proof path/outcome plus hardware-gate-based promotion state so automated evidence cannot be mistaken for release close
 - Branch rollout and rollback artifacts remain compatible with the local config and session data model
 
 ## Closed Contract Freeze Baseline
@@ -818,16 +822,17 @@ The architecture is now ready to support regenerated implementation stories agai
 - Session manifest contract: exact `session.json` schema including capture correlation IDs, preset version references, raw/preview/final fields, render-status correlation, and post-end state fields.
 - Preset bundle contract: immutable published preset artifact schema including approved compatibility metadata, preview/final render profiles, rollback-safe identifiers, and catalog-facing metadata required for future-session publication only.
 - Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery, with booth `Ready` and operator `카메라 연결 상태` both derived from the same host-normalized camera/helper truth.
+- Shared contract freeze scope: Story 1.14 owns the authoritative session/preset/error/capability/protocol baseline, Story 1.15 owns deeper Canon helper and publication detail, and Story 1.16 owns build/release proof including CI proof boundaries, signing-input normalization, and hardware-gated promotion semantics.
 - Canon helper implementation profile: the chosen Windows-only Canon EDSDK helper packaging, ownership split, diagnostics expectations, and recovery semantics that refine the generic sidecar contract for the current product decision.
 - Authoring publication contract: required publication payload fields, approval-state transitions, immutable published artifact requirements, audit metadata, and future-session-only application rules.
 - Release runbooks, fixture naming conventions, and sample datasets may continue to expand, but they no longer block regeneration of the corrected implementation-story baseline for preset publication, operator recovery, and release-governance tracks.
 
 ## Initial Implementation Priorities
 
-1. Regenerate the implementation story artifacts for Epic 4-6 against the frozen contract baseline and the approved corrected epic map.
-2. Implement the authorized-user publication flow and the truthful preview/final-render outcome flow around the frozen publication, manifest, render-status, and sidecar contracts.
-3. Wire the booth, operator, and authoring surfaces through typed adapters so UI never bypasses host normalization.
-4. Implement timing/completion and release-governance work as separate downstream epic tracks with their own verification gates.
+1. Align preview architecture implementation stories to the approved `local dedicated renderer + different close topology` decision, starting with dedicated renderer ownership, dual-close model, and cutover validation gates.
+2. Freeze and expand the dedicated renderer, session-manifest, and sidecar-adjacent contracts so preview truth closes through one host-owned local runtime boundary.
+3. Implement the preview architecture pivot behind a safe booth fallback path and prove `original visible -> preset-applied visible` against approved hardware validation.
+4. Continue publication, timing/completion, and release-governance tracks without weakening the approved preview/final truth model.
 
 ## Architecture Validation Results
 
@@ -906,7 +911,7 @@ The document defines enough consistency rules for multiple AI agents to implemen
 
 ### Architecture Readiness Assessment
 
-**Overall Status:** READY FOR IMPLEMENTATION
+**Overall Status:** READY FOR IMPLEMENTATION WITH APPROVED PREVIEW ARCHITECTURE PIVOT
 
 **Confidence Level:** High
 

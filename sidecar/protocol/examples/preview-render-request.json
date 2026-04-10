@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "dedicated-renderer-preview-job-request/v1",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "requestId": "request_20260410_001",
+  "captureId": "capture_20260410_001",
+  "presetId": "preset_soft-glow",
+  "publishedVersion": "2026.04.10",
+  "darktableVersion": "5.4.1",
+  "xmpTemplatePath": "C:/Users/Example/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.04.10/xmp/template.xmp",
+  "previewProfile": {
+    "profileId": "soft-glow-preview",
+    "displayName": "Soft Glow Preview",
+    "outputColorSpace": "sRGB"
+  },
+  "sourceAssetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260410_001.cr3",
+  "canonicalPreviewOutputPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
+  "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/capture_20260410_001-request_20260410_001.preview-request.json"
+}

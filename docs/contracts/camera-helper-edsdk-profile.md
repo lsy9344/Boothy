@@ -41,6 +41,7 @@ Boothy에 대한 구현 해석은 아래와 같다.
 - helper 런타임은 **Windows 전용**이다.
 - booth 현장 표준은 Windows 10/11 **x64**를 기본으로 본다.
 - helper 프로세스 이름은 `canon-helper.exe`를 기준으로 한다.
+- helper target framework는 `.NET 8 / net8.0` baseline으로 고정한다.
 - helper는 app instance당 **하나의 장수명 프로세스**로 두는 것을 기본으로 한다.
 - booth runtime은 **동시에 1대의 활성 카메라**만 소유하는 것을 기본으로 한다.
 - helper는 **동시에 1개의 in-flight capture**만 허용하는 것을 기본으로 한다.
@@ -229,6 +230,14 @@ React는 raw detailCode를 보고 독자적으로 최종 상태를 만들면 안
 - last fresh camera-status 시각과 sequence
 - capture request / file-arrived correlation
 - recovery 진입/종료 시각
+
+durable example baseline:
+
+- `sidecar/protocol/examples/helper-ready.json`
+- `sidecar/protocol/examples/camera-status.json`
+- `sidecar/protocol/examples/file-arrived.json`
+- `sidecar/protocol/examples/recovery-status.json`
+- `sidecar/protocol/examples/helper-error.json`
 
 HV-00, HV-03, HV-10 evidence에는 최소한 위 항목 일부가 남아야,
 문제가 생겼을 때 false-ready와 helper fault를 분리해서 볼 수 있다.

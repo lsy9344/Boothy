@@ -310,6 +310,7 @@ describe('operator diagnostics service', () => {
     await expect(
       service.loadOperatorAuditHistory({
         sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        eventCategories: [],
         limit: 10,
       }),
     ).resolves.toMatchObject({
@@ -348,6 +349,7 @@ describe('operator diagnostics service', () => {
     await expect(
       service.loadOperatorAuditHistory({
         sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        eventCategories: [],
         limit: 10,
       }),
     ).rejects.toMatchObject({

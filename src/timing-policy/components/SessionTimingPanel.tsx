@@ -41,7 +41,7 @@ function selectTimingCopy(
     case 'warning':
       return {
         badge: '곧 종료돼요',
-        headline: '종료 5분 전이에요.',
+        headline: '종료가 얼마 남지 않았어요.',
         detail: canCapture
           ? '남은 시간 안에는 계속 촬영할 수 있어요.'
           : '지금 상태를 마무리한 뒤 다음 안내를 확인해 주세요.',

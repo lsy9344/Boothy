@@ -207,6 +207,104 @@ pub fn rollback_preset_catalog_in_dir(
     })
 }
 
+pub fn preview_rollback_preset_catalog_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: RollbackPresetCatalogInputDto,
+) -> Result<RollbackPresetCatalogResultDto, HostErrorEnvelope> {
+    ensure_authoring_access(capability_snapshot)?;
+    validate_rollback_preset_catalog_input(&input)?;
+
+    let catalog_root = resolve_published_preset_catalog_dir(base_dir);
+    let bundles_by_id = load_published_presets_grouped_by_id(&catalog_root)?;
+    let state = load_or_initialize_catalog_state(base_dir)?;
+    let current_summary =
+        build_catalog_state_summary_for_preset(base_dir, &bundles_by_id, &state, &input.preset_id)?;
+
+    if state.catalog_revision != input.expected_catalog_revision {
+        return Ok(RollbackPresetCatalogResultDto::Rejected {
+            schema_version: "preset-catalog-rollback-result/v1".into(),
+            reason_code: "stale-catalog-revision".into(),
+            message: "방금 전 상태를 기준으로 다시 확인해 주세요. live catalog가 이미 바뀌었어요."
+                .into(),
+            guidance:
+                "최신 catalog 상태를 다시 불러온 뒤 원하는 rollback target을 다시 선택해 주세요."
+                    .into(),
+            catalog_revision: state.catalog_revision,
+            summary: current_summary,
+        });
+    }
+
+    let Some(current_live_version) = state
+        .live_presets
+        .iter()
+        .find(|entry| entry.preset_id == input.preset_id)
+        .map(|entry| entry.published_version.clone())
+    else {
+        return Ok(RollbackPresetCatalogResultDto::Rejected {
+            schema_version: "preset-catalog-rollback-result/v1".into(),
+            reason_code: "target-missing".into(),
+            message: "이 preset은 지금 rollback할 live catalog 항목이 없어요.".into(),
+            guidance: "먼저 승인된 게시 버전이 있는지 확인해 주세요.".into(),
+            catalog_revision: state.catalog_revision,
+            summary: current_summary,
+        });
+    };
+
+    if current_live_version == input.target_published_version {
+        return Ok(RollbackPresetCatalogResultDto::Rejected {
+            schema_version: "preset-catalog-rollback-result/v1".into(),
+            reason_code: "already-live".into(),
+            message: "이미 현재 미래 세션 catalog에 노출 중인 버전이에요.".into(),
+            guidance: "다른 승인 버전을 선택하거나 현재 상태를 유지해 주세요.".into(),
+            catalog_revision: state.catalog_revision,
+            summary: current_summary,
+        });
+    }
+
+    match ensure_target_bundle_is_valid(
+        &catalog_root,
+        &bundles_by_id,
+        &input.preset_id,
+        &input.target_published_version,
+    ) {
+        Ok(_) => {}
+        Err(TargetBundleValidation::Missing) => {
+            return Ok(RollbackPresetCatalogResultDto::Rejected {
+                schema_version: "preset-catalog-rollback-result/v1".into(),
+                reason_code: "target-missing".into(),
+                message: "선택한 승인 버전을 찾지 못했어요.".into(),
+                guidance: "version 목록을 새로고침한 뒤 다시 선택해 주세요.".into(),
+                catalog_revision: state.catalog_revision,
+                summary: current_summary,
+            })
+        }
+        Err(TargetBundleValidation::Incompatible) => {
+            return Ok(RollbackPresetCatalogResultDto::Rejected {
+                schema_version: "preset-catalog-rollback-result/v1".into(),
+                reason_code: "target-incompatible".into(),
+                message: "선택한 버전은 booth-safe published bundle 기준을 통과하지 못했어요."
+                    .into(),
+                guidance:
+                    "승인된 게시 bundle 상태를 다시 확인하고, 다른 승인 버전을 선택해 주세요."
+                        .into(),
+                catalog_revision: state.catalog_revision,
+                summary: current_summary,
+            })
+        }
+    }
+
+    Ok(RollbackPresetCatalogResultDto::Rejected {
+        schema_version: "preset-catalog-rollback-result/v1".into(),
+        reason_code: "stage-unavailable".into(),
+        message: "이 단계에서는 롤백을 실행하지 않아요.".into(),
+        guidance: "approval 준비 상태까지만 확인하고, 실제 롤백은 다음 단계에서 진행해 주세요."
+            .into(),
+        catalog_revision: state.catalog_revision,
+        summary: current_summary,
+    })
+}
+
 pub fn publish_preset_to_live_catalog(
     base_dir: &Path,
     preset_id: &str,

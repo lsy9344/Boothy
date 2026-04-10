@@ -125,6 +125,19 @@ export const sessionManifestSchema = z
         path: hasCatalogRevision ? ['catalogSnapshot'] : ['catalogRevision'],
       })
     }
+
+    if (
+      manifest.activePreset != null &&
+      manifest.activePresetId != null &&
+      manifest.activePreset.presetId !== manifest.activePresetId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'activePresetId는 canonical activePreset.presetId와 같은 값을 유지해야 해요.',
+        path: ['activePresetId'],
+      })
+    }
   })
 
 export const sessionStartResultSchema = z.object({

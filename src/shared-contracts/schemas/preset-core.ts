@@ -15,19 +15,90 @@ export const catalogRevisionSchema = z
   .int()
   .nonnegative('catalog revision은 0 이상의 정수여야 해요.')
 
-export const presetPreviewAssetSchema = z.object({
-  kind: z.enum(['preview-tile', 'sample-cut']),
-  assetPath: z.string().min(1),
-  altText: z.string().min(1),
-})
+const bundleRelativePathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => {
+    if (/^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\')) {
+      return false
+    }
 
-export const publishedPresetSummarySchema = z.object({
-  presetId: presetIdSchema,
-  displayName: z.string().trim().min(1),
-  publishedVersion: publishedVersionSchema,
-  boothStatus: z.literal('booth-safe'),
-  preview: presetPreviewAssetSchema,
-})
+    return value
+      .split(/[\\/]+/)
+      .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+  }, 'bundle root 내부의 안전한 상대 경로여야 해요.')
+
+const runtimeAssetPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) =>
+      bundleRelativePathSchema.safeParse(value).success ||
+      /^[a-zA-Z]:[\\/]/.test(value) ||
+      value.startsWith('/') ||
+      value.startsWith('\\'),
+    '런타임 응답에서는 안전한 상대 경로나 절대 파일 경로만 허용돼요.',
+  )
+
+const runtimePresetPreviewAssetSchema = z
+  .object({
+    kind: z.enum(['preview-tile', 'sample-cut']),
+    assetPath: runtimeAssetPathSchema,
+    altText: z.string().min(1),
+  })
+  .strict()
+
+export const presetPreviewAssetSchema = z
+  .object({
+    kind: z.enum(['preview-tile', 'sample-cut']),
+    assetPath: bundleRelativePathSchema,
+    altText: z.string().min(1),
+  })
+  .strict()
+
+export const publishedPresetRenderProfileSchema = z
+  .object({
+    profileId: z.string().trim().min(1),
+    displayName: z.string().trim().min(1),
+    outputColorSpace: z.string().trim().min(1),
+  })
+  .strict()
+
+export const publishedPresetSummarySchema = z
+  .object({
+    presetId: presetIdSchema,
+    displayName: z.string().trim().min(1),
+    publishedVersion: publishedVersionSchema,
+    boothStatus: z.literal('booth-safe'),
+    preview: runtimePresetPreviewAssetSchema,
+  })
+  .strict()
+
+export const publishedPresetBundleSchema = z
+  .object({
+    schemaVersion: z.literal('published-preset-bundle/v1'),
+    presetId: presetIdSchema,
+    displayName: z.string().trim().min(1),
+    publishedVersion: publishedVersionSchema,
+    lifecycleStatus: z.literal('published'),
+    boothStatus: z.literal('booth-safe'),
+    darktableVersion: z
+      .string()
+      .trim()
+      .regex(/^\d+\.\d+\.\d+$/, 'darktable version 형식이 올바르지 않아요.'),
+    darktableProjectPath: bundleRelativePathSchema.optional(),
+    xmpTemplatePath: bundleRelativePathSchema,
+    previewProfile: publishedPresetRenderProfileSchema,
+    finalProfile: publishedPresetRenderProfileSchema,
+    preview: presetPreviewAssetSchema,
+    sampleCut: presetPreviewAssetSchema.optional(),
+    sourceDraftVersion: z.number().int().positive().optional(),
+    publishedAt: z.string().trim().min(1).optional(),
+    publishedBy: z.string().trim().min(1).optional(),
+  })
+  .strict()
 
 export const presetDisplayNameSchema = z.string().trim().min(1)
 

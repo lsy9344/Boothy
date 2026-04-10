@@ -8,10 +8,11 @@
     "dev:desktop": "pnpm tauri dev",
     "dev:desktop:stable": "pnpm tauri dev --no-watch",
     "build": "tsc -b && vite build",
-    "build:desktop": "pnpm build && pnpm tauri build --debug",
+    "prepare:dedicated-renderer": "node scripts/prepare-dedicated-renderer-sidecar.mjs",
+    "build:desktop": "pnpm build && pnpm tauri build --debug --no-sign",
     "lint": "eslint .",
     "preview": "vite preview",
-    "release:desktop": "pnpm build && pnpm tauri build",
+    "release:desktop": "pnpm build && node scripts/prepare-windows-signing.mjs --allow-unsigned -- pnpm tauri build",
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run"

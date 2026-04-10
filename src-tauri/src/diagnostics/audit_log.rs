@@ -423,15 +423,22 @@ fn is_stale_audit_store_lock(lock_path: &Path) -> Result<bool, HostErrorEnvelope
     let metadata = match fs::metadata(lock_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return Ok(false),
         Err(error) => {
             return Err(HostErrorEnvelope::persistence(format!(
                 "operator audit 잠금을 확인하지 못했어요: {error}"
             )))
         }
     };
-    let modified_at = metadata.modified().map_err(|error| {
-        HostErrorEnvelope::persistence(format!("operator audit 잠금을 확인하지 못했어요: {error}"))
-    })?;
+    let modified_at = match metadata.modified() {
+        Ok(modified_at) => modified_at,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return Ok(false),
+        Err(error) => {
+            return Err(HostErrorEnvelope::persistence(format!(
+                "operator audit 잠금을 확인하지 못했어요: {error}"
+            )))
+        }
+    };
 
     Ok(SystemTime::now()
         .duration_since(modified_at)

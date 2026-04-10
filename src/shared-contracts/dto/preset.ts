@@ -25,6 +25,8 @@ import {
   repairInvalidDraftInputSchema,
   presetLifecycleStateSchema,
   presetCatalogResultSchema,
+  publishedPresetBundleSchema,
+  publishedPresetRenderProfileSchema,
   presetSelectionInputSchema,
   presetSelectionResultSchema,
   publishedPresetSummarySchema,
@@ -74,6 +76,10 @@ export type PublishValidatedPresetRejection = z.infer<
 export type PublishValidatedPresetResult = z.infer<
   typeof publishValidatedPresetResultSchema
 >
+export type PublishedPresetRenderProfile = z.infer<
+  typeof publishedPresetRenderProfileSchema
+>
+export type PublishedPresetBundle = z.infer<typeof publishedPresetBundleSchema>
 export type PublishedPresetSummary = z.infer<typeof publishedPresetSummarySchema>
 export type LoadPresetCatalogInput = z.infer<typeof loadPresetCatalogInputSchema>
 export type PresetCatalogResult = z.infer<typeof presetCatalogResultSchema>

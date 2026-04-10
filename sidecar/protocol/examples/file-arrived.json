@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "canon-helper-file-arrived/v1",
+  "type": "file-arrived",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "requestId": "request_20260410_001",
+  "captureId": "capture_20260410_001",
+  "arrivedAt": "2026-04-10T01:00:18Z",
+  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260410_001.cr3",
+  "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
+  "fastPreviewKind": "embedded-jpeg"
+}

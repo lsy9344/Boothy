@@ -59,6 +59,25 @@ describe('customerStatusCopy', () => {
     expect(copy.detail).not.toMatch(/darktable|sdk|helper/i)
   })
 
+  it('surfaces a warning snapshot with explicit countdown guidance while keeping capture enabled', () => {
+    const copy = selectCustomerStatusCopy(
+      createReadiness({
+        customerState: 'Ready',
+        canCapture: true,
+        primaryAction: 'capture',
+        customerMessage: '지금 촬영할 수 있어요.',
+        supportMessage: '남은 시간 안에 계속 찍을 수 있어요.',
+        reasonCode: 'warning',
+      }),
+    )
+
+    expect(copy.stateLabel).toBe('곧 종료돼요')
+    expect(copy.headline).toBe('종료가 얼마 남지 않았어요.')
+    expect(copy.detail).toBe('남은 시간 안에는 계속 촬영할 수 있어요.')
+    expect(copy.actionLabel).toBe('사진 찍기')
+    expect(copy.canCapture).toBe(true)
+  })
+
   it('keeps handoff-ready completion on a generic confirmation action in story 3.2', () => {
     const copy = selectCustomerStatusCopy(
       createReadiness({

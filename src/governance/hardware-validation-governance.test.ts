@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-const repoRoot = path.resolve(import.meta.dirname, '..', '..')
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 const readRepoFile = (...segments: string[]) =>
-  readFileSync(path.join(repoRoot, ...segments), 'utf8')
+  readFileSync(resolve(repoRoot, ...segments), 'utf8')
 
 const storyFiles = [
   {
@@ -21,13 +22,13 @@ const storyFiles = [
   },
   {
     file: '_bmad-output/implementation-artifacts/1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md',
-    status: 'review',
-    gate: 'No-Go',
+    status: 'done',
+    gate: 'Go',
   },
   {
     file: '_bmad-output/implementation-artifacts/3-2-export-waiting과-truthful-completion-안내.md',
-    status: 'review',
-    gate: 'No-Go',
+    status: 'done',
+    gate: 'Go',
   },
   {
     file: '_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md',
@@ -39,6 +40,32 @@ const storyFiles = [
     status: 'review',
     gate: 'No-Go',
   },
+] as const
+
+const canonicalSprintStoryKeys = [
+  '1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성',
+  '1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택',
+  '1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백',
+  '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단',
+  '2-1-현재-세션-사진-레일과-세션-범위-검토',
+  '2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제',
+  '2-3-이후-촬영용-활성-프리셋-변경',
+  '2-4-조정된-종료-시각-표시와-경고-종료-알림',
+  '3-2-export-waiting과-truthful-completion-안내',
+  '4-1-드래프트-프리셋-작성과-내부-저작-작업공간',
+  '4-2-부스-호환성-검증과-승인-준비-상태-전환',
+  '4-4-미래-세션-대상-롤백과-카탈로그-버전-관리',
+  '5-1-운영자용-현재-세션-문맥과-장애-진단-가시화',
+  '5-3-라이프사이클-개입-복구-감사-로그-기록',
+  '5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화',
+  '6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스',
+] as const
+
+const canonicalEpicHeadings = [
+  '### Story 1.5: 현재 세션 촬영 저장과 truthful preview waiting 피드백',
+  '### Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단',
+  '### Story 3.2: Export Waiting과 truthful completion 안내',
+  '### Story 4.2: 부스 호환성 검증과 승인 준비 상태 전환',
 ] as const
 
 describe('hardware validation governance baseline', () => {
@@ -115,17 +142,34 @@ describe('hardware validation governance baseline', () => {
     expect(sprintStatus).toContain('1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done')
     expect(sprintStatus).toContain('1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done')
     expect(sprintStatus).toContain(
-      '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: review',
+      '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done',
     )
     expect(sprintStatus).toContain(
-      '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review',
+      '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done',
     )
-    expect(sprintStatus).toContain('3-2-export-waiting과-truthful-completion-안내: review')
+    expect(sprintStatus).toContain('3-2-export-waiting과-truthful-completion-안내: done')
     expect(sprintStatus).toContain('4-2-부스-호환성-검증과-승인-준비-상태-전환: review')
     expect(sprintStatus).toContain('4-3-승인과-불변-게시-아티팩트-생성: review')
     expect(sprintStatus).toContain(
       'truth-critical stories stay in `review` or another pre-close state',
     )
+  })
+
+  it('keeps existing story ids stable across sprint tracking and planning artifacts', () => {
+    const sprintStatus = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      'sprint-status.yaml',
+    )
+    const epics = readRepoFile('_bmad-output', 'planning-artifacts', 'epics.md')
+
+    for (const storyKey of canonicalSprintStoryKeys) {
+      expect(sprintStatus).toContain(`${storyKey}:`)
+    }
+
+    for (const heading of canonicalEpicHeadings) {
+      expect(epics).toContain(heading)
+    }
   })
 
   it('normalizes hardware gate references across every impacted story document', () => {
@@ -140,7 +184,7 @@ describe('hardware validation governance baseline', () => {
     }
   })
 
-  it('keeps Story 1.8 under the corrective hardware gate until canonical booth evidence is recorded', () => {
+  it('closes Story 1.8 once canonical booth evidence is recorded in the ledger', () => {
     const story18 = readRepoFile(
       '_bmad-output',
       'implementation-artifacts',
@@ -152,27 +196,25 @@ describe('hardware validation governance baseline', () => {
       'hardware-validation-ledger.md',
     )
 
-    expect(story18).toContain('Status: review')
+    expect(story18).toContain('Status: done')
     expect(story18).toContain('### Validation Gate Reference')
-    expect(story18).toContain('Current hardware gate: `No-Go`')
+    expect(story18).toContain('Current hardware gate: `Go`')
     expect(story18).toContain('Close policy: automated pass만으로 닫지 않는다.')
     expect(ledger).toContain('### Story 1.8')
-    expect(ledger).toContain('Selected preset -> XMP apply -> preview/final differentiation package')
+    expect(ledger).toContain('Go / No-Go result: `Go`')
+    expect(ledger).toContain('session_000000000018a4df863488433c')
+    expect(ledger).toContain('session_000000000018a4e49821e18790')
+    expect(ledger).toContain('xmp/test-look.xmp')
+    expect(ledger).toContain('xmp/template.xmp')
   })
 
   it('removes stale done-era notes from stories that are still under a No-Go hardware gate', () => {
-    const story16 = readRepoFile(
-      '_bmad-output',
-      'implementation-artifacts',
-      '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md',
-    )
     const story32 = readRepoFile(
       '_bmad-output',
       'implementation-artifacts',
       '3-2-export-waiting과-truthful-completion-안내.md',
     )
 
-    expect(story16).not.toContain('Story 1.6을 `done`으로 정리했다')
     expect(story32).not.toContain('상태를 `done`으로 반영했다')
   })
 
@@ -190,8 +232,8 @@ describe('hardware validation governance baseline', () => {
 
     expect(story43).not.toContain('현재 sprint 상태상 4.2는 `ready-for-dev`이며 4.1은 아직 backlog다.')
     expect(story62).not.toContain('Story 5.4는 계속 `ready-for-dev`')
-    expect(story62).toContain('Story 1.4는 `done`')
-    expect(story62).toContain('Story 1.5, 1.6, 3.2, 4.2, 4.3은 `review`로 유지')
+    expect(story62).toContain('Story 1.4, 1.5, 1.6, 1.8, 3.2는 `done`')
+    expect(story62).toContain('Story 4.2, 4.3은 `review`로 유지')
     expect(story62).toContain('Story 5.4는 `review`')
     expect(story62).toContain('Story 6.2는 governance story로 `done`')
   })

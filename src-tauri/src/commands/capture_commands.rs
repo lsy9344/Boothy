@@ -5,7 +5,7 @@ use tauri::{Emitter, Manager};
 use crate::{
     capture::{
         helper_supervisor::try_ensure_helper_running,
-        ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
+        ingest_pipeline::mark_preview_render_failed_in_dir,
         normalized_state::{
             delete_capture_in_dir, get_capture_readiness_in_dir,
             request_capture_in_dir_with_fast_preview,
@@ -16,6 +16,7 @@ use crate::{
         CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
         CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
     },
+    render::dedicated_renderer::complete_capture_preview_with_dedicated_renderer_in_dir,
     session::session_repository::resolve_app_session_base_dir,
 };
 
@@ -138,7 +139,8 @@ pub fn request_capture(
     let preview_app = app.clone();
 
     thread::spawn(move || {
-        let initial_capture = match complete_preview_render_in_dir(
+        let initial_capture = match complete_capture_preview_with_dedicated_renderer_in_dir(
+            Some(&preview_app),
             &preview_base_dir,
             &preview_session_id,
             &preview_capture_id,
@@ -268,10 +270,9 @@ fn emit_refined_preview_readiness_when_available(
         let refined_ready_at_ms = refinement_ready
             .and_then(|capture| capture.preview.ready_at_ms)
             .filter(|ready_at_ms| {
-                baseline_ready_at_ms.map_or(
-                    *ready_at_ms >= first_visible_at_ms,
-                    |baseline| *ready_at_ms > baseline,
-                )
+                baseline_ready_at_ms.map_or(*ready_at_ms >= first_visible_at_ms, |baseline| {
+                    *ready_at_ms > baseline
+                })
             });
 
         if let Some(refined_ready_at_ms) = refined_ready_at_ms {

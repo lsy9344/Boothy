@@ -5,6 +5,7 @@ import type { SessionCaptureRecord } from '../../shared-contracts'
 import {
   CAPTURE_READINESS_POLL_MS,
   CAPTURE_READY_IDLE_POLL_MS,
+  type CaptureRuntimeGateway,
   createBrowserCaptureRuntimeGateway,
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
@@ -298,7 +299,7 @@ describe('capture runtime adapter', () => {
             canCapture: false,
             primaryAction: 'wait',
             customerMessage: '초점이 맞지 않았어요.',
-            supportMessage: '대상을 다시 맞춘 뒤 한 번 더 찍어 주세요.',
+            supportMessage: '대상을 다시 맞추는 동안 잠시 기다려 주세요.',
             reasonCode: 'capture-retry-required',
           },
         }
@@ -866,7 +867,15 @@ describe('capture runtime adapter', () => {
       onFastPreview,
     })
 
-    emitFastPreview?.({
+    expect(emitFastPreview).not.toBeNull()
+
+    if (emitFastPreview === null) {
+      throw new Error('fast preview listener was not registered')
+    }
+
+    const dispatchFastPreview: (payload: unknown) => void = emitFastPreview
+
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
       requestId: 'request_foreign',
@@ -876,7 +885,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 320,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_local',
@@ -921,7 +930,15 @@ describe('capture runtime adapter', () => {
       onFastPreview,
     })
 
-    emitFastPreview?.({
+    expect(emitFastPreview).not.toBeNull()
+
+    if (emitFastPreview === null) {
+      throw new Error('fast preview listener was not registered')
+    }
+
+    const dispatchFastPreview: (payload: unknown) => void = emitFastPreview
+
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_other',
       requestId: 'request_other',
@@ -930,7 +947,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 120,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',

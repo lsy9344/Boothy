@@ -1,6 +1,7 @@
 export * from './branch-rollout'
 export * from './capabilities'
 export * from './capture-readiness'
+export * from './dedicated-renderer'
 export * from './ids'
 export * from './operator-diagnostics'
 export * from './operator-audit'
