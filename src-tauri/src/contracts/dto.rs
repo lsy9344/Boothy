@@ -930,6 +930,20 @@ pub struct OperatorRecoveryDiagnosticsSummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OperatorPreviewArchitectureSummaryDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason_code: Option<String>,
+    pub hardware_capability: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperatorSessionSummaryDto {
     pub schema_version: String,
     pub state: String,
@@ -948,6 +962,7 @@ pub struct OperatorSessionSummaryDto {
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
+    pub preview_architecture: OperatorPreviewArchitectureSummaryDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_capture_truth: Option<LiveCaptureTruthDto>,
 }
@@ -975,6 +990,7 @@ pub struct OperatorRecoverySummaryDto {
     pub capture_boundary: OperatorBoundarySummaryDto,
     pub preview_render_boundary: OperatorBoundarySummaryDto,
     pub completion_boundary: OperatorBoundarySummaryDto,
+    pub preview_architecture: OperatorPreviewArchitectureSummaryDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_capture_truth: Option<LiveCaptureTruthDto>,
 }

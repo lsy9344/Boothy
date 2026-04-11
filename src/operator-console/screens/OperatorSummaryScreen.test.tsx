@@ -57,6 +57,13 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       title: '완료 경계 대기 전',
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
+    previewArchitecture: {
+      route: 'local-renderer-sidecar',
+      routeStage: 'canary',
+      laneOwner: 'inline-truthful-fallback',
+      fallbackReasonCode: 'route-policy-shadow',
+      hardwareCapability: 'dedicated-renderer-available',
+    },
     ...overrides,
   }
 }
@@ -248,6 +255,37 @@ describe('OperatorSummaryScreen', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/preview-render-blocked/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/C:\\render-worker\\stderr\.log/i)).not.toBeInTheDocument()
+  })
+
+  it('shows preview architecture diagnostics for the active session', async () => {
+    const loadOperatorRecoverySummary = vi.fn().mockResolvedValue(
+      createOperatorRecoverySummary({
+        previewArchitecture: {
+          route: 'local-renderer-sidecar',
+          routeStage: 'canary',
+          laneOwner: 'dedicated-renderer',
+          fallbackReasonCode: 'none',
+          hardwareCapability: 'dedicated-renderer-available',
+        },
+      }),
+    )
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValue(createOperatorAuditHistory())
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    expect(await screen.findByText(/Preview Architecture/i)).toBeInTheDocument()
+    expect(screen.getByText(/^dedicated-renderer$/i)).toBeInTheDocument()
+    expect(screen.getByText(/canary/i)).toBeInTheDocument()
+    expect(screen.getByText(/dedicated-renderer-available/i)).toBeInTheDocument()
   })
 
   it('renders a safe empty state when no active session exists', async () => {
@@ -510,5 +548,121 @@ describe('OperatorSummaryScreen', () => {
     expect(screen.getByText(/^연결됨$/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Preview \/ Render 확인 필요/i)).not.toHaveLength(0)
     expect(screen.getByText(/다른 경계 문제는 별도로 확인해 주세요\./i)).toBeInTheDocument()
+  })
+
+  it('keeps current session diagnostics visible when audit history refresh fails', async () => {
+    const loadOperatorRecoverySummary = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoverySummary())
+    const loadOperatorAuditHistory = vi.fn().mockRejectedValue({
+      code: 'host-unavailable',
+      message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
+    })
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /^현재 세션 문맥$/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /^현재 세션 진단을 다시 불러와 주세요$/i }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(/감사 기록을 불러오지 못했어요/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/세션 진단과 허용 액션은 계속 확인할 수 있어요\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the applied recovery result even when the audit history reload fails', async () => {
+    const loadOperatorRecoverySummary = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoverySummary())
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValueOnce(createOperatorAuditHistory())
+      .mockRejectedValueOnce({
+        code: 'host-unavailable',
+        message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
+      })
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    const user = userEvent.setup()
+
+    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Retry$/i }))
+
+    expect(
+      await screen.findByText(/현재 막힌 preview\/render 경계를 다시 시도했어요\./i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/다음 booth 상태: Ready/i)).toBeInTheDocument()
+    expect(screen.getByText(/감사 기록을 불러오지 못했어요/i)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /^Retry$/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the last known session visible when refresh fails after a successful load', async () => {
+    const loadOperatorRecoverySummary = vi
+      .fn()
+      .mockResolvedValueOnce(createOperatorRecoverySummary())
+      .mockRejectedValueOnce({
+        code: 'host-unavailable',
+        message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
+      })
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValue(createOperatorAuditHistory())
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    const user = userEvent.setup()
+
+    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /진단 새로고침/i }))
+
+    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /^현재 세션 문맥$/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /^현재 세션 진단을 다시 불러와 주세요$/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/지금은 현재 세션 진단을 불러올 수 없어요\. 잠시 후 다시 시도해 주세요\./i),
+    ).toBeInTheDocument()
+    const retryButton = screen.getByRole('button', { name: /^Retry$/i })
+    expect(retryButton).toBeEnabled()
+
+    await user.click(retryButton)
+
+    expect(runOperatorRecoveryAction).toHaveBeenCalledWith({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      action: 'retry',
+    })
   })
 })

@@ -1,0 +1,1310 @@
+diff --git a/src-tauri/src/render/dedicated_renderer.rs b/src-tauri/src/render/dedicated_renderer.rs
+index c1ec90d..59da399 100644
+--- a/src-tauri/src/render/dedicated_renderer.rs
++++ b/src-tauri/src/render/dedicated_renderer.rs
+@@ -78,7 +78,7 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+     let preview_result = match submit_preview_job(app_handle, &request, &request_path, &result_path) {
+         Ok(result) => {
+             let _ = write_json_file(&result_path, &result);
+-            if validate_preview_job_result(&request, &result).is_err() {
++            if validate_preview_job_result(&request, &result, &result_path).is_err() {
+                 log_render_failure_in_dir(
+                     base_dir,
+                     session_id,
+@@ -246,58 +246,75 @@ fn submit_warmup_request(
+     request_path: &Path,
+     result_path: &Path,
+ ) -> Result<DedicatedRendererWarmupResultDto, &'static str> {
+-    if should_attempt_dedicated_renderer_spawn() {
+-        let _ = try_spawn_dedicated_renderer(
++    if should_attempt_dedicated_renderer_spawn(app_handle.is_some()) {
++        if let Err(reason_code) = try_spawn_dedicated_renderer(
+             app_handle,
+             DEDICATED_RENDERER_WARMUP_PROTOCOL,
+             request_path,
+             result_path,
+-        )?;
++        ) {
++            return Ok(with_warmup_result_detail_path(
++                build_warmup_spawn_failure_result(request, reason_code),
++                result_path,
++            ));
++        }
+     }
+ 
+     if let Ok(bytes) = fs::read_to_string(result_path) {
+         match serde_json::from_str::<DedicatedRendererWarmupResultDto>(&bytes) {
+-            Ok(result) => match validate_warmup_result(request, &result) {
++            Ok(result) => match validate_warmup_result(request, &result, result_path) {
+                 Ok(()) => return Ok(result),
+                 Err("protocol-mismatch") => {
+-                    return Ok(build_warmup_result(
+-                        request,
+-                        "protocol-mismatch",
+-                        Some("protocol-mismatch"),
+-                        Some(
+-                            "warm-up result schema 또는 상태 값이 계약과 맞지 않아 shadow fallback으로 유지해요.",
++                    return Ok(with_warmup_result_detail_path(
++                        build_warmup_result(
++                            request,
++                            "protocol-mismatch",
++                            Some("protocol-mismatch"),
++                            Some(
++                                "warm-up result schema 또는 상태 값이 계약과 맞지 않아 shadow fallback으로 유지해요.",
++                            ),
+                         ),
++                        result_path,
+                     ));
+                 }
+                 Err(_) => {
+-                    return Ok(build_warmup_result(
+-                        request,
+-                        "fallback-suggested",
+-                        Some("shadow-inline-warmup"),
+-                        Some(
+-                            "warm-up result correlation이 맞지 않아 host-owned inline warm-up을 유지해요.",
++                    return Ok(with_warmup_result_detail_path(
++                        build_warmup_result(
++                            request,
++                            "fallback-suggested",
++                            Some("shadow-inline-warmup"),
++                            Some(
++                                "warm-up result correlation이 맞지 않아 host-owned inline warm-up을 유지해요.",
++                            ),
+                         ),
++                        result_path,
+                     ));
+                 }
+             },
+             Err(_) => {
+-                return Ok(build_warmup_result(
+-                    request,
+-                    "protocol-mismatch",
+-                    Some("protocol-mismatch"),
+-                    Some(
+-                        "warm-up result를 dedicated renderer 계약으로 해석하지 못해 shadow fallback으로 유지해요.",
++                return Ok(with_warmup_result_detail_path(
++                    build_warmup_result(
++                        request,
++                        "protocol-mismatch",
++                        Some("protocol-mismatch"),
++                        Some(
++                            "warm-up result를 dedicated renderer 계약으로 해석하지 못해 shadow fallback으로 유지해요.",
++                        ),
+                     ),
++                    result_path,
+                 ));
+             }
+         }
+     }
+ 
+-    Ok(build_warmup_result(
+-        request,
+-        "fallback-suggested",
+-        Some("shadow-inline-warmup"),
+-        Some("approved cutover 전까지 warm-up은 host-owned inline renderer가 계속 소유해요."),
++    Ok(with_warmup_result_detail_path(
++        build_warmup_result(
++            request,
++            "fallback-suggested",
++            Some("shadow-inline-warmup"),
++            Some("approved cutover 전까지 warm-up은 host-owned inline renderer가 계속 소유해요."),
++        ),
++        result_path,
+     ))
+ }
+ 
+@@ -308,81 +325,102 @@ fn submit_preview_job(
+     result_path: &Path,
+ ) -> Result<DedicatedRendererPreviewJobResultDto, &'static str> {
+     if let Some(result) = synthetic_preview_result_for_test(request) {
+-        return Ok(result);
++        return Ok(with_preview_result_detail_path(result, result_path));
+     }
+ 
+-    if should_attempt_dedicated_renderer_spawn() {
+-        let _ = try_spawn_dedicated_renderer(
++    if should_attempt_dedicated_renderer_spawn(app_handle.is_some()) {
++        if let Err(reason_code) = try_spawn_dedicated_renderer(
+             app_handle,
+             DEDICATED_RENDERER_PREVIEW_PROTOCOL,
+             request_path,
+             result_path,
+-        )?;
++        ) {
++            return Ok(with_preview_result_detail_path(
++                build_preview_spawn_failure_result(request, reason_code),
++                result_path,
++            ));
++        }
+     } else if resolve_dedicated_renderer_executable().is_none() {
+-        return Ok(build_preview_result(
+-            request,
+-            "fallback-suggested",
+-            None,
+-            Some("sidecar-unavailable"),
+-            Some(
+-                "dedicated renderer binary가 아직 bundle/runtime에서 확인되지 않아 truthful fallback path로 내려가요.",
++        return Ok(with_preview_result_detail_path(
++            build_preview_result(
++                request,
++                "fallback-suggested",
++                None,
++                Some("sidecar-unavailable"),
++                Some(
++                    "dedicated renderer binary가 아직 bundle/runtime에서 확인되지 않아 truthful fallback path로 내려가요.",
++                ),
+             ),
++            result_path,
+         ));
+     }
+ 
+     if let Ok(bytes) = fs::read_to_string(result_path) {
+         match serde_json::from_str::<DedicatedRendererPreviewJobResultDto>(&bytes) {
+-            Ok(result) => match validate_preview_job_result(request, &result) {
++            Ok(result) => match validate_preview_job_result(request, &result, result_path) {
+                 Ok(()) => return Ok(result),
+                 Err("protocol-mismatch") => {
+-                    return Ok(build_preview_result(
+-                        request,
+-                        "protocol-mismatch",
+-                        None,
+-                        Some("protocol-mismatch"),
+-                        Some(
+-                            "preview job result schema 또는 상태 값이 계약과 맞지 않아 fallback path로 내려가요.",
++                    return Ok(with_preview_result_detail_path(
++                        build_preview_result(
++                            request,
++                            "protocol-mismatch",
++                            None,
++                            Some("protocol-mismatch"),
++                            Some(
++                                "preview job result schema 또는 상태 값이 계약과 맞지 않아 fallback path로 내려가요.",
++                            ),
+                         ),
++                        result_path,
+                     ));
+                 }
+                 Err(_) => {
+-                    return Ok(build_preview_result(
+-                        request,
+-                        "invalid-output",
+-                        None,
+-                        Some("invalid-output"),
+-                        Some(
+-                            "preview job result correlation 또는 canonical output 검증에 실패해 fallback path로 내려가요.",
++                    return Ok(with_preview_result_detail_path(
++                        build_preview_result(
++                            request,
++                            "invalid-output",
++                            None,
++                            Some("invalid-output"),
++                            Some(
++                                "preview job result correlation 또는 canonical output 검증에 실패해 fallback path로 내려가요.",
++                            ),
+                         ),
++                        result_path,
+                     ));
+                 }
+             },
+             Err(_) => {
+-                return Ok(build_preview_result(
+-                    request,
+-                    "protocol-mismatch",
+-                    None,
+-                    Some("protocol-mismatch"),
+-                    Some(
+-                        "preview job result를 dedicated renderer 계약으로 해석하지 못해 fallback path로 내려가요.",
++                return Ok(with_preview_result_detail_path(
++                    build_preview_result(
++                        request,
++                        "protocol-mismatch",
++                        None,
++                        Some("protocol-mismatch"),
++                        Some(
++                            "preview job result를 dedicated renderer 계약으로 해석하지 못해 fallback path로 내려가요.",
++                        ),
+                     ),
++                    result_path,
+                 ));
+             }
+         }
+     }
+ 
+-    Ok(build_preview_result(
+-        request,
+-        "fallback-suggested",
+-        None,
+-        Some("shadow-submission-only"),
+-        Some("Story 1.11 baseline에서는 dedicated renderer submission만 고정하고 truthful close는 inline path가 계속 소유해요."),
++    Ok(with_preview_result_detail_path(
++        build_preview_result(
++            request,
++            "fallback-suggested",
++            None,
++            Some("shadow-submission-only"),
++            Some("Story 1.11 baseline에서는 dedicated renderer submission만 고정하고 truthful close는 inline path가 계속 소유해요."),
++        ),
++        result_path,
+     ))
+ }
+ 
+ fn validate_preview_job_result(
+     request: &DedicatedRendererPreviewJobRequestDto,
+     result: &DedicatedRendererPreviewJobResultDto,
++    expected_result_path: &Path,
+ ) -> Result<(), &'static str> {
+     if result.schema_version != DEDICATED_RENDERER_RESULT_SCHEMA_VERSION
+         || !matches!(
+@@ -398,7 +436,7 @@ fn validate_preview_job_result(
+         return Err("protocol-mismatch");
+     }
+ 
+-    if result.diagnostics_detail_path != request.diagnostics_detail_path {
++    if result.diagnostics_detail_path != path_to_runtime_string(expected_result_path) {
+         return Err("protocol-mismatch");
+     }
+ 
+@@ -518,7 +556,7 @@ fn append_preview_transition_summary_in_dir(
+         fallback_reason.unwrap_or("none"),
+         format_optional_metric(first_visible_ms),
+         format_optional_metric(replacement_ms),
+-        format_optional_metric(replacement_ms),
++        "none",
+     );
+     let _ = append_session_timing_event_in_dir(
+         base_dir,
+@@ -551,6 +589,7 @@ fn format_optional_metric(value: Option<u64>) -> String {
+ fn validate_warmup_result(
+     request: &DedicatedRendererWarmupRequestDto,
+     result: &DedicatedRendererWarmupResultDto,
++    expected_result_path: &Path,
+ ) -> Result<(), &'static str> {
+     if result.schema_version != DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION
+         || !matches!(
+@@ -561,7 +600,7 @@ fn validate_warmup_result(
+         return Err("protocol-mismatch");
+     }
+ 
+-    if result.diagnostics_detail_path != request.diagnostics_detail_path {
++    if result.diagnostics_detail_path != path_to_runtime_string(expected_result_path) {
+         return Err("protocol-mismatch");
+     }
+ 
+@@ -679,12 +718,13 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), Ho
+     })
+ }
+ 
+-fn should_attempt_dedicated_renderer_spawn() -> bool {
+-    env::var(DEDICATED_RENDERER_ENABLE_SPAWN_ENV)
+-        .ok()
+-        .as_deref()
+-        .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES"))
+-        .unwrap_or(false)
++fn should_attempt_dedicated_renderer_spawn(app_handle_available: bool) -> bool {
++    app_handle_available
++        && env::var(DEDICATED_RENDERER_ENABLE_SPAWN_ENV)
++            .ok()
++            .as_deref()
++            .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES"))
++            .unwrap_or(false)
+ }
+ 
+ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
+@@ -742,6 +782,35 @@ fn build_preview_result(
+     }
+ }
+ 
++fn build_preview_spawn_failure_result(
++    request: &DedicatedRendererPreviewJobRequestDto,
++    reason_code: &'static str,
++) -> DedicatedRendererPreviewJobResultDto {
++    build_preview_result(
++        request,
++        "fallback-suggested",
++        None,
++        Some(reason_code),
++        Some(match reason_code {
++            "sidecar-unavailable" => {
++                "dedicated renderer sidecar를 찾지 못해 truthful fallback path로 내려가요."
++            }
++            "sidecar-launch-failed" => {
++                "dedicated renderer sidecar 실행에 실패해 truthful fallback path로 내려가요."
++            }
++            _ => "dedicated renderer sidecar를 시작하지 못해 truthful fallback path로 내려가요.",
++        }),
++    )
++}
++
++fn with_preview_result_detail_path(
++    mut result: DedicatedRendererPreviewJobResultDto,
++    result_path: &Path,
++) -> DedicatedRendererPreviewJobResultDto {
++    result.diagnostics_detail_path = path_to_runtime_string(result_path);
++    result
++}
++
+ fn build_warmup_result(
+     request: &DedicatedRendererWarmupRequestDto,
+     status: &str,
+@@ -760,6 +829,34 @@ fn build_warmup_result(
+     }
+ }
+ 
++fn build_warmup_spawn_failure_result(
++    request: &DedicatedRendererWarmupRequestDto,
++    reason_code: &'static str,
++) -> DedicatedRendererWarmupResultDto {
++    build_warmup_result(
++        request,
++        "fallback-suggested",
++        Some(reason_code),
++        Some(match reason_code {
++            "sidecar-unavailable" => {
++                "dedicated renderer sidecar를 찾지 못해 inline warm-up을 유지해요."
++            }
++            "sidecar-launch-failed" => {
++                "dedicated renderer sidecar 실행에 실패해 inline warm-up을 유지해요."
++            }
++            _ => "dedicated renderer sidecar를 시작하지 못해 inline warm-up을 유지해요.",
++        }),
++    )
++}
++
++fn with_warmup_result_detail_path(
++    mut result: DedicatedRendererWarmupResultDto,
++    result_path: &Path,
++) -> DedicatedRendererWarmupResultDto {
++    result.diagnostics_detail_path = path_to_runtime_string(result_path);
++    result
++}
++
+ fn synthetic_preview_result_for_test(
+     request: &DedicatedRendererPreviewJobRequestDto,
+ ) -> Option<DedicatedRendererPreviewJobResultDto> {
+@@ -824,11 +921,14 @@ fn current_time_ms() -> Result<u64, HostErrorEnvelope> {
+ 
+ #[cfg(test)]
+ mod tests {
++    use std::path::Path;
++
+     use super::{
+         DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
+         DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
+         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION, build_preview_result,
+-        build_warmup_result, validate_preview_job_result, validate_warmup_result,
++        build_warmup_result, should_attempt_dedicated_renderer_spawn, validate_preview_job_result,
++        validate_warmup_result,
+     };
+     use crate::contracts::dto::{
+         DedicatedRendererPreviewJobRequestDto, DedicatedRendererRenderProfileDto,
+@@ -880,6 +980,8 @@ mod tests {
+     #[test]
+     fn preview_result_validation_rejects_wrong_session_or_capture() {
+         let request = preview_request();
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/result.json";
+         let mut result = build_preview_result(
+             &request,
+             "fallback-suggested",
+@@ -889,9 +991,14 @@ mod tests {
+         );
+         result.schema_version = DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into();
+         result.capture_id = "capture_other".into();
++        result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+-            validate_preview_job_result(&request, &result),
++            validate_preview_job_result(
++                &request,
++                &result,
++                Path::new(expected_result_path),
++            ),
+             Err("wrong-session")
+         );
+     }
+@@ -899,16 +1006,23 @@ mod tests {
+     #[test]
+     fn preview_result_validation_rejects_non_canonical_output_paths() {
+         let request = preview_request();
+-        let result = build_preview_result(
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/result.json";
++        let mut result = build_preview_result(
+             &request,
+             "invalid-output",
+             Some("C:/outside/non-canonical.jpg".into()),
+             Some("invalid-output"),
+             Some("fallback"),
+         );
++        result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+-            validate_preview_job_result(&request, &result),
++            validate_preview_job_result(
++                &request,
++                &result,
++                Path::new(expected_result_path),
++            ),
+             Err("non-canonical-output")
+         );
+     }
+@@ -916,6 +1030,8 @@ mod tests {
+     #[test]
+     fn preview_result_validation_rejects_schema_mismatch() {
+         let request = preview_request();
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/result.json";
+         let mut result = build_preview_result(
+             &request,
+             "accepted",
+@@ -924,9 +1040,14 @@ mod tests {
+             Some("accepted"),
+         );
+         result.schema_version = "dedicated-renderer-preview-job-result/v9".into();
++        result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+-            validate_preview_job_result(&request, &result),
++            validate_preview_job_result(
++                &request,
++                &result,
++                Path::new(expected_result_path),
++            ),
+             Err("protocol-mismatch")
+         );
+     }
+@@ -934,23 +1055,52 @@ mod tests {
+     #[test]
+     fn preview_result_validation_rejects_accepted_status_without_canonical_output() {
+         let request = preview_request();
+-        let result = build_preview_result(
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/result.json";
++        let mut result = build_preview_result(
+             &request,
+             "accepted",
+             None,
+             Some("accepted"),
+             Some("accepted"),
+         );
++        result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+-            validate_preview_job_result(&request, &result),
++            validate_preview_job_result(
++                &request,
++                &result,
++                Path::new(expected_result_path),
++            ),
+             Err("invalid-output")
+         );
+     }
+ 
++    #[test]
++    fn preview_result_validation_accepts_the_result_detail_path_companion_file() {
++        let request = preview_request();
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/result.json";
++        let mut result = build_preview_result(
++            &request,
++            "accepted",
++            Some(request.canonical_preview_output_path.clone()),
++            Some("accepted"),
++            Some("accepted"),
++        );
++        result.diagnostics_detail_path = expected_result_path.into();
++
++        assert_eq!(
++            validate_preview_job_result(&request, &result, Path::new(expected_result_path)),
++            Ok(())
++        );
++    }
++
+     #[test]
+     fn warmup_result_validation_accepts_typed_runtime_states() {
+         let request = warmup_request();
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
+         let mut result = build_warmup_result(
+             &request,
+             "warmed-up",
+@@ -958,7 +1108,52 @@ mod tests {
+             Some("warm"),
+         );
+         result.schema_version = DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into();
++        result.diagnostics_detail_path = expected_result_path.into();
++
++        assert_eq!(
++            validate_warmup_result(
++                &request,
++                &result,
++                Path::new(expected_result_path),
++            ),
++            Ok(())
++        );
++    }
++
++    #[test]
++    fn warmup_result_validation_accepts_the_result_detail_path_companion_file() {
++        let request = warmup_request();
++        let expected_result_path =
++            "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
++        let mut result = build_warmup_result(
++            &request,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("warm"),
++        );
++        result.diagnostics_detail_path = expected_result_path.into();
++
++        assert_eq!(
++            validate_warmup_result(&request, &result, Path::new(expected_result_path)),
++            Ok(())
++        );
++    }
++
++    #[test]
++    fn dedicated_renderer_spawn_requires_explicit_opt_in() {
++        std::env::remove_var("BOOTHY_DEDICATED_RENDERER_ENABLE_SPAWN");
++
++        assert!(!should_attempt_dedicated_renderer_spawn(true));
++        assert!(!should_attempt_dedicated_renderer_spawn(false));
++    }
++
++    #[test]
++    fn dedicated_renderer_spawn_requires_a_runtime_handle_even_when_opted_in() {
++        std::env::set_var("BOOTHY_DEDICATED_RENDERER_ENABLE_SPAWN", "true");
++
++        assert!(should_attempt_dedicated_renderer_spawn(true));
++        assert!(!should_attempt_dedicated_renderer_spawn(false));
+ 
+-        assert_eq!(validate_warmup_result(&request, &result), Ok(()));
++        std::env::remove_var("BOOTHY_DEDICATED_RENDERER_ENABLE_SPAWN");
+     }
+ }
+diff --git a/src-tauri/src/render/mod.rs b/src-tauri/src/render/mod.rs
+index 3d7e3ef..8a960e6 100644
+--- a/src-tauri/src/render/mod.rs
++++ b/src-tauri/src/render/mod.rs
+@@ -1373,11 +1373,20 @@ fn resolve_preview_render_source(
+     }
+ 
+     if matches!(intent, RenderIntent::Preview) {
++        let canonical_preview_asset = paths
++            .renders_previews_dir
++            .join(format!("{}.jpg", capture.capture_id));
++        let should_avoid_pending_canonical_preview = capture.preview.ready_at_ms.is_none()
++            && matches!(capture.render_status.as_str(), "captureSaved" | "previewWaiting");
++
+         if profile.allow_fast_preview_raster {
+             if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
+                 let preview_asset = Path::new(preview_asset_path);
++                let is_pending_canonical_preview = should_avoid_pending_canonical_preview
++                    && normalize_path(preview_asset) == normalize_path(&canonical_preview_asset);
+ 
+-                if is_session_scoped_asset_path(&paths.session_root, preview_asset)
++                if !is_pending_canonical_preview
++                    && is_session_scoped_asset_path(&paths.session_root, preview_asset)
+                     && is_valid_render_preview_asset(preview_asset)
+                 {
+                     return PreviewRenderSource {
+@@ -1387,10 +1396,9 @@ fn resolve_preview_render_source(
+                 }
+             }
+ 
+-            let canonical_preview_asset = paths
+-                .renders_previews_dir
+-                .join(format!("{}.jpg", capture.capture_id));
+-            if is_valid_render_preview_asset(&canonical_preview_asset) {
++            if !should_avoid_pending_canonical_preview
++                && is_valid_render_preview_asset(&canonical_preview_asset)
++            {
+                 return PreviewRenderSource {
+                     asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
+                     kind: PreviewRenderSourceKind::FastPreviewRaster,
+@@ -2025,7 +2033,13 @@ mod tests {
+         let paths = SessionPaths::new(&temp_dir, session_id);
+         fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+         fs::create_dir_all(&paths.captures_originals_dir).expect("raw dir should exist");
+-        let fast_preview_path = paths.renders_previews_dir.join("capture_test.jpg");
++        let fast_preview_path = paths.handoff_dir.join("fast-preview").join("capture_test.jpg");
++        fs::create_dir_all(
++            fast_preview_path
++                .parent()
++                .expect("fast preview path should have a parent"),
++        )
++        .expect("fast preview dir should exist");
+         fs::write(&fast_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+             .expect("jpeg preview should exist");
+ 
+@@ -2104,8 +2118,8 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn preview_invocation_reuses_canonical_preview_asset_in_default_booth_safe_mode() {
+-        let temp_dir = unique_temp_dir("preview-canonical-fallback");
++    fn preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close() {
++        let temp_dir = unique_temp_dir("preview-canonical-pending-fallback");
+         let session_id = "session_test";
+         let paths = SessionPaths::new(&temp_dir, session_id);
+         fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+@@ -2167,18 +2181,20 @@ mod tests {
+ 
+         assert_eq!(
+             invocation.render_source_kind,
+-            PreviewRenderSourceKind::FastPreviewRaster
++            PreviewRenderSourceKind::RawOriginal
+         );
+         assert!(invocation
+             .arguments
+-            .contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
++            .contains(&RAW_PREVIEW_MAX_WIDTH_PX.to_string()));
+         assert!(invocation
+             .arguments
+-            .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
++            .contains(&RAW_PREVIEW_MAX_HEIGHT_PX.to_string()));
+         assert_eq!(
+             invocation.arguments.first().map(String::as_str),
+             Some(
+-                canonical_preview_path
++                paths
++                    .captures_originals_dir
++                    .join("capture_test.cr2")
+                     .to_string_lossy()
+                     .replace('\\', "/")
+                     .as_str()
+diff --git a/src-tauri/tests/operator_diagnostics.rs b/src-tauri/tests/operator_diagnostics.rs
+index 0b04494..b33c83f 100644
+--- a/src-tauri/tests/operator_diagnostics.rs
++++ b/src-tauri/tests/operator_diagnostics.rs
+@@ -8,6 +8,7 @@ use std::{
+ use boothy_lib::{
+     commands::runtime_commands::capability_snapshot_for_profile,
+     diagnostics::{ensure_operator_window_label, load_operator_session_summary_in_dir},
++    diagnostics::recovery::load_operator_recovery_summary_in_dir,
+     session::{
+         session_manifest::{
+             current_timestamp, ActivePresetBinding, CaptureTimingMetrics, CompletedPostEnd,
+@@ -17,6 +18,7 @@ use boothy_lib::{
+             SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
+         },
+         session_paths::SessionPaths,
++        session_repository::{select_active_preset_in_dir, start_session_in_dir},
+     },
+ };
+ 
+@@ -46,6 +48,43 @@ fn operator_diagnostics_returns_a_safe_no_session_summary() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn operator_recovery_summary_loads_for_new_session_after_preset_selection() {
++    let base_dir = unique_test_root("recovery-summary-after-preset-selection");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++
++    let session = start_session_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should start");
++
++    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.26".into(),
++        },
++    )
++    .expect("preset selection should succeed");
++
++    let summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator recovery summary should load after preset selection");
++
++    assert_eq!(summary.state, "session-loaded");
++    assert_eq!(summary.session_id.as_deref(), Some(session.session_id.as_str()));
++    assert_eq!(summary.blocked_state_category, "capture-blocked");
++    assert_eq!(summary.active_preset_display_name.as_deref(), Some("Soft Glow"));
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn operator_diagnostics_classifies_capture_blocked_sessions() {
+     let base_dir = unique_test_root("capture-blocked");
+diff --git a/src/booth-shell/screens/CaptureScreen.test.tsx b/src/booth-shell/screens/CaptureScreen.test.tsx
+index 1e97859..da273d7 100644
+--- a/src/booth-shell/screens/CaptureScreen.test.tsx
++++ b/src/booth-shell/screens/CaptureScreen.test.tsx
+@@ -1833,6 +1833,11 @@ describe('CaptureScreen', () => {
+       'src',
+       'fixtures/current-session-older.jpg',
+     )
++    expect(screen.getByText('최신 사진')).toBeInTheDocument()
++    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(3)
++    expect(
++      screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
++    ).toHaveLength(3)
+     expect(
+       screen.getByRole('img', {
+         name: /현재 세션 사진,\s*3번째,\s*soft glow 룩/i,
+@@ -1841,11 +1846,6 @@ describe('CaptureScreen', () => {
+       'src',
+       'fixtures/current-session-waiting.jpg',
+     )
+-    expect(screen.getByText('최신 사진')).toBeInTheDocument()
+-    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(3)
+-    expect(
+-      screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
+-    ).toHaveLength(3)
+     expect(
+       screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+     ).toBeInTheDocument()
+diff --git a/src/operator-console/providers/operator-diagnostics-context.ts b/src/operator-console/providers/operator-diagnostics-context.ts
+index c9d8dad..b3101ce 100644
+--- a/src/operator-console/providers/operator-diagnostics-context.ts
++++ b/src/operator-console/providers/operator-diagnostics-context.ts
+@@ -12,6 +12,7 @@ export type OperatorDiagnosticsContextValue = {
+   summary: OperatorRecoverySummary | null
+   auditHistory: OperatorAuditQueryResult | null
+   error: HostErrorEnvelope | null
++  auditError: HostErrorEnvelope | null
+   isLoading: boolean
+   isActing: boolean
+   lastActionResult: OperatorRecoveryActionResult | null
+diff --git a/src/operator-console/providers/operator-diagnostics-provider.tsx b/src/operator-console/providers/operator-diagnostics-provider.tsx
+index cf875c9..4ad9154 100644
+--- a/src/operator-console/providers/operator-diagnostics-provider.tsx
++++ b/src/operator-console/providers/operator-diagnostics-provider.tsx
+@@ -31,6 +31,7 @@ export function OperatorDiagnosticsProvider({
+   const [summary, setSummary] = useState<OperatorRecoverySummary | null>(null)
+   const [auditHistory, setAuditHistory] = useState<OperatorAuditQueryResult | null>(null)
+   const [error, setError] = useState<HostErrorEnvelope | null>(null)
++  const [auditError, setAuditError] = useState<HostErrorEnvelope | null>(null)
+   const [isLoading, setIsLoading] = useState(true)
+   const [isActing, setIsActing] = useState(false)
+   const [lastActionResult, setLastActionResult] =
+@@ -40,6 +41,7 @@ export function OperatorDiagnosticsProvider({
+     requestVersion: number,
+     nextSummary: OperatorRecoverySummary,
+     nextAuditHistory: OperatorAuditQueryResult | null,
++    nextAuditError: HostErrorEnvelope | null,
+   ) {
+     if (requestVersion !== requestVersionRef.current) {
+       return
+@@ -50,30 +52,60 @@ export function OperatorDiagnosticsProvider({
+       setAuditHistory(nextAuditHistory)
+       setLastActionResult(null)
+       setError(null)
++      setAuditError(nextAuditError)
+       setIsLoading(false)
+     })
+   }
+ 
+-  function commitFailure(requestVersion: number, nextError: HostErrorEnvelope) {
++  function commitFailure(
++    requestVersion: number,
++    nextError: HostErrorEnvelope,
++    preserveCurrentView: boolean,
++  ) {
+     if (requestVersion !== requestVersionRef.current) {
+       return
+     }
+ 
+     startTransition(() => {
+-      setSummary(null)
+-      setAuditHistory(null)
++      if (!preserveCurrentView) {
++        setSummary(null)
++        setAuditHistory(null)
++      }
+       setLastActionResult(null)
+       setError(nextError)
++      setAuditError(null)
+       setIsLoading(false)
+     })
+   }
+ 
++  async function loadAuditHistory(sessionId: string | null) {
++    try {
++      const nextAuditHistory =
++        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
++          sessionId,
++          eventCategories: [],
++          limit: 10,
++        })
++
++      return {
++        auditHistory: nextAuditHistory,
++        auditError: null,
++      }
++    } catch (error) {
++      return {
++        auditHistory: null,
++        auditError: error as HostErrorEnvelope,
++      }
++    }
++  }
++
+   async function refresh() {
+     const requestVersion = requestVersionRef.current + 1
+ 
+     requestVersionRef.current = requestVersion
+     startTransition(() => {
+       setError(null)
++      setAuditError(null)
+       setIsLoading(true)
+       setLastActionResult(null)
+     })
+@@ -81,23 +113,29 @@ export function OperatorDiagnosticsProvider({
+     try {
+       const nextSummary =
+         await operatorDiagnosticsServiceRef.current.loadOperatorRecoverySummary()
+-      const nextAuditHistory =
+-        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
+-          sessionId: nextSummary.sessionId ?? null,
+-          eventCategories: [],
+-          limit: 10,
+-        })
+-
+-      commitSuccess(requestVersion, nextSummary, nextAuditHistory)
++      const { auditHistory: nextAuditHistory, auditError: nextAuditError } =
++        await loadAuditHistory(nextSummary.sessionId ?? null)
++
++      commitSuccess(
++        requestVersion,
++        nextSummary,
++        nextAuditHistory,
++        nextAuditError,
++      )
+     } catch (error) {
+-      commitFailure(requestVersion, error as HostErrorEnvelope)
++      commitFailure(requestVersion, error as HostErrorEnvelope, summary !== null)
+     }
+   }
+ 
+   async function runAction(action: OperatorRecoveryAction) {
+     const sessionId = summary?.sessionId
+ 
+-    if (sessionId === null || sessionId === undefined) {
++    if (
++      sessionId === null ||
++      sessionId === undefined ||
++      error !== null ||
++      isLoading
++    ) {
+       return
+     }
+ 
+@@ -107,6 +145,7 @@ export function OperatorDiagnosticsProvider({
+     startTransition(() => {
+       setIsActing(true)
+       setError(null)
++      setAuditError(null)
+     })
+ 
+     try {
+@@ -114,12 +153,8 @@ export function OperatorDiagnosticsProvider({
+         sessionId,
+         action,
+       })
+-      const nextAuditHistory =
+-        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
+-          sessionId: result.summary.sessionId ?? null,
+-          eventCategories: [],
+-          limit: 10,
+-        })
++      const { auditHistory: nextAuditHistory, auditError: nextAuditError } =
++        await loadAuditHistory(result.summary.sessionId ?? null)
+ 
+       if (requestVersion !== actionRequestVersionRef.current) {
+         return
+@@ -130,6 +165,7 @@ export function OperatorDiagnosticsProvider({
+         setAuditHistory(nextAuditHistory)
+         setLastActionResult(result)
+         setError(null)
++        setAuditError(nextAuditError)
+         setIsActing(false)
+       })
+     } catch (error) {
+@@ -140,6 +176,7 @@ export function OperatorDiagnosticsProvider({
+       startTransition(() => {
+         setLastActionResult(null)
+         setError(error as HostErrorEnvelope)
++        setAuditError(null)
+         setIsActing(false)
+       })
+     }
+@@ -159,6 +196,7 @@ export function OperatorDiagnosticsProvider({
+         summary,
+         auditHistory,
+         error,
++        auditError,
+         isLoading,
+         isActing,
+         lastActionResult,
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.test.tsx b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+index c687cb6..a71f905 100644
+--- a/src/operator-console/screens/OperatorSummaryScreen.test.tsx
++++ b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+@@ -511,4 +511,117 @@ describe('OperatorSummaryScreen', () => {
+     expect(screen.getAllByText(/Preview \/ Render 확인 필요/i)).not.toHaveLength(0)
+     expect(screen.getByText(/다른 경계 문제는 별도로 확인해 주세요\./i)).toBeInTheDocument()
+   })
++
++  it('keeps current session diagnostics visible when audit history refresh fails', async () => {
++    const loadOperatorRecoverySummary = vi
++      .fn()
++      .mockResolvedValue(createOperatorRecoverySummary())
++    const loadOperatorAuditHistory = vi.fn().mockRejectedValue({
++      code: 'host-unavailable',
++      message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
++    })
++    const runOperatorRecoveryAction = vi
++      .fn()
++      .mockResolvedValue(createOperatorRecoveryActionResult())
++
++    renderOperatorScreen({
++      loadOperatorRecoverySummary,
++      loadOperatorAuditHistory,
++      runOperatorRecoveryAction,
++    })
++
++    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
++    expect(
++      screen.getByRole('heading', { name: /^현재 세션 문맥$/i }),
++    ).toBeInTheDocument()
++    expect(
++      screen.queryByRole('heading', { name: /^현재 세션 진단을 다시 불러와 주세요$/i }),
++    ).not.toBeInTheDocument()
++    expect(screen.getByText(/감사 기록을 불러오지 못했어요/i)).toBeInTheDocument()
++    expect(
++      screen.getByText(/세션 진단과 허용 액션은 계속 확인할 수 있어요\./i),
++    ).toBeInTheDocument()
++  })
++
++  it('keeps the applied recovery result even when the audit history reload fails', async () => {
++    const loadOperatorRecoverySummary = vi
++      .fn()
++      .mockResolvedValue(createOperatorRecoverySummary())
++    const loadOperatorAuditHistory = vi
++      .fn()
++      .mockResolvedValueOnce(createOperatorAuditHistory())
++      .mockRejectedValueOnce({
++        code: 'host-unavailable',
++        message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
++      })
++    const runOperatorRecoveryAction = vi
++      .fn()
++      .mockResolvedValue(createOperatorRecoveryActionResult())
++
++    renderOperatorScreen({
++      loadOperatorRecoverySummary,
++      loadOperatorAuditHistory,
++      runOperatorRecoveryAction,
++    })
++
++    const user = userEvent.setup()
++
++    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
++
++    await user.click(screen.getByRole('button', { name: /^Retry$/i }))
++
++    expect(
++      await screen.findByText(/현재 막힌 preview\/render 경계를 다시 시도했어요\./i),
++    ).toBeInTheDocument()
++    expect(screen.getByText(/다음 booth 상태: Ready/i)).toBeInTheDocument()
++    expect(screen.getByText(/감사 기록을 불러오지 못했어요/i)).toBeInTheDocument()
++    expect(
++      screen.queryByRole('button', { name: /^Retry$/i }),
++    ).not.toBeInTheDocument()
++  })
++
++  it('keeps the last known session visible when refresh fails after a successful load', async () => {
++    const loadOperatorRecoverySummary = vi
++      .fn()
++      .mockResolvedValueOnce(createOperatorRecoverySummary())
++      .mockRejectedValueOnce({
++        code: 'host-unavailable',
++        message: '지금은 현재 세션 진단을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.',
++      })
++    const loadOperatorAuditHistory = vi
++      .fn()
++      .mockResolvedValue(createOperatorAuditHistory())
++    const runOperatorRecoveryAction = vi
++      .fn()
++      .mockResolvedValue(createOperatorRecoveryActionResult())
++
++    renderOperatorScreen({
++      loadOperatorRecoverySummary,
++      loadOperatorAuditHistory,
++      runOperatorRecoveryAction,
++    })
++
++    const user = userEvent.setup()
++
++    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
++
++    await user.click(screen.getByRole('button', { name: /진단 새로고침/i }))
++
++    expect(await screen.findByText('Kim 4821')).toBeInTheDocument()
++    expect(
++      screen.getByRole('heading', { name: /^현재 세션 문맥$/i }),
++    ).toBeInTheDocument()
++    expect(
++      screen.queryByRole('heading', { name: /^현재 세션 진단을 다시 불러와 주세요$/i }),
++    ).not.toBeInTheDocument()
++    expect(
++      screen.getByText(/지금은 현재 세션 진단을 불러올 수 없어요\. 잠시 후 다시 시도해 주세요\./i),
++    ).toBeInTheDocument()
++    const retryButton = screen.getByRole('button', { name: /^Retry$/i })
++    expect(retryButton).toBeDisabled()
++
++    await user.click(retryButton)
++
++    expect(runOperatorRecoveryAction).not.toHaveBeenCalled()
++  })
+ })
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.tsx b/src/operator-console/screens/OperatorSummaryScreen.tsx
+index aaf386c..60d3f59 100644
+--- a/src/operator-console/screens/OperatorSummaryScreen.tsx
++++ b/src/operator-console/screens/OperatorSummaryScreen.tsx
+@@ -7,6 +7,7 @@ import type {
+   OperatorCameraConnectionSummary,
+   OperatorRecoveryAction,
+   OperatorRecoverySummary,
++  HostErrorEnvelope,
+ } from '../../shared-contracts'
+ import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
+ import { useOperatorDiagnostics } from '../providers/use-operator-diagnostics'
+@@ -336,7 +337,29 @@ function AuditSummaryCard({ history }: { history: OperatorAuditQueryResult }) {
+   )
+ }
+ 
+-function AuditHistoryPanel({ history }: { history: OperatorAuditQueryResult | null }) {
++function AuditHistoryPanel({
++  history,
++  error,
++}: {
++  history: OperatorAuditQueryResult | null
++  error: HostErrorEnvelope | null
++}) {
++  if (error !== null) {
++    return (
++      <article className="surface-card operator-console__section">
++        <div className="operator-console__section-header">
++          <div>
++            <p className="operator-console__section-label">Audit History</p>
++            <h2>감사 기록을 불러오지 못했어요</h2>
++          </div>
++        </div>
++        <p className="operator-console__empty">
++          세션 진단과 허용 액션은 계속 확인할 수 있어요. 잠시 후 다시 새로고침해 주세요.
++        </p>
++      </article>
++    )
++  }
++
+   if (history === null) {
+     return null
+   }
+@@ -512,10 +535,12 @@ function RecentFailureCard({ summary }: { summary: OperatorRecoverySummary }) {
+ function ActionPanel({
+   summary,
+   isActing,
++  actionsDisabled,
+   onAction,
+ }: {
+   summary: OperatorRecoverySummary
+   isActing: boolean
++  actionsDisabled: boolean
+   onAction(action: OperatorRecoveryAction): void
+ }) {
+   return (
+@@ -532,6 +557,11 @@ function ActionPanel({
+       <p className="operator-console__empty">
+         {describeBlockedCategory(summary.blockedCategory)}
+       </p>
++      {actionsDisabled ? (
++        <p className="operator-console__empty">
++          최신 세션 진단을 다시 확인할 때까지 recovery action은 잠시 멈춰 둘게요.
++        </p>
++      ) : null}
+       {summary.allowedActions.length === 0 ? (
+         <p className="operator-console__empty">
+           현재 세션 범주에서는 추가 recovery action을 열지 않았어요.
+@@ -550,7 +580,7 @@ function ActionPanel({
+                 <button
+                   type="button"
+                   className="surface-card__action"
+-                  disabled={isActing}
++                  disabled={isActing || actionsDisabled}
+                   onClick={() => onAction(action)}
+                 >
+                   {isActing ? '실행 중...' : copy.label}
+@@ -605,9 +635,18 @@ function ActionResultCard() {
+ }
+ 
+ export function OperatorSummaryScreen() {
+-  const { summary, auditHistory, error, isLoading, isActing, refresh, runAction } =
+-    useOperatorDiagnostics()
++  const {
++    summary,
++    auditHistory,
++    error,
++    auditError,
++    isLoading,
++    isActing,
++    refresh,
++    runAction,
++  } = useOperatorDiagnostics()
+   const hasUnavailableSummary = summary === null && error !== null
++  const actionsDisabled = isLoading || error !== null
+   const activeCategory = summary?.blockedStateCategory ?? null
+   const categoryBadgeTone = activeCategory ?? 'loading'
+   const categoryBadgeLabel = formatBlockedStateCategoryLabel(
+@@ -683,9 +722,10 @@ export function OperatorSummaryScreen() {
+                 <ActionPanel
+                   summary={summary}
+                   isActing={isActing}
++                  actionsDisabled={actionsDisabled}
+                   onAction={runAction}
+                 />
+-                <AuditHistoryPanel history={auditHistory} />
++                <AuditHistoryPanel history={auditHistory} error={auditError} />
+                 <ActionResultCard />
+               </>
+             ) : (
+diff --git a/src/operator-console/services/operator-diagnostics-service.test.ts b/src/operator-console/services/operator-diagnostics-service.test.ts
+index cad7c34..f3f9327 100644
+--- a/src/operator-console/services/operator-diagnostics-service.test.ts
++++ b/src/operator-console/services/operator-diagnostics-service.test.ts
+@@ -207,6 +207,48 @@ describe('operator diagnostics service', () => {
+     })
+   })
+ 
++  it('accepts helper timestamps with timezone offsets through the service seam', async () => {
++    const service = createOperatorDiagnosticsService({
++      gateway: {
++        async loadOperatorRecoverySummary() {
++          return createOperatorRecoverySummary({
++            cameraConnection: {
++              state: 'connected',
++              title: '카메라와 helper 연결이 확인됐어요.',
++              detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
++              observedAt: '2026-04-10T08:17:58.5548198+00:00',
++            },
++            liveCaptureTruth: {
++              source: 'canon-helper-sidecar',
++              freshness: 'fresh',
++              sessionMatch: 'matched',
++              cameraState: 'ready',
++              helperState: 'healthy',
++              observedAt: '2026-04-10T08:17:58.5548198+00:00',
++              sequence: 162,
++              detailCode: 'camera-ready',
++            },
++          })
++        },
++        async loadOperatorAuditHistory() {
++          return createOperatorAuditHistory()
++        },
++        async runOperatorRecoveryAction() {
++          return createOperatorRecoveryActionResult()
++        },
++      },
++    })
++
++    await expect(service.loadOperatorRecoverySummary()).resolves.toMatchObject({
++      cameraConnection: {
++        observedAt: '2026-04-10T08:17:58.5548198+00:00',
++      },
++      liveCaptureTruth: {
++        observedAt: '2026-04-10T08:17:58.5548198+00:00',
++      },
++    })
++  })
++
+   it('parses recovery action results and enforces session consistency', async () => {
+     const service = createOperatorDiagnosticsService({
+       gateway: {
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 54f5274..8c768b9 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -805,6 +805,36 @@ describe('shared contracts baseline', () => {
+     expect(parsedCategory).toBe('preview-or-render')
+   })
+ 
++  it('accepts operator diagnostics timestamps emitted with timezone offsets', () => {
++    const parsedSummary = operatorRecoverySummarySchema.parse(
++      createOperatorRecoverySummary({
++        cameraConnection: {
++          state: 'connected',
++          title: '카메라와 helper 연결이 확인됐어요.',
++          detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
++          observedAt: '2026-04-10T08:17:58.5548198+00:00',
++        },
++        liveCaptureTruth: {
++          source: 'canon-helper-sidecar',
++          freshness: 'fresh',
++          sessionMatch: 'matched',
++          cameraState: 'ready',
++          helperState: 'healthy',
++          observedAt: '2026-04-10T08:17:58.5548198+00:00',
++          sequence: 162,
++          detailCode: 'camera-ready',
++        },
++      }),
++    )
++
++    expect(parsedSummary.cameraConnection.observedAt).toBe(
++      '2026-04-10T08:17:58.5548198+00:00',
++    )
++    expect(parsedSummary.liveCaptureTruth?.observedAt).toBe(
++      '2026-04-10T08:17:58.5548198+00:00',
++    )
++  })
++
+   it('rejects recovery summaries that expose actions without a blocked category', () => {
+     expect(() =>
+       operatorRecoverySummarySchema.parse(
+diff --git a/src/shared-contracts/schemas/operator-diagnostics.ts b/src/shared-contracts/schemas/operator-diagnostics.ts
+index 1b58990..5b754ff 100644
+--- a/src/shared-contracts/schemas/operator-diagnostics.ts
++++ b/src/shared-contracts/schemas/operator-diagnostics.ts
+@@ -38,13 +38,13 @@ export const operatorCameraConnectionSummarySchema = z.object({
+   state: operatorCameraConnectionStateSchema,
+   title: operatorSafeCopySchema,
+   detail: z.string().trim().min(1).max(240),
+-  observedAt: z.string().datetime().nullable().optional(),
++  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
+ })
+ 
+ export const operatorRecentFailureSummarySchema = z.object({
+   title: operatorSafeCopySchema,
+   detail: z.string().trim().min(1).max(240),
+-  observedAt: z.string().datetime().nullable().optional(),
++  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
+ })
+ 
+ export const operatorSessionSummarySchema = z.object({
+diff --git a/src/shared-contracts/schemas/operator-recovery.ts b/src/shared-contracts/schemas/operator-recovery.ts
+index 93d21f4..ad0918f 100644
+--- a/src/shared-contracts/schemas/operator-recovery.ts
++++ b/src/shared-contracts/schemas/operator-recovery.ts
+@@ -37,7 +37,7 @@ export const operatorRecoveryActionRejectionReasonSchema = z.enum([
+ export const operatorRecoveryDiagnosticsSummarySchema = z.object({
+   title: operatorSafeCopySchema,
+   detail: z.string().trim().min(1).max(240),
+-  observedAt: z.string().datetime().nullable().optional(),
++  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
+ })
+ 
+ export const operatorRecoverySummarySchema = operatorSessionSummarySchema

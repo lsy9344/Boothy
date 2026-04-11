@@ -354,6 +354,36 @@ fn activate_catalog_preset_version(
     actor_label: &str,
     happened_at: &str,
 ) -> Result<CatalogActivationOutcome, HostErrorEnvelope> {
+    activate_catalog_preset_version_with_summary_builder(
+        base_dir,
+        preset_id,
+        target_published_version,
+        action_type,
+        actor_id,
+        actor_label,
+        happened_at,
+        build_catalog_state_summary_for_preset,
+    )
+}
+
+fn activate_catalog_preset_version_with_summary_builder<F>(
+    base_dir: &Path,
+    preset_id: &str,
+    target_published_version: &str,
+    action_type: &str,
+    actor_id: &str,
+    actor_label: &str,
+    happened_at: &str,
+    build_summary: F,
+) -> Result<CatalogActivationOutcome, HostErrorEnvelope>
+where
+    F: Fn(
+        &Path,
+        &HashMap<String, Vec<PublishedPresetSummaryDto>>,
+        &CatalogStateRecord,
+        &str,
+    ) -> Result<Option<PresetCatalogStateSummaryDto>, HostErrorEnvelope>,
+{
     let catalog_root = resolve_published_preset_catalog_dir(base_dir);
     let bundles_by_id = load_published_presets_grouped_by_id(&catalog_root)?;
     let _ = ensure_target_bundle_is_valid(
@@ -417,18 +447,26 @@ fn activate_catalog_preset_version(
         return Err(error);
     }
 
-    let refreshed_bundles = load_published_presets_grouped_by_id(&catalog_root)?;
-    let summary = build_catalog_state_summary_for_preset(
-        base_dir,
-        &refreshed_bundles,
-        &next_state,
-        preset_id,
-    )?
-    .ok_or_else(|| {
-        HostErrorEnvelope::persistence(
-            "catalog state를 갱신한 뒤 live summary를 다시 계산하지 못했어요.",
-        )
-    })?;
+    let post_persist_result = (|| -> Result<PresetCatalogStateSummaryDto, HostErrorEnvelope> {
+        let refreshed_bundles = load_published_presets_grouped_by_id(&catalog_root)?;
+        build_summary(base_dir, &refreshed_bundles, &next_state, preset_id)?.ok_or_else(|| {
+            HostErrorEnvelope::persistence(
+                "catalog state를 갱신한 뒤 live summary를 다시 계산하지 못했어요.",
+            )
+        })
+    })();
+    let summary = match post_persist_result {
+        Ok(summary) => summary,
+        Err(error) => {
+            return Err(rollback_catalog_activation_side_effects(
+                base_dir,
+                preset_id,
+                &previous_state,
+                &previous_history,
+                error,
+            ));
+        }
+    };
 
     if action_type == "rollback" {
         try_append_operator_audit_record(
@@ -456,6 +494,40 @@ fn activate_catalog_preset_version(
         summary,
         audit_entry,
     })
+}
+
+fn rollback_catalog_activation_side_effects(
+    base_dir: &Path,
+    preset_id: &str,
+    previous_state: &CatalogStateRecord,
+    previous_history: &[CatalogVersionHistoryItemDto],
+    error: HostErrorEnvelope,
+) -> HostErrorEnvelope {
+    let mut rollback_failures = Vec::new();
+
+    if let Err(rollback_error) = persist_catalog_state(base_dir, previous_state) {
+        rollback_failures.push(format!(
+            "catalog state rollback failed: {}",
+            rollback_error.message
+        ));
+    }
+
+    if let Err(rollback_error) = persist_catalog_history(base_dir, preset_id, previous_history) {
+        rollback_failures.push(format!(
+            "catalog history rollback failed: {}",
+            rollback_error.message
+        ));
+    }
+
+    if rollback_failures.is_empty() {
+        error
+    } else {
+        HostErrorEnvelope::persistence(format!(
+            "{} 롤백까지 실패했어요: {}",
+            error.message,
+            rollback_failures.join(" / ")
+        ))
+    }
 }
 
 fn build_catalog_state_result(
@@ -832,4 +904,91 @@ fn map_fs_error(error: std::io::Error) -> HostErrorEnvelope {
 enum TargetBundleValidation {
     Missing,
     Incompatible,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn activate_catalog_preset_version_rolls_back_state_and_history_when_summary_build_fails() {
+        let base_dir = unique_test_root("catalog-rollback-on-summary-failure");
+        let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+        create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.20", "Soft Glow");
+        let _ = load_or_initialize_catalog_state(&base_dir).expect("initial catalog state should load");
+        create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.26", "Soft Glow");
+
+        let error = activate_catalog_preset_version_with_summary_builder(
+            &base_dir,
+            "preset_soft-glow",
+            "2026.03.26",
+            "published",
+            "manager-kim",
+            "Kim Manager",
+            "2026-03-26T00:20:00.000Z",
+            |_base_dir, _bundles_by_id, _state, _preset_id| {
+                Err(HostErrorEnvelope::persistence(
+                    "forced summary failure after catalog update",
+                ))
+            },
+        )
+        .expect_err("summary failure should bubble up");
+
+        assert!(error.message.contains("forced summary failure"));
+
+        let state_path = resolve_catalog_state_path(&base_dir);
+        let persisted_state = read_catalog_state(&state_path)
+            .expect("catalog state should remain readable")
+            .expect("catalog state should exist");
+        assert_eq!(persisted_state.catalog_revision, 1);
+        assert_eq!(persisted_state.live_presets.len(), 1);
+        assert_eq!(persisted_state.live_presets[0].preset_id, "preset_soft-glow");
+        assert_eq!(persisted_state.live_presets[0].published_version, "2026.03.20");
+
+        let history = load_catalog_history(&base_dir, "preset_soft-glow")
+            .expect("catalog history should remain readable");
+        assert!(history.is_empty());
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("boothy-{label}-{unique}"))
+    }
+
+    fn create_published_bundle(
+        catalog_root: &Path,
+        preset_id: &str,
+        published_version: &str,
+        display_name: &str,
+    ) {
+        let bundle_dir = catalog_root.join(preset_id).join(published_version);
+        fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
+        fs::write(bundle_dir.join("preview.jpg"), "preview").expect("preview should write");
+        let bundle = serde_json::json!({
+            "schemaVersion": "published-preset-bundle/v1",
+            "presetId": preset_id,
+            "displayName": display_name,
+            "publishedVersion": published_version,
+            "lifecycleStatus": "published",
+            "boothStatus": "booth-safe",
+            "preview": {
+                "kind": "preview-tile",
+                "assetPath": "preview.jpg",
+                "altText": format!("{display_name} preview"),
+            }
+        });
+        fs::write(
+            bundle_dir.join("bundle.json"),
+            serde_json::to_vec_pretty(&bundle).expect("bundle should serialize"),
+        )
+        .expect("bundle should write");
+    }
 }

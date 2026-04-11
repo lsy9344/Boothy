@@ -254,6 +254,13 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
       title: '완료 경계 대기 전',
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
+    previewArchitecture: {
+      route: 'local-renderer-sidecar',
+      routeStage: 'canary',
+      laneOwner: 'inline-truthful-fallback',
+      fallbackReasonCode: 'route-policy-shadow',
+      hardwareCapability: 'dedicated-renderer-available',
+    },
     liveCaptureTruth: {
       source: 'canon-helper-sidecar',
       freshness: 'fresh',
@@ -314,6 +321,13 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       status: 'clear',
       title: '완료 경계 대기 전',
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
+    },
+    previewArchitecture: {
+      route: 'local-renderer-sidecar',
+      routeStage: 'canary',
+      laneOwner: 'inline-truthful-fallback',
+      fallbackReasonCode: 'route-policy-shadow',
+      hardwareCapability: 'dedicated-renderer-available',
     },
     ...overrides,
   }
@@ -768,6 +782,15 @@ describe('shared contracts baseline', () => {
     expect(parsed.recentFailure?.title).toBe('프리뷰/렌더 결과 준비 지연')
     expect(parsed.liveCaptureTruth?.cameraState).toBe('ready')
     expect(parsed.liveCaptureTruth?.helperState).toBe('healthy')
+    expect(parsed).toMatchObject({
+      previewArchitecture: {
+        route: 'local-renderer-sidecar',
+        routeStage: 'canary',
+        laneOwner: 'inline-truthful-fallback',
+        fallbackReasonCode: 'route-policy-shadow',
+        hardwareCapability: 'dedicated-renderer-available',
+      },
+    })
   })
 
   it('rejects operator summaries whose blocked-state category or safe detail shape drift', () => {
@@ -801,8 +824,44 @@ describe('shared contracts baseline', () => {
 
     expect(parsedSummary.blockedCategory).toBe('preview-or-render')
     expect(parsedSummary.allowedActions).toContain('route-phone-required')
+    expect(parsedSummary).toMatchObject({
+      previewArchitecture: {
+        routeStage: 'canary',
+        laneOwner: 'inline-truthful-fallback',
+      },
+    })
     expect(parsedAction).toBe('approved-boundary-restart')
     expect(parsedCategory).toBe('preview-or-render')
+  })
+
+  it('accepts operator diagnostics timestamps emitted with timezone offsets', () => {
+    const parsedSummary = operatorRecoverySummarySchema.parse(
+      createOperatorRecoverySummary({
+        cameraConnection: {
+          state: 'connected',
+          title: '카메라와 helper 연결이 확인됐어요.',
+          detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+          observedAt: '2026-04-10T08:17:58.5548198+00:00',
+        },
+        liveCaptureTruth: {
+          source: 'canon-helper-sidecar',
+          freshness: 'fresh',
+          sessionMatch: 'matched',
+          cameraState: 'ready',
+          helperState: 'healthy',
+          observedAt: '2026-04-10T08:17:58.5548198+00:00',
+          sequence: 162,
+          detailCode: 'camera-ready',
+        },
+      }),
+    )
+
+    expect(parsedSummary.cameraConnection.observedAt).toBe(
+      '2026-04-10T08:17:58.5548198+00:00',
+    )
+    expect(parsedSummary.liveCaptureTruth?.observedAt).toBe(
+      '2026-04-10T08:17:58.5548198+00:00',
+    )
   })
 
   it('rejects recovery summaries that expose actions without a blocked category', () => {
@@ -1359,6 +1418,114 @@ describe('shared contracts baseline', () => {
     }
     expect(parsed.reasonCode).toBe('duplicate-version')
     expect(parsed.auditRecord.action).toBe('rejected')
+  })
+
+  it('accepts stage-unavailable publication rejections for drafts that were already published', () => {
+    const parsed = publishValidatedPresetResultSchema.parse({
+      schemaVersion: 'draft-preset-publication-result/v1',
+      status: 'rejected',
+      draft: createDraftPresetSummary({
+        lifecycleState: 'published',
+        validation: {
+          status: 'passed',
+          latestReport: createDraftValidationReport({
+            lifecycleState: 'validated',
+            status: 'passed',
+            findings: [],
+          }),
+          history: [
+            createDraftValidationReport({
+              lifecycleState: 'validated',
+              status: 'passed',
+              findings: [],
+            }),
+          ],
+        },
+        publicationHistory: [
+          createPublicationAuditRecord({
+            draftVersion: 2,
+            publishedVersion: '2026.03.26',
+            action: 'published',
+            reasonCode: null,
+            notedAt: '2026-03-26T00:20:00.000Z',
+          }),
+          createPublicationAuditRecord({
+            draftVersion: 2,
+            publishedVersion: '2026.03.27',
+            action: 'rejected',
+            reasonCode: 'stage-unavailable',
+            guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+            notedAt: '2026-03-27T00:20:00.000Z',
+          }),
+        ],
+      }),
+      reasonCode: 'stage-unavailable',
+      message: '이 단계에서는 게시를 실행하지 않아요.',
+      guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+      auditRecord: createPublicationAuditRecord({
+        draftVersion: 2,
+        publishedVersion: '2026.03.27',
+        action: 'rejected',
+        reasonCode: 'stage-unavailable',
+        guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+        notedAt: '2026-03-27T00:20:00.000Z',
+      }),
+    })
+
+    expect(parsed.status).toBe('rejected')
+    if (parsed.status !== 'rejected') {
+      throw new Error('expected a rejected publication result')
+    }
+    expect(parsed.draft.lifecycleState).toBe('published')
+  })
+
+  it('rejects stage-unavailable publication rejections that claim published state without prior published history', () => {
+    expect(() =>
+      publishValidatedPresetResultSchema.parse({
+        schemaVersion: 'draft-preset-publication-result/v1',
+        status: 'rejected',
+        draft: createDraftPresetSummary({
+          lifecycleState: 'published',
+          validation: {
+            status: 'passed',
+            latestReport: createDraftValidationReport({
+              lifecycleState: 'validated',
+              status: 'passed',
+              findings: [],
+            }),
+            history: [
+              createDraftValidationReport({
+                lifecycleState: 'validated',
+                status: 'passed',
+                findings: [],
+              }),
+            ],
+          },
+          publicationHistory: [
+            createPublicationAuditRecord({
+              draftVersion: 2,
+              publishedVersion: '2026.03.27',
+              action: 'rejected',
+              reasonCode: 'stage-unavailable',
+              guidance:
+                'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+              notedAt: '2026-03-27T00:20:00.000Z',
+            }),
+          ],
+        }),
+        reasonCode: 'stage-unavailable',
+        message: '이 단계에서는 게시를 실행하지 않아요.',
+        guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+        auditRecord: createPublicationAuditRecord({
+          draftVersion: 2,
+          publishedVersion: '2026.03.27',
+          action: 'rejected',
+          reasonCode: 'stage-unavailable',
+          guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+          notedAt: '2026-03-27T00:20:00.000Z',
+        }),
+      }),
+    ).toThrow(/이전 published 이력이 필요해요/i)
   })
 
   it('rejects invalid validation finding payloads and passed reports with error findings', () => {

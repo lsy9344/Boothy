@@ -1833,6 +1833,11 @@ describe('CaptureScreen', () => {
       'src',
       'fixtures/current-session-older.jpg',
     )
+    expect(screen.getByText('최신 사진')).toBeInTheDocument()
+    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(3)
+    expect(
+      screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
+    ).toHaveLength(3)
     expect(
       screen.getByRole('img', {
         name: /현재 세션 사진,\s*3번째,\s*soft glow 룩/i,
@@ -1841,11 +1846,6 @@ describe('CaptureScreen', () => {
       'src',
       'fixtures/current-session-waiting.jpg',
     )
-    expect(screen.getByText('최신 사진')).toBeInTheDocument()
-    expect(screen.getAllByText(/촬영 당시 soft glow 룩/i)).toHaveLength(3)
-    expect(
-      screen.getAllByText(/현재 룩과 같은 바인딩으로 유지돼요\./i),
-    ).toHaveLength(3)
     expect(
       screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
     ).toBeInTheDocument()

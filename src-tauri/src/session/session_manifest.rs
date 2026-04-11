@@ -11,8 +11,8 @@ pub const SESSION_POST_END_COMPLETED: &str = "completed";
 pub const SESSION_POST_END_PHONE_REQUIRED: &str = "phone-required";
 pub const SESSION_POST_END_LOCAL_DELIVERABLE_READY: &str = "local-deliverable-ready";
 pub const SESSION_POST_END_HANDOFF_READY: &str = "handoff-ready";
-pub const DEFAULT_SESSION_DURATION_SECONDS: u64 = 60;
-pub const WARNING_LEAD_SECONDS: u64 = 30;
+pub const DEFAULT_SESSION_DURATION_SECONDS: u64 = 15 * 60;
+pub const WARNING_LEAD_SECONDS: u64 = 5 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -228,6 +228,15 @@ pub struct CaptureTimingMetrics {
     pub preview_budget_state: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteSnapshot {
+    pub route: String,
+    pub route_stage: String,
+    #[serde(default)]
+    pub fallback_reason_code: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionCaptureRecord {
@@ -239,6 +248,8 @@ pub struct SessionCaptureRecord {
     pub active_preset_version: String,
     #[serde(default)]
     pub active_preset_display_name: Option<String>,
+    #[serde(default)]
+    pub preview_renderer_route: Option<PreviewRendererRouteSnapshot>,
     pub capture_id: String,
     pub request_id: String,
     pub raw: RawCaptureAsset,
@@ -271,6 +282,8 @@ pub struct SessionManifest {
     #[serde(default)]
     pub active_preset_display_name: Option<String>,
     #[serde(default)]
+    pub active_preview_renderer_route: Option<PreviewRendererRouteSnapshot>,
+    #[serde(default)]
     pub timing: Option<SessionTiming>,
     #[serde(default)]
     pub captures: Vec<SessionCaptureRecord>,
@@ -290,6 +303,7 @@ pub fn normalize_legacy_manifest(manifest: &mut SessionManifest) {
         .as_ref()
         .map(|preset| preset.published_version.clone());
     let fallback_active_preset_display_name = manifest.active_preset_display_name.clone();
+    let fallback_active_preview_renderer_route = manifest.active_preview_renderer_route.clone();
 
     for capture in &mut manifest.captures {
         let matches_manifest_active_preset = fallback_active_preset_version
@@ -306,6 +320,13 @@ pub fn normalize_legacy_manifest(manifest: &mut SessionManifest) {
             && capture.active_preset_id == fallback_active_preset_id
         {
             capture.active_preset_display_name = fallback_active_preset_display_name.clone();
+        }
+
+        if capture.preview_renderer_route.is_none()
+            && matches_manifest_active_preset
+            && capture.active_preset_id == fallback_active_preset_id
+        {
+            capture.preview_renderer_route = fallback_active_preview_renderer_route.clone();
         }
     }
 }
@@ -386,6 +407,7 @@ pub fn build_session_manifest_at(
         active_preset: None,
         active_preset_id: None,
         active_preset_display_name: None,
+        active_preview_renderer_route: None,
         timing: Some(timing),
         captures: Vec::new(),
         post_end: None,
@@ -408,9 +430,8 @@ pub fn build_default_session_timing_for_mode(
     let adjusted_end_at_seconds =
         started_at_seconds.saturating_add(DEFAULT_SESSION_DURATION_SECONDS);
     let adjusted_end_at = unix_seconds_to_rfc3339(adjusted_end_at_seconds);
-    let warning_at = unix_seconds_to_rfc3339(
-        adjusted_end_at_seconds.saturating_sub(WARNING_LEAD_SECONDS),
-    );
+    let warning_at =
+        unix_seconds_to_rfc3339(adjusted_end_at_seconds.saturating_sub(WARNING_LEAD_SECONDS));
 
     Ok(SessionTiming {
         schema_version: SESSION_TIMING_SCHEMA_VERSION.into(),

@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-04-10 13:45 +09:00
+Last Updated: 2026-04-11 11:28 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -18,6 +18,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 | Story 1.4 | HV-02, HV-03, HV-10 | `review` until `Go` | Shared readiness evidence may overlap Story 1.6, but close ownership is tracked here. |
 | Story 1.5 | HV-04, HV-05 | `review` until `Go` | Story 1.7 may supply supporting correlation proof, but release close is tracked here. |
 | Story 1.6 | HV-02, HV-03, HV-10 | `review` until `Go` | Helper/readiness truth must include reconnect-safe evidence. |
+| Story 1.13 | HV-00, HV-04, HV-05, HV-07, HV-08, HV-10, HV-11, HV-12 | `review` until `Go` | Story 1.11 / 1.12 supporting proof does not close guarded cutover; canonical preview architecture release close is tracked here. |
 | Story 3.2 | HV-08, HV-11 | `review` until `Go` | `Completed` truth cannot close from automated state alone. |
 | Story 4.2 | HV-01, HV-09 | `review` until `Go` | Validation failure isolation and published-only booth visibility must both hold. |
 | Story 4.3 | HV-01, HV-07, HV-12 | `review` until `Go` | Immutable publish, darktable application, and catalogSnapshot drift protection all remain release-gated. |
@@ -26,6 +27,10 @@ Supporting regression / follow-up notes:
 
 - Story 1.7 supplies implementation-level capture correlation evidence for `HV-04` and `HV-05`, but it is not the canonical release close owner in this ledger.
 - Story 1.8 is the corrective follow-up that proves selected preset apply truth across preview/final boundaries; close was confirmed on 2026-04-10 after one canonical package tied `session.json` preset binding, `bundle.json` render metadata, preview/final outputs, and diagnostics together.
+- Story 1.9 hardware latency correction package was verified on 2026-04-10 from `session_000000000018a4ff284e180d5c`; same-capture first-visible, later same-slot replacement, split timing, truthful `Preview Waiting`, and completed post-end가 확인됐다. This is recorded as supporting evidence, not a separate release close owner.
+- Story 1.10 corrective hardware package was verified on 2026-04-10 from `session_000000000018a5007b5fecf020`; 5 `request-capture`, 5 `file-arrived`, 5 `fast-preview-promoted`, 5 `preview-render-start`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`, `lifecycle.stage=completed`, `postEnd.state=completed`, `5 originals / 5 previews / 1 final`이 함께 확인됐다. Story 1.10 baseline close는 이 패키지로 `Go`로 승격하고, 현재 워크스페이스의 preview-topology regression은 후속 Story 1.11~1.12 scope로 분리 추적한다.
+- Story 1.11 established the dedicated renderer sidecar boundary and Story 1.12 locked same-slot truthful replacement, but neither story owns the canonical preview architecture release close. Story 1.13 remains the guarded cutover owner and stays `No-Go` while the observed route policy is shadow-by-default.
+- Story 1.12 supporting hardware run was inspected on 2026-04-10 from `session_000000000018a5007b5fecf020`; 5 `request-capture`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`, and repeated `post-end-evaluated state=completed variant=local-deliverable-ready` were confirmed together with 5 originals / 5 previews / 1 final. `capture_preview_transition_summary`에서 first-visible 이후 preset-applied close까지의 시간은 `replacementMs=3694, 3451, 3852, 3615, 3707`로 실제 기록됐고, `recent-session-pending-visible -> recent-session-visible` 연쇄와 사용자 현장 확인으로 same-slot replacement supporting proof도 확보됐다. 사용자는 2026-04-11에 replayable UI evidence 요구를 waived/pass로 처리하도록 승인했다. 같은 날 stale result reuse, operator recovery block, summary metric 회귀 patch를 닫았지만, Story 1.12는 release-truth `Go` 소유자가 아니므로 story status는 `review`로 유지한다. guarded cutover 최종 hardware gate는 Story 1.13이 이어받는다.
 - Story 2.3 is the supporting follow-up validation note for `HV-06`; Story 1.3 is not reopened as an independent close owner.
 
 ## Sprint Review Gateboard
@@ -36,8 +41,10 @@ Supporting regression / follow-up notes:
 | 1.5 | Pass | Pass | Go | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
 | 1.6 | Pass | Pass | Go | Closed. HV-02/HV-03/HV-10 package was visually verified and linked evidence was accepted for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
 | 1.8 | Pass | Pass | Go | Closed. HV-05/HV-07/HV-08/HV-11/HV-12 package confirmed from two published preset sessions with divergent preview/final assets and matching XMP bundle paths. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4e49821e18790\` |
+| 1.10 | Pass at story-close baseline; current follow-up workspace scope tracked separately | Pass | Go | Closed. 5-shot completed booth package confirmed Story 1.10 corrective baseline and seam close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\` |
+| 1.13 | Pass | Shadow-only evidence recorded; promoted cutover proof missing | No-Go | `preview-renderer-policy.json` still defaults to `darktable`; `session_000000000018a5007b5fecf020` stayed `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, and `originalVisibleToPresetAppliedVisibleMs=none`, so canonical preview architecture close cannot promote yet. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\ ; C:\Users\KimYS\Pictures\dabi_shoot\branch-config\preview-renderer-policy.json` |
 | 3.2 | Pass | Pass | Go | Closed. HV-08/HV-11 package confirmed from one failure-isolation session and one completed local-deliverable session. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df139592b950\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\` |
-| 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
+| 4.2 | Pass | Pass | Go | Closed. `HV-09` failure isolation and `HV-01` published booth visibility were visually confirmed. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
 
 ## Evidence Registry
@@ -170,26 +177,101 @@ Supporting regression / follow-up notes:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\renders\finals\capture_20260410025910515_dca9711d7a.jpg`
   - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
 
+### Story 1.9
+
+- story key: `1-9-fast-preview-handoff와-xmp-preview-교체`
+- HV checklist ID: `HV-05`, `HV-07`
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\`
+- executedAt: `2026-04-10T21:40:00+09:00`
+- validator: `User visual verification + Codex artifact inspection confirmed 2026-04-10`
+- booth PC: `NOAHLEE`
+- camera model: `Canon EOS 700D`
+- darktable pin: `release-5.4.1 / c3f96ca`
+- helper identifier: `canon-helper-status/v1 via diagnostics/camera-helper-status.json`
+- Go / No-Go result: `Go`
+- release blocker: `None for Story 1.9 supporting hardware package. Canonical release close ownership remains with the release-gated story set.`
+- follow-up owner: `Noah Lee`
+- rerun prerequisite: `None.`
+- target rerun date: `Closed 2026-04-10`
+- core evidence paths:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4fe8468fea6ac\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\renders\previews\capture_20260410123827511_1dea26842b.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\renders\previews\capture_20260410123906172_33b090bf9b.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4ff284e180d5c\renders\finals\capture_20260410123906172_33b090bf9b.jpg`
+
+### Story 1.10
+
+- story key: `1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입`
+- HV checklist ID: `HV-05`, supporting seam-close package
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\`
+- executedAt: `2026-04-10T22:09:50+09:00`
+- validator: `User visual verification + Codex artifact inspection confirmed 2026-04-10`
+- booth PC: `NOAHLEE`
+- camera model: `Canon EOS 700D`
+- darktable pin: `release-5.4.1 / c3f96ca`
+- helper identifier: `canon-helper-status/v1 via diagnostics/camera-helper-status.json`
+- Go / No-Go result: `Go`
+- release blocker: `None for Story 1.10 baseline close. Current preview-topology regressions belong to later in-progress stories.`
+- follow-up owner: `Noah Lee`
+- rerun prerequisite: `None.`
+- target rerun date: `Closed 2026-04-10`
+- core evidence paths:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\renders\previews\capture_20260410130307528_565bdd14a6.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\renders\finals\capture_20260410130307528_565bdd14a6.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
+
+### Story 1.13
+
+- story key: `1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate`
+- HV checklist ID: `HV-00`, `HV-04`, `HV-05`, `HV-07`, `HV-08`, `HV-10`, `HV-11`, `HV-12`
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\ ; C:\Users\KimYS\Pictures\dabi_shoot\branch-config\preview-renderer-policy.json`
+- executedAt: `2026-04-10T22:02:37+09:00`
+- validator: `Codex artifact inspection confirmed 2026-04-11`
+- booth PC: `NOAHLEE`
+- camera model: `Canon EOS 700D`
+- darktable pin: `release-5.4.1 / c3f96ca`
+- helper identifier: `canon-helper-status/v1 via diagnostics/camera-helper-status.json`
+- Go / No-Go result: `No-Go`
+- release blocker: `Observed route policy still keeps defaultRoute=darktable, with only manual canary for preset_test-look@2026.03.31. The recorded booth package for preset_new-draft-2@2026.04.10 remained on laneOwner=inline-truthful-fallback, fallbackReason=shadow-submission-only, and originalVisibleToPresetAppliedVisibleMs=none, so guarded cutover has not produced canonical dedicated-renderer close proof yet.`
+- follow-up owner: `Noah Lee`
+- rerun prerequisite: `Promote approved preset scope beyond shadow in preview-renderer-policy.json, rerun the Story 1.13 HV matrix on booth hardware, and capture a fresh package that proves promoted dedicated-renderer close plus one-action rollback evidence without active-session truth drift.`
+- target rerun date: `TBD`
+- core evidence paths:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\renders\previews\capture_20260410130307528_565bdd14a6.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\renders\finals\capture_20260410130307528_565bdd14a6.jpg`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\branch-config\preview-renderer-policy.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
+
 ### Story 4.2
 
 - story key: `4-2-부스-호환성-검증과-승인-준비-상태-전환`
 - HV checklist ID: `HV-01`, `HV-09`
 - evidence package path: `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md`
-- executedAt: `2026-03-30`
-- validator: `Noah Lee`
+- executedAt: `2026-04-11T12:14:53+09:00`
+- validator: `User visual verification confirmed 2026-04-11`
 - booth PC: `NOAHLEE`
-- camera model: `N/A (validation failure isolation pass)`
+- camera model: `N/A (published booth visibility confirmation)`
 - darktable pin: `release-5.4.1 / c3f96ca`
 - helper identifier: `N/A`
-- Go / No-Go result: `No-Go`
-- release blocker: `HV-09 failure behavior was confirmed, but HV-01 publish success evidence is still pending.`
+- Go / No-Go result: `Go`
+- release blocker: `None. HV-09 failure isolation and HV-01 published booth visibility were visually confirmed.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Complete a successful published preset pass and attach bundle/catalog proof from the booth surface.`
-- target rerun date: `TBD`
+- rerun prerequisite: `None.`
+- target rerun date: `Closed 2026-04-11`
 - core evidence paths:
   - `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md`
-  - `TBD/published/bundle.json`
-  - `TBD/preset-catalog/catalog-state.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
 
 ### Story 4.3
 

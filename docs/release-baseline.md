@@ -86,10 +86,12 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 
 - `automated proof` and `hardware proof` are separate release gates.
 - The canonical hardware close record lives in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
+- Story 1.13 is the canonical preview architecture close owner for guarded cutover, rollback evidence, and `preview-renderer-policy.json` proof.
 - Automated build/test success can prove implementation readiness, but booth `Ready` / `Completed` truth is not release-claimable until the ledger records `Go`.
 - Any `No-Go`, missing evidence package, or unresolved blocker in the ledger keeps the branch on `release hold`.
 - Failed or skipped automation proof keeps `Promotion state` on `release hold` even if earlier hardware evidence exists.
 - CI proof artifacts remain evidence only; `Promotion state` stays non-release until the hardware ledger clears the gated stories for close.
+- Preview architecture promotion evidence must include the host-owned `branch-config/preview-renderer-policy.json` state together with the booth session package so shadow, canary, default, and rollback boundaries stay auditable.
 - Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
 
 ## Current State
@@ -97,3 +99,5 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 Signing-ready blocker: final certificate issuance and trusted-signing provider rollout remain intentionally gated until operational approval is complete. The current baseline keeps `release:desktop` and CI on an unsigned draft proof unless `BOOTHY_WINDOWS_CERT_*` inputs are deliberately supplied for validation.
 
 The repo also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.
+
+On April 11, 2026, Story 1.13 remains on `release hold`: the observed `branch-config/preview-renderer-policy.json` still keeps `defaultRoute` on `darktable`, with only a manual canary for `preset_test-look@2026.03.31`, so the canonical ledger remains `No-Go` until a fresh booth package proves promoted dedicated-renderer close behavior and one-action rollback evidence.

@@ -61,24 +61,22 @@ pub fn load_authoring_workspace_in_dir(
             Ok(entry) => {
                 let draft_folder = entry.file_name().to_string_lossy().trim().to_string();
                 let Ok(file_type) = entry.file_type() else {
-                    continue;
-                };
-
-                if file_type.is_symlink() {
-                    invalid_drafts.push(InvalidDraftArtifactDto {
-                        draft_folder: if draft_folder.is_empty() {
+                    invalid_drafts.push(workspace_entry_access_failure(
+                        if draft_folder.is_empty() {
                             "unknown-draft".into()
                         } else {
                             draft_folder
                         },
-                        message:
-                            "draft 폴더가 링크로 연결되어 있어 작업공간에서 자동으로 열지 않았어요."
-                                .into(),
-                        guidance:
-                            "자동 삭제 대신 작업공간을 수동 점검해 주세요. 외부 링크 대신 authoring 루트 안의 실제 draft 폴더로 다시 정리한 뒤 불러오면 기록을 보존할 수 있어요."
-                                .into(),
-                        can_repair: false,
-                    });
+                    ));
+                    continue;
+                };
+
+                if file_type.is_symlink() {
+                    invalid_drafts.push(workspace_symlink_failure(if draft_folder.is_empty() {
+                        "unknown-draft".into()
+                    } else {
+                        draft_folder
+                    }));
                     continue;
                 }
 
@@ -88,7 +86,10 @@ pub fn load_authoring_workspace_in_dir(
 
                 entry.path()
             }
-            Err(_) => continue,
+            Err(_) => {
+                invalid_drafts.push(workspace_entry_access_failure("unknown-draft".into()));
+                continue;
+            }
         };
 
         let draft_path = draft_dir.join("draft.json");
@@ -1107,8 +1108,9 @@ fn create_published_bundle_from_draft(
     fs::create_dir_all(bundle_dir).map_err(map_fs_error)?;
     let preview_relative = copy_bundle_asset(bundle_dir, "preview", preview_source)?;
     let sample_cut_relative = copy_bundle_asset(bundle_dir, "sample-cut", sample_cut_source)?;
-    let darktable_relative =
-        darktable_source.map(|source| copy_bundle_asset(bundle_dir, "darktable", source)).transpose()?;
+    let darktable_relative = darktable_source
+        .map(|source| copy_bundle_asset(bundle_dir, "darktable", source))
+        .transpose()?;
     let xmp_relative = copy_bundle_asset(bundle_dir, "xmp", xmp_source)?;
     let bundle_value = serde_json::json!({
         "schemaVersion": PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION,
@@ -1249,6 +1251,8 @@ fn load_required_draft_summary(
         return Err(HostErrorEnvelope::validation_message(missing_message));
     }
 
+    ensure_workspace_file_is_not_symlink(draft_path, malformed_message)?;
+
     let draft_bytes = fs::read_to_string(draft_path).map_err(map_fs_error)?;
     let trusted_preset_id = trusted_draft_folder_name(draft_path)
         .ok_or_else(|| HostErrorEnvelope::validation_message(malformed_message))?;
@@ -1287,6 +1291,10 @@ fn inspect_draft_artifact(
                 "목록에서 손상 draft 정리를 실행한 뒤 새 draft를 만들고 필요한 메타데이터와 자산 참조를 다시 저장해 주세요.".into(),
             can_repair: true,
         });
+    }
+
+    if is_workspace_symlink(draft_path) {
+        return DraftArtifactInspection::Invalid(workspace_symlink_failure(draft_folder));
     }
 
     let Ok(draft_bytes) = fs::read_to_string(draft_path) else {
@@ -1363,6 +1371,47 @@ fn trusted_draft_folder_name(draft_path: &Path) -> Option<String> {
         Some(draft_folder)
     } else {
         None
+    }
+}
+
+fn is_workspace_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn ensure_workspace_file_is_not_symlink(
+    path: &Path,
+    malformed_message: &str,
+) -> Result<(), HostErrorEnvelope> {
+    if is_workspace_symlink(path) {
+        return Err(HostErrorEnvelope::validation_message(malformed_message));
+    }
+
+    Ok(())
+}
+
+fn workspace_symlink_failure(draft_folder: String) -> InvalidDraftArtifactDto {
+    InvalidDraftArtifactDto {
+        draft_folder,
+        message: "draft 폴더가 링크로 연결되어 있어 작업공간에서 자동으로 열지 않았어요."
+            .into(),
+        guidance:
+            "자동 삭제 대신 작업공간을 수동 점검해 주세요. 외부 링크 대신 authoring 루트 안의 실제 draft 폴더로 다시 정리한 뒤 불러오면 기록을 보존할 수 있어요."
+                .into(),
+        can_repair: false,
+    }
+}
+
+fn workspace_entry_access_failure(draft_folder: String) -> InvalidDraftArtifactDto {
+    InvalidDraftArtifactDto {
+        draft_folder,
+        message: "draft 폴더 접근 정보를 읽지 못해 작업공간에서 자동으로 열지 않았어요."
+            .into(),
+        guidance:
+            "파일 잠금이나 권한 문제일 수 있어 자동 정리는 막았어요. 잠시 후 다시 시도하거나 작업공간 접근 상태를 먼저 확인해 주세요."
+                .into(),
+        can_repair: false,
     }
 }
 
@@ -2035,4 +2084,33 @@ fn ensure_draft_file_path_within_root(
 
 fn map_fs_error(error: std::io::Error) -> HostErrorEnvelope {
     HostErrorEnvelope::persistence(format!("draft 작업공간 파일을 저장하지 못했어요: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{workspace_entry_access_failure, workspace_symlink_failure};
+
+    #[test]
+    fn workspace_entry_access_failure_requires_manual_recovery() {
+        let artifact = workspace_entry_access_failure("preset_locked-draft".into());
+
+        assert_eq!(artifact.draft_folder, "preset_locked-draft");
+        assert!(!artifact.can_repair);
+        assert!(artifact.message.contains("접근"));
+        assert!(artifact.guidance.contains("권한"));
+    }
+
+    #[test]
+    fn workspace_symlink_failure_requires_manual_inspection() {
+        let artifact = workspace_symlink_failure("preset_linked-draft".into());
+
+        assert_eq!(artifact.draft_folder, "preset_linked-draft");
+        assert!(!artifact.can_repair);
+        assert_eq!(
+            artifact.message,
+            "draft 폴더가 링크로 연결되어 있어 작업공간에서 자동으로 열지 않았어요."
+        );
+        assert!(artifact.guidance.contains("수동 점검"));
+        assert!(artifact.guidance.contains("실제 draft 폴더"));
+    }
 }

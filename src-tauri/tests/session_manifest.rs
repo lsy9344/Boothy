@@ -132,7 +132,7 @@ fn fails_manifest_build_when_system_time_precedes_unix_epoch() {
 }
 
 #[test]
-fn default_session_timing_uses_a_one_minute_window() {
+fn default_session_timing_uses_the_fifteen_minute_product_window() {
     let timing = build_default_session_timing_for_mode(
         "session_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
         "2026-04-10T10:37:00Z",
@@ -140,8 +140,8 @@ fn default_session_timing_uses_a_one_minute_window() {
     )
     .expect("default timing should resolve");
 
-    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:38:00Z");
-    assert_eq!(timing.warning_at, "2026-04-10T10:37:30Z");
+    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:52:00Z");
+    assert_eq!(timing.warning_at, "2026-04-10T10:47:00Z");
 }
 
 #[test]
@@ -153,8 +153,8 @@ fn session_timing_does_not_change_when_test_mode_flag_is_true() {
     )
     .expect("timing should stay aligned with durable product defaults");
 
-    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:38:00Z");
-    assert_eq!(timing.warning_at, "2026-04-10T10:37:30Z");
+    assert_eq!(timing.adjusted_end_at, "2026-04-10T10:52:00Z");
+    assert_eq!(timing.warning_at, "2026-04-10T10:47:00Z");
 }
 
 #[test]
@@ -633,6 +633,77 @@ fn legacy_v1_manifest_with_existing_captures_backfills_capture_preset_identity()
 }
 
 #[test]
+fn legacy_v1_manifest_with_existing_captures_backfills_capture_preview_route_snapshot() {
+    let mut manifest: SessionManifest = serde_json::from_value(serde_json::json!({
+      "schemaVersion": "session-manifest/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "customer": {
+        "name": "Kim",
+        "phoneLastFour": "4821"
+      },
+      "createdAt": "2026-03-20T00:00:00Z",
+      "updatedAt": "2026-03-20T00:00:00Z",
+      "lifecycle": {
+        "status": "active",
+        "stage": "capture-ready"
+      },
+      "activePreset": {
+        "presetId": "preset_soft-glow",
+        "publishedVersion": "2026.03.20"
+      },
+      "activePresetId": "preset_soft-glow",
+      "activePresetDisplayName": "Soft Glow",
+      "activePreviewRendererRoute": {
+        "route": "local-renderer-sidecar",
+        "routeStage": "canary"
+      },
+      "captures": [{
+        "schemaVersion": "session-capture/v1",
+        "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "boothAlias": "Kim 4821",
+        "activePresetVersion": "2026.03.20",
+        "captureId": "capture_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "requestId": "request_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "raw": {
+          "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg",
+          "persistedAtMs": 100
+        },
+        "preview": {
+          "assetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg",
+          "enqueuedAtMs": 120,
+          "readyAtMs": 200
+        },
+        "final": {
+          "assetPath": null,
+          "readyAtMs": null
+        },
+        "renderStatus": "previewReady",
+        "postEndState": "activeSession",
+        "timing": {
+          "captureAcknowledgedAtMs": 100,
+          "previewVisibleAtMs": 200,
+          "captureBudgetMs": 1000,
+          "previewBudgetMs": 5000,
+          "previewBudgetState": "withinBudget"
+        }
+      }],
+      "postEnd": null
+    }))
+    .expect("legacy manifest with captures should deserialize");
+
+    normalize_legacy_manifest(&mut manifest);
+
+    let route_snapshot = manifest.captures[0]
+        .preview_renderer_route
+        .as_ref()
+        .expect("legacy captures should inherit the session preview route snapshot");
+    assert_eq!(route_snapshot.route, "local-renderer-sidecar");
+    assert_eq!(route_snapshot.route_stage, "canary");
+    assert_eq!(route_snapshot.fallback_reason_code, None);
+}
+
+#[test]
 fn legacy_phone_required_post_end_without_evaluated_at_still_deserializes() {
     let manifest: SessionManifest = serde_json::from_value(serde_json::json!({
       "schemaVersion": "session-manifest/v1",
@@ -971,6 +1042,111 @@ fn selecting_the_same_preset_backfills_missing_display_name_without_bumping_time
 }
 
 #[test]
+fn reselecting_the_same_preset_keeps_the_existing_route_snapshot() {
+    let base_dir = unique_test_root("preset-selection-keeps-route-snapshot");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should exist before selecting a preset");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.03.20"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
+
+    select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("first selection should persist");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.updated_at = "2026-03-20T00:05:00Z".into();
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [],
+          "forcedFallbackRoutes": [
+            {
+              "route": "darktable",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.03.20"
+            }
+          ]
+        }),
+    );
+
+    let result = select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("re-selecting the same preset should preserve the active session route snapshot");
+
+    let persisted_manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+
+    let route_snapshot = persisted_manifest
+        .active_preview_renderer_route
+        .as_ref()
+        .expect("route snapshot should remain present");
+    assert_eq!(result.manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(persisted_manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(route_snapshot.route, "local-renderer-sidecar");
+    assert_eq!(route_snapshot.route_stage, "canary");
+    assert_eq!(route_snapshot.fallback_reason_code, None);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn selecting_a_preset_for_a_missing_session_reports_session_not_found_first() {
     let base_dir = unique_test_root("preset-selection-missing-session");
     let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
@@ -1069,7 +1245,10 @@ fn published_runtime_bundle_loader_backfills_render_profiles_for_legacy_bundles(
 
     assert_eq!(bundle.preset_id, "preset_test-look");
     assert_eq!(bundle.published_version, "2026.03.31");
-    assert_eq!(bundle.preview_profile.profile_id, "preset_test-look-preview");
+    assert_eq!(
+        bundle.preview_profile.profile_id,
+        "preset_test-look-preview"
+    );
     assert_eq!(bundle.preview_profile.display_name, "Test Look Preview");
     assert_eq!(bundle.preview_profile.output_color_space, "sRGB");
     assert_eq!(bundle.final_profile.profile_id, "preset_test-look-final");
@@ -1476,4 +1655,21 @@ fn create_published_bundle(
         serde_json::to_vec_pretty(&bundle).expect("bundle should serialize"),
     )
     .expect("bundle should be written");
+}
+
+fn write_preview_renderer_policy(base_dir: &PathBuf, policy: serde_json::Value) {
+    let policy_path = base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy.json");
+    fs::create_dir_all(
+        policy_path
+            .parent()
+            .expect("policy path should have a parent directory"),
+    )
+    .expect("policy directory should exist");
+    fs::write(
+        policy_path,
+        serde_json::to_vec_pretty(&policy).expect("policy should serialize"),
+    )
+    .expect("policy should be writable");
 }

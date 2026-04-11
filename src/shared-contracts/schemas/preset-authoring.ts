@@ -670,6 +670,13 @@ export const publishValidatedPresetRejectionSchema = z
     auditRecord: publicationAuditRecordSchema,
   })
   .superRefine((result, context) => {
+    const hasPriorPublishedHistory = result.draft.publicationHistory.some(
+      (record) =>
+        record.action === 'published' &&
+        record.draftVersion === result.draft.draftVersion &&
+        record.notedAt <= result.auditRecord.notedAt,
+    )
+
     if (result.auditRecord.action !== 'rejected') {
       addCustomIssue(
         context,
@@ -687,11 +694,19 @@ export const publishValidatedPresetRejectionSchema = z
     }
 
     if (result.draft.lifecycleState === 'published') {
-      addCustomIssue(
-        context,
-        ['draft', 'lifecycleState'],
-        '게시 거절 결과는 draft를 published 상태로 바꾸면 안 돼요.',
-      )
+      if (result.reasonCode !== 'stage-unavailable') {
+        addCustomIssue(
+          context,
+          ['draft', 'lifecycleState'],
+          '게시 거절 결과는 draft를 published 상태로 바꾸면 안 돼요.',
+        )
+      } else if (!hasPriorPublishedHistory) {
+        addCustomIssue(
+          context,
+          ['draft', 'publicationHistory'],
+          'stage-unavailable 거절이 published 상태를 유지하려면 이전 published 이력이 필요해요.',
+        )
+      }
     }
   })
 

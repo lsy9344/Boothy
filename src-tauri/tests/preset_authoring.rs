@@ -795,6 +795,87 @@ fn authoring_workspace_surfaces_symlinked_draft_dirs_as_manual_inspection_entrie
     let _ = fs::remove_dir_all(base_dir);
 }
 
+#[cfg(windows)]
+#[test]
+fn authoring_workspace_surfaces_symlinked_draft_json_as_manual_inspection_entry() {
+    let base_dir = unique_test_root("workspace-symlink-draft-json");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_soft-glow-draft");
+
+    let draft_root = resolve_draft_authoring_root(&base_dir).join("preset_soft-glow-draft");
+    let draft_path = draft_root.join("draft.json");
+    let external_draft_path = base_dir.join("outside-draft.json");
+    fs::write(
+        &external_draft_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schemaVersion": "draft-preset-artifact/v1",
+            "presetId": "preset_soft-glow-draft",
+            "displayName": "Escaped Soft Glow Draft",
+            "draftVersion": 99,
+            "lifecycleState": "validated",
+            "darktableVersion": "5.4.1",
+            "xmpTemplatePath": "xmp/soft-glow.xmp",
+            "previewProfile": {
+                "profileId": "preview-standard",
+                "displayName": "Preview Standard",
+                "outputColorSpace": "sRGB"
+            },
+            "finalProfile": {
+                "profileId": "final-standard",
+                "displayName": "Final Standard",
+                "outputColorSpace": "sRGB"
+            },
+            "noisePolicy": {
+                "policyId": "balanced-noise",
+                "displayName": "Balanced Noise",
+                "reductionMode": "balanced"
+            },
+            "preview": {
+                "assetPath": "previews/soft-glow.jpg",
+                "altText": "escaped preview"
+            },
+            "sampleCut": {
+                "assetPath": "samples/soft-glow-cut.jpg",
+                "altText": "escaped sample"
+            },
+            "description": null,
+            "notes": null,
+            "validation": {
+                "status": "passed",
+                "latestReport": null,
+                "history": []
+            },
+            "publicationHistory": [],
+            "updatedAt": "2026-03-26T00:30:00.000Z"
+        }))
+        .expect("escaped draft payload should serialize"),
+    )
+    .expect("external draft should write");
+    fs::remove_file(&draft_path).expect("draft json should be removable");
+    symlink_file(&external_draft_path, &draft_path).expect("draft json symlink should be created");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still load");
+
+    assert!(workspace.drafts.is_empty());
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert_eq!(
+        workspace.invalid_drafts[0].draft_folder,
+        "preset_soft-glow-draft"
+    );
+    assert!(!workspace.invalid_drafts[0].can_repair);
+    assert!(workspace.invalid_drafts[0].message.contains("링크"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
 #[test]
 fn repairing_invalid_draft_preserves_publication_history_and_allows_recreation() {
     let base_dir = unique_test_root("repair-invalid-draft");

@@ -7,6 +7,7 @@ use std::{
 
 use boothy_lib::{
     commands::runtime_commands::capability_snapshot_for_profile,
+    diagnostics::recovery::load_operator_recovery_summary_in_dir,
     diagnostics::{ensure_operator_window_label, load_operator_session_summary_in_dir},
     session::{
         session_manifest::{
@@ -17,6 +18,7 @@ use boothy_lib::{
             SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
         },
         session_paths::SessionPaths,
+        session_repository::{select_active_preset_in_dir, start_session_in_dir},
     },
 };
 
@@ -42,6 +44,49 @@ fn operator_diagnostics_returns_a_safe_no_session_summary() {
     assert_eq!(summary.session_id, None);
     assert_eq!(summary.camera_connection.state, "disconnected");
     assert_eq!(summary.capture_boundary.status, "clear");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_recovery_summary_loads_for_new_session_after_preset_selection() {
+    let base_dir = unique_test_root("recovery-summary-after-preset-selection");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    let session = start_session_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should start");
+
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        },
+    )
+    .expect("preset selection should succeed");
+
+    let summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("operator recovery summary should load after preset selection");
+
+    assert_eq!(summary.state, "session-loaded");
+    assert_eq!(
+        summary.session_id.as_deref(),
+        Some(session.session_id.as_str())
+    );
+    assert_eq!(summary.blocked_state_category, "capture-blocked");
+    assert_eq!(
+        summary.active_preset_display_name.as_deref(),
+        Some("Soft Glow")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -120,6 +165,152 @@ fn operator_diagnostics_classifies_preview_render_blocked_sessions() {
     assert_eq!(
         summary.active_preset_display_name.as_deref(),
         Some("Soft Glow")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover() {
+    let base_dir = unique_test_root("preview-architecture-state");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1aa";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let mut capture = preview_waiting_capture(session_id);
+    capture.preview_renderer_route = Some(
+        boothy_lib::session::session_manifest::PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+        },
+    );
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "preview-waiting".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        active_preview_renderer_route: capture.preview_renderer_route.clone(),
+        captures: vec![capture],
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_ready_helper_status(&base_dir, session_id);
+
+    let paths = SessionPaths::new(&base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
+    fs::write(
+        paths.diagnostics_dir.join("timing-events.log"),
+        concat!(
+            "2026-03-26T00:10:01Z\t",
+            "session=session_01hs6n1r8b8zc5v4ey2x7b9g1aa\t",
+            "event=capture_preview_transition_summary\t",
+            "detail=laneOwner=inline-truthful-fallback;fallbackReason=route-policy-shadow;routeStage=canary;firstVisibleMs=2810;replacementMs=3615;originalVisibleToPresetAppliedVisibleMs=3615"
+        ),
+    )
+    .expect("summary log should write");
+
+    let summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("preview architecture summary should load");
+
+    assert_eq!(
+        summary.preview_architecture.route.as_deref(),
+        Some("local-renderer-sidecar")
+    );
+    assert_eq!(
+        summary.preview_architecture.route_stage.as_deref(),
+        Some("canary")
+    );
+    assert_eq!(
+        summary.preview_architecture.lane_owner.as_deref(),
+        Some("inline-truthful-fallback")
+    );
+    assert_eq!(
+        summary.preview_architecture.fallback_reason_code.as_deref(),
+        Some("route-policy-shadow")
+    );
+    assert_eq!(
+        summary.preview_architecture.hardware_capability,
+        "dedicated-renderer-available"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_ignores_partial_preview_transition_lines() {
+    let base_dir = unique_test_root("preview-architecture-partial-line");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1ab";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let mut capture = preview_waiting_capture(session_id);
+    capture.preview_renderer_route = Some(
+        boothy_lib::session::session_manifest::PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+        },
+    );
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "preview-waiting".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        active_preview_renderer_route: capture.preview_renderer_route.clone(),
+        captures: vec![capture],
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_ready_helper_status(&base_dir, session_id);
+
+    let paths = SessionPaths::new(&base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
+    fs::write(
+        paths.diagnostics_dir.join("timing-events.log"),
+        concat!(
+            "2026-03-26T00:09:59Z\t",
+            "session=session_01hs6n1r8b8zc5v4ey2x7b9g1ab\t",
+            "event=capture_preview_transition_summary\t",
+            "detail=laneOwner=inline-truthful-fallback;fallbackReason=route-policy-shadow;routeStage=canary;firstVisibleMs=2810;replacementMs=3615;originalVisibleToPresetAppliedVisibleMs=3615\n",
+            "2026-03-26T00:10:01Z\t",
+            "session=session_01hs6n1r8b8zc5v4ey2x7b9g1ab\t",
+            "event=capture_preview_transition_summary\t",
+            "detail=laneOwner=dedicated-renderer"
+        ),
+    )
+    .expect("summary log should write");
+
+    let summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("preview architecture summary should load");
+
+    assert_eq!(
+        summary.preview_architecture.route.as_deref(),
+        Some("local-renderer-sidecar")
+    );
+    assert_eq!(
+        summary.preview_architecture.route_stage.as_deref(),
+        Some("canary")
+    );
+    assert_eq!(
+        summary.preview_architecture.lane_owner.as_deref(),
+        Some("inline-truthful-fallback")
+    );
+    assert_eq!(
+        summary.preview_architecture.fallback_reason_code.as_deref(),
+        Some("route-policy-shadow")
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -653,6 +844,7 @@ fn base_manifest(session_id: &str) -> SessionManifest {
         active_preset: None,
         active_preset_id: None,
         active_preset_display_name: None,
+        active_preview_renderer_route: None,
         timing: None,
         captures: Vec::new(),
         post_end: None,
@@ -667,6 +859,7 @@ fn preview_waiting_capture(session_id: &str) -> SessionCaptureRecord {
         active_preset_id: Some("preset_soft-glow".into()),
         active_preset_version: "2026.03.26".into(),
         active_preset_display_name: Some("Soft Glow".into()),
+        preview_renderer_route: None,
         capture_id: "capture_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
         request_id: "request_01hs6n1r8b8zc5v4ey2x7b9g1m".into(),
         raw: RawCaptureAsset {
@@ -805,6 +998,7 @@ fn write_helper_status(
         status_path,
         serde_json::to_vec_pretty(&serde_json::json!({
           "schemaVersion": "canon-helper-status/v1",
+          "type": "camera-status",
           "sessionId": session_id,
           "sequence": 1,
           "observedAt": observed_at,

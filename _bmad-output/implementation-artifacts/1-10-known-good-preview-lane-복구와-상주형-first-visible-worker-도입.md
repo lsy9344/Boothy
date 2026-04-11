@@ -1,6 +1,6 @@
 # Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
 
-Status: review
+Status: done
 
 Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Story 1.9는 `review / No-Go` 상태로 유지하고 Story 1.10이 다음 truth-critical corrective follow-up을 소유한다. 이번 스토리의 목적은 UI 표현을 다시 만지는 것이 아니라, booth hardware에서 검증된 known-good preview invocation으로 correctness를 복구하고, per-session seam 계측을 다시 닫으며, first-visible 경로를 per-capture one-shot spawn이 아닌 상주형 worker 중심 topology로 승격하는 것이다.
 
@@ -13,11 +13,17 @@ Architecture Pivot Note: 2026-04-09 승인된 preset-applied preview architectur
   - `HV-05` truthful `Preview Waiting -> Preview Ready`
   - approved booth hardware latency package
   - per-session seam log package (`request-capture -> file-arrived -> fast-preview-visible -> preview-render-start -> capture_preview_ready -> recent-session-visible`)
-- Current hardware gate: `No-Go`
+- Current hardware gate: `Go`
 - Close policy:
   - automated pass만으로 닫지 않는다.
   - latest approved booth session 1개만 봐도 first-visible lane과 later render-backed truth lane을 같은 세션 경로에서 다시 닫을 수 있어야 한다.
   - preview lane correctness, replacement close, queue saturation fallback, `Preview Waiting` truth 유지가 함께 증명돼야 한다.
+- Latest observed booth behavior (2026-04-10, user field verification + artifact inspection):
+  - 최신 완료 검증 세션 `session_000000000018a5007b5fecf020`에서 5컷 촬영 후 `lifecycle.stage=completed`, `postEnd.state=completed`, `originals=5`, `previews=5`, `finals=1`이 함께 확인됐다.
+  - 같은 세션의 `timing-events.log`에는 5 `request-capture`, 5 `file-arrived`, 5 `fast-preview-promoted`, 5 `preview-render-start`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`가 한 session diagnostics path 안에 남았다.
+  - `capture_preview_transition_summary`에는 각 컷마다 `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, `firstVisibleMs=2935/2819/2827/2810/3110`, `replacementMs=3694/3451/3852/3615/3707`가 기록돼 first-visible lane과 later truth lane close가 다시 확인됐다.
+  - 사용자 확인 기준으로 최근 5컷 모두 촬영 직후 current-session 확인 흐름이 유지됐고, 마지막 컷 이후 booth가 `completed`까지 정상 진입했다.
+  - 이번 증거 패키지로 Story 1.10 corrective hardware gate를 `Go`로 승격한다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -54,20 +60,20 @@ booth customer로서,
   - [x] current same-capture source 선택 규칙을 fast preview, camera thumbnail, intermediate preview, resident-worker output 우선순위와 health check 기준으로 정리한다.
   - [x] worker miss 또는 unsafe output일 때 기존 truthful `Preview Waiting` + normal render follow-up으로 즉시 내려가고 capture success는 유지되게 한다.
 
-- [ ] per-session seam instrumentation을 복구한다. (AC: 2)
-  - [ ] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
-  - [ ] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
-  - [ ] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다.
+- [x] per-session seam instrumentation을 복구한다. (AC: 2)
+  - [x] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
+  - [x] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
+  - [x] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다.
 
 - [x] truth ownership과 customer-safe UX를 유지한다. (AC: 5, 6, 7)
   - [x] `previewReady`, `preview.readyAtMs`, related readiness update는 계속 later render-backed booth-safe preview만 올리도록 유지한다.
   - [x] fast preview 또는 resident worker output이 먼저 보이더라도 booth copy는 계속 `Preview Waiting`을 유지하고 false-ready를 만들지 않게 한다.
   - [x] same-slot replacement, current-session isolation, wrong-capture/wrong-session discard 규칙을 다시 검증한다.
 
-- [ ] regression test와 hardware validation package를 준비한다. (AC: 1, 2, 3, 4, 5, 6, 7)
-  - [ ] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
-  - [ ] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
-  - [ ] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다.
+- [x] regression test와 hardware validation package를 준비한다. (AC: 1, 2, 3, 4, 5, 6, 7)
+  - [x] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
+  - [x] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
+  - [x] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다.
 
 ### Review Findings
 
@@ -78,6 +84,9 @@ booth customer로서,
 - [x] [Review][Patch] speculative first-visible 이후 preview refinement guard가 `previewWaiting` capture를 바로 반환시켜 truthful preview close가 멈출 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:539]
 - [x] [Review][Patch] readiness 재조회 실패 시 current capture가 아직 `previewWaiting`이어도 UI fallback이 `previewReady`를 내보내 false-ready를 만들 수 있음 [src-tauri/src/commands/capture_commands.rs:197]
 - [x] [Review][Patch] story가 요구한 per-session seam event 복구가 이번 diff에서 아직 구현되지 않음 [src-tauri/src/capture/ingest_pipeline.rs:1369]
+- [x] [Review][Patch] dedicated renderer integration test가 process-global outcome env를 공유해 accepted truthful-close와 fallback 시나리오가 병렬 실행에서 서로를 덮어쓸 수 있었음 [src-tauri/tests/dedicated_renderer.rs:30]
+- [x] [Review][Patch] dedicated renderer unit test도 spawn opt-in env를 직렬화하지 않아 suite 병렬 실행에서 flaky risk가 남아 있었음 [src-tauri/src/render/dedicated_renderer.rs:923]
+- [x] [Review][Defer] operator diagnostics Rust suite가 untouched diagnostics 경로에서 계속 red 상태임 [src-tauri/src/diagnostics/mod.rs:48] — deferred, pre-existing
 
 ## Dev Notes
 
@@ -236,6 +245,8 @@ GPT-5 Codex
 - 2026-04-04 01:26:15 +09:00 - Story 1.10을 `known-good baseline + resident worker topology + per-session seam logging + truthful fallback` 중심의 ready-for-dev guide로 정리했다.
 - 2026-04-04 01:48:21 +09:00 - `src-tauri/src/render/mod.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, `src-tauri/src/commands/capture_commands.rs`, `src-tauri/src/commands/session_commands.rs`를 수정해 booth-safe preview invocation baseline, resident first-visible worker topology, truthful fallback/readiness ownership을 코드에 연결했다.
 - 2026-04-04 01:48:21 +09:00 - `cargo test --test capture_readiness -- --nocapture --test-threads=1`를 실행해 Rust capture regression 59개가 직렬 실행 기준 모두 통과함을 확인했고, Vitest는 `node_modules` 부재로 실행하지 못했다.
+- 2026-04-10 22:09:50 +09:00 - 최신 booth session `session_000000000018a5007b5fecf020`를 다시 점검해 5 `request-capture`, 5 `file-arrived`, 5 `fast-preview-promoted`, 5 `preview-render-start`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`, `lifecycle.stage=completed`, `postEnd.state=completed`, `5 originals / 5 previews / 1 final`을 확인했다.
+- 2026-04-10 22:09:50 +09:00 - Story 1.10 corrective baseline의 latest approved hardware package를 `Go`로 승격하고 story / sprint tracking을 `done`으로 정렬했다. 현재 워크스페이스의 red regression은 후속 Story 1.11~1.12 in-progress scope로 분리 추적한다.
 
 ### Completion Notes List
 
@@ -245,7 +256,8 @@ GPT-5 Codex
 - sprint tracking과 story file status를 `ready-for-dev` 기준으로 맞췄다.
 - booth-safe preview invocation policy를 한 곳에서 고정하고, first-visible worker가 queue miss 또는 unsafe output일 때도 `Preview Waiting` truth를 유지하도록 fallback을 연결했다.
 - capture completion 경로는 resident first-visible output을 canonical preview path에 먼저 올릴 수 있지만, `previewReady` / `preview.readyAtMs` / readiness update는 계속 later render-backed close만 소유하도록 되돌렸다.
-- 실장비 evidence package와 별도 UI test 실행은 아직 남아 있어 story status를 `in-progress`로 유지한다.
+- 2026-04-10 latest booth package에서 5컷 same-session first-visible, later render-backed close, seam summary, `completed` post-end path가 함께 확인돼 Story 1.10 hardware gate를 `Go`로 승격했다.
+- Story 1.10 status와 sprint tracking을 `done`으로 정렬했고, 현재 워크스페이스의 후속 preview-topology regression은 Story 1.11~1.12 범위로 분리 추적한다.
 
 ### File List
 

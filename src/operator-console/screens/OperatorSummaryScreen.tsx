@@ -7,6 +7,7 @@ import type {
   OperatorCameraConnectionSummary,
   OperatorRecoveryAction,
   OperatorRecoverySummary,
+  HostErrorEnvelope,
 } from '../../shared-contracts'
 import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 import { useOperatorDiagnostics } from '../providers/use-operator-diagnostics'
@@ -142,6 +143,43 @@ function formatCameraConnectionStateLabel(state: OperatorCameraConnectionState) 
     default:
       return '복구 필요'
   }
+}
+
+function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary }) {
+  const architecture = summary.previewArchitecture
+
+  return (
+    <article className="surface-card operator-console__section">
+      <div className="operator-console__section-header">
+        <div>
+          <p className="operator-console__section-label">Preview Architecture</p>
+          <h2>프리뷰 아키텍처</h2>
+        </div>
+      </div>
+      <dl className="operator-console__facts">
+        <div className="operator-console__fact">
+          <dt>Route</dt>
+          <dd>{formatFieldValue(architecture.route)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Route Stage</dt>
+          <dd>{formatFieldValue(architecture.routeStage)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Lane Owner</dt>
+          <dd>{formatFieldValue(architecture.laneOwner)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Fallback Reason</dt>
+          <dd>{formatFieldValue(architecture.fallbackReasonCode)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Hardware Capability</dt>
+          <dd>{formatFieldValue(architecture.hardwareCapability)}</dd>
+        </div>
+      </dl>
+    </article>
+  )
 }
 
 function formatBlockedCategory(category: OperatorRecoverySummary['blockedCategory']) {
@@ -336,7 +374,29 @@ function AuditSummaryCard({ history }: { history: OperatorAuditQueryResult }) {
   )
 }
 
-function AuditHistoryPanel({ history }: { history: OperatorAuditQueryResult | null }) {
+function AuditHistoryPanel({
+  history,
+  error,
+}: {
+  history: OperatorAuditQueryResult | null
+  error: HostErrorEnvelope | null
+}) {
+  if (error !== null) {
+    return (
+      <article className="surface-card operator-console__section">
+        <div className="operator-console__section-header">
+          <div>
+            <p className="operator-console__section-label">Audit History</p>
+            <h2>감사 기록을 불러오지 못했어요</h2>
+          </div>
+        </div>
+        <p className="operator-console__empty">
+          세션 진단과 허용 액션은 계속 확인할 수 있어요. 잠시 후 다시 새로고침해 주세요.
+        </p>
+      </article>
+    )
+  }
+
   if (history === null) {
     return null
   }
@@ -512,10 +572,12 @@ function RecentFailureCard({ summary }: { summary: OperatorRecoverySummary }) {
 function ActionPanel({
   summary,
   isActing,
+  actionsDisabled,
   onAction,
 }: {
   summary: OperatorRecoverySummary
   isActing: boolean
+  actionsDisabled: boolean
   onAction(action: OperatorRecoveryAction): void
 }) {
   return (
@@ -532,6 +594,11 @@ function ActionPanel({
       <p className="operator-console__empty">
         {describeBlockedCategory(summary.blockedCategory)}
       </p>
+      {actionsDisabled ? (
+        <p className="operator-console__empty">
+          최신 세션 진단을 다시 확인할 때까지 recovery action은 잠시 멈춰 둘게요.
+        </p>
+      ) : null}
       {summary.allowedActions.length === 0 ? (
         <p className="operator-console__empty">
           현재 세션 범주에서는 추가 recovery action을 열지 않았어요.
@@ -550,7 +617,7 @@ function ActionPanel({
                 <button
                   type="button"
                   className="surface-card__action"
-                  disabled={isActing}
+                  disabled={isActing || actionsDisabled}
                   onClick={() => onAction(action)}
                 >
                   {isActing ? '실행 중...' : copy.label}
@@ -605,9 +672,18 @@ function ActionResultCard() {
 }
 
 export function OperatorSummaryScreen() {
-  const { summary, auditHistory, error, isLoading, isActing, refresh, runAction } =
-    useOperatorDiagnostics()
+  const {
+    summary,
+    auditHistory,
+    error,
+    auditError,
+    isLoading,
+    isActing,
+    refresh,
+    runAction,
+  } = useOperatorDiagnostics()
   const hasUnavailableSummary = summary === null && error !== null
+  const actionsDisabled = isLoading
   const activeCategory = summary?.blockedStateCategory ?? null
   const categoryBadgeTone = activeCategory ?? 'loading'
   const categoryBadgeLabel = formatBlockedStateCategoryLabel(
@@ -679,13 +755,15 @@ export function OperatorSummaryScreen() {
               <>
                 <CameraConnectionCard cameraConnection={summary.cameraConnection} />
                 <SessionFacts summary={summary} />
+                <PreviewArchitectureCard summary={summary} />
                 <RecentFailureCard summary={summary} />
                 <ActionPanel
                   summary={summary}
                   isActing={isActing}
+                  actionsDisabled={actionsDisabled}
                   onAction={runAction}
                 />
-                <AuditHistoryPanel history={auditHistory} />
+                <AuditHistoryPanel history={auditHistory} error={auditError} />
                 <ActionResultCard />
               </>
             ) : (

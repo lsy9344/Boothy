@@ -31,6 +31,7 @@ export function OperatorDiagnosticsProvider({
   const [summary, setSummary] = useState<OperatorRecoverySummary | null>(null)
   const [auditHistory, setAuditHistory] = useState<OperatorAuditQueryResult | null>(null)
   const [error, setError] = useState<HostErrorEnvelope | null>(null)
+  const [auditError, setAuditError] = useState<HostErrorEnvelope | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isActing, setIsActing] = useState(false)
   const [lastActionResult, setLastActionResult] =
@@ -40,6 +41,7 @@ export function OperatorDiagnosticsProvider({
     requestVersion: number,
     nextSummary: OperatorRecoverySummary,
     nextAuditHistory: OperatorAuditQueryResult | null,
+    nextAuditError: HostErrorEnvelope | null,
   ) {
     if (requestVersion !== requestVersionRef.current) {
       return
@@ -50,22 +52,51 @@ export function OperatorDiagnosticsProvider({
       setAuditHistory(nextAuditHistory)
       setLastActionResult(null)
       setError(null)
+      setAuditError(nextAuditError)
       setIsLoading(false)
     })
   }
 
-  function commitFailure(requestVersion: number, nextError: HostErrorEnvelope) {
+  function commitFailure(
+    requestVersion: number,
+    nextError: HostErrorEnvelope,
+    preserveCurrentView: boolean,
+  ) {
     if (requestVersion !== requestVersionRef.current) {
       return
     }
 
     startTransition(() => {
-      setSummary(null)
-      setAuditHistory(null)
+      if (!preserveCurrentView) {
+        setSummary(null)
+        setAuditHistory(null)
+      }
       setLastActionResult(null)
       setError(nextError)
+      setAuditError(null)
       setIsLoading(false)
     })
+  }
+
+  async function loadAuditHistory(sessionId: string | null) {
+    try {
+      const nextAuditHistory =
+        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
+          sessionId,
+          eventCategories: [],
+          limit: 10,
+        })
+
+      return {
+        auditHistory: nextAuditHistory,
+        auditError: null,
+      }
+    } catch (error) {
+      return {
+        auditHistory: null,
+        auditError: error as HostErrorEnvelope,
+      }
+    }
   }
 
   async function refresh() {
@@ -74,6 +105,7 @@ export function OperatorDiagnosticsProvider({
     requestVersionRef.current = requestVersion
     startTransition(() => {
       setError(null)
+      setAuditError(null)
       setIsLoading(true)
       setLastActionResult(null)
     })
@@ -81,23 +113,29 @@ export function OperatorDiagnosticsProvider({
     try {
       const nextSummary =
         await operatorDiagnosticsServiceRef.current.loadOperatorRecoverySummary()
-      const nextAuditHistory =
-        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
-          sessionId: nextSummary.sessionId ?? null,
-          eventCategories: [],
-          limit: 10,
-        })
+      const { auditHistory: nextAuditHistory, auditError: nextAuditError } =
+        await loadAuditHistory(nextSummary.sessionId ?? null)
 
-      commitSuccess(requestVersion, nextSummary, nextAuditHistory)
+      commitSuccess(
+        requestVersion,
+        nextSummary,
+        nextAuditHistory,
+        nextAuditError,
+      )
     } catch (error) {
-      commitFailure(requestVersion, error as HostErrorEnvelope)
+      commitFailure(requestVersion, error as HostErrorEnvelope, summary !== null)
     }
   }
 
   async function runAction(action: OperatorRecoveryAction) {
     const sessionId = summary?.sessionId
 
-    if (sessionId === null || sessionId === undefined) {
+    if (
+      sessionId === null ||
+      sessionId === undefined ||
+      isLoading ||
+      isActing
+    ) {
       return
     }
 
@@ -107,6 +145,7 @@ export function OperatorDiagnosticsProvider({
     startTransition(() => {
       setIsActing(true)
       setError(null)
+      setAuditError(null)
     })
 
     try {
@@ -114,12 +153,8 @@ export function OperatorDiagnosticsProvider({
         sessionId,
         action,
       })
-      const nextAuditHistory =
-        await operatorDiagnosticsServiceRef.current.loadOperatorAuditHistory({
-          sessionId: result.summary.sessionId ?? null,
-          eventCategories: [],
-          limit: 10,
-        })
+      const { auditHistory: nextAuditHistory, auditError: nextAuditError } =
+        await loadAuditHistory(result.summary.sessionId ?? null)
 
       if (requestVersion !== actionRequestVersionRef.current) {
         return
@@ -130,6 +165,7 @@ export function OperatorDiagnosticsProvider({
         setAuditHistory(nextAuditHistory)
         setLastActionResult(result)
         setError(null)
+        setAuditError(nextAuditError)
         setIsActing(false)
       })
     } catch (error) {
@@ -140,6 +176,7 @@ export function OperatorDiagnosticsProvider({
       startTransition(() => {
         setLastActionResult(null)
         setError(error as HostErrorEnvelope)
+        setAuditError(null)
         setIsActing(false)
       })
     }
@@ -159,6 +196,7 @@ export function OperatorDiagnosticsProvider({
         summary,
         auditHistory,
         error,
+        auditError,
         isLoading,
         isActing,
         lastActionResult,

@@ -13,13 +13,15 @@ use crate::{
     contracts::dto::{
         CapabilitySnapshotDto, HostErrorEnvelope, LiveCaptureTruthDto, OperatorBoundarySummaryDto,
         OperatorCameraConnectionSummaryDto, OperatorRecentFailureSummaryDto,
-        OperatorSessionSummaryDto,
+        OperatorPreviewArchitectureSummaryDto, OperatorSessionSummaryDto,
     },
     handoff::project_post_end_state_in_dir,
+    render::dedicated_renderer::dedicated_renderer_hardware_capability,
     session::{
         session_manifest::{
-            rfc3339_to_unix_seconds, SessionManifest, SESSION_POST_END_COMPLETED,
-            SESSION_POST_END_EXPORT_WAITING, SESSION_POST_END_PHONE_REQUIRED,
+            rfc3339_to_unix_seconds, PreviewRendererRouteSnapshot, SessionManifest,
+            SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
+            SESSION_POST_END_PHONE_REQUIRED,
         },
         session_paths::SessionPaths,
         session_repository::read_session_manifest,
@@ -35,7 +37,20 @@ struct DiagnosticsContext {
     observed_at: Option<String>,
     event_name: Option<String>,
     post_end_state: Option<String>,
+    lane_owner: Option<String>,
+    fallback_reason_code: Option<String>,
+    route_stage: Option<String>,
     malformed: bool,
+}
+
+#[derive(Debug, Default)]
+struct PreviewTransitionSummaryContext {
+    lane_owner: Option<String>,
+    fallback_reason_code: Option<String>,
+    route_stage: Option<String>,
+    saw_lane_owner: bool,
+    saw_fallback_reason: bool,
+    saw_route_stage: bool,
 }
 
 #[derive(Debug)]
@@ -93,6 +108,14 @@ pub fn load_operator_session_summary_in_dir(
         manifest.timing.as_ref().map(|timing| timing.phase.as_str()),
         &diagnostics,
     );
+    let preview_architecture = build_preview_architecture_summary(
+        readiness
+            .latest_capture
+            .as_ref()
+            .and_then(|capture| capture.preview_renderer_route.as_ref())
+            .or(manifest.active_preview_renderer_route.as_ref()),
+        &diagnostics,
+    );
 
     Ok(OperatorSessionSummaryDto {
         schema_version: OPERATOR_SESSION_SUMMARY_SCHEMA_VERSION.into(),
@@ -118,6 +141,7 @@ pub fn load_operator_session_summary_in_dir(
         capture_boundary,
         preview_render_boundary,
         completion_boundary,
+        preview_architecture,
         live_capture_truth,
     })
 }
@@ -195,6 +219,10 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
         completion_boundary: clear_boundary(
             "후처리 경계 비어 있음",
             "현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.",
+        ),
+        preview_architecture: build_preview_architecture_summary(
+            None,
+            &DiagnosticsContext::default(),
         ),
         live_capture_truth: None,
     }
@@ -449,10 +477,9 @@ fn is_current_operator_session(manifest: &SessionManifest) -> bool {
 }
 
 fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsContext {
-    let log_path = match SessionPaths::try_new(base_dir, session_id) {
-        Ok(paths) => paths.diagnostics_dir.join("timing-events.log"),
-        Err(_) => return DiagnosticsContext::default(),
-    };
+    let log_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join("timing-events.log");
 
     if !log_path.is_file() {
         return DiagnosticsContext::default();
@@ -464,7 +491,12 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
             ..DiagnosticsContext::default()
         };
     };
-    let Some(last_line) = contents.lines().rev().find(|line| !line.trim().is_empty()) else {
+    let lines = contents
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let Some(last_line) = lines.first().copied() else {
         return DiagnosticsContext::default();
     };
     let parts: Vec<_> = last_line.split('\t').collect();
@@ -499,7 +531,81 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
         }
     }
 
+    for line in lines {
+        let Some(summary) = parse_preview_transition_summary_context(line) else {
+            continue;
+        };
+
+        if summary.saw_lane_owner && summary.saw_fallback_reason && summary.saw_route_stage {
+            context.lane_owner = summary.lane_owner;
+            context.fallback_reason_code = summary.fallback_reason_code;
+            context.route_stage = summary.route_stage;
+            break;
+        }
+    }
+
     context
+}
+
+fn build_preview_architecture_summary(
+    route_snapshot: Option<&PreviewRendererRouteSnapshot>,
+    diagnostics: &DiagnosticsContext,
+) -> OperatorPreviewArchitectureSummaryDto {
+    OperatorPreviewArchitectureSummaryDto {
+        route: route_snapshot.map(|snapshot| snapshot.route.clone()),
+        route_stage: diagnostics
+            .route_stage
+            .clone()
+            .or_else(|| route_snapshot.map(|snapshot| snapshot.route_stage.clone())),
+        lane_owner: diagnostics.lane_owner.clone(),
+        fallback_reason_code: diagnostics
+            .fallback_reason_code
+            .clone()
+            .or_else(|| {
+                route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())
+            }),
+        hardware_capability: dedicated_renderer_hardware_capability().into(),
+    }
+}
+
+fn normalize_diagnostics_value(value: &str) -> Option<String> {
+    match value.trim() {
+        "" | "none" => None,
+        normalized => Some(normalized.to_string()),
+    }
+}
+
+fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransitionSummaryContext> {
+    if !line.contains("\tevent=capture_preview_transition_summary") {
+        return None;
+    }
+
+    let detail = line.split("\tdetail=").nth(1)?;
+    let mut summary = PreviewTransitionSummaryContext::default();
+
+    for fragment in detail.split(';') {
+        let Some((key, value)) = fragment.split_once('=') else {
+            continue;
+        };
+
+        match key {
+            "laneOwner" => {
+                summary.saw_lane_owner = true;
+                summary.lane_owner = normalize_diagnostics_value(value);
+            }
+            "fallbackReason" => {
+                summary.saw_fallback_reason = true;
+                summary.fallback_reason_code = normalize_diagnostics_value(value);
+            }
+            "routeStage" => {
+                summary.saw_route_stage = true;
+                summary.route_stage = normalize_diagnostics_value(value);
+            }
+            _ => {}
+        }
+    }
+
+    Some(summary)
 }
 
 fn build_capture_boundary(

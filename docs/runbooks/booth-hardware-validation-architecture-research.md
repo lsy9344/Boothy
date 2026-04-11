@@ -17,6 +17,7 @@
 - 기준 코드베이스: 현재 `C:\Code\Project\Boothy`
 - 목적: 제품 출시 전 실장비 검증의 방향과 방법을 고정
 - 성격: 연구/운영 설계 문서
+- 2026-04-11 addendum: Story 1.13이 preview architecture release close owner이며, host-owned `branch-config/preview-renderer-policy.json`와 canonical ledger row를 함께 증거로 남겨야 한다.
 
 ## 연구 범위
 

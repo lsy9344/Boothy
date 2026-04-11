@@ -25,6 +25,7 @@ use crate::{
         },
         preset_catalog_state::capture_live_catalog_snapshot,
     },
+    render::dedicated_renderer::resolve_preview_renderer_route_snapshot_in_dir,
     session::{
         session_manifest::{
             build_session_manifest, current_timestamp, normalize_legacy_manifest,
@@ -140,6 +141,11 @@ pub fn select_active_preset_in_dir(
         preset_id: selected_preset.preset_id.clone(),
         published_version: selected_preset.published_version.clone(),
     };
+    let route_snapshot = resolve_preview_renderer_route_snapshot_in_dir(
+        base_dir,
+        &selected_preset.preset_id,
+        &selected_preset.published_version,
+    );
 
     if manifest.active_preset.as_ref() == Some(&active_preset) {
         let mut changed = false;
@@ -153,6 +159,11 @@ pub fn select_active_preset_in_dir(
             != Some(selected_preset.display_name.as_str())
         {
             manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
+            changed = true;
+        }
+
+        if manifest.active_preview_renderer_route.is_none() {
+            manifest.active_preview_renderer_route = Some(route_snapshot);
             changed = true;
         }
 
@@ -170,6 +181,7 @@ pub fn select_active_preset_in_dir(
     manifest.active_preset = Some(active_preset);
     manifest.active_preset_id = Some(selected_preset.preset_id.clone());
     manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
+    manifest.active_preview_renderer_route = Some(route_snapshot);
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     if manifest.lifecycle.stage == "session-started" {
         manifest.lifecycle.stage = "preset-selected".into();

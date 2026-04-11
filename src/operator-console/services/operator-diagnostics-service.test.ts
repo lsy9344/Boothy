@@ -58,6 +58,13 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       title: '완료 경계 대기 전',
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
+    previewArchitecture: {
+      route: 'local-renderer-sidecar',
+      routeStage: 'canary',
+      laneOwner: 'inline-truthful-fallback',
+      fallbackReasonCode: 'route-policy-shadow',
+      hardwareCapability: 'dedicated-renderer-available',
+    },
     ...overrides,
   }
 }
@@ -204,6 +211,48 @@ describe('operator diagnostics service', () => {
     await expect(service.loadOperatorRecoverySummary()).resolves.toMatchObject({
       boothAlias: 'Kim 4821',
       blockedCategory: 'preview-or-render',
+    })
+  })
+
+  it('accepts helper timestamps with timezone offsets through the service seam', async () => {
+    const service = createOperatorDiagnosticsService({
+      gateway: {
+        async loadOperatorRecoverySummary() {
+          return createOperatorRecoverySummary({
+            cameraConnection: {
+              state: 'connected',
+              title: '카메라와 helper 연결이 확인됐어요.',
+              detail: '카메라와 helper가 현재 세션 기준으로 연결된 상태예요.',
+              observedAt: '2026-04-10T08:17:58.5548198+00:00',
+            },
+            liveCaptureTruth: {
+              source: 'canon-helper-sidecar',
+              freshness: 'fresh',
+              sessionMatch: 'matched',
+              cameraState: 'ready',
+              helperState: 'healthy',
+              observedAt: '2026-04-10T08:17:58.5548198+00:00',
+              sequence: 162,
+              detailCode: 'camera-ready',
+            },
+          })
+        },
+        async loadOperatorAuditHistory() {
+          return createOperatorAuditHistory()
+        },
+        async runOperatorRecoveryAction() {
+          return createOperatorRecoveryActionResult()
+        },
+      },
+    })
+
+    await expect(service.loadOperatorRecoverySummary()).resolves.toMatchObject({
+      cameraConnection: {
+        observedAt: '2026-04-10T08:17:58.5548198+00:00',
+      },
+      liveCaptureTruth: {
+        observedAt: '2026-04-10T08:17:58.5548198+00:00',
+      },
     })
   })
 

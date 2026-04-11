@@ -1,7 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::Once,
+    sync::{Mutex, MutexGuard, Once, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -28,6 +28,7 @@ use boothy_lib::{
 };
 
 static FAKE_DARKTABLE_SETUP: Once = Once::new();
+static DEDICATED_RENDERER_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn unique_test_root(test_name: &str) -> PathBuf {
     ensure_fake_darktable_cli();
@@ -50,8 +51,16 @@ fn ensure_fake_darktable_cli() {
     });
 }
 
+fn lock_dedicated_renderer_test_env() -> MutexGuard<'static, ()> {
+    DEDICATED_RENDERER_TEST_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("dedicated renderer test env lock should not be poisoned")
+}
+
 #[test]
 fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready() {
+    let _env_lock = lock_dedicated_renderer_test_env();
     let base_dir = unique_test_root("queue-saturated-fallback");
     ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
     let session = start_session_in_dir(
@@ -65,6 +74,22 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
     let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
 
     create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
     select_active_preset_in_dir(
         &base_dir,
         boothy_lib::contracts::dto::PresetSelectionInputDto {
@@ -93,7 +118,8 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
         None
     );
 
-    let env_guard = ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "queue-saturated");
+    let env_guard =
+        ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "queue-saturated");
     let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
         None,
         &base_dir,
@@ -141,7 +167,75 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
 }
 
 #[test]
+fn route_policy_shadow_mode_keeps_inline_truth_even_when_dev_env_requests_sidecar() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("route-policy-shadow");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [],
+          "forcedFallbackRoutes": []
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let env_guard = ScopedEnvVarGuard::set("BOOTHY_DEDICATED_RENDERER_ENABLE_SPAWN", "true");
+    let outcome_guard =
+        ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "accepted");
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("shadow route should still close via the inline truthful renderer");
+    drop(outcome_guard);
+    drop(env_guard);
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing log should exist");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
+    assert!(timing_events.contains("fallbackReason=route-policy-shadow"));
+    assert!(timing_events.contains("routeStage=shadow"));
+    assert!(
+        !timing_events.contains("laneOwner=dedicated-renderer"),
+        "shadow route should ignore dev env sidecar opt-in as a release substitute"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overwrite() {
+    let _env_lock = lock_dedicated_renderer_test_env();
     let base_dir = unique_test_root("accepted-close-owner");
     ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
     let session = start_session_in_dir(
@@ -155,6 +249,22 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
     let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
 
     create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
     select_active_preset_in_dir(
         &base_dir,
         boothy_lib::contracts::dto::PresetSelectionInputDto {
@@ -185,9 +295,8 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
 
     assert_eq!(completed_capture.render_status, "previewReady");
     assert!(completed_capture.preview.ready_at_ms.is_some());
-    let normalized_canonical_preview_path = canonical_preview_path
-        .to_string_lossy()
-        .replace('\\', "/");
+    let normalized_canonical_preview_path =
+        canonical_preview_path.to_string_lossy().replace('\\', "/");
     assert_eq!(
         completed_capture
             .preview
@@ -211,6 +320,266 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
     assert!(timing_events.contains("event=capture_preview_transition_summary"));
     assert!(timing_events.contains("laneOwner=dedicated-renderer"));
     assert!(timing_events.contains("fallbackReason=none"));
+    assert!(timing_events.contains("routeStage=canary"));
+    assert!(timing_events.contains("originalVisibleToPresetAppliedVisibleMs="));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn active_session_keeps_selected_route_even_after_policy_rolls_back() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("session-route-snapshot");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [],
+          "forcedFallbackRoutes": [
+            {
+              "route": "darktable",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "rollback"
+            }
+          ]
+        }),
+    );
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", capture.capture.capture_id));
+    fs::write(&canonical_preview_path, [0xFF, 0xD8, 0xFF, 0xD9])
+        .expect("accepted dedicated renderer output should exist");
+
+    let env_guard = ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "accepted");
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("active session route should stay on its selected canary snapshot");
+    drop(env_guard);
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing log should exist");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert!(timing_events.contains("laneOwner=dedicated-renderer"));
+    assert!(timing_events.contains("routeStage=canary"));
+    assert!(
+        !timing_events.contains("fallbackReason=route-policy-rollback"),
+        "policy rollback after preset selection should not reinterpret the active session"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn stale_dedicated_renderer_result_is_ignored_when_no_sidecar_run_happens() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("stale-result-ignored");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let stale_result_path = paths
+        .diagnostics_dir
+        .join("dedicated-renderer")
+        .join(format!(
+            "{}-{}.preview-result.json",
+            capture.capture.capture_id, capture.capture.request_id
+        ));
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", capture.capture.capture_id));
+    fs::create_dir_all(
+        stale_result_path
+            .parent()
+            .expect("stale result should have a parent directory"),
+    )
+    .expect("dedicated renderer diagnostics directory should exist");
+    fs::write(&canonical_preview_path, [0xFF, 0xD8, 0xFF, 0xD9])
+        .expect("canonical preview placeholder should exist");
+    fs::write(
+        &stale_result_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "dedicated-renderer-preview-job-result/v1",
+          "sessionId": session.session_id,
+          "requestId": capture.capture.request_id,
+          "captureId": capture.capture.capture_id,
+          "status": "accepted",
+          "diagnosticsDetailPath": stale_result_path.to_string_lossy().replace('\\', "/"),
+          "outputPath": canonical_preview_path.to_string_lossy().replace('\\', "/"),
+          "detailCode": "accepted",
+          "detailMessage": "stale accepted result"
+        }))
+        .expect("stale result should serialize"),
+    )
+    .expect("stale result should be writable");
+
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("stale dedicated renderer result should not block inline fallback completion");
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing log should exist");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert!(timing_events.contains("event=capture_preview_transition_summary"));
+    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
+    assert!(timing_events.contains("fallbackReason=sidecar-unavailable"));
+    assert!(
+        !timing_events.contains("laneOwner=dedicated-renderer"),
+        "stale accepted result should not be reused as the truthful close owner"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn forced_fallback_route_logs_route_policy_rollback_reason() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("forced-fallback-route");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "local-renderer-sidecar",
+          "canaryRoutes": [],
+          "forcedFallbackRoutes": [
+            {
+              "route": "darktable",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "rollback"
+            }
+          ]
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("rollback route should fall back safely");
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing log should exist");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
+    assert!(timing_events.contains("fallbackReason=route-policy-rollback"));
+    assert!(timing_events.contains("routeStage=shadow"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -265,6 +634,23 @@ fn create_published_bundle(catalog_root: &PathBuf) {
     .expect("bundle should be writable");
 }
 
+fn write_preview_renderer_policy(base_dir: &PathBuf, policy: serde_json::Value) {
+    let policy_path = base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy.json");
+    fs::create_dir_all(
+        policy_path
+            .parent()
+            .expect("policy path should have a parent directory"),
+    )
+    .expect("policy directory should exist");
+    fs::write(
+        policy_path,
+        serde_json::to_vec_pretty(&policy).expect("policy should serialize"),
+    )
+    .expect("policy should be writable");
+}
+
 fn request_capture_with_helper_success(
     base_dir: &PathBuf,
     session_id: &str,
@@ -277,8 +663,11 @@ fn request_capture_with_helper_success(
     let helper_base_dir = base_dir.clone();
     let helper_session_id = session_id.to_string();
     let helper_thread = thread::spawn(move || {
-        let request =
-            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, existing_request_count);
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
         let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
         let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
             .captures_originals_dir

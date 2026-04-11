@@ -1071,6 +1071,7 @@ fn build_saved_capture_record(
         active_preset_id: Some(active_preset.preset_id.clone()),
         active_preset_version: active_preset.published_version.clone(),
         active_preset_display_name: manifest.active_preset_display_name.clone(),
+        preview_renderer_route: manifest.active_preview_renderer_route.clone(),
         capture_id,
         request_id,
         raw: RawCaptureAsset {

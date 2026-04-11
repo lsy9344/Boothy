@@ -212,6 +212,164 @@ describe('browser preset authoring gateway', () => {
     })
   })
 
+  it('accepts a stage-unavailable publication rejection for an already published draft', async () => {
+    const service = createPresetAuthoringService({
+      gateway: {
+        loadAuthoringWorkspace: vi.fn(),
+        createDraftPreset: vi.fn(),
+        saveDraftPreset: vi.fn(),
+        validateDraftPreset: vi.fn(),
+        repairInvalidDraft: vi.fn(),
+        publishValidatedPreset: vi.fn().mockResolvedValue({
+          schemaVersion: 'draft-preset-publication-result/v1',
+          status: 'rejected',
+          draft: createValidatedDraft({
+            lifecycleState: 'published',
+            publicationHistory: [
+              {
+                schemaVersion: 'preset-publication-audit/v1',
+                presetId: DRAFT_PAYLOAD.presetId,
+                draftVersion: 1,
+                publishedVersion: '2026.03.26',
+                actorId: 'manager-kim',
+                actorLabel: 'Kim Manager',
+                reviewNote: null,
+                action: 'published',
+                reasonCode: null,
+                guidance:
+                  '게시가 완료되었고 이 버전은 미래 세션 catalog에서만 선택할 수 있어요.',
+                notedAt: '2026-03-26T00:20:00.000Z',
+              },
+              {
+                schemaVersion: 'preset-publication-audit/v1',
+                presetId: DRAFT_PAYLOAD.presetId,
+                draftVersion: 1,
+                publishedVersion: '2026.03.27',
+                actorId: 'manager-kim',
+                actorLabel: 'Kim Manager',
+                reviewNote: null,
+                action: 'rejected',
+                reasonCode: 'stage-unavailable',
+                guidance:
+                  'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+                notedAt: '2026-03-27T00:20:00.000Z',
+              },
+            ],
+          }),
+          reasonCode: 'stage-unavailable',
+          message: '이 단계에서는 게시를 실행하지 않아요.',
+          guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+          auditRecord: {
+            schemaVersion: 'preset-publication-audit/v1',
+            presetId: DRAFT_PAYLOAD.presetId,
+            draftVersion: 1,
+            publishedVersion: '2026.03.27',
+            actorId: 'manager-kim',
+            actorLabel: 'Kim Manager',
+            reviewNote: null,
+            action: 'rejected',
+            reasonCode: 'stage-unavailable',
+            guidance:
+              'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+            notedAt: '2026-03-27T00:20:00.000Z',
+          },
+        }),
+        loadPresetCatalogState: vi.fn(),
+        rollbackPresetCatalog: vi.fn(),
+      },
+    })
+
+    await expect(
+      service.publishValidatedPreset({
+        presetId: DRAFT_PAYLOAD.presetId,
+        draftVersion: 1,
+        validationCheckedAt: '2026-03-26T00:10:00.000Z',
+        expectedDisplayName: DRAFT_PAYLOAD.displayName,
+        publishedVersion: '2026.03.27',
+        actorId: 'manager-kim',
+        actorLabel: 'Kim Manager',
+        scope: 'future-sessions-only',
+        reviewNote: null,
+      }),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      reasonCode: 'stage-unavailable',
+      draft: {
+        lifecycleState: 'published',
+      },
+    })
+  })
+
+  it('rejects a stage-unavailable publication response that claims published state without prior publish history', async () => {
+    const service = createPresetAuthoringService({
+      gateway: {
+        loadAuthoringWorkspace: vi.fn(),
+        createDraftPreset: vi.fn(),
+        saveDraftPreset: vi.fn(),
+        validateDraftPreset: vi.fn(),
+        repairInvalidDraft: vi.fn(),
+        publishValidatedPreset: vi.fn().mockResolvedValue({
+          schemaVersion: 'draft-preset-publication-result/v1',
+          status: 'rejected',
+          draft: createValidatedDraft({
+            lifecycleState: 'published',
+            publicationHistory: [
+              {
+                schemaVersion: 'preset-publication-audit/v1',
+                presetId: DRAFT_PAYLOAD.presetId,
+                draftVersion: 1,
+                publishedVersion: '2026.03.27',
+                actorId: 'manager-kim',
+                actorLabel: 'Kim Manager',
+                reviewNote: null,
+                action: 'rejected',
+                reasonCode: 'stage-unavailable',
+                guidance:
+                  'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+                notedAt: '2026-03-27T00:20:00.000Z',
+              },
+            ],
+          }),
+          reasonCode: 'stage-unavailable',
+          message: '이 단계에서는 게시를 실행하지 않아요.',
+          guidance: 'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+          auditRecord: {
+            schemaVersion: 'preset-publication-audit/v1',
+            presetId: DRAFT_PAYLOAD.presetId,
+            draftVersion: 1,
+            publishedVersion: '2026.03.27',
+            actorId: 'manager-kim',
+            actorLabel: 'Kim Manager',
+            reviewNote: null,
+            action: 'rejected',
+            reasonCode: 'stage-unavailable',
+            guidance:
+              'approval 준비 상태까지만 확인하고, 실제 게시는 다음 단계에서 진행해 주세요.',
+            notedAt: '2026-03-27T00:20:00.000Z',
+          },
+        }),
+        loadPresetCatalogState: vi.fn(),
+        rollbackPresetCatalog: vi.fn(),
+      },
+    })
+
+    await expect(
+      service.publishValidatedPreset({
+        presetId: DRAFT_PAYLOAD.presetId,
+        draftVersion: 1,
+        validationCheckedAt: '2026-03-26T00:10:00.000Z',
+        expectedDisplayName: DRAFT_PAYLOAD.displayName,
+        publishedVersion: '2026.03.27',
+        actorId: 'manager-kim',
+        actorLabel: 'Kim Manager',
+        scope: 'future-sessions-only',
+        reviewNote: null,
+      }),
+    ).rejects.toMatchObject({
+      code: 'host-unavailable',
+    })
+  })
+
   it('rejects a stage-unavailable publication response that mixes a stale audit draft version', async () => {
     const service = createPresetAuthoringService({
       gateway: {

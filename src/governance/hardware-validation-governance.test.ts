@@ -14,31 +14,50 @@ const storyFiles = [
     file: '_bmad-output/implementation-artifacts/1-4-준비-상태-안내와-유효-상태에서만-촬영-허용.md',
     status: 'done',
     gate: 'Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
   },
   {
     file: '_bmad-output/implementation-artifacts/1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백.md',
     status: 'done',
     gate: 'Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
   },
   {
     file: '_bmad-output/implementation-artifacts/1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단.md',
     status: 'done',
     gate: 'Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
   },
   {
     file: '_bmad-output/implementation-artifacts/3-2-export-waiting과-truthful-completion-안내.md',
     status: 'done',
     gate: 'Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
+  },
+  {
+    file: '_bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md',
+    status: 'review',
+    gate: 'No-Go',
+    gateHeading: '### Validation Gate Reference',
+    automationMarker: 'automated proof',
   },
   {
     file: '_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md',
-    status: 'review',
-    gate: 'No-Go',
+    status: 'done',
+    gate: 'Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
   },
   {
     file: '_bmad-output/implementation-artifacts/4-3-승인과-불변-게시-아티팩트-생성.md',
     status: 'review',
     gate: 'No-Go',
+    gateHeading: '### Hardware Gate Reference',
+    automationMarker: 'automated pass',
   },
 ] as const
 
@@ -83,6 +102,8 @@ describe('hardware validation governance baseline', () => {
     expect(ledger).toContain('Story 1.6')
     expect(ledger).toContain('Story 1.8')
     expect(ledger).toContain('HV-05/HV-07/HV-08/HV-11/HV-12')
+    expect(ledger).toContain('Story 1.13')
+    expect(ledger).toContain('HV-00, HV-04, HV-05, HV-07, HV-08, HV-10, HV-11, HV-12')
     expect(ledger).toContain('Story 3.2')
     expect(ledger).toContain('HV-08, HV-11')
     expect(ledger).toContain('Story 4.2')
@@ -115,6 +136,7 @@ describe('hardware validation governance baseline', () => {
 
     expect(runbook).toContain('canonical release-gated stories')
     expect(runbook).toContain('Story 1.4')
+    expect(runbook).toContain('Story 1.13')
     expect(runbook).not.toContain('- Story 1.3: 승인된 프리셋 카탈로그 표시와 활성 프리셋 선택')
     expect(runbook).toContain('Story 2.3')
     expect(runbook).toContain('hardware-validation-ledger.md')
@@ -129,6 +151,8 @@ describe('hardware validation governance baseline', () => {
     expect(releaseBaseline).toContain('Go')
     expect(releaseBaseline).toContain('No-Go')
     expect(releaseBaseline).toContain('release hold')
+    expect(releaseBaseline).toContain('Story 1.13')
+    expect(releaseBaseline).toContain('preview-renderer-policy.json')
   })
 
   it('keeps sprint status aligned with the ledger-recorded close state', () => {
@@ -139,6 +163,9 @@ describe('hardware validation governance baseline', () => {
     )
 
     expect(sprintStatus).toContain('hardware_validation_ledger:')
+    expect(sprintStatus).toContain(
+      '1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: review',
+    )
     expect(sprintStatus).toContain('1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done')
     expect(sprintStatus).toContain('1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done')
     expect(sprintStatus).toContain(
@@ -148,7 +175,7 @@ describe('hardware validation governance baseline', () => {
       '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done',
     )
     expect(sprintStatus).toContain('3-2-export-waiting과-truthful-completion-안내: done')
-    expect(sprintStatus).toContain('4-2-부스-호환성-검증과-승인-준비-상태-전환: review')
+    expect(sprintStatus).toContain('4-2-부스-호환성-검증과-승인-준비-상태-전환: done')
     expect(sprintStatus).toContain('4-3-승인과-불변-게시-아티팩트-생성: review')
     expect(sprintStatus).toContain(
       'truth-critical stories stay in `review` or another pre-close state',
@@ -177,10 +204,10 @@ describe('hardware validation governance baseline', () => {
       const story = readRepoFile(...storyFile.file.split('/'))
 
       expect(story).toContain(`Status: ${storyFile.status}`)
-      expect(story).toContain('### Hardware Gate Reference')
+      expect(story).toContain(storyFile.gateHeading)
       expect(story).toContain('hardware-validation-ledger.md')
       expect(story).toContain(`Current hardware gate: \`${storyFile.gate}\``)
-      expect(story).toContain('automated pass')
+      expect(story).toContain(storyFile.automationMarker)
     }
   })
 

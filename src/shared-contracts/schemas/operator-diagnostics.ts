@@ -38,13 +38,21 @@ export const operatorCameraConnectionSummarySchema = z.object({
   state: operatorCameraConnectionStateSchema,
   title: operatorSafeCopySchema,
   detail: z.string().trim().min(1).max(240),
-  observedAt: z.string().datetime().nullable().optional(),
+  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
 })
 
 export const operatorRecentFailureSummarySchema = z.object({
   title: operatorSafeCopySchema,
   detail: z.string().trim().min(1).max(240),
-  observedAt: z.string().datetime().nullable().optional(),
+  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
+})
+
+export const operatorPreviewArchitectureSummarySchema = z.object({
+  route: z.string().trim().min(1).nullable().optional(),
+  routeStage: z.string().trim().min(1).nullable().optional(),
+  laneOwner: z.string().trim().min(1).nullable().optional(),
+  fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+  hardwareCapability: z.string().trim().min(1),
 })
 
 export const operatorSessionSummarySchema = z.object({
@@ -65,5 +73,6 @@ export const operatorSessionSummarySchema = z.object({
   captureBoundary: operatorBoundarySummarySchema,
   previewRenderBoundary: operatorBoundarySummarySchema,
   completionBoundary: operatorBoundarySummarySchema,
+  previewArchitecture: operatorPreviewArchitectureSummarySchema,
   liveCaptureTruth: liveCaptureTruthSchema.optional(),
 })

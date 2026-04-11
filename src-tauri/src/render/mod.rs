@@ -1373,11 +1373,23 @@ fn resolve_preview_render_source(
     }
 
     if matches!(intent, RenderIntent::Preview) {
+        let canonical_preview_asset = paths
+            .renders_previews_dir
+            .join(format!("{}.jpg", capture.capture_id));
+        let should_avoid_pending_canonical_preview = capture.preview.ready_at_ms.is_none()
+            && matches!(
+                capture.render_status.as_str(),
+                "captureSaved" | "previewWaiting"
+            );
+
         if profile.allow_fast_preview_raster {
             if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
                 let preview_asset = Path::new(preview_asset_path);
+                let is_pending_canonical_preview = should_avoid_pending_canonical_preview
+                    && normalize_path(preview_asset) == normalize_path(&canonical_preview_asset);
 
-                if is_session_scoped_asset_path(&paths.session_root, preview_asset)
+                if !is_pending_canonical_preview
+                    && is_session_scoped_asset_path(&paths.session_root, preview_asset)
                     && is_valid_render_preview_asset(preview_asset)
                 {
                     return PreviewRenderSource {
@@ -1387,10 +1399,9 @@ fn resolve_preview_render_source(
                 }
             }
 
-            let canonical_preview_asset = paths
-                .renders_previews_dir
-                .join(format!("{}.jpg", capture.capture_id));
-            if is_valid_render_preview_asset(&canonical_preview_asset) {
+            if !should_avoid_pending_canonical_preview
+                && is_valid_render_preview_asset(&canonical_preview_asset)
+            {
                 return PreviewRenderSource {
                     asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
                     kind: PreviewRenderSourceKind::FastPreviewRaster,
@@ -1859,6 +1870,7 @@ mod tests {
                 active_preset_id: Some("preset_test".into()),
                 active_preset_version: "2026.03.31".into(),
                 active_preset_display_name: Some("Test".into()),
+                preview_renderer_route: None,
                 capture_id: "capture_test".into(),
                 request_id: "request_test".into(),
                 raw: crate::session::session_manifest::RawCaptureAsset {
@@ -1937,6 +1949,7 @@ mod tests {
                 active_preset_id: Some("preset_test".into()),
                 active_preset_version: "2026.03.31".into(),
                 active_preset_display_name: Some("Test".into()),
+                preview_renderer_route: None,
                 capture_id: "capture_test".into(),
                 request_id: "request_test".into(),
                 raw: crate::session::session_manifest::RawCaptureAsset {
@@ -2025,7 +2038,16 @@ mod tests {
         let paths = SessionPaths::new(&temp_dir, session_id);
         fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
         fs::create_dir_all(&paths.captures_originals_dir).expect("raw dir should exist");
-        let fast_preview_path = paths.renders_previews_dir.join("capture_test.jpg");
+        let fast_preview_path = paths
+            .handoff_dir
+            .join("fast-preview")
+            .join("capture_test.jpg");
+        fs::create_dir_all(
+            fast_preview_path
+                .parent()
+                .expect("fast preview path should have a parent"),
+        )
+        .expect("fast preview dir should exist");
         fs::write(&fast_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
             .expect("jpeg preview should exist");
 
@@ -2040,6 +2062,7 @@ mod tests {
                 active_preset_id: Some("preset_test".into()),
                 active_preset_version: "2026.03.31".into(),
                 active_preset_display_name: Some("Test".into()),
+                preview_renderer_route: None,
                 capture_id: "capture_test".into(),
                 request_id: "request_test".into(),
                 raw: crate::session::session_manifest::RawCaptureAsset {
@@ -2104,8 +2127,8 @@ mod tests {
     }
 
     #[test]
-    fn preview_invocation_reuses_canonical_preview_asset_in_default_booth_safe_mode() {
-        let temp_dir = unique_temp_dir("preview-canonical-fallback");
+    fn preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close() {
+        let temp_dir = unique_temp_dir("preview-canonical-pending-fallback");
         let session_id = "session_test";
         let paths = SessionPaths::new(&temp_dir, session_id);
         fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
@@ -2125,6 +2148,7 @@ mod tests {
                 active_preset_id: Some("preset_test".into()),
                 active_preset_version: "2026.03.31".into(),
                 active_preset_display_name: Some("Test".into()),
+                preview_renderer_route: None,
                 capture_id: "capture_test".into(),
                 request_id: "request_test".into(),
                 raw: crate::session::session_manifest::RawCaptureAsset {
@@ -2167,18 +2191,20 @@ mod tests {
 
         assert_eq!(
             invocation.render_source_kind,
-            PreviewRenderSourceKind::FastPreviewRaster
+            PreviewRenderSourceKind::RawOriginal
         );
         assert!(invocation
             .arguments
-            .contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
+            .contains(&RAW_PREVIEW_MAX_WIDTH_PX.to_string()));
         assert!(invocation
             .arguments
-            .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+            .contains(&RAW_PREVIEW_MAX_HEIGHT_PX.to_string()));
         assert_eq!(
             invocation.arguments.first().map(String::as_str),
             Some(
-                canonical_preview_path
+                paths
+                    .captures_originals_dir
+                    .join("capture_test.cr2")
                     .to_string_lossy()
                     .replace('\\', "/")
                     .as_str()

@@ -55,6 +55,7 @@
 
 `stage-unavailable`는 preview/inspection 단계에서만 허용되는 typed rejection이다.
 이 경우 bundle 생성, live pointer 변경, rejection audit 저장을 수행하지 않는다.
+실제 Tauri `publish_validated_preset` command는 이 preview 경로가 아니라 immutable publish 경로를 호출해야 한다.
 
 ## Audit Record
 

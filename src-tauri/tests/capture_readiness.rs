@@ -385,7 +385,9 @@ fn readiness_surfaces_camera_connecting_guidance_when_helper_detects_powered_dev
 #[test]
 fn readiness_stays_blocked_when_helper_truth_is_absent_even_in_runtime_dir() {
     let local_app_data_root = unique_test_root("runtime-probe-localappdata");
-    let base_dir = local_app_data_root.join("com.boothy.desktop").join("dabi_shoot");
+    let base_dir = local_app_data_root
+        .join("com.boothy.desktop")
+        .join("dabi_shoot");
     let _env_guard = scoped_env_vars(vec![(
         "LOCALAPPDATA",
         Some(std::ffi::OsString::from(local_app_data_root.clone())),

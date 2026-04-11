@@ -37,7 +37,7 @@ export const operatorRecoveryActionRejectionReasonSchema = z.enum([
 export const operatorRecoveryDiagnosticsSummarySchema = z.object({
   title: operatorSafeCopySchema,
   detail: z.string().trim().min(1).max(240),
-  observedAt: z.string().datetime().nullable().optional(),
+  observedAt: z.string().datetime({ offset: true }).nullable().optional(),
 })
 
 export const operatorRecoverySummarySchema = operatorSessionSummarySchema

@@ -477,6 +477,7 @@ fn build_operator_recovery_summary(
         capture_boundary: session_summary.capture_boundary,
         preview_render_boundary: session_summary.preview_render_boundary,
         completion_boundary: session_summary.completion_boundary,
+        preview_architecture: session_summary.preview_architecture,
         live_capture_truth: session_summary.live_capture_truth,
     }
 }

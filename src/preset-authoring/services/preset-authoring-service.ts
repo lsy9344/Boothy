@@ -272,6 +272,21 @@ function ensureMatchingPublicationResult(
       code: 'host-unavailable',
       message: '게시 거절 결과의 audit 이력이 응답과 맞지 않아요. 다시 시도해 주세요.',
     } satisfies HostErrorEnvelope
+  } else if (
+    response.reasonCode === 'stage-unavailable' &&
+    response.draft.lifecycleState === 'published' &&
+    !response.draft.publicationHistory.some(
+      (record) =>
+        record.action === 'published' &&
+        record.draftVersion === response.draft.draftVersion &&
+        record.notedAt <= response.auditRecord.notedAt,
+    )
+  ) {
+    throw {
+      code: 'host-unavailable',
+      message:
+        'stage-unavailable 거절이 published 상태를 유지하려면 이전 published 이력이 필요해요.',
+    } satisfies HostErrorEnvelope
   } else if (response.reasonCode === 'future-session-only-violation') {
     if (input.scope === 'future-sessions-only') {
       throw {

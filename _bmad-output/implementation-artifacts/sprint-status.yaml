@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-10 14:38:38 +09:00
+# last_updated: 2026-04-11 11:28:23 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-10 15:59:00 +09:00"
+last_updated: "2026-04-11 12:14:53 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -47,6 +47,7 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
 
 development_status:
   epic-1: in-progress
+  1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: review
   1-14-공유-계약-동결과-검증-기준-확정: done
   1-15-canon-helper-profile과-publication-contract-확정: done
   1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
@@ -58,8 +59,8 @@ development_status:
   1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
   1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done
-  1-9-fast-preview-handoff와-xmp-preview-교체: review
-  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: review
+  1-9-fast-preview-handoff와-xmp-preview-교체: done
+  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
   1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입: done
   1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환: review
   epic-1-retrospective: optional
@@ -80,7 +81,7 @@ development_status:
 
   epic-4: in-progress
   4-1-드래프트-프리셋-작성과-내부-저작-작업공간: done
-  4-2-부스-호환성-검증과-승인-준비-상태-전환: review
+  4-2-부스-호환성-검증과-승인-준비-상태-전환: done
   4-3-승인과-불변-게시-아티팩트-생성: review
   4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: done
   epic-4-retrospective: optional

@@ -251,9 +251,9 @@ pub fn read_latest_status_message(
     base_dir: &Path,
     session_id: &str,
 ) -> Result<Option<CanonHelperStatusMessage>, SidecarClientError> {
-    let status_path = SessionPaths::try_new(base_dir, session_id)
-        .map(|paths| paths.diagnostics_dir.join(CAMERA_HELPER_STATUS_FILE_NAME))
-        .map_err(|_| SidecarClientError::StatusUnreadable)?;
+    let status_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join(CAMERA_HELPER_STATUS_FILE_NAME);
 
     if !status_path.is_file() {
         return Ok(None);
@@ -658,7 +658,11 @@ mod tests {
         CAMERA_HELPER_STATUS_FILE_NAME,
     };
     use crate::session::session_paths::SessionPaths;
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn unique_test_root(name: &str) -> PathBuf {
         let stamp = SystemTime::now()

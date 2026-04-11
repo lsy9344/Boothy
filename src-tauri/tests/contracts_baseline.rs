@@ -161,8 +161,9 @@ fn tauri_packaging_freezes_the_dedicated_renderer_sidecar_boundary() {
         .and_then(Value::as_array)
         .expect("bundle.externalBin should exist");
     assert!(
-        external_bins.iter().any(|value| value
-            == "../sidecar/dedicated-renderer/boothy-dedicated-renderer"),
+        external_bins
+            .iter()
+            .any(|value| value == "../sidecar/dedicated-renderer/boothy-dedicated-renderer"),
         "tauri bundle should include the dedicated renderer sidecar binary"
     );
 
@@ -172,9 +173,7 @@ fn tauri_packaging_freezes_the_dedicated_renderer_sidecar_boundary() {
         .expect("capability permissions should be an array");
     assert!(
         permissions.iter().any(|entry| {
-            entry.get("identifier")
-                .and_then(Value::as_str)
-                == Some("shell:allow-execute")
+            entry.get("identifier").and_then(Value::as_str) == Some("shell:allow-execute")
         }),
         "booth capability should freeze the dedicated renderer execute allowlist"
     );

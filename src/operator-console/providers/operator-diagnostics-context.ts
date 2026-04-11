@@ -12,6 +12,7 @@ export type OperatorDiagnosticsContextValue = {
   summary: OperatorRecoverySummary | null
   auditHistory: OperatorAuditQueryResult | null
   error: HostErrorEnvelope | null
+  auditError: HostErrorEnvelope | null
   isLoading: boolean
   isActing: boolean
   lastActionResult: OperatorRecoveryActionResult | null
