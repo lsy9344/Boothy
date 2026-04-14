@@ -100,10 +100,26 @@ fn parses_frozen_helper_protocol_examples() {
 #[test]
 fn loads_the_frozen_published_preset_bundle_fixture() {
     let bundle_dir =
-        repo_root().join("tests/fixtures/contracts/preset-bundle-v1/preset_soft-glow/2026.04.10");
+        repo_root().join("tests/fixtures/contracts/preset-bundle-v2/preset_soft-glow/2026.04.10");
+    let bundle_fixture = read_json_fixture(
+        "tests/fixtures/contracts/preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json",
+    );
+    let bundle_value: Value =
+        serde_json::from_str(&bundle_fixture).expect("bundle fixture should deserialize");
     let bundle = load_published_preset_runtime_bundle(&bundle_dir)
         .expect("published preset bundle fixture should load");
 
+    assert_eq!(
+        bundle_value.get("schemaVersion").and_then(Value::as_str),
+        Some("published-preset-bundle/v2")
+    );
+    assert_eq!(
+        bundle_value
+            .get("canonicalRecipe")
+            .and_then(|value| value.get("schemaVersion"))
+            .and_then(Value::as_str),
+        Some("canonical-preset-recipe/v1")
+    );
     assert_eq!(bundle.preset_id, "preset_soft-glow");
     assert_eq!(bundle.published_version, "2026.04.10");
     assert_eq!(bundle.preview_profile.profile_id, "soft-glow-preview");
@@ -133,6 +149,7 @@ fn parses_dedicated_renderer_preview_protocol_examples() {
     );
     assert_eq!(result.status, "fallback-suggested");
     assert_eq!(result.request_id, "request_20260410_001");
+    assert_eq!(result.warm_state.as_deref(), Some("cold"));
 }
 
 #[test]

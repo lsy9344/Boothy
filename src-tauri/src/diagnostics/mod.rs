@@ -12,14 +12,15 @@ use crate::{
     capture::normalized_state::normalize_capture_readiness,
     contracts::dto::{
         CapabilitySnapshotDto, HostErrorEnvelope, LiveCaptureTruthDto, OperatorBoundarySummaryDto,
-        OperatorCameraConnectionSummaryDto, OperatorRecentFailureSummaryDto,
-        OperatorPreviewArchitectureSummaryDto, OperatorSessionSummaryDto,
+        OperatorCameraConnectionSummaryDto, OperatorPreviewArchitectureSummaryDto,
+        OperatorRecentFailureSummaryDto, OperatorSessionSummaryDto,
     },
     handoff::project_post_end_state_in_dir,
     render::dedicated_renderer::dedicated_renderer_hardware_capability,
     session::{
         session_manifest::{
-            rfc3339_to_unix_seconds, PreviewRendererRouteSnapshot, SessionManifest,
+            rfc3339_to_unix_seconds, PreviewRendererRouteSnapshot,
+            PreviewRendererWarmStateSnapshot, SessionCaptureRecord, SessionManifest,
             SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
             SESSION_POST_END_PHONE_REQUIRED,
         },
@@ -40,17 +41,34 @@ struct DiagnosticsContext {
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
+    warm_state: Option<String>,
+    warm_state_observed_at: Option<String>,
+    first_visible_ms: Option<u64>,
+    replacement_ms: Option<u64>,
+    original_visible_to_preset_applied_visible_ms: Option<u64>,
     malformed: bool,
 }
 
 #[derive(Debug, Default)]
 struct PreviewTransitionSummaryContext {
+    observed_at: Option<String>,
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
+    warm_state: Option<String>,
+    first_visible_ms: Option<u64>,
+    replacement_ms: Option<u64>,
+    original_visible_to_preset_applied_visible_ms: Option<u64>,
     saw_lane_owner: bool,
     saw_fallback_reason: bool,
     saw_route_stage: bool,
+}
+
+#[derive(Debug, Default)]
+struct PreviewTimingMetrics {
+    first_visible_ms: Option<u64>,
+    replacement_ms: Option<u64>,
+    original_visible_to_preset_applied_visible_ms: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -109,11 +127,13 @@ pub fn load_operator_session_summary_in_dir(
         &diagnostics,
     );
     let preview_architecture = build_preview_architecture_summary(
+        readiness.latest_capture.as_ref(),
         readiness
             .latest_capture
             .as_ref()
             .and_then(|capture| capture.preview_renderer_route.as_ref())
             .or(manifest.active_preview_renderer_route.as_ref()),
+        manifest.active_preview_renderer_warm_state.as_ref(),
         &diagnostics,
     );
 
@@ -221,6 +241,8 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
             "현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.",
         ),
         preview_architecture: build_preview_architecture_summary(
+            None,
+            None,
             None,
             &DiagnosticsContext::default(),
         ),
@@ -540,6 +562,12 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
             context.lane_owner = summary.lane_owner;
             context.fallback_reason_code = summary.fallback_reason_code;
             context.route_stage = summary.route_stage;
+            context.warm_state = summary.warm_state;
+            context.warm_state_observed_at = summary.observed_at;
+            context.first_visible_ms = summary.first_visible_ms;
+            context.replacement_ms = summary.replacement_ms;
+            context.original_visible_to_preset_applied_visible_ms =
+                summary.original_visible_to_preset_applied_visible_ms;
             break;
         }
     }
@@ -548,9 +576,44 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
 }
 
 fn build_preview_architecture_summary(
+    latest_capture: Option<&SessionCaptureRecord>,
     route_snapshot: Option<&PreviewRendererRouteSnapshot>,
+    warm_state_snapshot: Option<&PreviewRendererWarmStateSnapshot>,
     diagnostics: &DiagnosticsContext,
 ) -> OperatorPreviewArchitectureSummaryDto {
+    let prefer_snapshot_warm_state = warm_state_snapshot
+        .map(|snapshot| {
+            let Some(snapshot_sort_key) = rfc3339_sort_key_lossy(&snapshot.observed_at) else {
+                return diagnostics.warm_state.is_none();
+            };
+            let Some(diagnostics_sort_key) = diagnostics
+                .warm_state_observed_at
+                .as_deref()
+                .and_then(rfc3339_sort_key_lossy)
+            else {
+                return true;
+            };
+            snapshot_sort_key > diagnostics_sort_key
+        })
+        .unwrap_or(false);
+    let warm_state = if prefer_snapshot_warm_state {
+        warm_state_snapshot.map(|snapshot| snapshot.state.clone())
+    } else {
+        diagnostics
+            .warm_state
+            .clone()
+            .or_else(|| warm_state_snapshot.map(|snapshot| snapshot.state.clone()))
+    };
+    let warm_state_observed_at = if prefer_snapshot_warm_state {
+        warm_state_snapshot.map(|snapshot| snapshot.observed_at.clone())
+    } else {
+        diagnostics
+            .warm_state_observed_at
+            .clone()
+            .or_else(|| warm_state_snapshot.map(|snapshot| snapshot.observed_at.clone()))
+    };
+    let timing_metrics = build_preview_timing_metrics(latest_capture, diagnostics);
+
     OperatorPreviewArchitectureSummaryDto {
         route: route_snapshot.map(|snapshot| snapshot.route.clone()),
         route_stage: diagnostics
@@ -561,11 +624,96 @@ fn build_preview_architecture_summary(
         fallback_reason_code: diagnostics
             .fallback_reason_code
             .clone()
-            .or_else(|| {
-                route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())
-            }),
+            .or_else(|| route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())),
+        warm_state,
+        warm_state_observed_at,
+        first_visible_ms: timing_metrics.first_visible_ms,
+        replacement_ms: timing_metrics.replacement_ms,
+        original_visible_to_preset_applied_visible_ms: timing_metrics
+            .original_visible_to_preset_applied_visible_ms,
         hardware_capability: dedicated_renderer_hardware_capability().into(),
     }
+}
+
+fn build_preview_timing_metrics(
+    latest_capture: Option<&SessionCaptureRecord>,
+    diagnostics: &DiagnosticsContext,
+) -> PreviewTimingMetrics {
+    let capture_metrics = latest_capture
+        .map(build_preview_timing_metrics_from_capture)
+        .unwrap_or_default();
+
+    PreviewTimingMetrics {
+        first_visible_ms: capture_metrics
+            .first_visible_ms
+            .or(diagnostics.first_visible_ms),
+        replacement_ms: capture_metrics
+            .replacement_ms
+            .or(diagnostics.replacement_ms),
+        original_visible_to_preset_applied_visible_ms: capture_metrics
+            .original_visible_to_preset_applied_visible_ms
+            .or(diagnostics.original_visible_to_preset_applied_visible_ms),
+    }
+}
+
+fn build_preview_timing_metrics_from_capture(
+    latest_capture: &SessionCaptureRecord,
+) -> PreviewTimingMetrics {
+    let acknowledged_at_ms = latest_capture.timing.capture_acknowledged_at_ms;
+    let first_visible_at_ms = latest_capture
+        .timing
+        .fast_preview_visible_at_ms
+        .or(latest_capture.timing.preview_visible_at_ms);
+    let replacement_visible_at_ms = latest_capture
+        .timing
+        .preview_visible_at_ms
+        .or(latest_capture.timing.xmp_preview_ready_at_ms);
+    let first_visible_ms =
+        first_visible_at_ms.map(|visible_at_ms| visible_at_ms.saturating_sub(acknowledged_at_ms));
+    let replacement_ms = replacement_visible_at_ms
+        .map(|visible_at_ms| visible_at_ms.saturating_sub(acknowledged_at_ms));
+
+    PreviewTimingMetrics {
+        first_visible_ms,
+        replacement_ms,
+        original_visible_to_preset_applied_visible_ms: match (first_visible_ms, replacement_ms) {
+            (Some(first_visible_ms), Some(replacement_ms)) => {
+                Some(replacement_ms.saturating_sub(first_visible_ms))
+            }
+            _ => None,
+        },
+    }
+}
+
+fn rfc3339_sort_key_lossy(timestamp: &str) -> Option<(u64, u32)> {
+    let seconds = rfc3339_to_unix_seconds(timestamp).ok()?;
+    let time = timestamp.trim().split_once('T')?.1;
+    let fraction = time
+        .split_once('.')
+        .and_then(|(_, fraction_and_offset)| {
+            let digits = fraction_and_offset
+                .chars()
+                .take_while(|char| char.is_ascii_digit())
+                .collect::<String>();
+            if digits.is_empty() {
+                None
+            } else {
+                Some(digits)
+            }
+        })
+        .map(|digits| {
+            let truncated = if digits.len() > 9 {
+                &digits[..9]
+            } else {
+                digits.as_str()
+            };
+            let parsed = truncated.parse::<u32>().ok()?;
+            let scale = 10_u32.pow(9_u32.saturating_sub(truncated.len() as u32));
+            Some(parsed.saturating_mul(scale))
+        })
+        .unwrap_or(Some(0))?;
+
+    Some((seconds, fraction))
 }
 
 fn normalize_diagnostics_value(value: &str) -> Option<String> {
@@ -575,13 +723,24 @@ fn normalize_diagnostics_value(value: &str) -> Option<String> {
     }
 }
 
+fn parse_preview_metric(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
 fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransitionSummaryContext> {
     if !line.contains("\tevent=capture_preview_transition_summary") {
         return None;
     }
 
+    let observed_at = line.split('\t').next()?.to_string();
+    if rfc3339_to_unix_seconds(&observed_at).is_err() {
+        return None;
+    }
     let detail = line.split("\tdetail=").nth(1)?;
-    let mut summary = PreviewTransitionSummaryContext::default();
+    let mut summary = PreviewTransitionSummaryContext {
+        observed_at: Some(observed_at),
+        ..PreviewTransitionSummaryContext::default()
+    };
 
     for fragment in detail.split(';') {
         let Some((key, value)) = fragment.split_once('=') else {
@@ -600,6 +759,18 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
             "routeStage" => {
                 summary.saw_route_stage = true;
                 summary.route_stage = normalize_diagnostics_value(value);
+            }
+            "warmState" => {
+                summary.warm_state = normalize_diagnostics_value(value);
+            }
+            "firstVisibleMs" => {
+                summary.first_visible_ms = parse_preview_metric(value);
+            }
+            "replacementMs" => {
+                summary.replacement_ms = parse_preview_metric(value);
+            }
+            "originalVisibleToPresetAppliedVisibleMs" => {
+                summary.original_visible_to_preset_applied_visible_ms = parse_preview_metric(value);
             }
             _ => {}
         }

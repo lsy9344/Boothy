@@ -237,6 +237,17 @@ pub struct PreviewRendererRouteSnapshot {
     pub fallback_reason_code: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererWarmStateSnapshot {
+    pub preset_id: String,
+    pub published_version: String,
+    pub state: String,
+    pub observed_at: String,
+    #[serde(default)]
+    pub diagnostics_detail_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionCaptureRecord {
@@ -283,6 +294,8 @@ pub struct SessionManifest {
     pub active_preset_display_name: Option<String>,
     #[serde(default)]
     pub active_preview_renderer_route: Option<PreviewRendererRouteSnapshot>,
+    #[serde(default)]
+    pub active_preview_renderer_warm_state: Option<PreviewRendererWarmStateSnapshot>,
     #[serde(default)]
     pub timing: Option<SessionTiming>,
     #[serde(default)]
@@ -408,6 +421,7 @@ pub fn build_session_manifest_at(
         active_preset_id: None,
         active_preset_display_name: None,
         active_preview_renderer_route: None,
+        active_preview_renderer_warm_state: None,
         timing: Some(timing),
         captures: Vec::new(),
         post_end: None,

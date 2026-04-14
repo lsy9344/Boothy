@@ -1376,20 +1376,11 @@ fn resolve_preview_render_source(
         let canonical_preview_asset = paths
             .renders_previews_dir
             .join(format!("{}.jpg", capture.capture_id));
-        let should_avoid_pending_canonical_preview = capture.preview.ready_at_ms.is_none()
-            && matches!(
-                capture.render_status.as_str(),
-                "captureSaved" | "previewWaiting"
-            );
 
         if profile.allow_fast_preview_raster {
             if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
                 let preview_asset = Path::new(preview_asset_path);
-                let is_pending_canonical_preview = should_avoid_pending_canonical_preview
-                    && normalize_path(preview_asset) == normalize_path(&canonical_preview_asset);
-
-                if !is_pending_canonical_preview
-                    && is_session_scoped_asset_path(&paths.session_root, preview_asset)
+                if is_session_scoped_asset_path(&paths.session_root, preview_asset)
                     && is_valid_render_preview_asset(preview_asset)
                 {
                     return PreviewRenderSource {
@@ -1399,9 +1390,7 @@ fn resolve_preview_render_source(
                 }
             }
 
-            if !should_avoid_pending_canonical_preview
-                && is_valid_render_preview_asset(&canonical_preview_asset)
-            {
+            if is_valid_render_preview_asset(&canonical_preview_asset) {
                 return PreviewRenderSource {
                     asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
                     kind: PreviewRenderSourceKind::FastPreviewRaster,
@@ -1930,6 +1919,92 @@ mod tests {
             invocation.render_source_kind,
             PreviewRenderSourceKind::RawOriginal
         );
+    }
+
+    #[test]
+    fn preview_invocation_reuses_a_pending_canonical_fast_preview_as_the_fallback_source() {
+        let temp_dir = unique_temp_dir("pending-canonical-fast-preview");
+        let session_id = "session_test";
+        let paths = SessionPaths::new(&temp_dir, session_id);
+        let canonical_preview_path = paths.renders_previews_dir.join("capture_test.jpg");
+        let jpeg_bytes = [
+            0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
+            0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C,
+            0x19, 0x12, 0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20,
+            0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30,
+            0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D, 0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34,
+            0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+            0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01,
+            0x00, 0x00, 0x3F, 0x00, 0xD2, 0xCF, 0x20, 0xFF, 0xD9,
+        ];
+
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+        fs::write(&canonical_preview_path, jpeg_bytes).expect("preview fixture should be writable");
+
+        let invocation = build_darktable_invocation(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &temp_dir.join("bundle").join("preview.xmp"),
+            &SessionCaptureRecord {
+                schema_version: "session-capture/v1".into(),
+                session_id: session_id.into(),
+                booth_alias: "Booth".into(),
+                active_preset_id: Some("preset_test".into()),
+                active_preset_version: "2026.03.31".into(),
+                active_preset_display_name: Some("Test".into()),
+                preview_renderer_route: None,
+                capture_id: "capture_test".into(),
+                request_id: "request_test".into(),
+                raw: crate::session::session_manifest::RawCaptureAsset {
+                    asset_path: temp_dir
+                        .join("captures")
+                        .join("originals")
+                        .join("capture_test.cr2")
+                        .to_string_lossy()
+                        .into_owned(),
+                    persisted_at_ms: 100,
+                },
+                preview: crate::session::session_manifest::PreviewCaptureAsset {
+                    asset_path: Some(canonical_preview_path.to_string_lossy().into_owned()),
+                    enqueued_at_ms: Some(100),
+                    ready_at_ms: None,
+                },
+                final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                    asset_path: None,
+                    ready_at_ms: None,
+                },
+                render_status: "previewWaiting".into(),
+                post_end_state: "activeSession".into(),
+                timing: crate::session::session_manifest::CaptureTimingMetrics {
+                    capture_acknowledged_at_ms: 100,
+                    preview_visible_at_ms: None,
+                    fast_preview_visible_at_ms: Some(120),
+                    xmp_preview_ready_at_ms: None,
+                    capture_budget_ms: 1000,
+                    preview_budget_ms: 5000,
+                    preview_budget_state: "pending".into(),
+                },
+            },
+            &paths,
+            &paths
+                .renders_previews_dir
+                .join("capture_test.preview-rendering.jpg"),
+            RenderIntent::Preview,
+            None,
+        );
+
+        assert_eq!(
+            invocation.render_source_kind,
+            PreviewRenderSourceKind::FastPreviewRaster
+        );
+        let expected_source_path = canonical_preview_path.to_string_lossy().replace('\\', "/");
+        assert_eq!(
+            invocation.arguments.first().map(String::as_str),
+            Some(expected_source_path.as_str())
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]

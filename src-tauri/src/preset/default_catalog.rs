@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{
     contracts::dto::HostErrorEnvelope,
@@ -13,6 +13,7 @@ use crate::{
 type DefaultPresetSeed = (&'static str, &'static str, &'static str, &'static str);
 const DEFAULT_RENDER_TEMPLATE: &str =
     include_str!("default_catalog_assets/default-render-template.xmp");
+const AUTHORITATIVE_BUNDLE_SCHEMA_VERSION: &str = "published-preset-bundle/v2";
 
 const DEFAULT_PRESET_SEEDS: [DefaultPresetSeed; 3] = [
     (
@@ -68,23 +69,38 @@ pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostE
         .map_err(map_fs_error)?;
 
         let bundle = json!({
-            "schemaVersion": "published-preset-bundle/v1",
+            "schemaVersion": "published-preset-bundle/v2",
             "presetId": preset_id,
             "displayName": display_name,
             "publishedVersion": published_version,
             "lifecycleStatus": "published",
             "boothStatus": "booth-safe",
-            "darktableVersion": "5.4.1",
-            "xmpTemplatePath": "xmp/template.xmp",
-            "previewProfile": {
-                "profileId": "preview-jpeg",
-                "displayName": "Booth Preview JPEG",
-                "outputColorSpace": "sRGB",
+            "canonicalRecipe": {
+                "schemaVersion": "canonical-preset-recipe/v1",
+                "presetId": preset_id,
+                "publishedVersion": published_version,
+                "displayName": display_name,
+                "boothStatus": "booth-safe",
+                "previewIntent": {
+                    "profileId": "preview-jpeg",
+                    "displayName": "Booth Preview JPEG",
+                    "outputColorSpace": "sRGB",
+                },
+                "finalIntent": {
+                    "profileId": "final-jpeg",
+                    "displayName": "Booth Final JPEG",
+                    "outputColorSpace": "sRGB",
+                },
+                "noisePolicy": {
+                    "policyId": "balanced-noise",
+                    "displayName": "Balanced Noise",
+                    "reductionMode": "balanced",
+                },
             },
-            "finalProfile": {
-                "profileId": "final-jpeg",
-                "displayName": "Booth Final JPEG",
-                "outputColorSpace": "sRGB",
+            "darktableAdapter": {
+                "schemaVersion": "darktable-preset-adapter/v1",
+                "darktableVersion": "5.4.1",
+                "xmpTemplatePath": "xmp/template.xmp",
             },
             "preview": {
                 "kind": "preview-tile",
@@ -110,8 +126,23 @@ fn bundle_requires_runtime_backfill(bundle_dir: &Path) -> bool {
         return true;
     }
 
-    load_published_preset_summary(bundle_dir).is_none()
+    !bundle_uses_authoritative_schema(bundle_dir)
+        || load_published_preset_summary(bundle_dir).is_none()
         || load_published_preset_runtime_bundle(bundle_dir).is_none()
+}
+
+fn bundle_uses_authoritative_schema(bundle_dir: &Path) -> bool {
+    let bundle_bytes = match fs::read_to_string(bundle_dir.join("bundle.json")) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let bundle_value: Value = match serde_json::from_str(&bundle_bytes) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+
+    bundle_value.get("schemaVersion").and_then(Value::as_str)
+        == Some(AUTHORITATIVE_BUNDLE_SCHEMA_VERSION)
 }
 
 fn contains_any_bundle_json(catalog_root: &Path) -> Result<bool, HostErrorEnvelope> {

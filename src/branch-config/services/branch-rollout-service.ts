@@ -6,11 +6,21 @@ import {
   branchRolloutInputSchema,
   branchRolloutOverviewResultSchema,
   hostErrorEnvelopeSchema,
+  previewRendererRouteMutationResultSchema,
+  previewRendererRoutePromotionInputSchema,
+  previewRendererRouteRollbackInputSchema,
+  previewRendererRouteStatusInputSchema,
+  previewRendererRouteStatusResultSchema,
   type BranchRollbackInput,
   type BranchRolloutActionResult,
   type BranchRolloutInput,
   type BranchRolloutOverviewResult,
   type HostErrorEnvelope,
+  type PreviewRendererRouteMutationResult,
+  type PreviewRendererRoutePromotionInput,
+  type PreviewRendererRouteRollbackInput,
+  type PreviewRendererRouteStatusInput,
+  type PreviewRendererRouteStatusResult,
 } from '../../shared-contracts'
 import { isTauriRuntime } from '../../shared/runtime/is-tauri'
 
@@ -18,6 +28,15 @@ export interface BranchRolloutGateway {
   loadOverview(): Promise<unknown>
   applyRollout(input: BranchRolloutInput): Promise<unknown>
   applyRollback(input: BranchRollbackInput): Promise<unknown>
+  promotePreviewRendererRoute(
+    input: PreviewRendererRoutePromotionInput,
+  ): Promise<unknown>
+  rollbackPreviewRendererRoute(
+    input: PreviewRendererRouteRollbackInput,
+  ): Promise<unknown>
+  loadPreviewRendererRouteStatus(
+    input: PreviewRendererRouteStatusInput,
+  ): Promise<unknown>
 }
 
 type HostBranchRolloutInput = {
@@ -32,6 +51,15 @@ export interface BranchRolloutService {
   loadOverview(): Promise<BranchRolloutOverviewResult>
   applyRollout(input: BranchRolloutInput): Promise<BranchRolloutActionResult>
   applyRollback(input: BranchRollbackInput): Promise<BranchRolloutActionResult>
+  promotePreviewRendererRoute(
+    input: PreviewRendererRoutePromotionInput,
+  ): Promise<PreviewRendererRouteMutationResult>
+  rollbackPreviewRendererRoute(
+    input: PreviewRendererRouteRollbackInput,
+  ): Promise<PreviewRendererRouteMutationResult>
+  loadPreviewRendererRouteStatus(
+    input: PreviewRendererRouteStatusInput,
+  ): Promise<PreviewRendererRouteStatusResult>
 }
 
 class DefaultBranchRolloutService implements BranchRolloutService {
@@ -72,6 +100,42 @@ class DefaultBranchRolloutService implements BranchRolloutService {
       throw normalizeHostError(error)
     }
   }
+
+  async promotePreviewRendererRoute(input: PreviewRendererRoutePromotionInput) {
+    const parsedInput = previewRendererRoutePromotionInputSchema.parse(input)
+
+    try {
+      return previewRendererRouteMutationResultSchema.parse(
+        await this.gateway.promotePreviewRendererRoute(parsedInput),
+      )
+    } catch (error) {
+      throw normalizeHostError(error)
+    }
+  }
+
+  async rollbackPreviewRendererRoute(input: PreviewRendererRouteRollbackInput) {
+    const parsedInput = previewRendererRouteRollbackInputSchema.parse(input)
+
+    try {
+      return previewRendererRouteMutationResultSchema.parse(
+        await this.gateway.rollbackPreviewRendererRoute(parsedInput),
+      )
+    } catch (error) {
+      throw normalizeHostError(error)
+    }
+  }
+
+  async loadPreviewRendererRouteStatus(input: PreviewRendererRouteStatusInput) {
+    const parsedInput = previewRendererRouteStatusInputSchema.parse(input)
+
+    try {
+      return previewRendererRouteStatusResultSchema.parse(
+        await this.gateway.loadPreviewRendererRouteStatus(parsedInput),
+      )
+    } catch (error) {
+      throw normalizeHostError(error)
+    }
+  }
 }
 
 function normalizeHostError(error: unknown): HostErrorEnvelope {
@@ -81,7 +145,7 @@ function normalizeHostError(error: unknown): HostErrorEnvelope {
     if (parsed.data.code === 'capability-denied') {
       return {
         code: parsed.data.code,
-        message: '승인된 settings surface에서만 지점 배포 거버넌스를 열 수 있어요.',
+        message: '승인된 settings surface에서만 운영 거버넌스를 열 수 있어요.',
       }
     }
 
@@ -145,6 +209,24 @@ export function createBrowserBranchRolloutGateway(): BranchRolloutGateway {
         message: '브라우저 미리보기에서는 rollback 실행을 지원하지 않아요.',
       } satisfies HostErrorEnvelope
     },
+    async promotePreviewRendererRoute() {
+      throw {
+        code: 'host-unavailable',
+        message: '브라우저 미리보기에서는 preview route 승격을 지원하지 않아요.',
+      } satisfies HostErrorEnvelope
+    },
+    async rollbackPreviewRendererRoute() {
+      throw {
+        code: 'host-unavailable',
+        message: '브라우저 미리보기에서는 preview route rollback을 지원하지 않아요.',
+      } satisfies HostErrorEnvelope
+    },
+    async loadPreviewRendererRouteStatus() {
+      throw {
+        code: 'host-unavailable',
+        message: '브라우저 미리보기에서는 preview route 현재 상태를 지원하지 않아요.',
+      } satisfies HostErrorEnvelope
+    },
   }
 }
 
@@ -166,6 +248,15 @@ export function createTauriBranchRolloutGateway(): BranchRolloutGateway {
     },
     async applyRollback(input) {
       return invoke('apply_branch_rollback', { input })
+    },
+    async promotePreviewRendererRoute(input) {
+      return invoke('promote_preview_renderer_route', { input })
+    },
+    async rollbackPreviewRendererRoute(input) {
+      return invoke('rollback_preview_renderer_route', { input })
+    },
+    async loadPreviewRendererRouteStatus(input) {
+      return invoke('load_preview_renderer_route_status', { input })
     },
   }
 }

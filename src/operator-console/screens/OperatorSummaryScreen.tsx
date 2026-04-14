@@ -9,6 +9,8 @@ import type {
   OperatorRecoverySummary,
   HostErrorEnvelope,
 } from '../../shared-contracts'
+import { Link } from 'react-router-dom'
+import { useCapabilityService } from '../../app/providers/use-capability-service'
 import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 import { useOperatorDiagnostics } from '../providers/use-operator-diagnostics'
 
@@ -71,6 +73,26 @@ function formatFieldValue(value: string | null | undefined) {
   return value === null || value === undefined || value.trim() === ''
     ? '아직 없음'
     : value
+}
+
+const PRESET_APPLIED_GOAL_MS = 2_000
+
+function formatMetricMs(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return '아직 없음'
+  }
+
+  return `${(value / 1_000).toFixed(1)}초 (${value}ms)`
+}
+
+function formatGoalSpeed(replacementMs: number | null | undefined) {
+  const goalSeconds = (PRESET_APPLIED_GOAL_MS / 1_000).toFixed(1)
+
+  if (replacementMs === null || replacementMs === undefined) {
+    return `목표 ${goalSeconds}초 이하 · 아직 계측 없음`
+  }
+
+  return `목표 ${goalSeconds}초 이하 · 현재 ${(replacementMs / 1_000).toFixed(1)}초`
 }
 
 function formatLifecycleStage(value: string | null | undefined) {
@@ -172,6 +194,34 @@ function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary
         <div className="operator-console__fact">
           <dt>Fallback Reason</dt>
           <dd>{formatFieldValue(architecture.fallbackReasonCode)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>First Visible</dt>
+          <dd>{formatMetricMs(architecture.firstVisibleMs)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Preset Applied</dt>
+          <dd>{formatMetricMs(architecture.replacementMs)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Slot Replacement</dt>
+          <dd>
+            {formatMetricMs(
+              architecture.originalVisibleToPresetAppliedVisibleMs,
+            )}
+          </dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Goal Speed</dt>
+          <dd>{formatGoalSpeed(architecture.replacementMs)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Warm State</dt>
+          <dd>{formatFieldValue(architecture.warmState)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Warm State Updated</dt>
+          <dd>{formatFieldValue(architecture.warmStateObservedAt)}</dd>
         </div>
         <div className="operator-console__fact">
           <dt>Hardware Capability</dt>
@@ -672,6 +722,7 @@ function ActionResultCard() {
 }
 
 export function OperatorSummaryScreen() {
+  const capabilityService = useCapabilityService()
   const {
     summary,
     auditHistory,
@@ -690,6 +741,7 @@ export function OperatorSummaryScreen() {
     activeCategory,
     hasUnavailableSummary,
   )
+  const canOpenSettings = capabilityService.canAccess('settings')
 
   return (
     <SurfaceLayout
@@ -704,13 +756,23 @@ export function OperatorSummaryScreen() {
               <p className="operator-console__section-label">Current Session</p>
               <h2>{describeSummaryHeading(summary, hasUnavailableSummary)}</h2>
             </div>
-            <button
-              type="button"
-              className="surface-card__action surface-card__action--secondary"
-              onClick={refresh}
-            >
-              {isLoading ? '새로고침 중...' : '진단 새로고침'}
-            </button>
+            <div className="operator-console__hero-actions">
+              {canOpenSettings ? (
+                <Link
+                  className="surface-card__action surface-card__action--secondary"
+                  to="/settings"
+                >
+                  운영 설정
+                </Link>
+              ) : null}
+              <button
+                type="button"
+                className="surface-card__action surface-card__action--secondary"
+                onClick={refresh}
+              >
+                {isLoading ? '새로고침 중...' : '진단 새로고침'}
+              </button>
+            </div>
           </div>
 
           <div className="operator-console__hero-status">

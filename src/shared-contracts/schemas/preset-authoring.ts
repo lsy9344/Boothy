@@ -4,6 +4,8 @@ import {
   catalogRevisionSchema,
   presetDisplayNameSchema,
   presetIdSchema,
+  publishedPresetNoisePolicySchema,
+  publishedPresetRenderProfileSchema,
   publishedPresetSummarySchema,
   publishedVersionSchema,
 } from './preset-core'
@@ -121,17 +123,8 @@ export const draftPresetPreviewReferenceSchema = z.object({
   altText: z.string().trim().min(1, '대표 preview 설명을 입력해 주세요.'),
 })
 
-export const draftRenderProfileSchema = z.object({
-  profileId: z.string().trim().min(1, 'render profile ID를 입력해 주세요.'),
-  displayName: z.string().trim().min(1, 'render profile 이름을 입력해 주세요.'),
-  outputColorSpace: z.string().trim().min(1, 'output color space를 입력해 주세요.'),
-})
-
-export const draftNoisePolicySchema = z.object({
-  policyId: z.string().trim().min(1, 'noise policy ID를 입력해 주세요.'),
-  displayName: z.string().trim().min(1, 'noise policy 이름을 입력해 주세요.'),
-  reductionMode: z.string().trim().min(1, 'noise reduction mode를 입력해 주세요.'),
-})
+export const draftRenderProfileSchema = publishedPresetRenderProfileSchema
+export const draftNoisePolicySchema = publishedPresetNoisePolicySchema
 
 export const draftValidationFindingSchema = z.object({
   ruleCode: z

@@ -35,4 +35,65 @@ describe('branch rollout gateway', () => {
       },
     })
   })
+
+  it('maps the preview route promotion payload to the Tauri host DTO shape', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null)
+    const gateway = createTauriBranchRolloutGateway()
+
+    await gateway.promotePreviewRendererRoute({
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+      targetRouteStage: 'canary',
+      actorId: 'release-kim',
+      actorLabel: 'Kim Release',
+    })
+
+    expect(invoke).toHaveBeenCalledWith('promote_preview_renderer_route', {
+      input: {
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+        targetRouteStage: 'canary',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      },
+    })
+  })
+
+  it('maps the preview route rollback payload to the Tauri host DTO shape', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null)
+    const gateway = createTauriBranchRolloutGateway()
+
+    await gateway.rollbackPreviewRendererRoute({
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+      actorId: 'release-kim',
+      actorLabel: 'Kim Release',
+    })
+
+    expect(invoke).toHaveBeenCalledWith('rollback_preview_renderer_route', {
+      input: {
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      },
+    })
+  })
+
+  it('maps the preview route status request to the Tauri host DTO shape', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null)
+    const gateway = createTauriBranchRolloutGateway()
+
+    await gateway.loadPreviewRendererRouteStatus({
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+    })
+
+    expect(invoke).toHaveBeenCalledWith('load_preview_renderer_route_status', {
+      input: {
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+      },
+    })
+  })
 })

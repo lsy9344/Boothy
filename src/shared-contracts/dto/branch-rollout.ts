@@ -20,6 +20,16 @@ import {
   branchRolloutRejectionCodeSchema,
   branchRolloutRejectionSchema,
   branchSafeTransitionSchema,
+  previewRendererRouteMutationActionSchema,
+  previewRendererRouteMutationResultSchema,
+  previewRendererRouteMutationResultStateSchema,
+  previewRendererRoutePolicyAuditEntrySchema,
+  previewRendererRoutePromotionStageSchema,
+  previewRendererRoutePromotionInputSchema,
+  previewRendererRouteRollbackInputSchema,
+  previewRendererRouteStageSchema,
+  previewRendererRouteStatusInputSchema,
+  previewRendererRouteStatusResultSchema,
 } from '../schemas'
 
 export type BranchId = z.infer<typeof branchIdSchema>
@@ -62,4 +72,34 @@ export type BranchRolloutInput = z.infer<typeof branchRolloutInputSchema>
 export type BranchRollbackInput = z.infer<typeof branchRollbackInputSchema>
 export type BranchRolloutActionResult = z.infer<
   typeof branchRolloutActionResultSchema
+>
+export type PreviewRendererRouteStage = z.infer<
+  typeof previewRendererRouteStageSchema
+>
+export type PreviewRendererRoutePromotionStage = z.infer<
+  typeof previewRendererRoutePromotionStageSchema
+>
+export type PreviewRendererRouteMutationAction = z.infer<
+  typeof previewRendererRouteMutationActionSchema
+>
+export type PreviewRendererRouteMutationResultState = z.infer<
+  typeof previewRendererRouteMutationResultStateSchema
+>
+export type PreviewRendererRoutePromotionInput = z.infer<
+  typeof previewRendererRoutePromotionInputSchema
+>
+export type PreviewRendererRouteRollbackInput = z.infer<
+  typeof previewRendererRouteRollbackInputSchema
+>
+export type PreviewRendererRouteStatusInput = z.infer<
+  typeof previewRendererRouteStatusInputSchema
+>
+export type PreviewRendererRoutePolicyAuditEntry = z.infer<
+  typeof previewRendererRoutePolicyAuditEntrySchema
+>
+export type PreviewRendererRouteMutationResult = z.infer<
+  typeof previewRendererRouteMutationResultSchema
+>
+export type PreviewRendererRouteStatusResult = z.infer<
+  typeof previewRendererRouteStatusResultSchema
 >

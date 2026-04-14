@@ -1,17 +1,24 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use boothy_lib::{
     branch_config::{
         apply_branch_rollback_in_dir, apply_branch_rollout_in_dir,
-        load_branch_rollout_overview_in_dir,
+        load_branch_rollout_overview_in_dir, load_preview_renderer_route_status_in_dir,
+        promote_preview_renderer_route_in_dir, rollback_preview_renderer_route_in_dir,
     },
     commands::runtime_commands::capability_snapshot_for_profile,
-    contracts::dto::{BranchRollbackInputDto, BranchRolloutInputDto},
+    contracts::dto::{
+        BranchRollbackInputDto, BranchRolloutInputDto, PreviewRendererRoutePromotionInputDto,
+        PreviewRendererRouteRollbackInputDto, PreviewRendererRouteStatusInputDto,
+    },
 };
+
+static BRANCH_ROLLOUT_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn unique_test_root(test_name: &str) -> PathBuf {
     let stamp = SystemTime::now()
@@ -20,6 +27,13 @@ fn unique_test_root(test_name: &str) -> PathBuf {
         .as_nanos();
 
     std::env::temp_dir().join(format!("boothy-branch-rollout-{test_name}-{stamp}"))
+}
+
+fn lock_branch_rollout_test_env() -> MutexGuard<'static, ()> {
+    BRANCH_ROLLOUT_TEST_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("branch rollout test env lock should not be poisoned")
 }
 
 #[test]
@@ -306,6 +320,367 @@ fn malformed_release_baseline_is_rejected_before_mutation() {
     let _ = fs::remove_dir_all(base_dir);
 }
 
+#[test]
+fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-audit");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+
+    let promote_canary = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "canary".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("canary promotion should succeed");
+    assert_eq!(promote_canary.route_stage, "canary");
+
+    let promote_default = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("default promotion should succeed after repeated canary evidence");
+    assert_eq!(promote_default.route_stage, "default");
+    let promoted_policy: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            base_dir
+                .join("branch-config")
+                .join("preview-renderer-policy.json"),
+        )
+        .expect("policy should exist after default promotion"),
+    )
+    .expect("policy should deserialize after default promotion");
+    assert_eq!(promoted_policy["defaultRoute"], "darktable");
+    assert_eq!(
+        promoted_policy["defaultRoutes"][0]["presetId"],
+        "preset_soft-glow"
+    );
+    assert_eq!(
+        promoted_policy["defaultRoutes"][0]["presetVersion"],
+        "2026.04.10"
+    );
+
+    let rollback = rollback_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRouteRollbackInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("rollback should remain a one-action host-owned path");
+    assert_eq!(rollback.route_stage, "shadow");
+
+    let policy: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            base_dir
+                .join("branch-config")
+                .join("preview-renderer-policy.json"),
+        )
+        .expect("policy should exist"),
+    )
+    .expect("policy should deserialize");
+    assert_eq!(policy["defaultRoute"], "darktable");
+    assert!(policy["defaultRoutes"]
+        .as_array()
+        .expect("defaultRoutes should be an array")
+        .is_empty());
+    assert_eq!(
+        policy["forcedFallbackRoutes"][0]["presetId"],
+        "preset_soft-glow"
+    );
+
+    let history: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            base_dir
+                .join("branch-config")
+                .join("preview-renderer-policy-history.json"),
+        )
+        .expect("preview route policy history should exist"),
+    )
+    .expect("preview route policy history should deserialize");
+    let entries = history["entries"]
+        .as_array()
+        .expect("entries should be an array");
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0]["action"], "promote");
+    assert_eq!(entries[1]["action"], "promote");
+    assert_eq!(entries[2]["action"], "rollback");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_without_repeated_canary_success_path() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-default-gate");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should require repeated canary success-path evidence");
+
+    assert_eq!(error.code, "validation-error");
+    let history: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            base_dir
+                .join("branch-config")
+                .join("preview-renderer-policy-history.json"),
+        )
+        .expect("preview route policy history should exist"),
+    )
+    .expect("preview route policy history should deserialize");
+    let entries = history["entries"]
+        .as_array()
+        .expect("entries should be an array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["result"], "rejected");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_duplicate_evidence_for_the_same_capture() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-duplicate-evidence");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("duplicate evidence from one capture should not unlock default promotion");
+
+    assert_eq!(error.code, "validation-error");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_status_reports_canary_for_a_promoted_preset_version() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-status");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+
+    let promote_canary = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "canary".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("canary promotion should succeed");
+    assert_eq!(promote_canary.route_stage, "canary");
+
+    let status = load_preview_renderer_route_status_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRouteStatusInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("status should load");
+
+    assert_eq!(status.route_stage, "canary");
+    assert_eq!(status.resolved_route, "local-renderer-sidecar");
+    assert_eq!(status.message, "이 프리셋 버전은 canary 상태예요.");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_promotion_rolls_back_when_history_persist_fails() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-history-failure");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let _failure_guard = ScopedEnvVarGuard::set(
+        "BOOTHY_TEST_PREVIEW_ROUTE_POLICY_HISTORY_WRITE_FAILURE",
+        "true",
+    );
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "canary".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("history persist failure should reject the route mutation");
+    assert_eq!(error.code, "session-persistence-failed");
+
+    let policy: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            base_dir
+                .join("branch-config")
+                .join("preview-renderer-policy.json"),
+        )
+        .expect("policy should still exist"),
+    )
+    .expect("policy should deserialize after rollback");
+    assert_eq!(policy["defaultRoute"], "darktable");
+    assert!(
+        policy["canaryRoutes"]
+            .as_array()
+            .expect("canaryRoutes should be an array")
+            .is_empty(),
+        "failed mutation must not leave a promoted canary route behind"
+    );
+
+    let history_path = base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy-history.json");
+    assert!(
+        !history_path.exists(),
+        "failed mutation must not leave a partial history file behind"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_records_missing_snapshot_evidence() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-incomplete-evidence");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:01:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "requestId": "request_20260412_002",
+            "captureId": "capture_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 2815,
+            "replacementMs": 3610,
+            "originalVisibleToPresetAppliedVisibleMs": 795,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/sessions/session/diagnostics/captured-catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": null
+        }),
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should reject incomplete success-path evidence");
+
+    assert_eq!(error.code, "validation-error");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
 fn seed_branch_store(base_dir: &Path, with_active_session: bool) {
     let branch_config_dir = base_dir.join("branch-config");
     fs::create_dir_all(&branch_config_dir).expect("branch config directory should exist");
@@ -496,4 +871,111 @@ fn seed_active_session_manifest(
         serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
     )
     .expect("manifest should write");
+}
+
+fn seed_preview_renderer_policy(base_dir: &Path) {
+    let policy_path = base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy.json");
+    fs::create_dir_all(
+        policy_path
+            .parent()
+            .expect("policy path should have parent"),
+    )
+    .expect("policy directory should exist");
+    fs::write(
+        policy_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schemaVersion": "preview-renderer-route-policy/v1",
+            "defaultRoute": "darktable",
+            "defaultRoutes": [],
+            "canaryRoutes": [],
+            "forcedFallbackRoutes": []
+        }))
+        .expect("policy should serialize"),
+    )
+    .expect("policy should write");
+}
+
+fn seed_preview_promotion_evidence(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+) {
+    seed_preview_promotion_evidence_line(
+        base_dir,
+        session_id,
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:00:15+09:00",
+            "sessionId": session_id,
+            "requestId": request_id,
+            "captureId": capture_id,
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 2810,
+            "replacementMs": 3615,
+            "originalVisibleToPresetAppliedVisibleMs": 805,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/sessions/session/diagnostics/captured-preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/sessions/session/diagnostics/captured-catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": null
+        }),
+    );
+}
+
+fn seed_preview_promotion_evidence_line(
+    base_dir: &Path,
+    session_id: &str,
+    line: serde_json::Value,
+) {
+    let diagnostics_dir = base_dir
+        .join("sessions")
+        .join(session_id)
+        .join("diagnostics")
+        .join("dedicated-renderer");
+    fs::create_dir_all(&diagnostics_dir).expect("diagnostics directory should exist");
+
+    let evidence_path = diagnostics_dir.join("preview-promotion-evidence.jsonl");
+    let line = serde_json::to_string(&line).expect("evidence record should serialize");
+    let existing = fs::read_to_string(&evidence_path).unwrap_or_default();
+    let next = if existing.trim().is_empty() {
+        format!("{line}\n")
+    } else {
+        format!("{existing}{line}\n")
+    };
+    fs::write(evidence_path, next).expect("evidence should write");
+}
+
+struct ScopedEnvVarGuard {
+    key: String,
+    original_value: Option<std::ffi::OsString>,
+}
+
+impl ScopedEnvVarGuard {
+    fn set(key: &str, value: &str) -> Self {
+        let original_value = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self {
+            key: key.into(),
+            original_value,
+        }
+    }
+}
+
+impl Drop for ScopedEnvVarGuard {
+    fn drop(&mut self) {
+        match self.original_value.take() {
+            Some(value) => std::env::set_var(&self.key, value),
+            None => std::env::remove_var(&self.key),
+        }
+    }
 }

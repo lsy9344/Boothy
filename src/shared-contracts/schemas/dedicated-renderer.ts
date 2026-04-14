@@ -13,7 +13,7 @@ export const dedicatedRendererPreviewJobRequestSchemaVersion =
 export const dedicatedRendererPreviewJobResultSchemaVersion =
   'dedicated-renderer-preview-job-result/v1' as const
 
-const runtimePathSchema = z.string().trim().min(1)
+export const runtimePathSchema = z.string().trim().min(1)
 
 export const dedicatedRendererPreviewJobRequestSchema = z
   .object({
@@ -42,7 +42,13 @@ export const dedicatedRendererPreviewJobStatusSchema = z.enum([
   'protocol-mismatch',
   'invalid-output',
   'restarted',
-  'warmed-up',
+])
+
+export const previewRendererWarmStateSchema = z.enum([
+  'warm-ready',
+  'warm-hit',
+  'cold',
+  'warm-state-lost',
 ])
 
 export const dedicatedRendererPreviewJobResultSchema = z
@@ -56,5 +62,7 @@ export const dedicatedRendererPreviewJobResultSchema = z
     outputPath: runtimePathSchema.nullable().optional(),
     detailCode: z.string().trim().min(1).nullable().optional(),
     detailMessage: z.string().trim().min(1).nullable().optional(),
+    warmState: previewRendererWarmStateSchema.nullable().optional(),
+    warmStateDetailPath: runtimePathSchema.nullable().optional(),
   })
   .strict()

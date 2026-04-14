@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { presetIdSchema, publishedVersionSchema } from './preset-core'
+
 const branchIdPattern = /^[a-z0-9][a-z0-9-]{1,47}$/i
 const safeCopySchema = z.string().trim().min(1).max(240)
 const actorIdSchema = z
@@ -199,3 +201,81 @@ export const branchRolloutActionResultSchema = z
       })
     }
   })
+
+export const previewRendererRoutePromotionStageSchema = z.enum([
+  'canary',
+  'default',
+])
+
+export const previewRendererRouteStageSchema = z.enum([
+  'shadow',
+  'canary',
+  'default',
+])
+
+export const previewRendererRouteMutationActionSchema = z.enum([
+  'promote',
+  'rollback',
+])
+
+export const previewRendererRouteMutationResultStateSchema = z.enum([
+  'applied',
+  'rejected',
+])
+
+export const previewRendererRoutePromotionInputSchema = z.object({
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+  targetRouteStage: previewRendererRoutePromotionStageSchema,
+  actorId: actorIdSchema,
+  actorLabel: actorLabelSchema,
+})
+
+export const previewRendererRouteRollbackInputSchema = z.object({
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+  actorId: actorIdSchema,
+  actorLabel: actorLabelSchema,
+})
+
+export const previewRendererRouteStatusInputSchema = z.object({
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+})
+
+export const previewRendererRoutePolicyAuditEntrySchema = z.object({
+  schemaVersion: z.literal('preview-renderer-route-policy-audit-entry/v1'),
+  auditId: z.string().trim().min(1).max(80),
+  action: previewRendererRouteMutationActionSchema,
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+  targetRouteStage: previewRendererRouteStageSchema,
+  approval: branchRolloutApprovalSchema,
+  result: previewRendererRouteMutationResultStateSchema,
+  canarySuccessCount: z.number().int().nonnegative(),
+  notedAt: z.string().datetime(),
+})
+
+export const previewRendererRouteMutationResultSchema = z.object({
+  schemaVersion: z.enum([
+    'preview-renderer-route-mutation-result/v1',
+    'preview-renderer-route-policy-audit-entry/v1',
+  ]),
+  action: previewRendererRouteMutationActionSchema,
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+  routeStage: previewRendererRouteStageSchema,
+  approval: branchRolloutApprovalSchema,
+  auditEntry: previewRendererRoutePolicyAuditEntrySchema,
+  message: safeCopySchema,
+})
+
+export const previewRendererRouteStatusResultSchema = z.object({
+  schemaVersion: z.literal('preview-renderer-route-status-result/v1'),
+  presetId: presetIdSchema,
+  publishedVersion: publishedVersionSchema,
+  routeStage: previewRendererRouteStageSchema,
+  resolvedRoute: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  message: safeCopySchema,
+})

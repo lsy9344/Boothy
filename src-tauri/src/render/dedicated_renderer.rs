@@ -1,12 +1,16 @@
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    process::Command,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{async_runtime, AppHandle};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 use crate::{
     capture::ingest_pipeline::{complete_preview_render_in_dir, finish_preview_render_in_dir},
@@ -26,9 +30,12 @@ use crate::{
         RenderIntent, RenderedCaptureAsset,
     },
     session::{
-        session_manifest::{PreviewRendererRouteSnapshot, SessionCaptureRecord},
+        session_manifest::{
+            current_timestamp, PreviewRendererRouteSnapshot, PreviewRendererWarmStateSnapshot,
+            SessionCaptureRecord,
+        },
         session_paths::SessionPaths,
-        session_repository::read_session_manifest,
+        session_repository::{read_session_manifest, write_session_manifest},
     },
     timing::{append_session_timing_event_in_dir, SessionTimingEventInput},
 };
@@ -42,8 +49,15 @@ const DEDICATED_RENDERER_RESULT_SCHEMA_VERSION: &str = "dedicated-renderer-previ
 const DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION: &str =
     "dedicated-renderer-warmup-request/v1";
 const DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION: &str = "dedicated-renderer-warmup-result/v1";
+const PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION: &str =
+    "preview-promotion-evidence-record/v1";
 const DEDICATED_RENDERER_TEST_OUTCOME_ENV: &str = "BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME";
+const DEDICATED_RENDERER_TEST_START_FAILURE_ENV: &str =
+    "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE";
+const PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE_ENV: &str =
+    "BOOTHY_TEST_PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE";
 const PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION: &str = "preview-renderer-route-policy/v1";
+const DEDICATED_RENDERER_PROCESS_TIMEOUT: Duration = Duration::from_secs(50);
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -57,6 +71,8 @@ enum PreviewRendererRouteKind {
 struct PreviewRendererRoutePolicy {
     schema_version: String,
     default_route: PreviewRendererRouteKind,
+    #[serde(default)]
+    default_routes: Vec<PreviewRendererRouteRule>,
     #[serde(default)]
     canary_routes: Vec<PreviewRendererRouteRule>,
     #[serde(default)]
@@ -78,6 +94,32 @@ struct ResolvedPreviewRendererRoute {
     route: PreviewRendererRouteKind,
     route_stage: &'static str,
     fallback_reason_code: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionEvidenceRecord {
+    schema_version: String,
+    observed_at: String,
+    session_id: String,
+    request_id: String,
+    capture_id: String,
+    preset_id: Option<String>,
+    published_version: String,
+    lane_owner: String,
+    fallback_reason_code: Option<String>,
+    route_stage: String,
+    warm_state: Option<String>,
+    first_visible_ms: Option<u64>,
+    replacement_ms: Option<u64>,
+    original_visible_to_preset_applied_visible_ms: Option<u64>,
+    session_manifest_path: String,
+    timing_events_path: String,
+    route_policy_snapshot_path: String,
+    published_bundle_path: Option<String>,
+    catalog_state_path: String,
+    preview_asset_path: Option<String>,
+    warm_state_detail_path: Option<String>,
 }
 
 enum PreviewRendererRoutePolicyLoadResult {
@@ -133,10 +175,30 @@ pub fn schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
     {
         let _ = write_json_file(&request_path, &request);
         let route = resolve_preview_renderer_route_in_dir(base_dir, preset_id, preset_version);
-        let result =
-            submit_warmup_request(app_handle, &request, &request_path, &result_path, &route);
+        let result = submit_warmup_request(
+            base_dir,
+            app_handle,
+            &request,
+            &request_path,
+            &result_path,
+            &route,
+        );
         if let Ok(result) = result {
             let _ = write_json_file(&result_path, &result);
+            let _ = sync_active_preview_warm_state_in_manifest(
+                base_dir,
+                session_id,
+                &request.preset_id,
+                &request.published_version,
+                result
+                    .warm_state
+                    .as_deref()
+                    .or_else(|| match result.status.as_str() {
+                        "warmed-up" => Some("warm-ready"),
+                        _ => None,
+                    }),
+                result.warm_state_detail_path.as_deref(),
+            );
         }
     }
 
@@ -153,38 +215,44 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
         build_preview_job_request_in_dir(base_dir, session_id, capture_id)?;
     write_json_file(&request_path, &request)?;
 
-    let preview_result =
-        match submit_preview_job(app_handle, &request, &request_path, &result_path, &route) {
-            Ok(result) => {
-                let _ = write_json_file(&result_path, &result);
-                if validate_preview_job_result(&request, &result, &result_path).is_err() {
-                    log_render_failure_in_dir(
-                        base_dir,
-                        session_id,
-                        capture_id,
-                        Some(&request.request_id),
-                        RenderIntent::Preview,
-                        "invalid-output",
-                    );
-                } else {
-                    log_preview_submission_result(base_dir, &request, &result);
-                }
-
-                Some(result)
-            }
-            Err(reason_code) => {
+    let preview_result = match submit_preview_job(
+        base_dir,
+        app_handle,
+        &request,
+        &request_path,
+        &result_path,
+        &route,
+    ) {
+        Ok(result) => {
+            let _ = write_json_file(&result_path, &result);
+            if validate_preview_job_result(&request, &result, &result_path).is_err() {
                 log_render_failure_in_dir(
                     base_dir,
                     session_id,
                     capture_id,
                     Some(&request.request_id),
                     RenderIntent::Preview,
-                    reason_code,
+                    "invalid-output",
                 );
-
-                None
+            } else {
+                log_preview_submission_result(base_dir, &request, &result);
             }
-        };
+
+            Some(result)
+        }
+        Err(reason_code) => {
+            log_render_failure_in_dir(
+                base_dir,
+                session_id,
+                capture_id,
+                Some(&request.request_id),
+                RenderIntent::Preview,
+                reason_code,
+            );
+
+            None
+        }
+    };
 
     if let Some(result) = preview_result.as_ref() {
         if let Some(capture) = try_complete_preview_from_dedicated_result_in_dir(
@@ -196,6 +264,16 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
                 "dedicated-renderer",
                 None,
                 route.route_stage,
+                result.warm_state.as_deref(),
+                result.warm_state_detail_path.as_deref(),
+            );
+            let _ = sync_active_preview_warm_state_in_manifest(
+                base_dir,
+                session_id,
+                &request.preset_id,
+                &request.published_version,
+                result.warm_state.as_deref(),
+                result.warm_state_detail_path.as_deref(),
             );
             return Ok(capture);
         }
@@ -210,7 +288,23 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
             .as_ref()
             .and_then(|result| result.detail_code.as_deref()),
         route.route_stage,
+        preview_result
+            .as_ref()
+            .and_then(|result| result.warm_state.as_deref()),
+        preview_result
+            .as_ref()
+            .and_then(|result| result.warm_state_detail_path.as_deref()),
     );
+    if let Some(result) = preview_result.as_ref() {
+        let _ = sync_active_preview_warm_state_in_manifest(
+            base_dir,
+            session_id,
+            &request.preset_id,
+            &request.published_version,
+            result.warm_state.as_deref(),
+            result.warm_state_detail_path.as_deref(),
+        );
+    }
 
     Ok(capture)
 }
@@ -313,6 +407,7 @@ fn build_preview_job_request_in_dir(
             xmp_template_path: path_to_runtime_string(&bundle.xmp_template_path),
             preview_profile: render_profile_from_bundle(&bundle),
             source_asset_path: capture.raw.asset_path.clone(),
+            preview_source_asset_path: resolve_preview_source_asset_path(&paths, &capture),
             canonical_preview_output_path: path_to_runtime_string(&canonical_output_path),
             diagnostics_detail_path: path_to_runtime_string(&request_path),
         },
@@ -322,7 +417,56 @@ fn build_preview_job_request_in_dir(
     ))
 }
 
+fn resolve_preview_source_asset_path(
+    paths: &SessionPaths,
+    capture: &SessionCaptureRecord,
+) -> Option<String> {
+    if let Some(preview_asset_path) = capture.preview.asset_path.as_deref() {
+        let preview_asset = Path::new(preview_asset_path);
+        if is_session_scoped_asset_path(&paths.session_root, preview_asset)
+            && is_valid_render_preview_asset(preview_asset)
+        {
+            return Some(preview_asset_path.to_string());
+        }
+    }
+
+    let canonical_preview_asset = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", capture.capture_id));
+    if is_valid_render_preview_asset(&canonical_preview_asset) {
+        return Some(path_to_runtime_string(&canonical_preview_asset));
+    }
+
+    None
+}
+
+fn is_session_scoped_asset_path(session_root: &Path, candidate_path: &Path) -> bool {
+    let normalized_candidate = normalize_path(candidate_path);
+    let Some(normalized_session_root) = canonicalize_existing_root(session_root) else {
+        return false;
+    };
+
+    normalized_candidate == normalized_session_root
+        || normalized_candidate.starts_with(&(normalized_session_root + "/"))
+}
+
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+        .trim_start_matches("//?/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn canonicalize_existing_root(path: &Path) -> Option<String> {
+    fs::canonicalize(path)
+        .ok()
+        .map(|resolved| normalize_path(&resolved))
+}
+
 fn submit_warmup_request(
+    base_dir: &Path,
     app_handle: Option<&AppHandle>,
     request: &DedicatedRendererWarmupRequestDto,
     request_path: &Path,
@@ -338,23 +482,29 @@ fn submit_warmup_request(
                 "fallback-suggested",
                 route.fallback_reason_code,
                 Some("승인된 shadow route를 유지해 inline warm-up을 계속 사용해요."),
+                None,
+                None,
             ),
             result_path,
         ));
     }
 
-    if app_handle.is_some() {
-        if let Err(reason_code) = try_spawn_dedicated_renderer(
-            app_handle,
-            DEDICATED_RENDERER_WARMUP_PROTOCOL,
-            request_path,
+    if let Err(reason_code) = try_start_dedicated_renderer(
+        app_handle,
+        DEDICATED_RENDERER_WARMUP_PROTOCOL,
+        request_path,
+        result_path,
+    ) {
+        let warm_state = infer_warmup_spawn_failure_warm_state(
+            base_dir,
+            &request.session_id,
+            &request.preset_id,
+            &request.published_version,
+        );
+        return Ok(with_warmup_result_detail_path(
+            build_warmup_spawn_failure_result(request, reason_code, &warm_state),
             result_path,
-        ) {
-            return Ok(with_warmup_result_detail_path(
-                build_warmup_spawn_failure_result(request, reason_code),
-                result_path,
-            ));
-        }
+        ));
     }
 
     if let Ok(bytes) = fs::read_to_string(result_path) {
@@ -370,6 +520,8 @@ fn submit_warmup_request(
                             Some(
                                 "warm-up result schema 또는 상태 값이 계약과 맞지 않아 shadow fallback으로 유지해요.",
                             ),
+                            None,
+                            None,
                         ),
                         result_path,
                     ));
@@ -383,6 +535,8 @@ fn submit_warmup_request(
                             Some(
                                 "warm-up result correlation이 맞지 않아 host-owned inline warm-up을 유지해요.",
                             ),
+                            None,
+                            None,
                         ),
                         result_path,
                     ));
@@ -397,6 +551,8 @@ fn submit_warmup_request(
                         Some(
                             "warm-up result를 dedicated renderer 계약으로 해석하지 못해 shadow fallback으로 유지해요.",
                         ),
+                        None,
+                        None,
                     ),
                     result_path,
                 ));
@@ -410,12 +566,15 @@ fn submit_warmup_request(
             "fallback-suggested",
             Some("shadow-inline-warmup"),
             Some("approved cutover 전까지 warm-up은 host-owned inline renderer가 계속 소유해요."),
+            None,
+            None,
         ),
         result_path,
     ))
 }
 
 fn submit_preview_job(
+    base_dir: &Path,
     app_handle: Option<&AppHandle>,
     request: &DedicatedRendererPreviewJobRequestDto,
     request_path: &Path,
@@ -436,47 +595,27 @@ fn submit_preview_job(
                 None,
                 route.fallback_reason_code,
                 Some("승인된 shadow route를 유지해 inline truthful close로 내려가요."),
+                None,
+                None,
             ),
             result_path,
         ));
     }
 
-    if app_handle.is_some() {
-        if let Err(reason_code) = try_spawn_dedicated_renderer(
-            app_handle,
-            DEDICATED_RENDERER_PREVIEW_PROTOCOL,
-            request_path,
-            result_path,
-        ) {
-            return Ok(with_preview_result_detail_path(
-                build_preview_spawn_failure_result(request, reason_code),
-                result_path,
-            ));
-        }
-    } else if resolve_dedicated_renderer_executable().is_none() {
+    if let Err(reason_code) = try_start_dedicated_renderer(
+        app_handle,
+        DEDICATED_RENDERER_PREVIEW_PROTOCOL,
+        request_path,
+        result_path,
+    ) {
+        let warm_state = infer_preview_spawn_failure_warm_state(
+            base_dir,
+            &request.session_id,
+            &request.preset_id,
+            &request.published_version,
+        );
         return Ok(with_preview_result_detail_path(
-            build_preview_result(
-                request,
-                "fallback-suggested",
-                None,
-                Some("sidecar-unavailable"),
-                Some(
-                    "dedicated renderer binary가 아직 bundle/runtime에서 확인되지 않아 truthful fallback path로 내려가요.",
-                ),
-            ),
-            result_path,
-        ));
-    } else {
-        return Ok(with_preview_result_detail_path(
-            build_preview_result(
-                request,
-                "fallback-suggested",
-                None,
-                Some("sidecar-unavailable"),
-                Some(
-                    "승인된 local renderer route지만 현재 runtime handle이 없어 truthful fallback path로 내려가요.",
-                ),
-            ),
+            build_preview_spawn_failure_result(request, reason_code, Some(&warm_state)),
             result_path,
         ));
     }
@@ -495,6 +634,8 @@ fn submit_preview_job(
                             Some(
                                 "preview job result schema 또는 상태 값이 계약과 맞지 않아 fallback path로 내려가요.",
                             ),
+                            None,
+                            None,
                         ),
                         result_path,
                     ));
@@ -509,6 +650,8 @@ fn submit_preview_job(
                             Some(
                                 "preview job result correlation 또는 canonical output 검증에 실패해 fallback path로 내려가요.",
                             ),
+                            result.warm_state.as_deref(),
+                            result.warm_state_detail_path.clone(),
                         ),
                         result_path,
                     ));
@@ -524,6 +667,8 @@ fn submit_preview_job(
                         Some(
                             "preview job result를 dedicated renderer 계약으로 해석하지 못해 fallback path로 내려가요.",
                         ),
+                        None,
+                        None,
                     ),
                     result_path,
                 ));
@@ -536,8 +681,12 @@ fn submit_preview_job(
             request,
             "fallback-suggested",
             None,
-            Some(fallback_reason_for_missing_preview_result(route.route_stage)),
+            Some(fallback_reason_for_missing_preview_result(
+                route.route_stage,
+            )),
             Some(missing_preview_result_message(route.route_stage)),
+            Some("cold"),
+            None,
         ),
         result_path,
     ))
@@ -679,11 +828,12 @@ fn build_dedicated_renderer_ready_detail(
     ready_at_ms: u64,
 ) -> String {
     format!(
-        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={}",
+        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={};warmState={}",
         request.preset_id,
         request.published_version,
         result.status,
         result.detail_code.as_deref().unwrap_or("accepted"),
+        result.warm_state.as_deref().unwrap_or("none"),
     )
 }
 
@@ -693,6 +843,8 @@ fn append_preview_transition_summary_in_dir(
     lane_owner: &str,
     fallback_reason: Option<&str>,
     route_stage: &str,
+    warm_state: Option<&str>,
+    warm_state_detail_path: Option<&str>,
 ) {
     let first_visible_ms = capture
         .timing
@@ -715,6 +867,7 @@ fn append_preview_transition_summary_in_dir(
         route_stage,
         first_visible_ms,
         replacement_ms,
+        warm_state,
     );
     let _ = append_session_timing_event_in_dir(
         base_dir,
@@ -737,6 +890,36 @@ fn append_preview_transition_summary_in_dir(
         format_optional_metric(first_visible_ms),
         format_optional_metric(replacement_ms),
     );
+    if let Err(error) = append_preview_promotion_evidence_record_in_dir(
+        base_dir,
+        capture,
+        lane_owner,
+        fallback_reason,
+        route_stage,
+        warm_state,
+        warm_state_detail_path,
+        first_visible_ms,
+        replacement_ms,
+    ) {
+        let detail = format!("reason={}", error.message.replace(char::is_whitespace, "_"));
+        let _ = append_session_timing_event_in_dir(
+            base_dir,
+            SessionTimingEventInput {
+                session_id: &capture.session_id,
+                event: "preview-promotion-evidence-write-failed",
+                capture_id: Some(&capture.capture_id),
+                request_id: Some(&capture.request_id),
+                detail: Some(&detail),
+            },
+        );
+        log::error!(
+            "preview promotion evidence write failed session={} capture_id={} request_id={} message={}",
+            capture.session_id,
+            capture.capture_id,
+            capture.request_id,
+            error.message
+        );
+    }
 }
 
 fn format_optional_metric(value: Option<u64>) -> String {
@@ -751,14 +934,179 @@ fn build_preview_transition_summary_detail(
     route_stage: &str,
     first_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
+    warm_state: Option<&str>,
 ) -> String {
+    let original_visible_to_preset_applied_visible_ms = match (first_visible_ms, replacement_ms) {
+        (Some(first_visible_ms), Some(replacement_ms)) => {
+            Some(replacement_ms.saturating_sub(first_visible_ms))
+        }
+        _ => None,
+    };
     format!(
-        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
+        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
         fallback_reason.unwrap_or("none"),
+        warm_state.unwrap_or("none"),
         format_optional_metric(first_visible_ms),
         format_optional_metric(replacement_ms),
-        format_optional_metric(replacement_ms),
+        format_optional_metric(original_visible_to_preset_applied_visible_ms),
     )
+}
+
+fn append_preview_promotion_evidence_record_in_dir(
+    base_dir: &Path,
+    capture: &SessionCaptureRecord,
+    lane_owner: &str,
+    fallback_reason: Option<&str>,
+    route_stage: &str,
+    warm_state: Option<&str>,
+    warm_state_detail_path: Option<&str>,
+    first_visible_ms: Option<u64>,
+    replacement_ms: Option<u64>,
+) -> Result<(), HostErrorEnvelope> {
+    if let Some(reason) = env::var_os(PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE_ENV) {
+        return Err(HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 남기지 못했어요: {}",
+            reason.to_string_lossy()
+        )));
+    }
+
+    let original_visible_to_preset_applied_visible_ms = match (first_visible_ms, replacement_ms) {
+        (Some(first_visible_ms), Some(replacement_ms)) => {
+            Some(replacement_ms.saturating_sub(first_visible_ms))
+        }
+        _ => None,
+    };
+    let paths = SessionPaths::try_new(base_dir, &capture.session_id)?;
+    let diagnostics_dir = dedicated_renderer_diagnostics_dir(base_dir, &capture.session_id)?;
+    let evidence_path = diagnostics_dir.join("preview-promotion-evidence.jsonl");
+    let (route_policy_snapshot_path, catalog_state_snapshot_path) =
+        preview_promotion_snapshot_paths_in_dir(
+            base_dir,
+            &capture.session_id,
+            &capture.capture_id,
+        )?;
+    if !route_policy_snapshot_path.is_file() {
+        return Err(HostErrorEnvelope::persistence(
+            "capture 시점 route policy snapshot을 찾지 못했어요.",
+        ));
+    }
+    if !catalog_state_snapshot_path.is_file() {
+        return Err(HostErrorEnvelope::persistence(
+            "capture 시점 catalog snapshot을 찾지 못했어요.",
+        ));
+    }
+    let published_bundle_path = capture.active_preset_id.as_ref().map(|preset_id| {
+        path_to_runtime_string(
+            &resolve_published_preset_catalog_dir(base_dir)
+                .join(preset_id)
+                .join(&capture.active_preset_version)
+                .join("bundle.json"),
+        )
+    });
+    let record = PreviewPromotionEvidenceRecord {
+        schema_version: PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION.into(),
+        observed_at: current_timestamp(SystemTime::now())?,
+        session_id: capture.session_id.clone(),
+        request_id: capture.request_id.clone(),
+        capture_id: capture.capture_id.clone(),
+        preset_id: capture.active_preset_id.clone(),
+        published_version: capture.active_preset_version.clone(),
+        lane_owner: lane_owner.into(),
+        fallback_reason_code: fallback_reason.map(str::to_string),
+        route_stage: route_stage.into(),
+        warm_state: warm_state.map(str::to_string),
+        first_visible_ms,
+        replacement_ms,
+        original_visible_to_preset_applied_visible_ms,
+        session_manifest_path: path_to_runtime_string(&paths.manifest_path),
+        timing_events_path: path_to_runtime_string(
+            &paths.diagnostics_dir.join("timing-events.log"),
+        ),
+        route_policy_snapshot_path: path_to_runtime_string(&route_policy_snapshot_path),
+        published_bundle_path,
+        catalog_state_path: path_to_runtime_string(&catalog_state_snapshot_path),
+        preview_asset_path: capture.preview.asset_path.clone(),
+        warm_state_detail_path: warm_state_detail_path.map(str::to_string),
+    };
+    let serialized = serde_json::to_string(&record).map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 직렬화하지 못했어요: {error}"
+        ))
+    })?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&evidence_path)
+        .map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "preview promotion evidence를 남기지 못했어요: {error}"
+            ))
+        })?;
+    writeln!(file, "{serialized}").map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 남기지 못했어요: {error}"
+        ))
+    })?;
+
+    Ok(())
+}
+
+pub(crate) fn preview_promotion_snapshot_paths_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+) -> Result<(PathBuf, PathBuf), HostErrorEnvelope> {
+    let diagnostics_dir = dedicated_renderer_diagnostics_dir(base_dir, session_id)?;
+    Ok((
+        diagnostics_dir.join(format!(
+            "captured-preview-renderer-policy-{capture_id}.json"
+        )),
+        diagnostics_dir.join(format!("captured-catalog-state-{capture_id}.json")),
+    ))
+}
+
+fn sync_active_preview_warm_state_in_manifest(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    published_version: &str,
+    warm_state: Option<&str>,
+    diagnostics_detail_path: Option<&str>,
+) -> Result<(), HostErrorEnvelope> {
+    let Some(warm_state) = warm_state else {
+        return Ok(());
+    };
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let active_preset_matches = manifest
+        .active_preset
+        .as_ref()
+        .map(|binding| {
+            binding.preset_id == preset_id && binding.published_version == published_version
+        })
+        .or_else(|| {
+            Some(
+                manifest.active_preset_id.as_deref() == Some(preset_id)
+                    && manifest
+                        .active_preview_renderer_warm_state
+                        .as_ref()
+                        .map(|snapshot| snapshot.published_version.as_str())
+                        .unwrap_or(published_version)
+                        == published_version,
+            )
+        })
+        .unwrap_or(false);
+    if !active_preset_matches {
+        return Ok(());
+    }
+    manifest.active_preview_renderer_warm_state = Some(PreviewRendererWarmStateSnapshot {
+        preset_id: preset_id.into(),
+        published_version: published_version.into(),
+        state: warm_state.into(),
+        observed_at: current_timestamp(SystemTime::now())?,
+        diagnostics_detail_path: diagnostics_detail_path.map(str::to_string),
+    });
+    write_session_manifest(&paths.manifest_path, &manifest)
 }
 
 fn clear_previous_result_file(result_path: &Path) {
@@ -831,29 +1179,146 @@ fn log_preview_submission_result(
     }
 }
 
-fn try_spawn_dedicated_renderer(
+fn try_start_dedicated_renderer(
     app_handle: Option<&AppHandle>,
     protocol: &str,
     request_path: &Path,
     result_path: &Path,
 ) -> Result<(), &'static str> {
-    let app_handle = app_handle.ok_or("sidecar-unavailable")?;
-    let command = app_handle
-        .shell()
-        .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
-        .map_err(|_| "sidecar-unavailable")?
+    if let Some(reason_code) = forced_start_failure_for_test() {
+        return Err(reason_code);
+    }
+
+    if let Some(app_handle) = app_handle {
+        let shell_result = match app_handle
+            .shell()
+            .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
+        {
+            Ok(command) => wait_for_shell_command_with_timeout(
+                command
+                    .arg("--protocol")
+                    .arg(protocol)
+                    .arg("--request")
+                    .arg(request_path)
+                    .arg("--result")
+                    .arg(result_path),
+                DEDICATED_RENDERER_PROCESS_TIMEOUT,
+            ),
+            Err(_) => Err("sidecar-unavailable"),
+        };
+        if matches!(
+            shell_result,
+            Err("sidecar-unavailable") | Err("sidecar-launch-failed")
+        ) {
+            return reconcile_sidecar_start_result(
+                shell_result,
+                try_start_dedicated_renderer_directly(protocol, request_path, result_path),
+            );
+        }
+
+        return shell_result;
+    }
+
+    try_start_dedicated_renderer_directly(protocol, request_path, result_path)
+}
+
+fn try_start_dedicated_renderer_directly(
+    protocol: &str,
+    request_path: &Path,
+    result_path: &Path,
+) -> Result<(), &'static str> {
+    let executable = resolve_dedicated_renderer_executable().ok_or("sidecar-unavailable")?;
+    let mut child = Command::new(executable)
         .arg("--protocol")
         .arg(protocol)
         .arg("--request")
         .arg(request_path)
         .arg("--result")
-        .arg(result_path);
+        .arg(result_path)
+        .spawn()
+        .map_err(|_| "sidecar-launch-failed")?;
 
-    let status = async_runtime::block_on(command.status()).map_err(|_| "sidecar-launch-failed")?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("sidecar-launch-failed")
+    wait_for_child_exit_with_timeout(&mut child, DEDICATED_RENDERER_PROCESS_TIMEOUT)
+}
+
+fn reconcile_sidecar_start_result(
+    shell_result: Result<(), &'static str>,
+    direct_result: Result<(), &'static str>,
+) -> Result<(), &'static str> {
+    match shell_result {
+        Ok(()) => Ok(()),
+        Err("sidecar-unavailable" | "sidecar-launch-failed") => direct_result,
+        Err(reason_code) => Err(reason_code),
+    }
+}
+
+fn wait_for_shell_command_with_timeout(
+    command: tauri_plugin_shell::process::Command,
+    timeout: Duration,
+) -> Result<(), &'static str> {
+    let (mut receiver, child) = command.spawn().map_err(|_| "sidecar-launch-failed")?;
+    let (result_tx, result_rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = async_runtime::block_on(async move {
+            while let Some(event) = receiver.recv().await {
+                match event {
+                    CommandEvent::Terminated(payload) => {
+                        return if payload.code.unwrap_or_default() == 0 {
+                            Ok(())
+                        } else {
+                            Err("sidecar-launch-failed")
+                        };
+                    }
+                    CommandEvent::Error(_) => return Err("sidecar-launch-failed"),
+                    _ => {}
+                }
+            }
+
+            Err("sidecar-launch-failed")
+        });
+        let _ = result_tx.send(result);
+    });
+
+    match result_rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            Err("sidecar-launch-timeout")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err("sidecar-launch-failed"),
+    }
+}
+
+fn wait_for_child_exit_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Result<(), &'static str> {
+    let started_at = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err("sidecar-launch-failed")
+                };
+            }
+            Ok(None) => {
+                if started_at.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("sidecar-launch-timeout");
+                }
+
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return Err("sidecar-launch-failed");
+            }
+        }
     }
 }
 
@@ -939,6 +1404,24 @@ fn resolve_preview_renderer_route_in_dir(
             route: PreviewRendererRouteKind::Darktable,
             route_stage: "shadow",
             fallback_reason_code: Some("route-policy-rollback"),
+        };
+    }
+
+    if let Some(route) = policy
+        .default_routes
+        .iter()
+        .find(|route| route_matches_preset(route, preset_id, preset_version))
+    {
+        return ResolvedPreviewRendererRoute {
+            route: route.route.clone(),
+            route_stage: match route.route {
+                PreviewRendererRouteKind::Darktable => "shadow",
+                PreviewRendererRouteKind::LocalRendererSidecar => "default",
+            },
+            fallback_reason_code: match route.route {
+                PreviewRendererRouteKind::Darktable => Some("route-policy-shadow"),
+                PreviewRendererRouteKind::LocalRendererSidecar => None,
+            },
         };
     }
 
@@ -1048,10 +1531,9 @@ fn route_matches_preset(
 }
 
 fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
-    let host_suffix = format!(
-        "{}-x86_64-pc-windows-msvc.exe",
-        dedicated_renderer_binary_stem()
-    );
+    let target = compiled_target_triple()?;
+    let repo_binary_name = sidecar_binary_name_for_target(target, false)?;
+    let packaged_binary_name = sidecar_binary_name_for_target(target, true)?;
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(Path::to_path_buf)
@@ -1059,7 +1541,7 @@ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
     let repo_candidate = repo_root
         .join("sidecar")
         .join("dedicated-renderer")
-        .join(host_suffix);
+        .join(repo_binary_name);
 
     if repo_candidate.is_file() {
         return Some(repo_candidate);
@@ -1067,8 +1549,7 @@ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
 
     if let Ok(current_exe) = env::current_exe() {
         if let Some(current_dir) = current_exe.parent() {
-            let packaged_candidate =
-                current_dir.join(format!("{}.exe", dedicated_renderer_binary_stem()));
+            let packaged_candidate = current_dir.join(packaged_binary_name);
             if packaged_candidate.is_file() {
                 return Some(packaged_candidate);
             }
@@ -1090,6 +1571,41 @@ fn dedicated_renderer_binary_stem() -> &'static str {
     "boothy-dedicated-renderer"
 }
 
+fn compiled_target_triple() -> Option<&'static str> {
+    if cfg!(all(target_arch = "x86_64", target_os = "windows")) {
+        Some("x86_64-pc-windows-msvc")
+    } else if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+        Some("x86_64-unknown-linux-gnu")
+    } else if cfg!(all(target_arch = "x86_64", target_os = "macos")) {
+        Some("x86_64-apple-darwin")
+    } else if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        Some("aarch64-apple-darwin")
+    } else {
+        None
+    }
+}
+
+fn sidecar_binary_name_for_target(target: &str, packaged: bool) -> Option<String> {
+    if target.trim().is_empty() {
+        return None;
+    }
+
+    let stem = dedicated_renderer_binary_stem();
+    if packaged {
+        return Some(if target.contains("windows") {
+            format!("{stem}.exe")
+        } else {
+            stem.to_string()
+        });
+    }
+
+    Some(if target.contains("windows") {
+        format!("{stem}-{target}.exe")
+    } else {
+        format!("{stem}-{target}")
+    })
+}
+
 fn path_to_runtime_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -1100,6 +1616,8 @@ fn build_preview_result(
     output_path: Option<String>,
     detail_code: Option<&str>,
     detail_message: Option<&str>,
+    warm_state: Option<&str>,
+    warm_state_detail_path: Option<String>,
 ) -> DedicatedRendererPreviewJobResultDto {
     DedicatedRendererPreviewJobResultDto {
         schema_version: DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into(),
@@ -1111,12 +1629,15 @@ fn build_preview_result(
         output_path,
         detail_code: detail_code.map(str::to_string),
         detail_message: detail_message.map(str::to_string),
+        warm_state: warm_state.map(str::to_string),
+        warm_state_detail_path,
     }
 }
 
 fn build_preview_spawn_failure_result(
     request: &DedicatedRendererPreviewJobRequestDto,
     reason_code: &'static str,
+    warm_state: Option<&PreviewSpawnFailureWarmState>,
 ) -> DedicatedRendererPreviewJobResultDto {
     build_preview_result(
         request,
@@ -1127,12 +1648,82 @@ fn build_preview_spawn_failure_result(
             "sidecar-unavailable" => {
                 "dedicated renderer sidecar를 찾지 못해 truthful fallback path로 내려가요."
             }
+            "sidecar-launch-timeout" => {
+                "dedicated renderer sidecar 응답이 제한 시간 안에 끝나지 않아 truthful fallback path로 내려가요."
+            }
             "sidecar-launch-failed" => {
                 "dedicated renderer sidecar 실행에 실패해 truthful fallback path로 내려가요."
             }
             _ => "dedicated renderer sidecar를 시작하지 못해 truthful fallback path로 내려가요.",
         }),
+        warm_state.map(|state| state.state),
+        warm_state.and_then(|state| state.diagnostics_detail_path.clone()),
     )
+}
+
+#[derive(Debug, Clone)]
+struct PreviewSpawnFailureWarmState {
+    state: &'static str,
+    diagnostics_detail_path: Option<String>,
+}
+
+type WarmupSpawnFailureWarmState = PreviewSpawnFailureWarmState;
+
+fn infer_warmup_spawn_failure_warm_state(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    published_version: &str,
+) -> WarmupSpawnFailureWarmState {
+    infer_preview_spawn_failure_warm_state(base_dir, session_id, preset_id, published_version)
+}
+
+fn infer_preview_spawn_failure_warm_state(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    published_version: &str,
+) -> PreviewSpawnFailureWarmState {
+    let snapshot = SessionPaths::try_new(base_dir, session_id)
+        .ok()
+        .and_then(|paths| read_session_manifest(&paths.manifest_path).ok())
+        .and_then(|manifest| manifest.active_preview_renderer_warm_state)
+        .filter(|snapshot| {
+            snapshot.preset_id == preset_id && snapshot.published_version == published_version
+        });
+
+    match snapshot {
+        Some(snapshot) if matches!(snapshot.state.as_str(), "warm-ready" | "warm-hit") => {
+            PreviewSpawnFailureWarmState {
+                state: "warm-state-lost",
+                diagnostics_detail_path: snapshot.diagnostics_detail_path,
+            }
+        }
+        Some(snapshot) if snapshot.state == "warm-state-lost" => PreviewSpawnFailureWarmState {
+            state: "warm-state-lost",
+            diagnostics_detail_path: snapshot.diagnostics_detail_path,
+        },
+        Some(snapshot) => PreviewSpawnFailureWarmState {
+            state: "cold",
+            diagnostics_detail_path: snapshot.diagnostics_detail_path,
+        },
+        None => PreviewSpawnFailureWarmState {
+            state: "cold",
+            diagnostics_detail_path: None,
+        },
+    }
+}
+
+fn forced_start_failure_for_test() -> Option<&'static str> {
+    match env::var(DEDICATED_RENDERER_TEST_START_FAILURE_ENV)
+        .ok()?
+        .as_str()
+    {
+        "sidecar-unavailable" => Some("sidecar-unavailable"),
+        "sidecar-launch-timeout" => Some("sidecar-launch-timeout"),
+        "sidecar-launch-failed" => Some("sidecar-launch-failed"),
+        _ => None,
+    }
 }
 
 fn with_preview_result_detail_path(
@@ -1148,6 +1739,8 @@ fn build_warmup_result(
     status: &str,
     detail_code: Option<&str>,
     detail_message: Option<&str>,
+    warm_state: Option<&str>,
+    warm_state_detail_path: Option<String>,
 ) -> DedicatedRendererWarmupResultDto {
     DedicatedRendererWarmupResultDto {
         schema_version: DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into(),
@@ -1158,12 +1751,15 @@ fn build_warmup_result(
         diagnostics_detail_path: request.diagnostics_detail_path.clone(),
         detail_code: detail_code.map(str::to_string),
         detail_message: detail_message.map(str::to_string),
+        warm_state: warm_state.map(str::to_string),
+        warm_state_detail_path,
     }
 }
 
 fn build_warmup_spawn_failure_result(
     request: &DedicatedRendererWarmupRequestDto,
     reason_code: &'static str,
+    warm_state: &WarmupSpawnFailureWarmState,
 ) -> DedicatedRendererWarmupResultDto {
     build_warmup_result(
         request,
@@ -1173,11 +1769,16 @@ fn build_warmup_spawn_failure_result(
             "sidecar-unavailable" => {
                 "dedicated renderer sidecar를 찾지 못해 inline warm-up을 유지해요."
             }
+            "sidecar-launch-timeout" => {
+                "dedicated renderer sidecar 응답이 제한 시간 안에 끝나지 않아 inline warm-up을 유지해요."
+            }
             "sidecar-launch-failed" => {
                 "dedicated renderer sidecar 실행에 실패해 inline warm-up을 유지해요."
             }
             _ => "dedicated renderer sidecar를 시작하지 못해 inline warm-up을 유지해요.",
         }),
+        Some(warm_state.state),
+        warm_state.diagnostics_detail_path.clone(),
     )
 }
 
@@ -1208,6 +1809,8 @@ fn synthetic_preview_result_for_test(
                 Some(request.canonical_preview_output_path.clone()),
                 Some("accepted"),
                 Some("accepted"),
+                Some("warm-hit"),
+                None,
             )
         }
         "queue-saturated" => build_preview_result(
@@ -1216,6 +1819,8 @@ fn synthetic_preview_result_for_test(
             None,
             Some("render-queue-saturated"),
             Some("dedicated renderer queue가 포화되어 inline truthful fallback으로 내려가요."),
+            Some("warm-state-lost"),
+            None,
         ),
         "protocol-mismatch" => build_preview_result(
             request,
@@ -1223,6 +1828,8 @@ fn synthetic_preview_result_for_test(
             None,
             Some("protocol-mismatch"),
             Some("preview job protocol version이 맞지 않아 fallback path로 내려가요."),
+            None,
+            None,
         ),
         "invalid-output" => build_preview_result(
             request,
@@ -1230,6 +1837,8 @@ fn synthetic_preview_result_for_test(
             Some("C:/outside/non-canonical.jpg".into()),
             Some("invalid-output"),
             Some("non-canonical output을 감지해 fallback path로 내려가요."),
+            Some("warm-hit"),
+            None,
         ),
         "restarted" => build_preview_result(
             request,
@@ -1237,6 +1846,8 @@ fn synthetic_preview_result_for_test(
             None,
             Some("renderer-restarted"),
             Some("renderer restart가 감지되어 fallback path로 내려가요."),
+            Some("warm-state-lost"),
+            None,
         ),
         _ => build_preview_result(
             request,
@@ -1244,6 +1855,8 @@ fn synthetic_preview_result_for_test(
             None,
             Some("sidecar-unavailable"),
             Some("test fallback path"),
+            None,
+            None,
         ),
     })
 }
@@ -1289,15 +1902,16 @@ fn current_time_ms() -> Result<u64, HostErrorEnvelope> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path, thread, time::Duration};
+    use std::{fs, path::Path, process::Command, thread, time::Duration};
 
     use super::{
         build_preview_result, build_preview_transition_summary_detail, build_warmup_result,
         fallback_reason_for_missing_preview_result, preview_output_is_fresh_for_request,
-        resolve_preview_renderer_route_in_dir, validate_preview_job_result,
-        validate_warmup_result, PreviewRendererRouteKind,
-        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
-        DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
+        reconcile_sidecar_start_result, resolve_preview_renderer_route_in_dir,
+        sidecar_binary_name_for_target, validate_preview_job_result, validate_warmup_result,
+        wait_for_child_exit_with_timeout, PreviewRendererRouteKind,
+        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION,
+        DEDICATED_RENDERER_RESULT_SCHEMA_VERSION, DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION,
         PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
     };
@@ -1325,6 +1939,7 @@ mod tests {
             },
             source_asset_path:
                 "C:/boothy/sessions/session/captures/originals/capture_20260410_001.cr3".into(),
+            preview_source_asset_path: None,
             canonical_preview_output_path:
                 "C:/boothy/sessions/session/renders/previews/capture_20260410_001.jpg".into(),
             diagnostics_detail_path:
@@ -1364,6 +1979,8 @@ mod tests {
             None,
             Some("sidecar-unavailable"),
             Some("fallback"),
+            None,
+            None,
         );
         result.schema_version = DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into();
         result.capture_id = "capture_other".into();
@@ -1386,6 +2003,8 @@ mod tests {
             Some("C:/outside/non-canonical.jpg".into()),
             Some("invalid-output"),
             Some("fallback"),
+            None,
+            None,
         );
         result.diagnostics_detail_path = expected_result_path.into();
 
@@ -1406,6 +2025,8 @@ mod tests {
             None,
             Some("accepted"),
             Some("accepted"),
+            None,
+            None,
         );
         result.schema_version = "dedicated-renderer-preview-job-result/v9".into();
         result.diagnostics_detail_path = expected_result_path.into();
@@ -1427,6 +2048,8 @@ mod tests {
             None,
             Some("accepted"),
             Some("accepted"),
+            None,
+            None,
         );
         result.diagnostics_detail_path = expected_result_path.into();
 
@@ -1447,6 +2070,8 @@ mod tests {
             Some(request.canonical_preview_output_path.clone()),
             Some("accepted"),
             Some("accepted"),
+            None,
+            None,
         );
         result.diagnostics_detail_path = expected_result_path.into();
 
@@ -1461,8 +2086,14 @@ mod tests {
         let request = warmup_request();
         let expected_result_path =
             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
-        let mut result =
-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
+        let mut result = build_warmup_result(
+            &request,
+            "warmed-up",
+            Some("renderer-warm"),
+            Some("warm"),
+            Some("warm-ready"),
+            None,
+        );
         result.schema_version = DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into();
         result.diagnostics_detail_path = expected_result_path.into();
 
@@ -1477,8 +2108,14 @@ mod tests {
         let request = warmup_request();
         let expected_result_path =
             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
-        let mut result =
-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
+        let mut result = build_warmup_result(
+            &request,
+            "warmed-up",
+            Some("renderer-warm"),
+            Some("warm"),
+            Some("warm-ready"),
+            None,
+        );
         result.diagnostics_detail_path = expected_result_path.into();
 
         assert_eq!(
@@ -1521,6 +2158,7 @@ mod tests {
             serde_json::to_vec_pretty(&serde_json::json!({
               "schemaVersion": PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
               "defaultRoute": "darktable",
+              "defaultRoutes": [],
               "canaryRoutes": [
                 {
                   "route": "local-renderer-sidecar",
@@ -1565,6 +2203,7 @@ mod tests {
             serde_json::to_vec_pretty(&serde_json::json!({
               "schemaVersion": PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
               "defaultRoute": "local-renderer-sidecar",
+              "defaultRoutes": [],
               "canaryRoutes": [],
               "forcedFallbackRoutes": []
             }))
@@ -1602,6 +2241,7 @@ mod tests {
             serde_json::to_vec_pretty(&serde_json::json!({
               "schemaVersion": PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
               "defaultRoute": "local-renderer-sidecar",
+              "defaultRoutes": [],
               "canaryRoutes": [],
               "forcedFallbackRoutes": [
                 {
@@ -1622,6 +2262,62 @@ mod tests {
         assert_eq!(route.route, PreviewRendererRouteKind::Darktable);
         assert_eq!(route.route_stage, "shadow");
         assert_eq!(route.fallback_reason_code, Some("route-policy-rollback"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn preview_renderer_route_scopes_default_promotion_to_matching_presets_only() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-preview-route-scoped-default-{}",
+            std::process::id()
+        ));
+        let policy_path = base_dir
+            .join("branch-config")
+            .join("preview-renderer-policy.json");
+        fs::create_dir_all(
+            policy_path
+                .parent()
+                .expect("policy path should have a parent directory"),
+        )
+        .expect("policy directory should exist");
+        fs::write(
+            &policy_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+              "schemaVersion": PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
+              "defaultRoute": "darktable",
+              "defaultRoutes": [
+                {
+                  "route": "local-renderer-sidecar",
+                  "presetId": "preset_soft-glow",
+                  "presetVersion": "2026.04.10",
+                  "reason": "host-approved-default"
+                }
+              ],
+              "canaryRoutes": [],
+              "forcedFallbackRoutes": []
+            }))
+            .expect("policy should serialize"),
+        )
+        .expect("policy should write");
+
+        let matching_route =
+            resolve_preview_renderer_route_in_dir(&base_dir, "preset_soft-glow", "2026.04.10");
+        assert_eq!(
+            matching_route.route,
+            PreviewRendererRouteKind::LocalRendererSidecar
+        );
+        assert_eq!(matching_route.route_stage, "default");
+        assert_eq!(matching_route.fallback_reason_code, None);
+
+        let unrelated_route =
+            resolve_preview_renderer_route_in_dir(&base_dir, "preset_cool-tone", "2026.04.11");
+        assert_eq!(unrelated_route.route, PreviewRendererRouteKind::Darktable);
+        assert_eq!(unrelated_route.route_stage, "shadow");
+        assert_eq!(
+            unrelated_route.fallback_reason_code,
+            Some("route-policy-shadow")
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -1696,6 +2392,23 @@ mod tests {
     }
 
     #[test]
+    fn local_sidecar_process_times_out_and_is_killed() {
+        let mut child = Command::new("powershell")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 4000"])
+            .spawn()
+            .expect("sleeping process should spawn");
+
+        let started_at = std::time::Instant::now();
+        let result = wait_for_child_exit_with_timeout(&mut child, Duration::from_millis(100));
+
+        assert_eq!(result, Err("sidecar-launch-timeout"));
+        assert!(
+            started_at.elapsed() < Duration::from_secs(2),
+            "timed out child should be cut off quickly"
+        );
+    }
+
+    #[test]
     fn missing_sidecar_result_uses_route_aware_fallback_reason_codes() {
         assert_eq!(
             fallback_reason_for_missing_preview_result("shadow"),
@@ -1712,18 +2425,88 @@ mod tests {
     }
 
     #[test]
-    fn preview_transition_summary_keeps_original_visible_to_preset_applied_metric() {
+    fn preview_transition_summary_reports_original_visible_delta() {
         let detail = build_preview_transition_summary_detail(
             "inline-truthful-fallback",
             Some("shadow-submission-only"),
             "shadow",
             Some(2810),
             Some(3615),
+            Some("warm-ready"),
         );
 
         assert!(detail.contains("firstVisibleMs=2810"));
         assert!(detail.contains("replacementMs=3615"));
-        assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=3615"));
+        assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=805"));
         assert!(detail.contains("routeStage=shadow"));
+        assert!(detail.contains("warmState=warm-ready"));
+    }
+
+    #[test]
+    fn sidecar_binary_names_cover_supported_targets() {
+        assert_eq!(
+            sidecar_binary_name_for_target("x86_64-pc-windows-msvc", false).as_deref(),
+            Some("boothy-dedicated-renderer-x86_64-pc-windows-msvc.exe")
+        );
+        assert_eq!(
+            sidecar_binary_name_for_target("x86_64-pc-windows-msvc", true).as_deref(),
+            Some("boothy-dedicated-renderer.exe")
+        );
+        assert_eq!(
+            sidecar_binary_name_for_target("x86_64-unknown-linux-gnu", false).as_deref(),
+            Some("boothy-dedicated-renderer-x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            sidecar_binary_name_for_target("x86_64-unknown-linux-gnu", true).as_deref(),
+            Some("boothy-dedicated-renderer")
+        );
+        assert_eq!(
+            sidecar_binary_name_for_target("aarch64-apple-darwin", false).as_deref(),
+            Some("boothy-dedicated-renderer-aarch64-apple-darwin")
+        );
+        assert_eq!(
+            sidecar_binary_name_for_target("aarch64-apple-darwin", true).as_deref(),
+            Some("boothy-dedicated-renderer")
+        );
+    }
+
+    #[test]
+    fn shell_sidecar_launch_failure_can_fall_back_to_direct_start() {
+        assert_eq!(
+            reconcile_sidecar_start_result(Err("sidecar-launch-failed"), Ok(())),
+            Ok(())
+        );
+        assert_eq!(
+            reconcile_sidecar_start_result(Err("sidecar-unavailable"), Ok(())),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn successful_shell_sidecar_start_does_not_require_direct_retry() {
+        assert_eq!(
+            reconcile_sidecar_start_result(Ok(()), Err("sidecar-launch-failed")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn shell_sidecar_timeout_keeps_the_timeout_result() {
+        assert_eq!(
+            reconcile_sidecar_start_result(Err("sidecar-launch-timeout"), Ok(())),
+            Err("sidecar-launch-timeout")
+        );
+    }
+
+    #[test]
+    fn preview_request_can_include_fast_preview_source_asset() {
+        let mut request = preview_request();
+        request.preview_source_asset_path =
+            Some("C:/boothy/sessions/session/renders/previews/capture_20260410_001-fast.jpg".into());
+
+        let serialized = serde_json::to_string(&request).expect("request should serialize");
+
+        assert!(serialized.contains("previewSourceAssetPath"));
+        assert!(serialized.contains("capture_20260410_001-fast.jpg"));
     }
 }

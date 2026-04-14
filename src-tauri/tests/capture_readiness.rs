@@ -2085,9 +2085,10 @@ fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fall
         .expect("delayed speculative writer should complete");
 
     assert_eq!(completed_capture.render_status, "previewReady");
+    let expected_canonical_preview_path = canonical_preview_path.to_string_lossy().into_owned();
     assert_eq!(
         completed_capture.preview.asset_path.as_deref(),
-        Some(canonical_preview_path.to_string_lossy().as_ref())
+        Some(expected_canonical_preview_path.as_str())
     );
     assert_eq!(
         completed_capture.preview.ready_at_ms,
@@ -2270,6 +2271,99 @@ fn speculative_preview_wait_does_not_hold_the_capture_pipeline_lock() {
         .join()
         .expect("preview completion thread should join")
         .expect("preview completion should fall back to the normal render path");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_keeps_waiting_long_enough_for_a_slower_same_capture_close() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("slower-speculative-close-wins");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&canonical_preview_path);
+    fs::write(&lock_path, &result.capture.request_id).expect("speculative lock should be writable");
+
+    let delayed_output_path = output_path.clone();
+    let delayed_detail_path = detail_path.clone();
+    let delayed_lock_path = lock_path.clone();
+    let delayed_writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(5600));
+        write_test_jpeg(&delayed_output_path);
+        fs::write(
+            &delayed_detail_path,
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=5600;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        )
+        .expect("speculative detail should be writable");
+        fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
+    });
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("slower speculative close should still win before raw fallback starts");
+
+    delayed_writer
+        .join()
+        .expect("delayed speculative writer should complete");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        completed_capture.preview.ready_at_ms,
+        completed_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(
+        !timing_events.contains("sourceAsset=raw-original"),
+        "the booth should keep the same-capture close as the truthful owner instead of starting a slower raw fallback"
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -5946,6 +6040,7 @@ fn write_helper_status(
         status_path,
         serde_json::to_vec_pretty(&serde_json::json!({
           "schemaVersion": "canon-helper-status/v1",
+          "type": "camera-status",
           "sessionId": session_id,
           "sequence": 1,
           "observedAt": observed_at,

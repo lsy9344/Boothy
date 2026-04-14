@@ -8,16 +8,14 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
-    host: tauriHost || false,
+    host: tauriHost || '127.0.0.1',
     port: 5173,
     strictPort: true,
-    hmr: tauriHost
-      ? {
-          protocol: 'ws',
-          host: tauriHost,
-          port: 1421,
-        }
-      : undefined,
+    hmr: {
+      protocol: 'ws',
+      host: tauriHost || '127.0.0.1',
+      port: 1421,
+    },
     watch: {
       ignored: ['**/src-tauri/**'],
     },

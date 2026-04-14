@@ -27,6 +27,8 @@ import {
   operatorRecoveryBlockedCategorySchema,
   operatorRecoverySummarySchema,
   operatorSessionSummarySchema,
+  previewPromotionEvidenceBundleSchema,
+  previewPromotionEvidenceRecordSchema,
   publicationAuditRecordSchema,
   presetCatalogResultSchema,
   presetLifecycleStateSchema,
@@ -259,7 +261,12 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      firstVisibleMs: 2810,
+      replacementMs: 3615,
+      originalVisibleToPresetAppliedVisibleMs: 805,
       hardwareCapability: 'dedicated-renderer-available',
+      warmState: 'warm-ready',
+      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
     },
     liveCaptureTruth: {
       source: 'canon-helper-sidecar',
@@ -327,7 +334,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      firstVisibleMs: 2810,
+      replacementMs: 3615,
+      originalVisibleToPresetAppliedVisibleMs: 805,
       hardwareCapability: 'dedicated-renderer-available',
+      warmState: 'warm-ready',
+      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
     },
     ...overrides,
   }
@@ -382,23 +394,46 @@ describe('shared contracts baseline', () => {
 
   it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
     const parsed = publishedPresetBundleSchema.parse(
-      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
+      readContractFixture('preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json'),
     )
 
-    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
-    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
-    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
+    expect(parsed.schemaVersion).toBe('published-preset-bundle/v2')
+    expect(parsed.canonicalRecipe.schemaVersion).toBe('canonical-preset-recipe/v1')
+    expect(parsed.canonicalRecipe.previewIntent.profileId).toBe('soft-glow-preview')
+    expect(parsed.canonicalRecipe.finalIntent.profileId).toBe('soft-glow-final')
+    expect(parsed.canonicalRecipe.noisePolicy.policyId).toBe('balanced-noise')
+    expect(parsed.darktableAdapter.xmpTemplatePath).toBe('xmp/template.xmp')
   })
 
-  it('rejects published preset bundles that escape the bundle root or add unknown fields', () => {
+  it('rejects published preset bundles that miss canonical recipe truth, escape the bundle root, or add unknown fields', () => {
     const fixture = readContractFixture(
-      'preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json',
+      'preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json',
     )
 
     expect(() =>
       publishedPresetBundleSchema.parse({
         ...fixture,
-        xmpTemplatePath: '../outside/template.xmp',
+        canonicalRecipe: undefined,
+      }),
+    ).toThrow()
+
+    expect(() =>
+      publishedPresetBundleSchema.parse({
+        ...fixture,
+        darktableAdapter: {
+          ...(fixture.darktableAdapter as Record<string, unknown>),
+          darktableVersion: '5.5.0',
+        },
+      }),
+    ).toThrow()
+
+    expect(() =>
+      publishedPresetBundleSchema.parse({
+        ...fixture,
+        darktableAdapter: {
+          ...(fixture.darktableAdapter as Record<string, unknown>),
+          xmpTemplatePath: '../outside/template.xmp',
+        },
       }),
     ).toThrow()
 
@@ -510,6 +545,212 @@ describe('shared contracts baseline', () => {
     expect(request.publishedVersion).toBe('2026.04.10')
     expect(result.status).toBe('fallback-suggested')
     expect(result.detailCode).toBe('sidecar-unavailable')
+  })
+
+  it('parses the frozen preview-promotion evidence record fixture used for hardware gate bundles', () => {
+    const parsed = previewPromotionEvidenceRecordSchema.parse(
+      readContractFixture('preview-promotion-evidence-record-v1.json'),
+    )
+
+    expect(parsed.routeStage).toBe('canary')
+    expect(parsed.laneOwner).toBe('dedicated-renderer')
+    expect(parsed.originalVisibleToPresetAppliedVisibleMs).toBe(805)
+    expect(parsed.routePolicySnapshotPath).toContain(
+      'branch-config/preview-renderer-policy.json',
+    )
+  })
+
+  it('rejects preview-promotion evidence records that drop route policy or correlation paths', () => {
+    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+
+    expect(() =>
+      previewPromotionEvidenceRecordSchema.parse({
+        ...fixture,
+        routePolicySnapshotPath: undefined,
+      }),
+    ).toThrow()
+
+    expect(() =>
+      previewPromotionEvidenceRecordSchema.parse({
+        ...fixture,
+        requestId: '',
+      }),
+    ).toThrow()
+  })
+
+  it('parses preview-promotion evidence bundles with visual and rollback evidence slots', () => {
+    const parsed = previewPromotionEvidenceBundleSchema.parse({
+      schemaVersion: 'preview-promotion-evidence-bundle/v1',
+      generatedAt: '2026-04-12T08:05:00+09:00',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      captureId: 'capture_20260410_001',
+      requestId: 'request_20260410_001',
+      presetId: 'preset_soft-glow',
+      publishedVersion: '2026.04.10',
+      laneOwner: 'dedicated-renderer',
+      fallbackReasonCode: null,
+      routeStage: 'canary',
+      warmState: 'warm-ready',
+      firstVisibleMs: 2810,
+      replacementMs: 3615,
+      originalVisibleToPresetAppliedVisibleMs: 805,
+      fallbackRatio: 0,
+      outputRoot: 'C:/evidence/session/capture',
+      bundleManifestPath: 'C:/evidence/session/capture/preview-promotion-evidence-bundle.json',
+      artifacts: {
+        sessionManifest: {
+          source: 'C:/repo/sessions/session/session.json',
+          destination: 'C:/evidence/session/capture/session.json',
+        },
+      },
+      missingArtifacts: [],
+      visualEvidence: {
+        booth: ['C:/evidence/session/capture/booth-1.png'],
+        operator: ['C:/evidence/session/capture/operator-1.png'],
+      },
+      rollbackEvidence: ['C:/evidence/session/capture/rollback-proof.txt'],
+      parity: {
+        result: 'not-run',
+        reason: 'oracle-not-provided',
+        threshold: 6,
+        baseline: {
+          status: 'not-run',
+          result: 'not-run',
+          referencePath: null,
+          referenceMetadataPath: null,
+          threshold: 6,
+          numericScore: null,
+          maxChannelDelta: null,
+          reason: 'reference-not-provided',
+        },
+        fallback: {
+          status: 'not-run',
+          result: 'not-run',
+          referencePath: null,
+          referenceMetadataPath: null,
+          threshold: 6,
+          numericScore: null,
+          maxChannelDelta: null,
+          reason: 'reference-not-provided',
+        },
+      },
+    })
+
+    expect(parsed.visualEvidence.booth).toHaveLength(1)
+    expect(parsed.fallbackRatio).toBe(0)
+    expect(parsed.rollbackEvidence).toContain(
+      'C:/evidence/session/capture/rollback-proof.txt',
+    )
+  })
+
+  it('rejects preview-promotion evidence bundles that omit required visual or rollback proof', () => {
+    expect(() =>
+      previewPromotionEvidenceBundleSchema.parse({
+        schemaVersion: 'preview-promotion-evidence-bundle/v1',
+        generatedAt: '2026-04-12T08:05:00+09:00',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        captureId: 'capture_20260410_001',
+        requestId: 'request_20260410_001',
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.04.10',
+        laneOwner: 'dedicated-renderer',
+        fallbackReasonCode: null,
+        routeStage: 'canary',
+        warmState: 'warm-ready',
+        firstVisibleMs: 2810,
+        replacementMs: 3615,
+        originalVisibleToPresetAppliedVisibleMs: 805,
+        fallbackRatio: 0,
+        outputRoot: 'C:/evidence/session/capture',
+        bundleManifestPath: 'C:/evidence/session/capture/preview-promotion-evidence-bundle.json',
+        artifacts: {},
+        missingArtifacts: [],
+        visualEvidence: {
+          booth: [],
+          operator: ['C:/evidence/session/capture/operator-1.png'],
+        },
+        rollbackEvidence: ['C:/evidence/session/capture/rollback-proof.txt'],
+        parity: {
+          result: 'not-run',
+          reason: 'oracle-not-provided',
+          threshold: 6,
+          baseline: {
+            status: 'not-run',
+            result: 'not-run',
+            referencePath: null,
+            referenceMetadataPath: null,
+            threshold: 6,
+            numericScore: null,
+            maxChannelDelta: null,
+            reason: 'reference-not-provided',
+          },
+          fallback: {
+            status: 'not-run',
+            result: 'not-run',
+            referencePath: null,
+            referenceMetadataPath: null,
+            threshold: 6,
+            numericScore: null,
+            maxChannelDelta: null,
+            reason: 'reference-not-provided',
+          },
+        },
+      }),
+    ).toThrow()
+
+    expect(() =>
+      previewPromotionEvidenceBundleSchema.parse({
+        schemaVersion: 'preview-promotion-evidence-bundle/v1',
+        generatedAt: '2026-04-12T08:05:00+09:00',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        captureId: 'capture_20260410_001',
+        requestId: 'request_20260410_001',
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.04.10',
+        laneOwner: 'dedicated-renderer',
+        fallbackReasonCode: null,
+        routeStage: 'canary',
+        warmState: 'warm-ready',
+        firstVisibleMs: 2810,
+        replacementMs: 3615,
+        originalVisibleToPresetAppliedVisibleMs: 805,
+        fallbackRatio: 0,
+        outputRoot: 'C:/evidence/session/capture',
+        bundleManifestPath: 'C:/evidence/session/capture/preview-promotion-evidence-bundle.json',
+        artifacts: {},
+        missingArtifacts: [],
+        visualEvidence: {
+          booth: ['C:/evidence/session/capture/booth-1.png'],
+          operator: ['C:/evidence/session/capture/operator-1.png'],
+        },
+        rollbackEvidence: [],
+        parity: {
+          result: 'not-run',
+          reason: 'oracle-not-provided',
+          threshold: 6,
+          baseline: {
+            status: 'not-run',
+            result: 'not-run',
+            referencePath: null,
+            referenceMetadataPath: null,
+            threshold: 6,
+            numericScore: null,
+            maxChannelDelta: null,
+            reason: 'reference-not-provided',
+          },
+          fallback: {
+            status: 'not-run',
+            result: 'not-run',
+            referencePath: null,
+            referenceMetadataPath: null,
+            threshold: 6,
+            numericScore: null,
+            maxChannelDelta: null,
+            reason: 'reference-not-provided',
+          },
+        },
+      }),
+    ).toThrow()
   })
 
   it('normalizes booth capability access to always include the booth surface', () => {
@@ -788,7 +1029,12 @@ describe('shared contracts baseline', () => {
         routeStage: 'canary',
         laneOwner: 'inline-truthful-fallback',
         fallbackReasonCode: 'route-policy-shadow',
+        firstVisibleMs: 2810,
+        replacementMs: 3615,
+        originalVisibleToPresetAppliedVisibleMs: 805,
         hardwareCapability: 'dedicated-renderer-available',
+        warmState: 'warm-ready',
+        warmStateObservedAt: '2026-04-12T08:00:00.000Z',
       },
     })
   })
@@ -828,6 +1074,8 @@ describe('shared contracts baseline', () => {
       previewArchitecture: {
         routeStage: 'canary',
         laneOwner: 'inline-truthful-fallback',
+        replacementMs: 3615,
+        warmState: 'warm-ready',
       },
     })
     expect(parsedAction).toBe('approved-boundary-restart')
@@ -862,6 +1110,79 @@ describe('shared contracts baseline', () => {
     expect(parsedSummary.liveCaptureTruth?.observedAt).toBe(
       '2026-04-10T08:17:58.5548198+00:00',
     )
+  })
+
+  it('rejects warm-state values outside the approved vocabulary', () => {
+    expect(() =>
+      dedicatedRendererPreviewJobResultSchema.parse({
+        schemaVersion: 'dedicated-renderer-preview-job-result/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        requestId: 'request_20260410_001',
+        captureId: 'capture_20260410_001',
+        status: 'warmed-up',
+        diagnosticsDetailPath: 'C:/temp/result.json',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      dedicatedRendererPreviewJobResultSchema.parse({
+        schemaVersion: 'dedicated-renderer-preview-job-result/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        requestId: 'request_20260410_001',
+        captureId: 'capture_20260410_001',
+        status: 'fallback-suggested',
+        diagnosticsDetailPath: 'C:/temp/result.json',
+        warmState: 'warming',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      operatorRecoverySummarySchema.parse(
+        createOperatorRecoverySummary({
+          previewArchitecture: {
+            route: 'local-renderer-sidecar',
+            routeStage: 'canary',
+            laneOwner: 'inline-truthful-fallback',
+            fallbackReasonCode: 'route-policy-shadow',
+            firstVisibleMs: 2810,
+            replacementMs: 3615,
+            originalVisibleToPresetAppliedVisibleMs: 805,
+            hardwareCapability: 'dedicated-renderer-available',
+            warmState: 'warming',
+            warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+          },
+        }),
+      ),
+    ).toThrow()
+
+    expect(() =>
+      sessionManifestSchema.parse({
+        schemaVersion: 'session-manifest/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        boothAlias: 'Kim 4821',
+        customer: {
+          name: 'Kim',
+          phoneLastFour: '4821',
+        },
+        lifecycle: {
+          status: 'active',
+          stage: 'preview-waiting',
+        },
+        activePreset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.04.10',
+        },
+        captures: [],
+        postEnd: null,
+        activePreviewRendererWarmState: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.04.10',
+          state: 'warming',
+          observedAt: '2026-04-12T08:00:00.000Z',
+          diagnosticsDetailPath: null,
+        },
+      }),
+    ).toThrow()
   })
 
   it('rejects recovery summaries that expose actions without a blocked category', () => {

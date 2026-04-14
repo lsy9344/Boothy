@@ -1,6 +1,6 @@
 # Story 1.12: same-capture / preset-applied dual-close topology 정착과 same-slot truthful replacement 전환
 
-Status: review
+Status: done
 
 Architecture Pivot Note: `epics.md` 본문은 아직 1.11~1.13을 개별 스토리로 재생성하지 않았지만, 2026-04-09 승인된 preview architecture decision과 Story 1.11 handoff에 따라 이번 스토리는 `local dedicated renderer + different close topology`의 두 번째 단계인 dual-close product state 정착과 same-slot truthful replacement 전환 범위로 복원한다.
 
@@ -233,6 +233,7 @@ GPT-5 Codex
 - 2026-04-10 22:08:00 +09:00 - 같은 세션은 5 originals / 5 previews / 1 final을 남겼지만 `capture_preview_transition_summary`의 `originalVisibleToPresetAppliedVisibleMs`가 여전히 `none`이고 replay 가능한 UI evidence도 없어서 Story 1.12를 `done`으로 닫지는 않았다.
 - 2026-04-11 00:00:00 +09:00 - 같은 세션 로그에서 first-visible 이후 preset-applied close 시간은 `replacementMs=3694, 3451, 3852, 3615, 3707`로 실제 기록된 것을 다시 확인했다.
 - 2026-04-11 11:24:18 +09:00 - 사용자 승인에 따라 replay 가능한 UI evidence 요구는 waived/pass로 처리했고, 남아 있던 review patch를 닫은 뒤에도 truth-critical gate policy에 따라 Story 1.12 상태는 `review`로 유지한다.
+- 2026-04-13 13:42:07 +09:00 - 제품 정리 기준으로 Story 1.12를 `done`으로 닫았다. 이 스토리는 dual-close topology와 same-slot truthful replacement를 제품/계약/진단에 정착시키는 supporting implementation owner로 마감하고, guarded cutover와 canonical release-truth `Go / No-Go`는 계속 Story 1.13이 소유한다.
 
 ### Completion Notes List
 
@@ -244,7 +245,8 @@ GPT-5 Codex
 - fallback이 발생해도 `capture_preview_transition_summary`에서 lane owner와 fallback reason, seam 수치를 다시 읽을 수 있게 만들었다.
 - Rust/TypeScript/React 회귀 검증을 통과했고, replay evidence의 하드웨어 패키지 gap은 Story 1.13 handoff로 남겼다.
 - 최신 실장비 세션 `session_000000000018a5007b5fecf020`에서 5컷 촬영 후 completed까지의 흐름은 확인했다.
-- 다만 Story 1.12는 supporting hardware pass만 확보했으므로, guarded cutover와 release-truth `Go`를 소유하는 Story 1.13 전까지 상태를 `review`로 유지한다.
+- Story 1.12는 supporting hardware pass를 바탕으로 supporting implementation story로 `done` 처리했다.
+- guarded cutover와 canonical release-truth `Go / No-Go`는 계속 Story 1.13이 소유한다.
 - 위 세션에서 사용자가 질문한 “처음 보인 시점에서 프리셋 적용 결과로 바뀌기까지 걸린 시간”은 `replacementMs` 값으로 실제 기록되어 있었다.
 - replay 가능한 UI evidence 요구는 사용자 승인으로 pass 처리했고, 남은 close gate는 Story 1.13 hardware validation이다.
 

@@ -1,0 +1,3793 @@
+diff --git a/_bmad-output/implementation-artifacts/hardware-validation-ledger.md b/_bmad-output/implementation-artifacts/hardware-validation-ledger.md
+index 092f213..20c9136 100644
+--- a/_bmad-output/implementation-artifacts/hardware-validation-ledger.md
++++ b/_bmad-output/implementation-artifacts/hardware-validation-ledger.md
+@@ -1,6 +1,6 @@
+ # Hardware Validation Ledger
+ 
+-Last Updated: 2026-04-11 11:28 +09:00
++Last Updated: 2026-04-13 11:40 +09:00
+ Sprint Artifact Owner: Boothy sprint operator
+ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+ 
+@@ -31,21 +31,22 @@ Supporting regression / follow-up notes:
+ - Story 1.10 corrective hardware package was verified on 2026-04-10 from `session_000000000018a5007b5fecf020`; 5 `request-capture`, 5 `file-arrived`, 5 `fast-preview-promoted`, 5 `preview-render-start`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`, `lifecycle.stage=completed`, `postEnd.state=completed`, `5 originals / 5 previews / 1 final`이 함께 확인됐다. Story 1.10 baseline close는 이 패키지로 `Go`로 승격하고, 현재 워크스페이스의 preview-topology regression은 후속 Story 1.11~1.12 scope로 분리 추적한다.
+ - Story 1.11 established the dedicated renderer sidecar boundary and Story 1.12 locked same-slot truthful replacement, but neither story owns the canonical preview architecture release close. Story 1.13 remains the guarded cutover owner and stays `No-Go` while the observed route policy is shadow-by-default.
+ - Story 1.12 supporting hardware run was inspected on 2026-04-10 from `session_000000000018a5007b5fecf020`; 5 `request-capture`, 5 `capture_preview_ready`, 5 `capture_preview_transition_summary`, 5 `recent-session-visible`, and repeated `post-end-evaluated state=completed variant=local-deliverable-ready` were confirmed together with 5 originals / 5 previews / 1 final. `capture_preview_transition_summary`에서 first-visible 이후 preset-applied close까지의 시간은 `replacementMs=3694, 3451, 3852, 3615, 3707`로 실제 기록됐고, `recent-session-pending-visible -> recent-session-visible` 연쇄와 사용자 현장 확인으로 same-slot replacement supporting proof도 확보됐다. 사용자는 2026-04-11에 replayable UI evidence 요구를 waived/pass로 처리하도록 승인했다. 같은 날 stale result reuse, operator recovery block, summary metric 회귀 patch를 닫았지만, Story 1.12는 release-truth `Go` 소유자가 아니므로 story status는 `review`로 유지한다. guarded cutover 최종 hardware gate는 Story 1.13이 이어받는다.
++- Story 1.19 establishes the replayable promotion-evidence gate. Its contribution is the canonical bundle contract, trace planning scripts, parity oracle rules, and ledger semantics that future reruns must use before claiming `Go`.
+ - Story 2.3 is the supporting follow-up validation note for `HV-06`; Story 1.3 is not reopened as an independent close owner.
+ 
+ ## Sprint Review Gateboard
+ 
+-| Story Key | Automated Pass | Hardware Pass | Go / No-Go | Blocker | Owner | Evidence Path |
+-| --- | --- | --- | --- | --- | --- | --- |
+-| 1.4 | Pass | Pass | Go | Closed. HV-02/HV-03/HV-10 package confirmed complete for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
+-| 1.5 | Pass | Pass | Go | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
+-| 1.6 | Pass | Pass | Go | Closed. HV-02/HV-03/HV-10 package was visually verified and linked evidence was accepted for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
+-| 1.8 | Pass | Pass | Go | Closed. HV-05/HV-07/HV-08/HV-11/HV-12 package confirmed from two published preset sessions with divergent preview/final assets and matching XMP bundle paths. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4e49821e18790\` |
+-| 1.10 | Pass at story-close baseline; current follow-up workspace scope tracked separately | Pass | Go | Closed. 5-shot completed booth package confirmed Story 1.10 corrective baseline and seam close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\` |
+-| 1.13 | Pass | Shadow-only evidence recorded; promoted cutover proof missing | No-Go | `preview-renderer-policy.json` still defaults to `darktable`; `session_000000000018a5007b5fecf020` stayed `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, and `originalVisibleToPresetAppliedVisibleMs=none`, so canonical preview architecture close cannot promote yet. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\ ; C:\Users\KimYS\Pictures\dabi_shoot\branch-config\preview-renderer-policy.json` |
+-| 3.2 | Pass | Pass | Go | Closed. HV-08/HV-11 package confirmed from one failure-isolation session and one completed local-deliverable session. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df139592b950\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\` |
+-| 4.2 | Pass | Pass | Go | Closed. `HV-09` failure isolation and `HV-01` published booth visibility were visually confirmed. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json` |
+-| 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
++| Story Key | Automated Pass | Hardware Pass | Go / No-Go | Latency | Parity | Fallback Ratio | Route Policy State | Rollback Evidence | Blocker | Owner | Evidence Path |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++| 1.4 | Pass | Pass | Go | N/A | N/A | N/A | N/A | N/A | Closed. HV-02/HV-03/HV-10 package confirmed complete for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
++| 1.5 | Pass | Pass | Go | RAW save and preview waiting split confirmed | N/A | N/A | N/A | N/A | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
++| 1.6 | Pass | Pass | Go | N/A | N/A | N/A | N/A | N/A | Closed. HV-02/HV-03/HV-10 package was visually verified and linked evidence was accepted for close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a157b0cfc8cea4\` |
++| 1.8 | Pass | Pass | Go | Preview/final close timings recorded | Pass against published XMP bundle truth | Low in accepted hardware package | Published bundle route only | N/A | Closed. HV-05/HV-07/HV-08/HV-11/HV-12 package confirmed from two published preset sessions with divergent preview/final assets and matching XMP bundle paths. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4e49821e18790\` |
++| 1.10 | Pass at story-close baseline; current follow-up workspace scope tracked separately | Pass | Go | 5-shot booth package confirmed seam timing | Supporting-only | Low in corrective baseline package | Host route package aligned for corrective run | Supporting-only | Closed. 5-shot completed booth package confirmed Story 1.10 corrective baseline and seam close. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\` |
++| 1.13 | Pass | Shadow-only evidence recorded; promoted cutover proof missing | No-Go | Shadow-only delta, promoted close not proven | Not yet measured against Story 1.19 oracle bundle | Shadow submission still present | `preview-renderer-policy.json` defaultRoute=`darktable` | One-action rollback not re-proved on promoted lane | `preview-renderer-policy.json` still defaults to `darktable`; `session_000000000018a5007b5fecf020` stayed `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, and `originalVisibleToPresetAppliedVisibleMs=none`, so canonical preview architecture close cannot promote yet. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a5007b5fecf020\ ; C:\Users\KimYS\Pictures\dabi_shoot\branch-config\preview-renderer-policy.json` |
++| 3.2 | Pass | Pass | Go | Export waiting and completed timing confirmed | N/A | N/A | N/A | N/A | Closed. HV-08/HV-11 package confirmed from one failure-isolation session and one completed local-deliverable session. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df139592b950\ ; C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a4df863488433c\` |
++| 4.2 | Pass | Pass | Go | N/A | N/A | N/A | Published-only booth visibility confirmed | N/A | Closed. `HV-09` failure isolation and `HV-01` published booth visibility were visually confirmed. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json` ; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json` |
++| 4.3 | Pass | Not run | No-Go | Not recorded | Not recorded | Not recorded | Immutable publish route not re-proved on hardware | Active-session rollback evidence missing | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
+ 
+ ## Evidence Registry
+ 
+@@ -298,6 +299,6 @@ Supporting regression / follow-up notes:
+ 
+ Use this template for the next validation run.
+ 
+-| story key | HV checklist ID | evidence package path | executedAt | validator | booth PC | camera model | darktable pin | helper identifier | Go / No-Go result | release blocker | follow-up owner | rerun prerequisite | target rerun date | core evidence paths |
+-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+-|  |  |  |  |  |  |  |  |  |  |  |  |  |  | `session.json`; `timing-events.log`; `bundle.json`; `catalog-state.json` |
++| story key | HV checklist ID | evidence package path | executedAt | validator | booth PC | camera model | darktable pin | helper identifier | Go / No-Go result | latency | parity | fallback ratio | route policy state | rollback evidence | release blocker | follow-up owner | rerun prerequisite | target rerun date | core evidence paths |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | `session.json`; `timing-events.log`; `preview-promotion-evidence.jsonl`; `bundle.json`; `catalog-state.json`; `preview-renderer-policy.json` |
+diff --git "a/_bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-\352\270\260\353\260\230-\354\212\271\352\262\251-\352\262\214\354\235\264\355\212\270-\354\240\225\354\260\251.md" "b/_bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-\352\270\260\353\260\230-\354\212\271\352\262\251-\352\262\214\354\235\264\355\212\270-\354\240\225\354\260\251.md"
+new file mode 100644
+index 0000000..6796d02
+--- /dev/null
++++ "b/_bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-\352\270\260\353\260\230-\354\212\271\352\262\251-\352\262\214\354\235\264\355\212\270-\354\240\225\354\260\251.md"
+@@ -0,0 +1,233 @@
++# Story 1.19: ETW/WPR/WPA/PIX + parity diff 기반 승격 게이트 정착
++
++Status: review
++
++Promotion Gate Note: Story 1.18이 resident GPU-first 후보와 seam evidence를 이미 남겼다. 이번 스토리는 새 렌더러를 또 발명하는 단계가 아니라, 그 증거를 어떤 도구와 기준으로 수집하고 해석해 승격 여부를 판정할지 고정하는 단계다. canonical release close owner는 계속 Story 1.13이며, 이번 스토리만으로 hardware `Go`를 주장하면 안 된다.
++
++### Validation Gate Reference
++
++- Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
++- Supporting evidence family:
++  - `capture_preview_transition_summary` + session diagnostics package
++  - host-owned `branch-config/preview-renderer-policy.json` snapshot
++  - darktable baseline/fallback oracle against parity diff package
++  - ETW/WPR/WPA/PIX 또는 동등 계측 runbook
++  - Story 1.13 canonical `Go / No-Go` row
++- Current hardware gate: `No-Go`
++- Close policy:
++  - `automated pass`만으로 renderer promotion을 닫지 않는다.
++  - 속도 지표만 좋아도 parity drift, fallback 상시 발생, route-policy rollback 불능, active-session truth drift가 있으면 `No-Go`다.
++  - 이번 스토리는 guarded cutover 의미를 바꾸지 않는다. shadow/canary/default/rollback ownership은 계속 host-owned route policy와 Story 1.13 ledger row가 소유한다.
++
++<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
++
++## Story
++
++owner / brand operator로서,
++latency, parity, fallback evidence를 한 기준으로 수집하고 싶다,
++그래서 renderer 승격을 체감 속도와 품질 기준으로 동시에 판단할 수 있다.
++
++## Acceptance Criteria
++
++1. renderer 승격 판단용 booth evidence package는 같은 capture correlation 안에서 `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`, `laneOwner`, `fallbackReason`, `routeStage`, `warmState`, parity diff 결과를 함께 읽을 수 있어야 한다. 이 패키지는 `session.json`, `timing-events.log`, published `bundle.json`, `catalog-state.json`, route policy snapshot, booth/operator 화면 근거를 빠뜨리면 안 된다.
++2. ETW/WPR/WPA/PIX 또는 동등 계측 체계는 runbook과 실행 스크립트 수준에서 고정되어야 한다. 어떤 trace를 켜는지, 어떤 correlation id로 묶는지, 어떤 산출물을 evidence package에 넣는지, 어떤 저장 경로를 쓰는지가 재실행 가능하게 문서화되어야 한다.
++3. parity diff는 resident GPU lane 결과를 darktable baseline/fallback oracle against 기준으로 비교해야 하며, same-capture / same-session / same-preset-version 전제가 깨진 비교는 승격 근거가 되면 안 된다. 허용 임계치, diff 이미지 또는 수치 출력, fallback 발생 시 판정 규칙이 함께 남아야 한다.
++4. hardware ledger와 release baseline은 속도만이 아니라 parity와 fallback 안정성까지 함께 판정해야 한다. `Go / No-Go` 행은 최소한 latency, parity, fallback ratio, route policy state, rollback evidence, blocker, owner, evidence path를 함께 읽을 수 있어야 하며, automated proof만으로 `Go`를 주장하면 안 된다.
++5. 이번 스토리는 resident GPU lane의 최종 promotion을 닫지 않는다. Story 1.13의 guarded cutover ownership, active-session truth 불변, one-action rollback 요구사항을 유지한 채, 다음 hardware rerun이 실질적인 `Go / No-Go`를 판단할 수 있을 정도로 측정/판정 체계를 준비하는 범위까지만 닫아야 한다.
++
++## Tasks / Subtasks
++
++- [x] seam evidence와 승격 판정 입력을 단일 계약으로 고정한다. (AC: 1, 3, 4)
++  - [x] `src-tauri/src/render/dedicated_renderer.rs`의 기존 `capture_preview_transition_summary`와 warm-state evidence를 재사용하고, story 문서/계약 문서에서 canonical field set으로 명시한다.
++  - [x] `docs/contracts/local-dedicated-renderer.md`, `docs/contracts/render-worker.md`, `docs/contracts/session-manifest.md` 또는 동등 계약 문서에 evidence package 필수 항목, parity 비교 입력, route policy snapshot 요구사항을 추가한다.
++  - [x] same-capture / same-session / same-preset-version이 아닌 비교를 parity 근거에서 제외한다는 규칙을 명시한다.
++
++- [x] ETW/WPR/WPA/PIX 기반 수집 경로와 자동화 스크립트를 만든다. (AC: 1, 2, 5)
++  - [x] `scripts/` 아래에 Windows용 capture start/stop, trace export, evidence bundle assemble 스크립트를 추가하거나 동등 경로를 만든다.
++  - [x] host/renderer에 ETW provider 또는 동등 저오버헤드 trace entry를 추가해 `sessionId`, `requestId`, `captureId`, route stage, lane owner, fallback reason을 WPR/WPA에서 상관분석 가능하게 만든다.
++  - [x] PIX timing capture, 필요한 경우 `pixtool.exe` 기반 CSV/PNG export, PDB 준비, 저장 디렉터리 정책을 runbook과 스크립트에서 맞춘다.
++
++- [x] parity diff 산출물과 판정 규칙을 제품 기준으로 정리한다. (AC: 1, 3, 4)
++  - [x] resident preview 결과와 darktable baseline/fallback 결과를 같은 capture 단위로 수집해 diff image, numeric score, threshold, pass/fail reason을 남기는 경로를 정한다.
++  - [x] fallback이 발생했을 때 diff를 어떻게 기록하고 `No-Go` 또는 conditional evidence로 처리할지 규칙을 문서화한다.
++  - [x] false-positive를 줄이기 위해 비교 대상 crop/resize/color-space 규칙을 명시하고, 비교 전처리가 고객 truth를 바꾸지 않는다는 전제를 잠근다.
++
++- [x] runbook, ledger, release governance를 Story 1.13 close owner 기준으로 정렬한다. (AC: 2, 4, 5)
++  - [x] `docs/runbooks/booth-hardware-validation-checklist.md`에 Story 1.19 측정 절차, evidence package 구조, parity/fallback 판정 항목을 추가한다.
++  - [x] `docs/release-baseline.md`와 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`가 latency-only gate가 아니라 parity + fallback + rollback evidence gate를 함께 읽도록 정리한다.
++  - [x] Story 1.13 문서와 충돌 없이 “1.19는 gate establishment, 1.13은 canonical close owner”라는 역할 분리를 유지한다.
++
++- [x] 회귀/거버넌스 검증을 추가한다. (AC: 1, 2, 3, 4, 5)
++  - [x] `src/governance/hardware-validation-governance.test.ts` 또는 동등 검증에 Story 1.19 관련 문서/ledger/runbook 정합성 체크를 추가한다.
++  - [x] `src/shared-contracts/contracts.test.ts`, `src-tauri/tests/dedicated_renderer.rs` 또는 동등 테스트에서 evidence field, warm-state, parity 입력 drift를 막는다.
++  - [x] scripts dry-run 또는 fixture 기반 검증으로 evidence bundle naming/path drift를 막는다.
++
++## Dev Notes
++
++### 스토리 목적과 범위
++
++- 이번 스토리의 본질은 `측정 가능한 승격 게이트`를 제품 기준으로 잠그는 것이다.
++- 렌더러 자체를 더 빠르게 만드는 일은 부수효과일 수 있지만, 주 목표는 아니다.
++- Story 1.13이 여전히 canonical release close owner이고, 이번 스토리는 그 판단이 더 이상 사람 기억이나 ad-hoc 해석에 기대지 않게 만드는 역할이다.
++
++### 이미 있는 기반
++
++- `src-tauri/src/render/dedicated_renderer.rs`는 이미 `capture_preview_transition_summary`에 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`, `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 남긴다.
++- `src/shared-contracts/schemas/operator-diagnostics.ts`는 operator-safe warm-state projection을 이미 제공한다.
++- `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`, `docs/runbooks/booth-hardware-validation-checklist.md`, `docs/release-baseline.md`, `src/governance/hardware-validation-governance.test.ts`는 release gate 문서/테스트의 현재 기준선이다.
++- 현재 `scripts/`에는 dedicated renderer packaging과 Windows signing 준비만 있고, WPR/PIX/parity bundle 자동화는 아직 없다.
++
++### 이전 스토리 인텔리전스
++
++- Story 1.17은 canonical preset recipe를 먼저 잠갔다. parity diff는 이 internal truth를 소비한 결과를 비교해야지, XMP나 임시 산출물만을 유일 진실처럼 취급하면 안 된다. [Source: _bmad-output/implementation-artifacts/1-17-canonical-preset-recipe와-xmp-adapter-기준-동결.md]
++- Story 1.18은 warm-state prototype과 seam evidence를 준비했고, Story 1.19가 읽을 필드를 이미 `capture_preview_transition_summary`에 남기도록 고정했다. 새 telemetry family를 따로 발명하기보다 이 evidence family를 canonical 입력으로 재사용하는 편이 안전하다. [Source: _bmad-output/implementation-artifacts/1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입.md]
++- Story 1.13은 guarded cutover, rollback proof, route-policy ownership, canonical `Go / No-Go`를 소유한다. 1.19는 여기서 승격 claim을 가져오지 말고, 1.13이 rerun에서 판정할 수 있도록 준비만 해야 한다. [Source: _bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md]
++
++### 최근 구현 패턴과 git 인텔리전스
++
++- 최근 커밋은 preset-applied rendering checkpoint, local renderer contract, session seam logging을 순차적으로 강화했다.
++- 즉 현재 저장소는 “기능을 새로 만드는 단계”보다 “이미 생긴 seam과 계약을 release-grade gate로 묶는 단계”에 더 가깝다.
++- 1.19에서도 파일 경로, DTO 이름, diagnostics field 이름을 불필요하게 다시 바꾸기보다 existing field를 gate semantics로 재사용하는 쪽이 drift를 줄인다. [Source: git log -5 --oneline]
++
++### 아키텍처/제품 가드레일
++
++- host-owned `branch-config/preview-renderer-policy.json`만 승격/rollback 경계를 제어해야 한다. dev-only 토글, React direct call, sidecar 단독 실행은 release substitute가 될 수 없다.
++- darktable는 계속 baseline / fallback / parity oracle이다. resident GPU lane의 promotion 판단도 darktable against 비교로 읽어야 한다.
++- active session truth는 forced update 없이 유지되어야 한다. runbook/ledger는 기존 세션 route snapshot과 preset binding이 나중 정책 변경으로 재해석되지 않는다는 규칙을 유지해야 한다.
++- customer-facing UI에는 ETW, WPR, WPA, PIX, GPU, sidecar, fallback ratio 같은 내부 용어를 노출하면 안 된다.
++
++### 구현 가드레일
++
++- ETW provider나 trace event를 추가하더라도 기존 `timing-events.log` evidence family를 버리면 안 된다. WPR/WPA/PIX는 추가 상관분석 계층이지, 현재 canonical booth diagnostics를 대체하는 단일 진실이 아니다.
++- parity diff는 동일 capture와 동일 preset binding 비교만 허용해야 한다. 다른 세션이나 다른 publishedVersion을 비교해 좋은 수치가 나와도 승격 근거가 될 수 없다.
++- PIX 관련 수집은 필요한 범위의 display lane 측정에 집중하고, export/final lane 전체를 한 번에 끌어들이지 말 것. 이번 스토리의 범위는 여전히 `display + preset apply` 승격 게이트다.
++- evidence bundle naming/path는 운영자가 재실행 가능한 수준으로 단순해야 한다. 회차별 폴더, session id, preset/version, route stage, executedAt가 함께 남는 구조가 바람직하다.
++
++### 프로젝트 구조 요구사항
++
++- 우선 수정 후보 경로:
++  - `src-tauri/src/render/dedicated_renderer.rs`
++  - `src-tauri/src/diagnostics/mod.rs`
++  - `src/shared-contracts/schemas/dedicated-renderer.ts`
++  - `src/shared-contracts/schemas/operator-diagnostics.ts`
++  - `src/governance/hardware-validation-governance.test.ts`
++  - `docs/contracts/local-dedicated-renderer.md`
++  - `docs/contracts/render-worker.md`
++  - `docs/contracts/session-manifest.md`
++  - `docs/runbooks/booth-hardware-validation-checklist.md`
++  - `docs/release-baseline.md`
++  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
++  - `_bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md`
++- 새로 추가될 가능성이 큰 경로:
++  - `scripts/hardware/*.ps1`
++  - `scripts/hardware/*.json`
++  - `docs/runbooks/preview-promotion-evidence-*.md`
++  - `fixtures/hardware-validation/**` 또는 동등 fixture 경로
++
++### 테스트 요구사항
++
++- 최소 필수 자동 검증:
++  - governance test가 Story 1.19 문서, runbook, ledger, release baseline의 gate semantics를 함께 잠근다.
++  - dedicated renderer evidence formatting이 기존 seam 필드를 유지한다.
++  - parity diff 입력/출력 contract가 drift하지 않는다.
++  - evidence bundle path/naming 규칙이 scripts나 fixture 검증에서 재현 가능하다.
++- 권장 추가 검증:
++  - WPR/PIX capture dry-run이 실패했을 때도 booth product path를 깨지 않는지 확인
++  - hardware ledger row template이 latency, parity, fallback ratio, rollback evidence를 모두 담는지 확인
++
++### 최신 기술 / 제품 컨텍스트
++
++- Microsoft ETW 공식 문서는 ETW를 Windows에 내장된 high-speed tracing facility로 설명하며, tracing session을 reboot이나 app restart 없이 동적으로 제어할 수 있다고 말한다. Boothy에서는 현장 장비에서 낮은 오버헤드로 렌더/전환/rollback seam을 수집해야 하므로 이 특성이 직접적으로 맞다. [Source: https://learn.microsoft.com/en-us/windows-hardware/test/weg/instrumenting-your-code-with-etw]
++- 같은 문서는 WPR을 권장 controller, WPA를 권장 consumer로 설명한다. 따라서 Story 1.19는 ad-hoc 로그 복사보다 `WPR capture -> WPA analysis`를 runbook에 고정하는 편이 맞다. [Source: https://learn.microsoft.com/en-us/windows-hardware/test/weg/instrumenting-your-code-with-etw]
++- Microsoft PIX timing capture 문서는 CPU/GPU 작업 시점, file I/O, memory allocation, counters를 한 캡처 안에서 함께 보고 상관관계를 분석할 수 있다고 설명한다. 이는 `first-visible -> preset-applied visible` seam, fallback 전환, GPU queue 관찰을 같은 회차에서 읽어야 하는 Boothy 목적과 맞는다. [Source: https://devblogs.microsoft.com/pix/timing-captures-new/]
++- `pixtool.exe` 문서는 GPU capture에서 event list를 CSV로 저장하거나 screenshot/resource를 PNG로 저장할 수 있다고 설명한다. 이는 Story 1.19의 parity diff package를 반자동으로 만드는 보조 경로가 될 수 있다. 이 문장은 공식 PIX 도구 설명을 현재 repo의 parity package 요구사항에 적용한 해석이다. [Source: https://devblogs.microsoft.com/pix/pixtool/]
++
++### References
++
++- [Source: _bmad-output/planning-artifacts/epics.md#Story 1.19: ETW/WPR/WPA/PIX + parity diff 기반 승격 게이트 정착]
++- [Source: _bmad-output/planning-artifacts/architecture.md]
++- [Source: _bmad-output/planning-artifacts/prd.md]
++- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260412-044022.md]
++- [Source: _bmad-output/planning-artifacts/research/technical-boothy-gpu-first-rendering-architecture-validation-research-2026-04-11.md]
++- [Source: _bmad-output/planning-artifacts/ux-design-specification.md]
++- [Source: _bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md]
++- [Source: _bmad-output/implementation-artifacts/1-17-canonical-preset-recipe와-xmp-adapter-기준-동결.md]
++- [Source: _bmad-output/implementation-artifacts/1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입.md]
++- [Source: _bmad-output/implementation-artifacts/hardware-validation-ledger.md]
++- [Source: docs/runbooks/booth-hardware-validation-checklist.md]
++- [Source: docs/runbooks/booth-hardware-validation-architecture-research.md]
++- [Source: docs/release-baseline.md]
++- [Source: src-tauri/src/render/dedicated_renderer.rs]
++- [Source: src/shared-contracts/schemas/dedicated-renderer.ts]
++- [Source: src/shared-contracts/schemas/operator-diagnostics.ts]
++- [Source: src/governance/hardware-validation-governance.test.ts]
++- [Source: scripts/prepare-dedicated-renderer-sidecar.mjs]
++- [Source: https://learn.microsoft.com/en-us/windows-hardware/test/weg/instrumenting-your-code-with-etw]
++- [Source: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/windows-performance-recorder]
++- [Source: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/windows-performance-analyzer]
++- [Source: https://devblogs.microsoft.com/pix/timing-captures-new/]
++- [Source: https://devblogs.microsoft.com/pix/pixtool/]
++
++## Dev Agent Record
++
++### Agent Model Used
++
++GPT-5 Codex
++
++### Story Creation Notes
++
++- config, sprint-status, epics, PRD, architecture, UX spec, 1.13/1.18 story context, hardware runbook, ledger, governance tests, current seam logging 구현을 교차 분석했다.
++- 이번 스토리는 resident lane 자체의 새 기능보다 `승격 판정 체계`를 잠그는 story로 다시 정렬했다.
++- 별도 `project-context.md`는 발견되지 않았다.
++- 최신 외부 확인은 Microsoft ETW/PIX 공식 문서 기준으로만 보강했다.
++
++### Debug Log References
++
++- `Get-Content -Raw _bmad/bmm/config.yaml`
++- `Get-Content -Raw _bmad-output/implementation-artifacts/sprint-status.yaml`
++- `Get-Content -Raw _bmad-output/planning-artifacts/epics.md`
++- `Get-Content -Raw _bmad-output/implementation-artifacts/1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입.md`
++- `rg -n "Story 1\\.19|ETW|WPR|WPA|PIX|parity diff|resident GPU-first" _bmad-output/planning-artifacts`
++- `rg -n "capture_preview_transition_summary|warmState|originalVisibleToPresetAppliedVisibleMs" src-tauri/src/render/dedicated_renderer.rs src/shared-contracts/schemas/*.ts`
++- `Get-Content -Raw docs/runbooks/booth-hardware-validation-checklist.md`
++- `Get-Content -Raw _bmad-output/implementation-artifacts/hardware-validation-ledger.md`
++- `git log -5 --oneline`
++- `pnpm test:run src/shared-contracts/contracts.test.ts src/governance/hardware-validation-governance.test.ts tests/hardware-evidence-scripts.test.ts tests/build-script.test.ts`
++- `$env:CARGO_TARGET_DIR='C:\Code\Project\Boothy_thumbnail-reset-at-2c89c40\target-codex-story119'; cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
++
++### Completion Notes List
++
++- Story 문서를 생성하고 sprint status를 `ready-for-dev`로 올렸다.
++- Story 1.13 release close ownership을 유지한 채, 1.19의 역할을 측정/판정 체계 정착으로 분리했다.
++- `preview-promotion-evidence.jsonl` structured record와 shared contract fixture를 추가해 same-capture 승격 판단 입력이 한 계약으로 다시 읽히게 했다.
++- Windows hardware evidence flow를 `Start/Stop/New-PreviewPromotion*` 스크립트와 전용 runbook으로 고정해 trace plan, evidence bundle naming, parity gate를 재실행 가능하게 만들었다.
++- hardware ledger와 release baseline이 latency-only가 아니라 parity, fallback ratio, route policy state, rollback evidence까지 함께 읽도록 정렬했다.
++- Vitest governance/contract/script dry-run 검증과 Rust dedicated renderer integration 검증을 모두 재통과시켜 evidence drift를 막았다.
++
++### File List
++
++- _bmad-output/implementation-artifacts/hardware-validation-ledger.md
++- _bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착.md
++- _bmad-output/implementation-artifacts/sprint-status.yaml
++- docs/contracts/local-dedicated-renderer.md
++- docs/contracts/render-worker.md
++- docs/contracts/session-manifest.md
++- docs/release-baseline.md
++- docs/runbooks/booth-hardware-validation-checklist.md
++- docs/runbooks/preview-promotion-evidence-package.md
++- scripts/hardware/Start-PreviewPromotionTrace.ps1
++- scripts/hardware/Stop-PreviewPromotionTrace.ps1
++- scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1
++- src/governance/hardware-validation-governance.test.ts
++- src/shared-contracts/contracts.test.ts
++- src/shared-contracts/schemas/dedicated-renderer.ts
++- src/shared-contracts/schemas/hardware-validation.ts
++- src/shared-contracts/schemas/index.ts
++- src-tauri/src/render/dedicated_renderer.rs
++- src-tauri/tests/dedicated_renderer.rs
++- tests/fixtures/contracts/preview-promotion-evidence-record-v1.json
++- tests/hardware-evidence-scripts.test.ts
++
++## Change Log
++
++- 2026-04-13 11:56:00 +09:00 - Story 1.19 implementation complete: structured preview-promotion evidence record 추가, Windows trace/evidence bundle scripts 추가, parity gate/runbook/ledger/release baseline 정렬, governance/contract/script/Rust 검증 재통과, story 상태를 `review`로 전환.
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index 14a3679..5a663ca 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-03-20 09:44:49 +09:00
+-# last_updated: 2026-04-11 11:28:23 +09:00
++# last_updated: 2026-04-13 11:56:00 +09:00
+ # project: Boothy
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -38,7 +38,7 @@
+ # - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
+ 
+ generated: "2026-03-20 09:44:49 +09:00"
+-last_updated: "2026-04-11 12:14:53 +09:00"
++last_updated: "2026-04-13 11:56:00 +09:00"
+ project: "Boothy"
+ project_key: "NOKEY"
+ tracking_system: "file-system"
+@@ -51,6 +51,9 @@ development_status:
+   1-14-공유-계약-동결과-검증-기준-확정: done
+   1-15-canon-helper-profile과-publication-contract-확정: done
+   1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
++  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
++  1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입: done
++  1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착: review
+   1-1-set-up-initial-project-from-starter-template: done
+   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
+   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
+@@ -96,3 +99,4 @@ development_status:
+   epic-6: done
+   6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
+   epic-6-retrospective: optional
++
+diff --git a/docs/contracts/local-dedicated-renderer.md b/docs/contracts/local-dedicated-renderer.md
+index 5483f22..ee13f21 100644
+--- a/docs/contracts/local-dedicated-renderer.md
++++ b/docs/contracts/local-dedicated-renderer.md
+@@ -2,13 +2,7 @@
+ 
+ ## 목적
+ 
+-이 문서는 Boothy의 다음 preview architecture로 승인된 `local dedicated renderer`의 최소 계약을 고정한다.
+-
+-## Ownership
+-
+-- Tauri host가 dedicated renderer lifecycle을 직접 소유한다.
+-- dedicated renderer는 preset-applied truthful close owner다.
+-- first-visible lane은 별도 customer-visible projection일 수 있지만 `previewReady` truth owner가 아니다.
++이 문서는 Boothy의 승인된 preview architecture인 `local dedicated renderer`의 최소 계약을 고정한다.
+ 
+ ## 최소 입력
+ 
+@@ -21,29 +15,25 @@
+ - `xmpTemplatePath`
+ - `previewProfile`
+ 
+-## 최소 동작
++## 해석 규칙
+ 
+-- `warmRenderer`
+-  - preset preload, cache priming, warm-state 확보
+-- `submitPreviewJob`
+-  - capture-bound preset artifact로 same-capture preview close 시도
+-- `previewReady`
+-  - canonical preview path에 실제 preset-applied artifact가 생성된 뒤에만 발생
+-- `queueSaturated`
+-  - host가 truthful fallback을 결정할 수 있게 전달
+-- `fallbackSuggested`
+-  - current booth path로 안전 강등이 필요함을 전달
++- `previewProfile`은 bundle top-level legacy field가 아니라 `canonicalRecipe.previewIntent`에서 유도된다.
++- `xmpTemplatePath`는 `darktableAdapter.xmpTemplatePath`에서 유도된다.
++- dedicated renderer는 same-capture, same-session, capture-bound preset version을 유지해야 한다.
++- dedicated renderer result는 additive warm-state evidence(`warmState`, `warmStateDetailPath`)를 함께 남길 수 있지만, session truth 자체를 직접 소유하면 안 된다.
+ 
+ ## Booth-Safe Rules
+ 
+ - booth는 first-visible image가 먼저 보여도 `previewReady`를 조기 승격하면 안 된다.
+-- dedicated renderer는 same-capture, same-session, capture-bound preset version을 유지해야 한다.
+ - same-path replacement는 기존 canonical preview를 먼저 잃지 않는 방식으로 수행돼야 한다.
+ - queue saturation, warm-state loss, invalid output 시 booth는 `Preview Waiting`과 approved fallback path를 유지해야 한다.
++- operator/diagnostics용 warm-state vocabulary는 `warm-ready`, `warm-hit`, `cold`, `warm-state-lost` 또는 동등한 typed 값으로 제한한다.
+ 
+-## Validation Gate
++## Promotion Evidence Contract
+ 
+-- `original visible -> preset-applied visible <= 2.5s` 목표
+-- wrong-capture `0`
+-- preset mismatch `0`
+-- preview/final truth drift `0`
++- dedicated renderer는 `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`에 capture-bound evidence record를 남긴다.
++- 각 record는 최소 `sessionId`, `requestId`, `captureId`, `presetId`, `publishedVersion`, `laneOwner`, `fallbackReasonCode`, `routeStage`, `warmState`,
++  `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 포함해야 한다.
++- 같은 record에는 `session.json`, `timing-events.log`, `branch-config/preview-renderer-policy.json`, published `bundle.json`,
++  `preset-catalog/catalog-state.json`, candidate preview asset 경로가 함께 남아 evidence bundle assemble 입력으로 바로 재사용될 수 있어야 한다.
++- parity diff는 same-capture / same-session / same-preset-version 비교에만 사용할 수 있다. 이 전제가 깨진 비교는 promotion 근거가 아니다.
+diff --git a/docs/contracts/render-worker.md b/docs/contracts/render-worker.md
+index 27ae140..589b142 100644
+--- a/docs/contracts/render-worker.md
++++ b/docs/contracts/render-worker.md
+@@ -2,70 +2,42 @@
+ 
+ ## 목적
+ 
+-이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때 지켜야 하는 기준선을 고정한다. 현재 승인된 다음 구조는 host-owned `local dedicated renderer`이며, 이 문서는 그 구조의 booth-safe contract를 설명한다.
++이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때
++지켜야 하는 기준선을 고정한다.
+ 
+ ## Runtime 입력 기준
+ 
+-- local dedicated renderer는 live catalog pointer가 아니라 capture record에 저장된
+-  `activePresetId + activePresetVersion`을 사용한다.
+-- host는 dedicated renderer를 임의 executable 경로로 직접 띄우지 않는다.
+-  bundle에 포함된 sidecar 이름 `../sidecar/dedicated-renderer/boothy-dedicated-renderer`와
+-  승인된 `--protocol`, `--request`, `--result` 인수만 사용한다.
+ - runtime bundle loader는 최소 아래 필드를 읽어야 한다.
+   - `presetId`
+   - `publishedVersion`
+-  - `darktableVersion`
+-  - `xmpTemplatePath`
+-  - `previewProfile`
+-  - `finalProfile`
+-- `darktableVersion`은 pinned `5.4.1`과 일치해야 한다.
+-- `xmpTemplatePath`는 bundle root 내부의 실제 파일이어야 한다.
+-- preview lane의 기본 invocation은 booth hardware에서 검증된 known-good contract를 사용해야 한다.
+-- speculative 또는 실험적 invocation flag는 별도 승인 없이는 기본 booth path에 포함되면 안 된다.
++  - `canonicalRecipe.previewIntent`
++  - `canonicalRecipe.finalIntent`
++  - `canonicalRecipe.noisePolicy`
++  - `darktableAdapter.darktableVersion`
++  - `darktableAdapter.xmpTemplatePath`
++- `darktableAdapter.darktableVersion`은 pinned `5.4.1`과 일치해야 한다.
++- `darktableAdapter.xmpTemplatePath`는 bundle root 내부의 실제 파일이어야 한다.
++- runtime truth는 editor 내부 표현 하나가 아니라 capture-bound bundle에 고정된다.
+ 
+ ## Preview 규칙
+ 
+-- first-visible preview 경로는 booth UX 보호를 위해 별도 lane으로 존재할 수 있지만, preset-applied truthful close의 owner는 host-owned local dedicated renderer다.
+-- preset 선택 또는 세션 시작 시 dedicated renderer warm-up, preset preload, cache priming을 허용할 수 있지만 capture truth를 막으면 안 된다.
+-- dedicated renderer가 queue saturation, warm-state loss, restart, invalid output에 부딪히면 booth는 false-ready 없이 기존 truthful `Preview Waiting`과 approved fallback path로 내려가야 한다.
+-- preview result의 `schemaVersion`, typed `status`, `sessionId`, `requestId`, `captureId`,
+-  `diagnosticsDetailPath`, canonical preview output path 검증이 실패하면 host는 이를
+-  `protocol-mismatch` 또는 `invalid-output`으로 기록하고 inline truthful fallback을 유지한다.
+-- preview render는 `renders/previews/{captureId}.jpg`를 실제로 만든 뒤에만 `previewReady`를 기록한다.
+-- 같은 capture의 pending first-visible image가 이미 canonical preview path에 있어도, dedicated renderer는 그 경로를 same-path preset-applied output으로 직접 교체할 수 있어야 한다.
+-- first-visible image가 먼저 보였더라도 dedicated renderer만이 truthful `previewReady`와 `preview.readyAtMs`를 올릴 수 있다.
+-- dedicated renderer가 같은 capture의 preset-applied preview file을 성공적으로 만들었다면, 그 시점이 곧 truthful `previewReady` close다.
+-- same-path 교체가 실패하더라도 runtime은 기존 canonical preview를 먼저 잃어버리는 방식으로 downgrade하면 안 된다.
++- first-visible preview 경로는 별도 lane으로 존재할 수 있지만, truthful close owner는 host-owned renderer다.
++- `previewReady`는 canonical recipe intent와 darktable adapter를 사용해 같은 capture의 preset-applied preview file을 실제로 만든 뒤에만 기록한다.
++- first-visible image가 먼저 보여도 booth는 `Preview Waiting`을 유지해야 한다.
+ - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
+-- booth는 dedicated renderer가 실제 preset-applied preview를 만들기 전까지 `Preview Waiting`을 유지해야 한다.
++- resident prototype evidence는 `capture_preview_transition_summary` 계열 진단에서 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`,
++  `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 Story 1.19 seam으로 이어져야 한다.
+ 
+ ## Final 규칙
+ 
+-- final render는 `renders/finals/{captureId}.jpg`를 실제로 만든 뒤에만 `finalReady`를 기록한다.
++- `finalReady`도 canonical recipe final intent와 darktable adapter XMP를 사용한 성공 산출물 뒤에만 기록한다.
+ - post-end `Completed`는 `finalReady`가 없는 상태에서 올라가면 안 된다.
+-- post-end에서 preview만 준비된 상태는 `export-waiting`으로 유지한다.
+ 
+ ## Drift 보호
+ 
+-- capture 이후 publish/rollback 또는 active preset 변경이 있어도,
+-  이미 저장된 capture render는 capture record에 저장된 version으로만 다시 계산한다.
++- capture 이후 publish/rollback 또는 active preset 변경이 있어도, 이미 저장된 capture render는 capture record에 저장된 version으로만 다시 계산한다.
+ - runtime은 capture-bound bundle을 찾지 못하면 조용히 최신 live version으로 대체하면 안 된다.
+-
+-## 진단과 실패
+-
+-- render failure는 customer surface에 darktable/XMP/filesystem 경로를 노출하지 않는다.
+-- diagnostics에는 safe event만 남긴다.
+-  - `preview-render-start`
+-  - `preview-render-ready`
+-  - `preview-render-failed`
+-  - `preview-render-queue-saturated`
+-  - `fast-preview-visible` 또는 동등 first-visible event
+-  - `capture_preview_ready`
+-  - `recent-session-visible`
+-  - `final-render-start`
+-  - `final-render-ready`
+-  - `final-render-failed`
+-  - `final-render-queue-saturated`
+-- warm-up 결과는 최소 `fallback-suggested`, `warmed-up`, `restarted`, `protocol-mismatch`
+-  typed 상태로 남겨 host integration과 seam review에서 구분 가능해야 한다.
+-- preview/final failure는 저장된 RAW와 기존 session asset을 보존한 채 bounded failure truth로 기록한다.
++- promotion evidence bundle은 `preview-promotion-evidence.jsonl` record, `session.json`, `timing-events.log`, route policy snapshot, published `bundle.json`,
++  `catalog-state.json`을 같이 읽을 수 있어야 한다.
++- parity diff gate는 darktable baseline/fallback oracle against 비교만 허용하며, same-capture / same-session / same-preset-version 전제가 깨진 비교는
++  `Go` 근거가 될 수 없다.
+diff --git a/docs/contracts/session-manifest.md b/docs/contracts/session-manifest.md
+index 940bbc3..9b910ca 100644
+--- a/docs/contracts/session-manifest.md
++++ b/docs/contracts/session-manifest.md
+@@ -64,6 +64,18 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+   },
+   "activePresetId": "preset_soft-glow",
+   "activePresetDisplayName": "Soft Glow",
++  "activePreviewRendererRoute": {
++    "route": "local-renderer-sidecar",
++    "routeStage": "canary",
++    "fallbackReasonCode": null
++  },
++  "activePreviewRendererWarmState": {
++    "presetId": "preset_soft-glow",
++    "publishedVersion": "2026.04.10",
++    "state": "warm-ready",
++    "observedAt": "2026-04-10T01:00:12Z",
++    "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
++  },
+   "timing": {
+     "schemaVersion": "session-timing/v1",
+     "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+@@ -95,6 +107,9 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+ - `activePreset`: canonical preset binding
+ - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
+ - `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
++- `activePreviewRendererRoute`: active session이 선택한 preview route snapshot. 이후 policy rollback이 생겨도 이미 선택된 세션 의미를 재해석하면 안 된다.
++- `activePreviewRendererWarmState`: active session 기준 warm-state evidence snapshot. route snapshot과 별개 additive evidence이며, `presetId +
++  publishedVersion + state + observedAt`를 최소 단위로 유지한다.
+ - `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.
+ - `captures[*]`는 `session-capture/v1`을 따른다.
+ - `captures[*].sessionId`, `requestId`, `captureId`: capture correlation baseline
+@@ -112,7 +127,9 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+   preview path 검증을 통과하기 전에는 `previewReady`나 `xmpPreviewReadyAtMs`를 올리면 안 된다.
+ - dedicated renderer result가 `accepted + canonical output`까지 검증되면 host는 같은 canonical
+   preview path를 truthful close owner로 채택할 수 있고, `capture_preview_transition_summary`
+-  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason을 함께 남긴다.
++  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason, warm state를 함께 남긴다.
++- Story 1.19 evidence bundle은 manifest capture record만 단독으로 읽지 않는다. 같은 capture correlation의
++  `preview-promotion-evidence.jsonl`, `timing-events.log`, route policy snapshot, published bundle, catalog state를 함께 읽어야 한다.
+ - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 현재 세션 root 아래 절대경로만 허용
+ - `postEnd`는 아래 셋 중 하나 또는 `null`
+   - `export-waiting`: `{ state, evaluatedAt }`
+@@ -143,3 +160,4 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+ - React는 host DTO만 소비하고 durable truth를 직접 만들지 않는다.
+ - fixture 및 테스트는 `tests/fixtures/contracts/session-manifest-v1.json`을 기준 예시로 사용한다.
+ - post-end `completed`는 `finalReady` 근거 없이 먼저 올라가면 안 된다.
++- parity gate에서 허용되는 비교는 same-capture / same-session / same-preset-version 조합뿐이다.
+diff --git a/docs/release-baseline.md b/docs/release-baseline.md
+index 8909349..79b22fc 100644
+--- a/docs/release-baseline.md
++++ b/docs/release-baseline.md
+@@ -93,6 +93,7 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
+ - CI proof artifacts remain evidence only; `Promotion state` stays non-release until the hardware ledger clears the gated stories for close.
+ - Preview architecture promotion evidence must include the host-owned `branch-config/preview-renderer-policy.json` state together with the booth session package so shadow, canary, default, and rollback boundaries stay auditable.
+ - Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
++- Preview promotion sign-off also reads latency, parity, fallback ratio, route policy state, and rollback evidence together; speed alone cannot produce `Go`.
+ 
+ ## Current State
+ 
+diff --git a/docs/runbooks/booth-hardware-validation-checklist.md b/docs/runbooks/booth-hardware-validation-checklist.md
+index 229cb5b..3d6eb64 100644
+--- a/docs/runbooks/booth-hardware-validation-checklist.md
++++ b/docs/runbooks/booth-hardware-validation-checklist.md
+@@ -25,6 +25,7 @@ supporting regression / follow-up scope:
+ 
+ - Story 1.7: `HV-04` / `HV-05` capture correlation evidence를 Story 1.5 close review에 공급하는 supporting story
+ - Story 1.11 / 1.12: preview architecture supporting evidence를 공급하지만 canonical release close owner는 아니다.
++- Story 1.19: ETW/WPR/WPA/PIX + parity diff gate를 위한 evidence package와 rerun 판단 기준을 고정하는 supporting governance story
+ - Story 2.3: `HV-06` 후속 validation note와 preset switch regression 확인 범위
+ - canonical close record는 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`가 소유한다.
+ 
+@@ -68,6 +69,7 @@ supporting regression / follow-up scope:
+ - preview 파일이 없는데 `previewReady`로 보이거나, post-end truth 없이 `Completed`가 보임
+ - 고객 화면에 darktable, XMP, helper, library, OpenCL, SDK 용어가 노출됨
+ - 증거 패키지에서 `session.json`, `bundle.json`, `timing-events.log`, 화면 캡처 중 핵심 항목이 누락됨
++- Story 1.19 evidence package에서 `preview-promotion-evidence.jsonl`, route policy snapshot, parity oracle result, rollback evidence가 빠짐
+ 
+ ## 운영 고정값
+ 
+@@ -254,6 +256,17 @@ operator 화면에서 함께 볼 항목:
+ - pass / fail 판정
+ - 실패 시 관찰 메모
+ 
++### Story 1.19 Evidence Package
++
++- Story 1.19 rerun은 `docs/runbooks/preview-promotion-evidence-package.md`를 기준으로 준비한다.
++- trace planning/start는 `scripts/hardware/Start-PreviewPromotionTrace.ps1`를 사용한다.
++- trace stop/export planning은 `scripts/hardware/Stop-PreviewPromotionTrace.ps1`를 사용한다.
++- booth package assemble은 `scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1`를 사용한다.
++- evidence package는 최소 `session.json`, `timing-events.log`, `preview-promotion-evidence.jsonl`, route policy snapshot, published `bundle.json`,
++  `catalog-state.json`, booth/operator visual evidence를 같이 보관해야 한다.
++- parity diff는 same-capture / same-session / same-preset-version 비교만 허용한다.
++- fallback-only evidence, rollback evidence 누락, parity threshold fail은 모두 `No-Go`다.
++
+ ## 시나리오
+ 
+ ### HV-01 게시 프리셋 준비 확인
+diff --git a/docs/runbooks/preview-promotion-evidence-package.md b/docs/runbooks/preview-promotion-evidence-package.md
+new file mode 100644
+index 0000000..254e567
+--- /dev/null
++++ b/docs/runbooks/preview-promotion-evidence-package.md
+@@ -0,0 +1,46 @@
++# Preview Promotion Evidence Package
++
++## Purpose
++
++This runbook freezes the evidence package Boothy uses before arguing for preview-renderer promotion.
++
++## Canonical Inputs
++
++- `session.json`
++- `diagnostics/timing-events.log`
++- `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
++- `branch-config/preview-renderer-policy.json`
++- published `bundle.json`
++- `preset-catalog/catalog-state.json`
++- booth/operator visual evidence for the same capture correlation
++- optional WPR/WPA/PIX exports for the same run
++
++## Rules
++
++- Promotion evidence is valid only when the compared artifacts are same-capture, same-session, and same-preset-version.
++- `preview-promotion-evidence.jsonl` is the canonical machine-readable summary for lane owner, fallback reason, route stage, warm state, and preview timing deltas.
++- Automated pass alone is never `Go`.
++- Any fallback-heavy run, parity drift above threshold, missing route policy snapshot, or missing rollback evidence remains `No-Go`.
++
++## Scripts
++
++- Start trace planning: `scripts/hardware/Start-PreviewPromotionTrace.ps1`
++- Stop trace/export planning: `scripts/hardware/Stop-PreviewPromotionTrace.ps1`
++- Assemble booth evidence bundle: `scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1`
++
++## Recommended Flow
++
++1. Start the trace plan before the booth run.
++2. Capture the booth session and preserve the same-capture booth/operator visuals.
++3. Stop trace collection and export the approved analysis views.
++4. Assemble the evidence bundle with the session id, capture id, preset id, and published version.
++5. Compare the resident lane output against the darktable baseline oracle and optional fallback oracle.
++6. Record the final `Go / No-Go` decision in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
++
++## Parity Gate
++
++- Default numeric threshold: mean absolute channel delta `<= 6`
++- A baseline pass is `pass`.
++- A fallback-only pass is `conditional` evidence and does not close promotion by itself.
++- Missing oracle input is `not-run`.
++- Any measured fail is `No-Go` until rerun evidence is captured.
+diff --git a/scripts/hardware/Start-PreviewPromotionTrace.ps1 b/scripts/hardware/Start-PreviewPromotionTrace.ps1
+new file mode 100644
+index 0000000..d7a26ca
+--- /dev/null
++++ b/scripts/hardware/Start-PreviewPromotionTrace.ps1
+@@ -0,0 +1,112 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$SessionId,
++    [Parameter(Mandatory = $true)]
++    [string]$PresetId,
++    [Parameter(Mandatory = $true)]
++    [string]$PublishedVersion,
++    [string]$CaptureId = 'capture-pending',
++    [string]$RepoRoot,
++    [string]$TraceRoot,
++    [switch]$DryRun,
++    [switch]$Execute,
++    [switch]$EmitJson
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Resolve-RepoRoot {
++    param([string]$ConfiguredRoot)
++
++    if ($ConfiguredRoot) {
++        return (Resolve-Path -LiteralPath $ConfiguredRoot).Path
++    }
++
++    return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
++}
++
++function Get-ToolPath {
++    param([string]$CommandName)
++
++    $command = Get-Command -Name $CommandName -ErrorAction SilentlyContinue
++    if ($null -eq $command) {
++        return $null
++    }
++
++    return $command.Source
++}
++
++$resolvedRepoRoot = Resolve-RepoRoot -ConfiguredRoot $RepoRoot
++$generatedAt = (Get-Date).ToString('o')
++$timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
++
++if (-not $TraceRoot) {
++    $TraceRoot = Join-Path $resolvedRepoRoot (
++        'artifacts\hardware-validation\{0}\{1}\{2}\{3}\trace-{4}' -f
++        $SessionId,
++        $PresetId,
++        $PublishedVersion,
++        $CaptureId,
++        $timestamp
++    )
++}
++
++$wprTracePath = Join-Path $TraceRoot 'preview-promotion.etl'
++$tracePlanPath = Join-Path $TraceRoot 'preview-promotion-trace-plan.json'
++$wpaTableExportPath = Join-Path $TraceRoot 'preview-promotion-wpa-table.csv'
++$pixTimingCapturePath = Join-Path $TraceRoot 'preview-promotion-timing.wpix'
++$pixEventCsvPath = Join-Path $TraceRoot 'preview-promotion-pix-events.csv'
++$pixScreenshotPath = Join-Path $TraceRoot 'preview-promotion-pix-screenshot.png'
++$wprPath = Get-ToolPath -CommandName 'wpr.exe'
++$wpaPath = Get-ToolPath -CommandName 'wpa.exe'
++$pixPath = Get-ToolPath -CommandName 'pix.exe'
++$pixtoolPath = Get-ToolPath -CommandName 'pixtool.exe'
++
++$plan = [ordered]@{
++    schemaVersion = 'preview-promotion-trace-plan/v1'
++    mode = if ($Execute -and -not $DryRun) { 'executed' } elseif ($DryRun) { 'dry-run' } else { 'planned' }
++    generatedAt = $generatedAt
++    sessionId = $SessionId
++    presetId = $PresetId
++    publishedVersion = $PublishedVersion
++    captureId = $CaptureId
++    traceRoot = $TraceRoot
++    tools = [ordered]@{
++        wpr = $wprPath
++        wpa = $wpaPath
++        pix = $pixPath
++        pixtool = $pixtoolPath
++    }
++    traces = [ordered]@{
++        tracePlanPath = $tracePlanPath
++        wprTracePath = $wprTracePath
++        wpaTableExportPath = $wpaTableExportPath
++        pixTimingCapturePath = $pixTimingCapturePath
++        pixEventCsvPath = $pixEventCsvPath
++        pixScreenshotPath = $pixScreenshotPath
++    }
++    commands = [ordered]@{
++        startWpr = if ($wprPath) { ('"{0}" -start GeneralProfile -filemode' -f $wprPath) } else { $null }
++        stopWpr = if ($wprPath) { ('"{0}" -stop "{1}"' -f $wprPath, $wprTracePath) } else { $null }
++        wpaExportHint = if ($wpaPath) { ('Open "{0}" in WPA and export the target table view to "{1}".' -f $wprTracePath, $wpaTableExportPath) } else { $null }
++        pixCaptureHint = if ($pixPath) { ('Start a PIX timing capture for Boothy and save it to "{0}".' -f $pixTimingCapturePath) } else { $null }
++        pixExportHint = if ($pixtoolPath) { ('Use "{0}" to export CSV/PNG artifacts into "{1}".' -f $pixtoolPath, $TraceRoot) } else { $null }
++    }
++}
++
++if ($Execute -and -not $DryRun) {
++    New-Item -ItemType Directory -Force -Path $TraceRoot | Out-Null
++    if ($wprPath) {
++        & $wprPath -start GeneralProfile -filemode | Out-Null
++    }
++    $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tracePlanPath -Encoding utf8
++}
++
++if ($EmitJson) {
++    $plan | ConvertTo-Json -Depth 8
++    return
++}
++
++Write-Host ('Preview promotion trace plan ready: {0}' -f $TraceRoot)
+diff --git a/scripts/hardware/Stop-PreviewPromotionTrace.ps1 b/scripts/hardware/Stop-PreviewPromotionTrace.ps1
+new file mode 100644
+index 0000000..90afbf9
+--- /dev/null
++++ b/scripts/hardware/Stop-PreviewPromotionTrace.ps1
+@@ -0,0 +1,105 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$SessionId,
++    [Parameter(Mandatory = $true)]
++    [string]$PresetId,
++    [Parameter(Mandatory = $true)]
++    [string]$PublishedVersion,
++    [string]$CaptureId = 'capture-pending',
++    [string]$RepoRoot,
++    [string]$TraceRoot,
++    [switch]$DryRun,
++    [switch]$Execute,
++    [switch]$EmitJson
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Resolve-RepoRoot {
++    param([string]$ConfiguredRoot)
++
++    if ($ConfiguredRoot) {
++        return (Resolve-Path -LiteralPath $ConfiguredRoot).Path
++    }
++
++    return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
++}
++
++function Get-ToolPath {
++    param([string]$CommandName)
++
++    $command = Get-Command -Name $CommandName -ErrorAction SilentlyContinue
++    if ($null -eq $command) {
++        return $null
++    }
++
++    return $command.Source
++}
++
++$resolvedRepoRoot = Resolve-RepoRoot -ConfiguredRoot $RepoRoot
++$generatedAt = (Get-Date).ToString('o')
++$timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
++
++if (-not $TraceRoot) {
++    $TraceRoot = Join-Path $resolvedRepoRoot (
++        'artifacts\hardware-validation\{0}\{1}\{2}\{3}\trace-{4}' -f
++        $SessionId,
++        $PresetId,
++        $PublishedVersion,
++        $CaptureId,
++        $timestamp
++    )
++}
++
++$wprTracePath = Join-Path $TraceRoot 'preview-promotion.etl'
++$traceSummaryPath = Join-Path $TraceRoot 'preview-promotion-trace-summary.json'
++$wpaTableExportPath = Join-Path $TraceRoot 'preview-promotion-wpa-table.csv'
++$pixTimingCapturePath = Join-Path $TraceRoot 'preview-promotion-timing.wpix'
++$pixEventCsvPath = Join-Path $TraceRoot 'preview-promotion-pix-events.csv'
++$pixScreenshotPath = Join-Path $TraceRoot 'preview-promotion-pix-screenshot.png'
++$wprPath = Get-ToolPath -CommandName 'wpr.exe'
++$wpaPath = Get-ToolPath -CommandName 'wpa.exe'
++$pixPath = Get-ToolPath -CommandName 'pix.exe'
++$pixtoolPath = Get-ToolPath -CommandName 'pixtool.exe'
++
++$summary = [ordered]@{
++    schemaVersion = 'preview-promotion-trace-summary/v1'
++    mode = if ($Execute -and -not $DryRun) { 'executed' } elseif ($DryRun) { 'dry-run' } else { 'planned' }
++    generatedAt = $generatedAt
++    sessionId = $SessionId
++    presetId = $PresetId
++    publishedVersion = $PublishedVersion
++    captureId = $CaptureId
++    traceRoot = $TraceRoot
++    traces = [ordered]@{
++        summaryPath = $traceSummaryPath
++        wprTracePath = $wprTracePath
++        wpaTableExportPath = $wpaTableExportPath
++        pixTimingCapturePath = $pixTimingCapturePath
++        pixEventCsvPath = $pixEventCsvPath
++        pixScreenshotPath = $pixScreenshotPath
++    }
++    commands = [ordered]@{
++        stopWpr = if ($wprPath) { ('"{0}" -stop "{1}"' -f $wprPath, $wprTracePath) } else { $null }
++        wpaExportHint = if ($wpaPath) { ('Open "{0}" in WPA and export the approved analysis table to "{1}".' -f $wprTracePath, $wpaTableExportPath) } else { $null }
++        pixReviewHint = if ($pixPath) { ('Review the saved PIX timing capture at "{0}" and keep the correlated export beside it.' -f $pixTimingCapturePath) } else { $null }
++        pixtoolExportHint = if ($pixtoolPath) { ('Use "{0}" to export PIX CSV/PNG evidence into "{1}".' -f $pixtoolPath, $TraceRoot) } else { $null }
++    }
++}
++
++if ($Execute -and -not $DryRun) {
++    New-Item -ItemType Directory -Force -Path $TraceRoot | Out-Null
++    if ($wprPath) {
++        & $wprPath -stop $wprTracePath | Out-Null
++    }
++    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $traceSummaryPath -Encoding utf8
++}
++
++if ($EmitJson) {
++    $summary | ConvertTo-Json -Depth 8
++    return
++}
++
++Write-Host ('Preview promotion trace stop plan ready: {0}' -f $TraceRoot)
+diff --git a/scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1 b/scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1
+new file mode 100644
+index 0000000..7f9965a
+--- /dev/null
++++ b/scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1
+@@ -0,0 +1,321 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$SessionId,
++    [Parameter(Mandatory = $true)]
++    [string]$CaptureId,
++    [Parameter(Mandatory = $true)]
++    [string]$PresetId,
++    [Parameter(Mandatory = $true)]
++    [string]$PublishedVersion,
++    [string]$RepoRoot,
++    [string]$OutputRoot,
++    [string]$BaselineImagePath,
++    [string]$FallbackImagePath,
++    [double]$ParityThreshold = 6,
++    [switch]$DryRun,
++    [switch]$EmitJson
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Resolve-RepoRoot {
++    param([string]$ConfiguredRoot)
++
++    if ($ConfiguredRoot) {
++        return (Resolve-Path -LiteralPath $ConfiguredRoot).Path
++    }
++
++    return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
++}
++
++function Read-JsonFile {
++    param([string]$Path)
++
++    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
++}
++
++function Find-EvidenceRecord {
++    param(
++        [string]$Path,
++        [string]$TargetCaptureId
++    )
++
++    if (-not (Test-Path -LiteralPath $Path)) {
++        return $null
++    }
++
++    $records = Get-Content -LiteralPath $Path |
++        Where-Object { $_.Trim() } |
++        ForEach-Object { $_ | ConvertFrom-Json }
++
++    return $records |
++        Where-Object { $_.captureId -eq $TargetCaptureId } |
++        Select-Object -Last 1
++}
++
++function Get-ParityMeasurement {
++    param(
++        [string]$CandidatePath,
++        [string]$ReferencePath,
++        [double]$Threshold
++    )
++
++    if (-not $ReferencePath) {
++        return [ordered]@{
++            status = 'not-run'
++            result = 'not-run'
++            referencePath = $null
++            threshold = $Threshold
++            numericScore = $null
++            maxChannelDelta = $null
++            reason = 'reference-not-provided'
++        }
++    }
++
++    if (-not (Test-Path -LiteralPath $CandidatePath)) {
++        return [ordered]@{
++            status = 'invalid-input'
++            result = 'fail'
++            referencePath = $ReferencePath
++            threshold = $Threshold
++            numericScore = $null
++            maxChannelDelta = $null
++            reason = 'candidate-missing'
++        }
++    }
++
++    if (-not (Test-Path -LiteralPath $ReferencePath)) {
++        return [ordered]@{
++            status = 'invalid-input'
++            result = 'fail'
++            referencePath = $ReferencePath
++            threshold = $Threshold
++            numericScore = $null
++            maxChannelDelta = $null
++            reason = 'reference-missing'
++        }
++    }
++
++    Add-Type -AssemblyName System.Drawing
++    $candidate = New-Object System.Drawing.Bitmap $CandidatePath
++    $reference = New-Object System.Drawing.Bitmap $ReferencePath
++
++    try {
++        if ($candidate.Width -ne $reference.Width -or $candidate.Height -ne $reference.Height) {
++            return [ordered]@{
++                status = 'invalid-input'
++                result = 'fail'
++                referencePath = $ReferencePath
++                threshold = $Threshold
++                numericScore = $null
++                maxChannelDelta = $null
++                reason = 'dimension-mismatch'
++            }
++        }
++
++        $totalDelta = 0.0
++        $sampleCount = 0
++        $maxChannelDelta = 0
++
++        for ($y = 0; $y -lt $candidate.Height; $y++) {
++            for ($x = 0; $x -lt $candidate.Width; $x++) {
++                $candidatePixel = $candidate.GetPixel($x, $y)
++                $referencePixel = $reference.GetPixel($x, $y)
++                foreach ($delta in @(
++                    [math]::Abs($candidatePixel.R - $referencePixel.R),
++                    [math]::Abs($candidatePixel.G - $referencePixel.G),
++                    [math]::Abs($candidatePixel.B - $referencePixel.B)
++                )) {
++                    $totalDelta += $delta
++                    $sampleCount += 1
++                    if ($delta -gt $maxChannelDelta) {
++                        $maxChannelDelta = $delta
++                    }
++                }
++            }
++        }
++
++        $numericScore = if ($sampleCount -gt 0) {
++            [math]::Round($totalDelta / $sampleCount, 4)
++        } else {
++            0
++        }
++
++        return [ordered]@{
++            status = 'measured'
++            result = if ($numericScore -le $Threshold) { 'pass' } else { 'fail' }
++            referencePath = $ReferencePath
++            threshold = $Threshold
++            numericScore = $numericScore
++            maxChannelDelta = $maxChannelDelta
++            reason = if ($numericScore -le $Threshold) { 'within-threshold' } else { 'threshold-exceeded' }
++        }
++    }
++    finally {
++        $candidate.Dispose()
++        $reference.Dispose()
++    }
++}
++
++function Copy-Artifacts {
++    param(
++        [hashtable]$Artifacts,
++        [switch]$DryRun
++    )
++
++    $missing = New-Object System.Collections.Generic.List[string]
++
++    foreach ($key in $Artifacts.Keys) {
++        $artifact = $Artifacts[$key]
++        if (-not $artifact.source -or -not (Test-Path -LiteralPath $artifact.source)) {
++            $missing.Add($artifact.source)
++            continue
++        }
++
++        if ($DryRun) {
++            continue
++        }
++
++        $destinationDirectory = Split-Path -Path $artifact.destination -Parent
++        New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
++        Copy-Item -LiteralPath $artifact.source -Destination $artifact.destination -Force
++    }
++
++    return $missing
++}
++
++$resolvedRepoRoot = Resolve-RepoRoot -ConfiguredRoot $RepoRoot
++$sessionRoot = Join-Path $resolvedRepoRoot ('sessions\{0}' -f $SessionId)
++$sessionManifestPath = Join-Path $sessionRoot 'session.json'
++$timingEventsPath = Join-Path $sessionRoot 'diagnostics\timing-events.log'
++$evidenceLogPath = Join-Path $sessionRoot 'diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl'
++$routePolicySnapshotPath = Join-Path $resolvedRepoRoot 'branch-config\preview-renderer-policy.json'
++$publishedBundlePath = Join-Path $resolvedRepoRoot ('preset-catalog\published\{0}\{1}\bundle.json' -f $PresetId, $PublishedVersion)
++$catalogStatePath = Join-Path $resolvedRepoRoot 'preset-catalog\catalog-state.json'
++$generatedAt = (Get-Date).ToString('o')
++
++if (-not (Test-Path -LiteralPath $sessionManifestPath)) {
++    throw ('Session manifest not found: {0}' -f $sessionManifestPath)
++}
++
++$manifest = Read-JsonFile -Path $sessionManifestPath
++$capture = $manifest.captures | Where-Object { $_.captureId -eq $CaptureId } | Select-Object -First 1
++if ($null -eq $capture) {
++    throw ('Capture not found in session manifest: {0}' -f $CaptureId)
++}
++
++$evidenceRecord = Find-EvidenceRecord -Path $evidenceLogPath -TargetCaptureId $CaptureId
++
++$candidatePreviewPath = if ($evidenceRecord -and $evidenceRecord.previewAssetPath) {
++    $evidenceRecord.previewAssetPath
++} elseif ($capture.preview.assetPath) {
++    $capture.preview.assetPath
++} else {
++    $null
++}
++
++if (-not $OutputRoot) {
++    $OutputRoot = Join-Path $resolvedRepoRoot (
++        'artifacts\hardware-validation\{0}\{1}\{2}\{3}' -f
++        $SessionId,
++        $PresetId,
++        $PublishedVersion,
++        $CaptureId
++    )
++}
++
++$bundleManifestPath = Join-Path $OutputRoot 'preview-promotion-evidence-bundle.json'
++
++$artifacts = [ordered]@{
++    sessionManifest = @{
++        source = $sessionManifestPath
++        destination = Join-Path $OutputRoot 'session.json'
++    }
++    timingEvents = @{
++        source = $timingEventsPath
++        destination = Join-Path $OutputRoot 'timing-events.log'
++    }
++    routePolicySnapshot = @{
++        source = $routePolicySnapshotPath
++        destination = Join-Path $OutputRoot 'preview-renderer-policy.json'
++    }
++    publishedBundle = @{
++        source = $publishedBundlePath
++        destination = Join-Path $OutputRoot 'bundle.json'
++    }
++    catalogState = @{
++        source = $catalogStatePath
++        destination = Join-Path $OutputRoot 'catalog-state.json'
++    }
++    previewPromotionEvidence = @{
++        source = $evidenceLogPath
++        destination = Join-Path $OutputRoot 'preview-promotion-evidence.jsonl'
++    }
++    candidatePreview = @{
++        source = $candidatePreviewPath
++        destination = Join-Path $OutputRoot 'candidate-preview.jpg'
++    }
++}
++
++$missingArtifacts = Copy-Artifacts -Artifacts $artifacts -DryRun:$DryRun
++$baselineParity = Get-ParityMeasurement -CandidatePath $candidatePreviewPath -ReferencePath $BaselineImagePath -Threshold $ParityThreshold
++$fallbackParity = Get-ParityMeasurement -CandidatePath $candidatePreviewPath -ReferencePath $FallbackImagePath -Threshold $ParityThreshold
++
++$parityResult = if ($baselineParity.result -eq 'pass') {
++    'pass'
++} elseif ($fallbackParity.result -eq 'pass') {
++    'conditional'
++} elseif ($baselineParity.status -eq 'not-run' -and $fallbackParity.status -eq 'not-run') {
++    'not-run'
++} else {
++    'fail'
++}
++
++$parityReason = switch ($parityResult) {
++    'pass' { 'baseline-within-threshold' }
++    'conditional' { 'fallback-within-threshold' }
++    'not-run' { 'oracle-not-provided' }
++    default { 'threshold-or-input-failure' }
++}
++
++$bundle = [ordered]@{
++    schemaVersion = 'preview-promotion-evidence-bundle/v1'
++    generatedAt = $generatedAt
++    sessionId = $SessionId
++    captureId = $CaptureId
++    requestId = if ($evidenceRecord -and $evidenceRecord.requestId) { $evidenceRecord.requestId } else { $capture.requestId }
++    presetId = $PresetId
++    publishedVersion = $PublishedVersion
++    laneOwner = if ($evidenceRecord) { $evidenceRecord.laneOwner } else { 'unknown' }
++    fallbackReasonCode = if ($evidenceRecord) { $evidenceRecord.fallbackReasonCode } else { $null }
++    routeStage = if ($evidenceRecord) { $evidenceRecord.routeStage } else { 'shadow' }
++    warmState = if ($evidenceRecord) { $evidenceRecord.warmState } else { $null }
++    firstVisibleMs = if ($evidenceRecord) { $evidenceRecord.firstVisibleMs } else { $null }
++    replacementMs = if ($evidenceRecord) { $evidenceRecord.replacementMs } else { $null }
++    originalVisibleToPresetAppliedVisibleMs = if ($evidenceRecord) { $evidenceRecord.originalVisibleToPresetAppliedVisibleMs } else { $null }
++    outputRoot = $OutputRoot
++    bundleManifestPath = $bundleManifestPath
++    artifacts = $artifacts
++    missingArtifacts = @($missingArtifacts)
++    parity = [ordered]@{
++        result = $parityResult
++        reason = $parityReason
++        threshold = $ParityThreshold
++        baseline = $baselineParity
++        fallback = $fallbackParity
++    }
++}
++
++if (-not $DryRun) {
++    New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
++    $bundle | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $bundleManifestPath -Encoding utf8
++}
++
++if ($EmitJson) {
++    $bundle | ConvertTo-Json -Depth 12
++    return
++}
++
++Write-Host ('Preview promotion evidence bundle ready: {0}' -f $OutputRoot)
+diff --git a/src/governance/hardware-validation-governance.test.ts b/src/governance/hardware-validation-governance.test.ts
+index 9316ee1..c60f3b5 100644
+--- a/src/governance/hardware-validation-governance.test.ts
++++ b/src/governance/hardware-validation-governance.test.ts
+@@ -113,6 +113,11 @@ describe('hardware validation governance baseline', () => {
+     expect(ledger).toContain('Automated Pass')
+     expect(ledger).toContain('Hardware Pass')
+     expect(ledger).toContain('Go / No-Go')
++    expect(ledger).toContain('Latency')
++    expect(ledger).toContain('Parity')
++    expect(ledger).toContain('Fallback Ratio')
++    expect(ledger).toContain('Route Policy State')
++    expect(ledger).toContain('Rollback Evidence')
+     expect(ledger).toContain('Blocker')
+     expect(ledger).toContain('Owner')
+     expect(ledger).toContain('Evidence Path')
+@@ -125,6 +130,11 @@ describe('hardware validation governance baseline', () => {
+     expect(ledger).toContain('camera model')
+     expect(ledger).toContain('darktable pin')
+     expect(ledger).toContain('helper identifier')
++    expect(ledger).toContain('latency')
++    expect(ledger).toContain('parity')
++    expect(ledger).toContain('fallback ratio')
++    expect(ledger).toContain('route policy state')
++    expect(ledger).toContain('rollback evidence')
+     expect(ledger).toContain('release blocker')
+     expect(ledger).toContain('follow-up owner')
+     expect(ledger).toContain('core evidence paths')
+@@ -139,11 +149,15 @@ describe('hardware validation governance baseline', () => {
+     expect(runbook).toContain('Story 1.13')
+     expect(runbook).not.toContain('- Story 1.3: 승인된 프리셋 카탈로그 표시와 활성 프리셋 선택')
+     expect(runbook).toContain('Story 2.3')
++    expect(runbook).toContain('Story 1.19')
+     expect(runbook).toContain('hardware-validation-ledger.md')
+     expect(runbook).toContain('HV-00, HV-01, HV-02, HV-03, HV-04, HV-05, HV-07, HV-09, HV-10, HV-11, HV-12')
+     expect(runbook).toContain('Story 1.5를 `review`로 되돌린다')
+     expect(runbook).toContain('Story 2.3 / 4.3 경계를 우선 재점검한다')
+     expect(runbook).toContain('HV-09 실패: Story 4.2 경계를 우선 재점검한다')
++    expect(runbook).toContain('preview-promotion-evidence.jsonl')
++    expect(runbook).toContain('Start-PreviewPromotionTrace.ps1')
++    expect(runbook).toContain('New-PreviewPromotionEvidenceBundle.ps1')
+ 
+     expect(releaseBaseline).toContain('automated proof')
+     expect(releaseBaseline).toContain('hardware proof')
+@@ -153,6 +167,7 @@ describe('hardware validation governance baseline', () => {
+     expect(releaseBaseline).toContain('release hold')
+     expect(releaseBaseline).toContain('Story 1.13')
+     expect(releaseBaseline).toContain('preview-renderer-policy.json')
++    expect(releaseBaseline).toContain('latency, parity, fallback ratio, route policy state, and rollback evidence')
+   })
+ 
+   it('keeps sprint status aligned with the ledger-recorded close state', () => {
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 374b688..ed266ec 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -27,6 +27,7 @@ import {
+   operatorRecoveryBlockedCategorySchema,
+   operatorRecoverySummarySchema,
+   operatorSessionSummarySchema,
++  previewPromotionEvidenceRecordSchema,
+   publicationAuditRecordSchema,
+   presetCatalogResultSchema,
+   presetLifecycleStateSchema,
+@@ -260,6 +261,8 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     liveCaptureTruth: {
+       source: 'canon-helper-sidecar',
+@@ -328,6 +331,8 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     ...overrides,
+   }
+@@ -382,23 +387,46 @@ describe('shared contracts baseline', () => {
+ 
+   it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
+     const parsed = publishedPresetBundleSchema.parse(
+-      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
++      readContractFixture('preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json'),
+     )
+ 
+-    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
+-    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
+-    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
++    expect(parsed.schemaVersion).toBe('published-preset-bundle/v2')
++    expect(parsed.canonicalRecipe.schemaVersion).toBe('canonical-preset-recipe/v1')
++    expect(parsed.canonicalRecipe.previewIntent.profileId).toBe('soft-glow-preview')
++    expect(parsed.canonicalRecipe.finalIntent.profileId).toBe('soft-glow-final')
++    expect(parsed.canonicalRecipe.noisePolicy.policyId).toBe('balanced-noise')
++    expect(parsed.darktableAdapter.xmpTemplatePath).toBe('xmp/template.xmp')
+   })
+ 
+-  it('rejects published preset bundles that escape the bundle root or add unknown fields', () => {
++  it('rejects published preset bundles that miss canonical recipe truth, escape the bundle root, or add unknown fields', () => {
+     const fixture = readContractFixture(
+-      'preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json',
++      'preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json',
+     )
+ 
+     expect(() =>
+       publishedPresetBundleSchema.parse({
+         ...fixture,
+-        xmpTemplatePath: '../outside/template.xmp',
++        canonicalRecipe: undefined,
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        darktableAdapter: {
++          ...(fixture.darktableAdapter as Record<string, unknown>),
++          darktableVersion: '5.5.0',
++        },
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        darktableAdapter: {
++          ...(fixture.darktableAdapter as Record<string, unknown>),
++          xmpTemplatePath: '../outside/template.xmp',
++        },
+       }),
+     ).toThrow()
+ 
+@@ -512,6 +540,37 @@ describe('shared contracts baseline', () => {
+     expect(result.detailCode).toBe('sidecar-unavailable')
+   })
+ 
++  it('parses the frozen preview-promotion evidence record fixture used for hardware gate bundles', () => {
++    const parsed = previewPromotionEvidenceRecordSchema.parse(
++      readContractFixture('preview-promotion-evidence-record-v1.json'),
++    )
++
++    expect(parsed.routeStage).toBe('canary')
++    expect(parsed.laneOwner).toBe('dedicated-renderer')
++    expect(parsed.originalVisibleToPresetAppliedVisibleMs).toBe(805)
++    expect(parsed.routePolicySnapshotPath).toContain(
++      'branch-config/preview-renderer-policy.json',
++    )
++  })
++
++  it('rejects preview-promotion evidence records that drop route policy or correlation paths', () => {
++    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
++
++    expect(() =>
++      previewPromotionEvidenceRecordSchema.parse({
++        ...fixture,
++        routePolicySnapshotPath: undefined,
++      }),
++    ).toThrow()
++
++    expect(() =>
++      previewPromotionEvidenceRecordSchema.parse({
++        ...fixture,
++        requestId: '',
++      }),
++    ).toThrow()
++  })
++
+   it('normalizes booth capability access to always include the booth surface', () => {
+     const parsed = capabilitySnapshotSchema.parse({
+       isAdminAuthenticated: false,
+@@ -789,6 +848,8 @@ describe('shared contracts baseline', () => {
+         laneOwner: 'inline-truthful-fallback',
+         fallbackReasonCode: 'route-policy-shadow',
+         hardwareCapability: 'dedicated-renderer-available',
++        warmState: 'warm-ready',
++        warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+       },
+     })
+   })
+@@ -828,6 +889,7 @@ describe('shared contracts baseline', () => {
+       previewArchitecture: {
+         routeStage: 'canary',
+         laneOwner: 'inline-truthful-fallback',
++        warmState: 'warm-ready',
+       },
+     })
+     expect(parsedAction).toBe('approved-boundary-restart')
+@@ -864,6 +926,76 @@ describe('shared contracts baseline', () => {
+     )
+   })
+ 
++  it('rejects warm-state values outside the approved vocabulary', () => {
++    expect(() =>
++      dedicatedRendererPreviewJobResultSchema.parse({
++        schemaVersion: 'dedicated-renderer-preview-job-result/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        requestId: 'request_20260410_001',
++        captureId: 'capture_20260410_001',
++        status: 'warmed-up',
++        diagnosticsDetailPath: 'C:/temp/result.json',
++      }),
++    ).toThrow()
++
++    expect(() =>
++      dedicatedRendererPreviewJobResultSchema.parse({
++        schemaVersion: 'dedicated-renderer-preview-job-result/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        requestId: 'request_20260410_001',
++        captureId: 'capture_20260410_001',
++        status: 'fallback-suggested',
++        diagnosticsDetailPath: 'C:/temp/result.json',
++        warmState: 'warming',
++      }),
++    ).toThrow()
++
++    expect(() =>
++      operatorRecoverySummarySchema.parse(
++        createOperatorRecoverySummary({
++          previewArchitecture: {
++            route: 'local-renderer-sidecar',
++            routeStage: 'canary',
++            laneOwner: 'inline-truthful-fallback',
++            fallbackReasonCode: 'route-policy-shadow',
++            hardwareCapability: 'dedicated-renderer-available',
++            warmState: 'warming',
++            warmStateObservedAt: '2026-04-12T08:00:00.000Z',
++          },
++        }),
++      ),
++    ).toThrow()
++
++    expect(() =>
++      sessionManifestSchema.parse({
++        schemaVersion: 'session-manifest/v1',
++        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        lifecycle: {
++          status: 'active',
++          stage: 'preview-waiting',
++        },
++        activePreset: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.04.10',
++        },
++        captures: [],
++        postEnd: null,
++        activePreviewRendererWarmState: {
++          presetId: 'preset_soft-glow',
++          publishedVersion: '2026.04.10',
++          state: 'warming',
++          observedAt: '2026-04-12T08:00:00.000Z',
++          diagnosticsDetailPath: null,
++        },
++      }),
++    ).toThrow()
++  })
++
+   it('rejects recovery summaries that expose actions without a blocked category', () => {
+     expect(() =>
+       operatorRecoverySummarySchema.parse(
+diff --git a/src/shared-contracts/schemas/dedicated-renderer.ts b/src/shared-contracts/schemas/dedicated-renderer.ts
+index 8e30145..a87721a 100644
+--- a/src/shared-contracts/schemas/dedicated-renderer.ts
++++ b/src/shared-contracts/schemas/dedicated-renderer.ts
+@@ -13,7 +13,7 @@ export const dedicatedRendererPreviewJobRequestSchemaVersion =
+ export const dedicatedRendererPreviewJobResultSchemaVersion =
+   'dedicated-renderer-preview-job-result/v1' as const
+ 
+-const runtimePathSchema = z.string().trim().min(1)
++export const runtimePathSchema = z.string().trim().min(1)
+ 
+ export const dedicatedRendererPreviewJobRequestSchema = z
+   .object({
+@@ -42,7 +42,13 @@ export const dedicatedRendererPreviewJobStatusSchema = z.enum([
+   'protocol-mismatch',
+   'invalid-output',
+   'restarted',
+-  'warmed-up',
++])
++
++export const previewRendererWarmStateSchema = z.enum([
++  'warm-ready',
++  'warm-hit',
++  'cold',
++  'warm-state-lost',
+ ])
+ 
+ export const dedicatedRendererPreviewJobResultSchema = z
+@@ -56,5 +62,7 @@ export const dedicatedRendererPreviewJobResultSchema = z
+     outputPath: runtimePathSchema.nullable().optional(),
+     detailCode: z.string().trim().min(1).nullable().optional(),
+     detailMessage: z.string().trim().min(1).nullable().optional(),
++    warmState: previewRendererWarmStateSchema.nullable().optional(),
++    warmStateDetailPath: runtimePathSchema.nullable().optional(),
+   })
+   .strict()
+diff --git a/src/shared-contracts/schemas/hardware-validation.ts b/src/shared-contracts/schemas/hardware-validation.ts
+new file mode 100644
+index 0000000..e143fad
+--- /dev/null
++++ b/src/shared-contracts/schemas/hardware-validation.ts
+@@ -0,0 +1,37 @@
++import { z } from 'zod'
++
++import { previewRendererWarmStateSchema, runtimePathSchema } from './dedicated-renderer'
++import { sessionIdSchema } from './ids'
++import { presetIdSchema, publishedVersionSchema } from './preset-core'
++import { captureIdSchema, captureRequestIdSchema } from './session-capture'
++
++export const previewPromotionEvidenceRecordSchemaVersion =
++  'preview-promotion-evidence-record/v1' as const
++
++const optionalMetricSchema = z.number().int().nonnegative().nullable().optional()
++
++export const previewPromotionEvidenceRecordSchema = z
++  .object({
++    schemaVersion: z.literal(previewPromotionEvidenceRecordSchemaVersion),
++    observedAt: z.string().datetime({ offset: true }),
++    sessionId: sessionIdSchema,
++    requestId: captureRequestIdSchema,
++    captureId: captureIdSchema,
++    presetId: presetIdSchema.nullable().optional(),
++    publishedVersion: publishedVersionSchema,
++    laneOwner: z.string().trim().min(1),
++    fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
++    routeStage: z.string().trim().min(1),
++    warmState: previewRendererWarmStateSchema.nullable().optional(),
++    firstVisibleMs: optionalMetricSchema,
++    replacementMs: optionalMetricSchema,
++    originalVisibleToPresetAppliedVisibleMs: optionalMetricSchema,
++    sessionManifestPath: runtimePathSchema,
++    timingEventsPath: runtimePathSchema,
++    routePolicySnapshotPath: runtimePathSchema,
++    publishedBundlePath: runtimePathSchema.nullable().optional(),
++    catalogStatePath: runtimePathSchema,
++    previewAssetPath: runtimePathSchema.nullable().optional(),
++    warmStateDetailPath: runtimePathSchema.nullable().optional(),
++  })
++  .strict()
+diff --git a/src/shared-contracts/schemas/index.ts b/src/shared-contracts/schemas/index.ts
+index 1717a52..fac48c6 100644
+--- a/src/shared-contracts/schemas/index.ts
++++ b/src/shared-contracts/schemas/index.ts
+@@ -2,6 +2,7 @@ export * from './branch-rollout'
+ export * from './capabilities'
+ export * from './capture-readiness'
+ export * from './dedicated-renderer'
++export * from './hardware-validation'
+ export * from './ids'
+ export * from './operator-diagnostics'
+ export * from './operator-audit'
+diff --git a/src-tauri/src/render/dedicated_renderer.rs b/src-tauri/src/render/dedicated_renderer.rs
+index 9270e23..01791eb 100644
+--- a/src-tauri/src/render/dedicated_renderer.rs
++++ b/src-tauri/src/render/dedicated_renderer.rs
+@@ -1,12 +1,16 @@
+ use std::{
+     env, fs,
++    io::Write,
+     path::{Path, PathBuf},
+-    time::{SystemTime, UNIX_EPOCH},
++    process::Command,
++    sync::mpsc,
++    thread,
++    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+ };
+ 
+-use serde::Deserialize;
++use serde::{Deserialize, Serialize};
+ use tauri::{async_runtime, AppHandle};
+-use tauri_plugin_shell::ShellExt;
++use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+ 
+ use crate::{
+     capture::ingest_pipeline::{complete_preview_render_in_dir, finish_preview_render_in_dir},
+@@ -26,9 +30,12 @@ use crate::{
+         RenderIntent, RenderedCaptureAsset,
+     },
+     session::{
+-        session_manifest::{PreviewRendererRouteSnapshot, SessionCaptureRecord},
++        session_manifest::{
++            current_timestamp, PreviewRendererRouteSnapshot, PreviewRendererWarmStateSnapshot,
++            SessionCaptureRecord,
++        },
+         session_paths::SessionPaths,
+-        session_repository::read_session_manifest,
++        session_repository::{read_session_manifest, write_session_manifest},
+     },
+     timing::{append_session_timing_event_in_dir, SessionTimingEventInput},
+ };
+@@ -42,8 +49,13 @@ const DEDICATED_RENDERER_RESULT_SCHEMA_VERSION: &str = "dedicated-renderer-previ
+ const DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION: &str =
+     "dedicated-renderer-warmup-request/v1";
+ const DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION: &str = "dedicated-renderer-warmup-result/v1";
++const PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION: &str =
++    "preview-promotion-evidence-record/v1";
+ const DEDICATED_RENDERER_TEST_OUTCOME_ENV: &str = "BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME";
++const DEDICATED_RENDERER_TEST_START_FAILURE_ENV: &str =
++    "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE";
+ const PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION: &str = "preview-renderer-route-policy/v1";
++const DEDICATED_RENDERER_PROCESS_TIMEOUT: Duration = Duration::from_secs(50);
+ 
+ #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+ #[serde(rename_all = "kebab-case")]
+@@ -80,6 +92,32 @@ struct ResolvedPreviewRendererRoute {
+     fallback_reason_code: Option<&'static str>,
+ }
+ 
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct PreviewPromotionEvidenceRecord {
++    schema_version: String,
++    observed_at: String,
++    session_id: String,
++    request_id: String,
++    capture_id: String,
++    preset_id: Option<String>,
++    published_version: String,
++    lane_owner: String,
++    fallback_reason_code: Option<String>,
++    route_stage: String,
++    warm_state: Option<String>,
++    first_visible_ms: Option<u64>,
++    replacement_ms: Option<u64>,
++    original_visible_to_preset_applied_visible_ms: Option<u64>,
++    session_manifest_path: String,
++    timing_events_path: String,
++    route_policy_snapshot_path: String,
++    published_bundle_path: Option<String>,
++    catalog_state_path: String,
++    preview_asset_path: Option<String>,
++    warm_state_detail_path: Option<String>,
++}
++
+ enum PreviewRendererRoutePolicyLoadResult {
+     Missing,
+     Invalid,
+@@ -133,10 +171,30 @@ pub fn schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
+     {
+         let _ = write_json_file(&request_path, &request);
+         let route = resolve_preview_renderer_route_in_dir(base_dir, preset_id, preset_version);
+-        let result =
+-            submit_warmup_request(app_handle, &request, &request_path, &result_path, &route);
++        let result = submit_warmup_request(
++            base_dir,
++            app_handle,
++            &request,
++            &request_path,
++            &result_path,
++            &route,
++        );
+         if let Ok(result) = result {
+             let _ = write_json_file(&result_path, &result);
++            let _ = sync_active_preview_warm_state_in_manifest(
++                base_dir,
++                session_id,
++                &request.preset_id,
++                &request.published_version,
++                result
++                    .warm_state
++                    .as_deref()
++                    .or_else(|| match result.status.as_str() {
++                        "warmed-up" => Some("warm-ready"),
++                        _ => None,
++                    }),
++                result.warm_state_detail_path.as_deref(),
++            );
+         }
+     }
+ 
+@@ -153,38 +211,44 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+         build_preview_job_request_in_dir(base_dir, session_id, capture_id)?;
+     write_json_file(&request_path, &request)?;
+ 
+-    let preview_result =
+-        match submit_preview_job(app_handle, &request, &request_path, &result_path, &route) {
+-            Ok(result) => {
+-                let _ = write_json_file(&result_path, &result);
+-                if validate_preview_job_result(&request, &result, &result_path).is_err() {
+-                    log_render_failure_in_dir(
+-                        base_dir,
+-                        session_id,
+-                        capture_id,
+-                        Some(&request.request_id),
+-                        RenderIntent::Preview,
+-                        "invalid-output",
+-                    );
+-                } else {
+-                    log_preview_submission_result(base_dir, &request, &result);
+-                }
+-
+-                Some(result)
+-            }
+-            Err(reason_code) => {
++    let preview_result = match submit_preview_job(
++        base_dir,
++        app_handle,
++        &request,
++        &request_path,
++        &result_path,
++        &route,
++    ) {
++        Ok(result) => {
++            let _ = write_json_file(&result_path, &result);
++            if validate_preview_job_result(&request, &result, &result_path).is_err() {
+                 log_render_failure_in_dir(
+                     base_dir,
+                     session_id,
+                     capture_id,
+                     Some(&request.request_id),
+                     RenderIntent::Preview,
+-                    reason_code,
++                    "invalid-output",
+                 );
+-
+-                None
++            } else {
++                log_preview_submission_result(base_dir, &request, &result);
+             }
+-        };
++
++            Some(result)
++        }
++        Err(reason_code) => {
++            log_render_failure_in_dir(
++                base_dir,
++                session_id,
++                capture_id,
++                Some(&request.request_id),
++                RenderIntent::Preview,
++                reason_code,
++            );
++
++            None
++        }
++    };
+ 
+     if let Some(result) = preview_result.as_ref() {
+         if let Some(capture) = try_complete_preview_from_dedicated_result_in_dir(
+@@ -196,6 +260,16 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+                 "dedicated-renderer",
+                 None,
+                 route.route_stage,
++                result.warm_state.as_deref(),
++                result.warm_state_detail_path.as_deref(),
++            );
++            let _ = sync_active_preview_warm_state_in_manifest(
++                base_dir,
++                session_id,
++                &request.preset_id,
++                &request.published_version,
++                result.warm_state.as_deref(),
++                result.warm_state_detail_path.as_deref(),
+             );
+             return Ok(capture);
+         }
+@@ -210,7 +284,23 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+             .as_ref()
+             .and_then(|result| result.detail_code.as_deref()),
+         route.route_stage,
++        preview_result
++            .as_ref()
++            .and_then(|result| result.warm_state.as_deref()),
++        preview_result
++            .as_ref()
++            .and_then(|result| result.warm_state_detail_path.as_deref()),
+     );
++    if let Some(result) = preview_result.as_ref() {
++        let _ = sync_active_preview_warm_state_in_manifest(
++            base_dir,
++            session_id,
++            &request.preset_id,
++            &request.published_version,
++            result.warm_state.as_deref(),
++            result.warm_state_detail_path.as_deref(),
++        );
++    }
+ 
+     Ok(capture)
+ }
+@@ -323,6 +413,7 @@ fn build_preview_job_request_in_dir(
+ }
+ 
+ fn submit_warmup_request(
++    base_dir: &Path,
+     app_handle: Option<&AppHandle>,
+     request: &DedicatedRendererWarmupRequestDto,
+     request_path: &Path,
+@@ -338,23 +429,29 @@ fn submit_warmup_request(
+                 "fallback-suggested",
+                 route.fallback_reason_code,
+                 Some("승인된 shadow route를 유지해 inline warm-up을 계속 사용해요."),
++                None,
++                None,
+             ),
+             result_path,
+         ));
+     }
+ 
+-    if app_handle.is_some() {
+-        if let Err(reason_code) = try_spawn_dedicated_renderer(
+-            app_handle,
+-            DEDICATED_RENDERER_WARMUP_PROTOCOL,
+-            request_path,
++    if let Err(reason_code) = try_start_dedicated_renderer(
++        app_handle,
++        DEDICATED_RENDERER_WARMUP_PROTOCOL,
++        request_path,
++        result_path,
++    ) {
++        let warm_state = infer_warmup_spawn_failure_warm_state(
++            base_dir,
++            &request.session_id,
++            &request.preset_id,
++            &request.published_version,
++        );
++        return Ok(with_warmup_result_detail_path(
++            build_warmup_spawn_failure_result(request, reason_code, &warm_state),
+             result_path,
+-        ) {
+-            return Ok(with_warmup_result_detail_path(
+-                build_warmup_spawn_failure_result(request, reason_code),
+-                result_path,
+-            ));
+-        }
++        ));
+     }
+ 
+     if let Ok(bytes) = fs::read_to_string(result_path) {
+@@ -370,6 +467,8 @@ fn submit_warmup_request(
+                             Some(
+                                 "warm-up result schema 또는 상태 값이 계약과 맞지 않아 shadow fallback으로 유지해요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -383,6 +482,8 @@ fn submit_warmup_request(
+                             Some(
+                                 "warm-up result correlation이 맞지 않아 host-owned inline warm-up을 유지해요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -397,6 +498,8 @@ fn submit_warmup_request(
+                         Some(
+                             "warm-up result를 dedicated renderer 계약으로 해석하지 못해 shadow fallback으로 유지해요.",
+                         ),
++                        None,
++                        None,
+                     ),
+                     result_path,
+                 ));
+@@ -410,12 +513,15 @@ fn submit_warmup_request(
+             "fallback-suggested",
+             Some("shadow-inline-warmup"),
+             Some("approved cutover 전까지 warm-up은 host-owned inline renderer가 계속 소유해요."),
++            None,
++            None,
+         ),
+         result_path,
+     ))
+ }
+ 
+ fn submit_preview_job(
++    base_dir: &Path,
+     app_handle: Option<&AppHandle>,
+     request: &DedicatedRendererPreviewJobRequestDto,
+     request_path: &Path,
+@@ -436,47 +542,27 @@ fn submit_preview_job(
+                 None,
+                 route.fallback_reason_code,
+                 Some("승인된 shadow route를 유지해 inline truthful close로 내려가요."),
++                None,
++                None,
+             ),
+             result_path,
+         ));
+     }
+ 
+-    if app_handle.is_some() {
+-        if let Err(reason_code) = try_spawn_dedicated_renderer(
+-            app_handle,
+-            DEDICATED_RENDERER_PREVIEW_PROTOCOL,
+-            request_path,
+-            result_path,
+-        ) {
+-            return Ok(with_preview_result_detail_path(
+-                build_preview_spawn_failure_result(request, reason_code),
+-                result_path,
+-            ));
+-        }
+-    } else if resolve_dedicated_renderer_executable().is_none() {
+-        return Ok(with_preview_result_detail_path(
+-            build_preview_result(
+-                request,
+-                "fallback-suggested",
+-                None,
+-                Some("sidecar-unavailable"),
+-                Some(
+-                    "dedicated renderer binary가 아직 bundle/runtime에서 확인되지 않아 truthful fallback path로 내려가요.",
+-                ),
+-            ),
+-            result_path,
+-        ));
+-    } else {
++    if let Err(reason_code) = try_start_dedicated_renderer(
++        app_handle,
++        DEDICATED_RENDERER_PREVIEW_PROTOCOL,
++        request_path,
++        result_path,
++    ) {
++        let warm_state = infer_preview_spawn_failure_warm_state(
++            base_dir,
++            &request.session_id,
++            &request.preset_id,
++            &request.published_version,
++        );
+         return Ok(with_preview_result_detail_path(
+-            build_preview_result(
+-                request,
+-                "fallback-suggested",
+-                None,
+-                Some("sidecar-unavailable"),
+-                Some(
+-                    "승인된 local renderer route지만 현재 runtime handle이 없어 truthful fallback path로 내려가요.",
+-                ),
+-            ),
++            build_preview_spawn_failure_result(request, reason_code, Some(&warm_state)),
+             result_path,
+         ));
+     }
+@@ -495,6 +581,8 @@ fn submit_preview_job(
+                             Some(
+                                 "preview job result schema 또는 상태 값이 계약과 맞지 않아 fallback path로 내려가요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -509,6 +597,8 @@ fn submit_preview_job(
+                             Some(
+                                 "preview job result correlation 또는 canonical output 검증에 실패해 fallback path로 내려가요.",
+                             ),
++                            result.warm_state.as_deref(),
++                            result.warm_state_detail_path.clone(),
+                         ),
+                         result_path,
+                     ));
+@@ -524,6 +614,8 @@ fn submit_preview_job(
+                         Some(
+                             "preview job result를 dedicated renderer 계약으로 해석하지 못해 fallback path로 내려가요.",
+                         ),
++                        None,
++                        None,
+                     ),
+                     result_path,
+                 ));
+@@ -536,8 +628,12 @@ fn submit_preview_job(
+             request,
+             "fallback-suggested",
+             None,
+-            Some(fallback_reason_for_missing_preview_result(route.route_stage)),
++            Some(fallback_reason_for_missing_preview_result(
++                route.route_stage,
++            )),
+             Some(missing_preview_result_message(route.route_stage)),
++            Some("cold"),
++            None,
+         ),
+         result_path,
+     ))
+@@ -679,11 +775,12 @@ fn build_dedicated_renderer_ready_detail(
+     ready_at_ms: u64,
+ ) -> String {
+     format!(
+-        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={}",
++        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={};warmState={}",
+         request.preset_id,
+         request.published_version,
+         result.status,
+         result.detail_code.as_deref().unwrap_or("accepted"),
++        result.warm_state.as_deref().unwrap_or("none"),
+     )
+ }
+ 
+@@ -693,6 +790,8 @@ fn append_preview_transition_summary_in_dir(
+     lane_owner: &str,
+     fallback_reason: Option<&str>,
+     route_stage: &str,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<&str>,
+ ) {
+     let first_visible_ms = capture
+         .timing
+@@ -715,6 +814,7 @@ fn append_preview_transition_summary_in_dir(
+         route_stage,
+         first_visible_ms,
+         replacement_ms,
++        warm_state,
+     );
+     let _ = append_session_timing_event_in_dir(
+         base_dir,
+@@ -737,6 +837,17 @@ fn append_preview_transition_summary_in_dir(
+         format_optional_metric(first_visible_ms),
+         format_optional_metric(replacement_ms),
+     );
++    let _ = append_preview_promotion_evidence_record_in_dir(
++        base_dir,
++        capture,
++        lane_owner,
++        fallback_reason,
++        route_stage,
++        warm_state,
++        warm_state_detail_path,
++        first_visible_ms,
++        replacement_ms,
++    );
+ }
+ 
+ fn format_optional_metric(value: Option<u64>) -> String {
+@@ -751,16 +862,148 @@ fn build_preview_transition_summary_detail(
+     route_stage: &str,
+     first_visible_ms: Option<u64>,
+     replacement_ms: Option<u64>,
++    warm_state: Option<&str>,
+ ) -> String {
++    let original_visible_to_preset_applied_visible_ms = match (first_visible_ms, replacement_ms) {
++        (Some(first_visible_ms), Some(replacement_ms)) => {
++            Some(replacement_ms.saturating_sub(first_visible_ms))
++        }
++        _ => None,
++    };
+     format!(
+-        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
++        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
+         fallback_reason.unwrap_or("none"),
++        warm_state.unwrap_or("none"),
+         format_optional_metric(first_visible_ms),
+         format_optional_metric(replacement_ms),
+-        format_optional_metric(replacement_ms),
++        format_optional_metric(original_visible_to_preset_applied_visible_ms),
+     )
+ }
+ 
++fn append_preview_promotion_evidence_record_in_dir(
++    base_dir: &Path,
++    capture: &SessionCaptureRecord,
++    lane_owner: &str,
++    fallback_reason: Option<&str>,
++    route_stage: &str,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<&str>,
++    first_visible_ms: Option<u64>,
++    replacement_ms: Option<u64>,
++) -> Result<(), HostErrorEnvelope> {
++    let original_visible_to_preset_applied_visible_ms = match (first_visible_ms, replacement_ms) {
++        (Some(first_visible_ms), Some(replacement_ms)) => {
++            Some(replacement_ms.saturating_sub(first_visible_ms))
++        }
++        _ => None,
++    };
++    let paths = SessionPaths::try_new(base_dir, &capture.session_id)?;
++    let diagnostics_dir = dedicated_renderer_diagnostics_dir(base_dir, &capture.session_id)?;
++    let evidence_path = diagnostics_dir.join("preview-promotion-evidence.jsonl");
++    let published_bundle_path = capture.active_preset_id.as_ref().map(|preset_id| {
++        path_to_runtime_string(
++            &resolve_published_preset_catalog_dir(base_dir)
++                .join(preset_id)
++                .join(&capture.active_preset_version)
++                .join("bundle.json"),
++        )
++    });
++    let record = PreviewPromotionEvidenceRecord {
++        schema_version: PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION.into(),
++        observed_at: current_timestamp(SystemTime::now())?,
++        session_id: capture.session_id.clone(),
++        request_id: capture.request_id.clone(),
++        capture_id: capture.capture_id.clone(),
++        preset_id: capture.active_preset_id.clone(),
++        published_version: capture.active_preset_version.clone(),
++        lane_owner: lane_owner.into(),
++        fallback_reason_code: fallback_reason.map(str::to_string),
++        route_stage: route_stage.into(),
++        warm_state: warm_state.map(str::to_string),
++        first_visible_ms,
++        replacement_ms,
++        original_visible_to_preset_applied_visible_ms,
++        session_manifest_path: path_to_runtime_string(&paths.manifest_path),
++        timing_events_path: path_to_runtime_string(&paths.diagnostics_dir.join("timing-events.log")),
++        route_policy_snapshot_path: path_to_runtime_string(
++            &base_dir
++                .join("branch-config")
++                .join("preview-renderer-policy.json"),
++        ),
++        published_bundle_path,
++        catalog_state_path: path_to_runtime_string(
++            &base_dir.join("preset-catalog").join("catalog-state.json"),
++        ),
++        preview_asset_path: capture.preview.asset_path.clone(),
++        warm_state_detail_path: warm_state_detail_path.map(str::to_string),
++    };
++    let serialized = serde_json::to_string(&record).map_err(|error| {
++        HostErrorEnvelope::persistence(format!(
++            "preview promotion evidence를 직렬화하지 못했어요: {error}"
++        ))
++    })?;
++    let mut file = fs::OpenOptions::new()
++        .create(true)
++        .append(true)
++        .open(&evidence_path)
++        .map_err(|error| {
++            HostErrorEnvelope::persistence(format!(
++                "preview promotion evidence를 남기지 못했어요: {error}"
++            ))
++        })?;
++    writeln!(file, "{serialized}").map_err(|error| {
++        HostErrorEnvelope::persistence(format!(
++            "preview promotion evidence를 남기지 못했어요: {error}"
++        ))
++    })?;
++
++    Ok(())
++}
++
++fn sync_active_preview_warm_state_in_manifest(
++    base_dir: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++    warm_state: Option<&str>,
++    diagnostics_detail_path: Option<&str>,
++) -> Result<(), HostErrorEnvelope> {
++    let Some(warm_state) = warm_state else {
++        return Ok(());
++    };
++    let paths = SessionPaths::try_new(base_dir, session_id)?;
++    let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    let active_preset_matches = manifest
++        .active_preset
++        .as_ref()
++        .map(|binding| {
++            binding.preset_id == preset_id && binding.published_version == published_version
++        })
++        .or_else(|| {
++            Some(
++                manifest.active_preset_id.as_deref() == Some(preset_id)
++                    && manifest
++                        .active_preview_renderer_warm_state
++                        .as_ref()
++                        .map(|snapshot| snapshot.published_version.as_str())
++                        .unwrap_or(published_version)
++                        == published_version,
++            )
++        })
++        .unwrap_or(false);
++    if !active_preset_matches {
++        return Ok(());
++    }
++    manifest.active_preview_renderer_warm_state = Some(PreviewRendererWarmStateSnapshot {
++        preset_id: preset_id.into(),
++        published_version: published_version.into(),
++        state: warm_state.into(),
++        observed_at: current_timestamp(SystemTime::now())?,
++        diagnostics_detail_path: diagnostics_detail_path.map(str::to_string),
++    });
++    write_session_manifest(&paths.manifest_path, &manifest)
++}
++
+ fn clear_previous_result_file(result_path: &Path) {
+     if let Err(error) = fs::remove_file(result_path) {
+         if error.kind() != std::io::ErrorKind::NotFound {
+@@ -831,29 +1074,112 @@ fn log_preview_submission_result(
+     }
+ }
+ 
+-fn try_spawn_dedicated_renderer(
++fn try_start_dedicated_renderer(
+     app_handle: Option<&AppHandle>,
+     protocol: &str,
+     request_path: &Path,
+     result_path: &Path,
+ ) -> Result<(), &'static str> {
+-    let app_handle = app_handle.ok_or("sidecar-unavailable")?;
+-    let command = app_handle
+-        .shell()
+-        .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
+-        .map_err(|_| "sidecar-unavailable")?
++    if let Some(reason_code) = forced_start_failure_for_test() {
++        return Err(reason_code);
++    }
++
++    if let Some(app_handle) = app_handle {
++        let command = app_handle
++            .shell()
++            .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
++            .map_err(|_| "sidecar-unavailable")?
++            .arg("--protocol")
++            .arg(protocol)
++            .arg("--request")
++            .arg(request_path)
++            .arg("--result")
++            .arg(result_path);
++
++        return wait_for_shell_command_with_timeout(command, DEDICATED_RENDERER_PROCESS_TIMEOUT);
++    }
++
++    let executable = resolve_dedicated_renderer_executable().ok_or("sidecar-unavailable")?;
++    let mut child = Command::new(executable)
+         .arg("--protocol")
+         .arg(protocol)
+         .arg("--request")
+         .arg(request_path)
+         .arg("--result")
+-        .arg(result_path);
++        .arg(result_path)
++        .spawn()
++        .map_err(|_| "sidecar-launch-failed")?;
+ 
+-    let status = async_runtime::block_on(command.status()).map_err(|_| "sidecar-launch-failed")?;
+-    if status.success() {
+-        Ok(())
+-    } else {
+-        Err("sidecar-launch-failed")
++    wait_for_child_exit_with_timeout(&mut child, DEDICATED_RENDERER_PROCESS_TIMEOUT)
++}
++
++fn wait_for_shell_command_with_timeout(
++    command: tauri_plugin_shell::process::Command,
++    timeout: Duration,
++) -> Result<(), &'static str> {
++    let (mut receiver, child) = command.spawn().map_err(|_| "sidecar-launch-failed")?;
++    let (result_tx, result_rx) = mpsc::channel();
++
++    thread::spawn(move || {
++        let result = async_runtime::block_on(async move {
++            while let Some(event) = receiver.recv().await {
++                match event {
++                    CommandEvent::Terminated(payload) => {
++                        return if payload.code.unwrap_or_default() == 0 {
++                            Ok(())
++                        } else {
++                            Err("sidecar-launch-failed")
++                        };
++                    }
++                    CommandEvent::Error(_) => return Err("sidecar-launch-failed"),
++                    _ => {}
++                }
++            }
++
++            Err("sidecar-launch-failed")
++        });
++        let _ = result_tx.send(result);
++    });
++
++    match result_rx.recv_timeout(timeout) {
++        Ok(result) => result,
++        Err(mpsc::RecvTimeoutError::Timeout) => {
++            let _ = child.kill();
++            Err("sidecar-launch-timeout")
++        }
++        Err(mpsc::RecvTimeoutError::Disconnected) => Err("sidecar-launch-failed"),
++    }
++}
++
++fn wait_for_child_exit_with_timeout(
++    child: &mut std::process::Child,
++    timeout: Duration,
++) -> Result<(), &'static str> {
++    let started_at = Instant::now();
++
++    loop {
++        match child.try_wait() {
++            Ok(Some(status)) => {
++                return if status.success() {
++                    Ok(())
++                } else {
++                    Err("sidecar-launch-failed")
++                };
++            }
++            Ok(None) => {
++                if started_at.elapsed() >= timeout {
++                    let _ = child.kill();
++                    let _ = child.wait();
++                    return Err("sidecar-launch-timeout");
++                }
++
++                thread::sleep(Duration::from_millis(50));
++            }
++            Err(_) => {
++                let _ = child.kill();
++                return Err("sidecar-launch-failed");
++            }
++        }
+     }
+ }
+ 
+@@ -1048,10 +1374,9 @@ fn route_matches_preset(
+ }
+ 
+ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
+-    let host_suffix = format!(
+-        "{}-x86_64-pc-windows-msvc.exe",
+-        dedicated_renderer_binary_stem()
+-    );
++    let target = compiled_target_triple()?;
++    let repo_binary_name = sidecar_binary_name_for_target(target, false)?;
++    let packaged_binary_name = sidecar_binary_name_for_target(target, true)?;
+     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+         .parent()
+         .map(Path::to_path_buf)
+@@ -1059,7 +1384,7 @@ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
+     let repo_candidate = repo_root
+         .join("sidecar")
+         .join("dedicated-renderer")
+-        .join(host_suffix);
++        .join(repo_binary_name);
+ 
+     if repo_candidate.is_file() {
+         return Some(repo_candidate);
+@@ -1067,8 +1392,7 @@ fn resolve_dedicated_renderer_executable() -> Option<PathBuf> {
+ 
+     if let Ok(current_exe) = env::current_exe() {
+         if let Some(current_dir) = current_exe.parent() {
+-            let packaged_candidate =
+-                current_dir.join(format!("{}.exe", dedicated_renderer_binary_stem()));
++            let packaged_candidate = current_dir.join(packaged_binary_name);
+             if packaged_candidate.is_file() {
+                 return Some(packaged_candidate);
+             }
+@@ -1090,6 +1414,41 @@ fn dedicated_renderer_binary_stem() -> &'static str {
+     "boothy-dedicated-renderer"
+ }
+ 
++fn compiled_target_triple() -> Option<&'static str> {
++    if cfg!(all(target_arch = "x86_64", target_os = "windows")) {
++        Some("x86_64-pc-windows-msvc")
++    } else if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
++        Some("x86_64-unknown-linux-gnu")
++    } else if cfg!(all(target_arch = "x86_64", target_os = "macos")) {
++        Some("x86_64-apple-darwin")
++    } else if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
++        Some("aarch64-apple-darwin")
++    } else {
++        None
++    }
++}
++
++fn sidecar_binary_name_for_target(target: &str, packaged: bool) -> Option<String> {
++    if target.trim().is_empty() {
++        return None;
++    }
++
++    let stem = dedicated_renderer_binary_stem();
++    if packaged {
++        return Some(if target.contains("windows") {
++            format!("{stem}.exe")
++        } else {
++            stem.to_string()
++        });
++    }
++
++    Some(if target.contains("windows") {
++        format!("{stem}-{target}.exe")
++    } else {
++        format!("{stem}-{target}")
++    })
++}
++
+ fn path_to_runtime_string(path: &Path) -> String {
+     path.to_string_lossy().replace('\\', "/")
+ }
+@@ -1100,6 +1459,8 @@ fn build_preview_result(
+     output_path: Option<String>,
+     detail_code: Option<&str>,
+     detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
+ ) -> DedicatedRendererPreviewJobResultDto {
+     DedicatedRendererPreviewJobResultDto {
+         schema_version: DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into(),
+@@ -1111,12 +1472,15 @@ fn build_preview_result(
+         output_path,
+         detail_code: detail_code.map(str::to_string),
+         detail_message: detail_message.map(str::to_string),
++        warm_state: warm_state.map(str::to_string),
++        warm_state_detail_path,
+     }
+ }
+ 
+ fn build_preview_spawn_failure_result(
+     request: &DedicatedRendererPreviewJobRequestDto,
+     reason_code: &'static str,
++    warm_state: Option<&PreviewSpawnFailureWarmState>,
+ ) -> DedicatedRendererPreviewJobResultDto {
+     build_preview_result(
+         request,
+@@ -1127,14 +1491,84 @@ fn build_preview_spawn_failure_result(
+             "sidecar-unavailable" => {
+                 "dedicated renderer sidecar를 찾지 못해 truthful fallback path로 내려가요."
+             }
++            "sidecar-launch-timeout" => {
++                "dedicated renderer sidecar 응답이 제한 시간 안에 끝나지 않아 truthful fallback path로 내려가요."
++            }
+             "sidecar-launch-failed" => {
+                 "dedicated renderer sidecar 실행에 실패해 truthful fallback path로 내려가요."
+             }
+             _ => "dedicated renderer sidecar를 시작하지 못해 truthful fallback path로 내려가요.",
+         }),
++        warm_state.map(|state| state.state),
++        warm_state.and_then(|state| state.diagnostics_detail_path.clone()),
+     )
+ }
+ 
++#[derive(Debug, Clone)]
++struct PreviewSpawnFailureWarmState {
++    state: &'static str,
++    diagnostics_detail_path: Option<String>,
++}
++
++type WarmupSpawnFailureWarmState = PreviewSpawnFailureWarmState;
++
++fn infer_warmup_spawn_failure_warm_state(
++    base_dir: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++) -> WarmupSpawnFailureWarmState {
++    infer_preview_spawn_failure_warm_state(base_dir, session_id, preset_id, published_version)
++}
++
++fn infer_preview_spawn_failure_warm_state(
++    base_dir: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++) -> PreviewSpawnFailureWarmState {
++    let snapshot = SessionPaths::try_new(base_dir, session_id)
++        .ok()
++        .and_then(|paths| read_session_manifest(&paths.manifest_path).ok())
++        .and_then(|manifest| manifest.active_preview_renderer_warm_state)
++        .filter(|snapshot| {
++            snapshot.preset_id == preset_id && snapshot.published_version == published_version
++        });
++
++    match snapshot {
++        Some(snapshot) if matches!(snapshot.state.as_str(), "warm-ready" | "warm-hit") => {
++            PreviewSpawnFailureWarmState {
++                state: "warm-state-lost",
++                diagnostics_detail_path: snapshot.diagnostics_detail_path,
++            }
++        }
++        Some(snapshot) if snapshot.state == "warm-state-lost" => PreviewSpawnFailureWarmState {
++            state: "warm-state-lost",
++            diagnostics_detail_path: snapshot.diagnostics_detail_path,
++        },
++        Some(snapshot) => PreviewSpawnFailureWarmState {
++            state: "cold",
++            diagnostics_detail_path: snapshot.diagnostics_detail_path,
++        },
++        None => PreviewSpawnFailureWarmState {
++            state: "cold",
++            diagnostics_detail_path: None,
++        },
++    }
++}
++
++fn forced_start_failure_for_test() -> Option<&'static str> {
++    match env::var(DEDICATED_RENDERER_TEST_START_FAILURE_ENV)
++        .ok()?
++        .as_str()
++    {
++        "sidecar-unavailable" => Some("sidecar-unavailable"),
++        "sidecar-launch-timeout" => Some("sidecar-launch-timeout"),
++        "sidecar-launch-failed" => Some("sidecar-launch-failed"),
++        _ => None,
++    }
++}
++
+ fn with_preview_result_detail_path(
+     mut result: DedicatedRendererPreviewJobResultDto,
+     result_path: &Path,
+@@ -1148,6 +1582,8 @@ fn build_warmup_result(
+     status: &str,
+     detail_code: Option<&str>,
+     detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
+ ) -> DedicatedRendererWarmupResultDto {
+     DedicatedRendererWarmupResultDto {
+         schema_version: DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into(),
+@@ -1158,12 +1594,15 @@ fn build_warmup_result(
+         diagnostics_detail_path: request.diagnostics_detail_path.clone(),
+         detail_code: detail_code.map(str::to_string),
+         detail_message: detail_message.map(str::to_string),
++        warm_state: warm_state.map(str::to_string),
++        warm_state_detail_path,
+     }
+ }
+ 
+ fn build_warmup_spawn_failure_result(
+     request: &DedicatedRendererWarmupRequestDto,
+     reason_code: &'static str,
++    warm_state: &WarmupSpawnFailureWarmState,
+ ) -> DedicatedRendererWarmupResultDto {
+     build_warmup_result(
+         request,
+@@ -1173,11 +1612,16 @@ fn build_warmup_spawn_failure_result(
+             "sidecar-unavailable" => {
+                 "dedicated renderer sidecar를 찾지 못해 inline warm-up을 유지해요."
+             }
++            "sidecar-launch-timeout" => {
++                "dedicated renderer sidecar 응답이 제한 시간 안에 끝나지 않아 inline warm-up을 유지해요."
++            }
+             "sidecar-launch-failed" => {
+                 "dedicated renderer sidecar 실행에 실패해 inline warm-up을 유지해요."
+             }
+             _ => "dedicated renderer sidecar를 시작하지 못해 inline warm-up을 유지해요.",
+         }),
++        Some(warm_state.state),
++        warm_state.diagnostics_detail_path.clone(),
+     )
+ }
+ 
+@@ -1208,6 +1652,8 @@ fn synthetic_preview_result_for_test(
+                 Some(request.canonical_preview_output_path.clone()),
+                 Some("accepted"),
+                 Some("accepted"),
++                Some("warm-hit"),
++                None,
+             )
+         }
+         "queue-saturated" => build_preview_result(
+@@ -1216,6 +1662,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("render-queue-saturated"),
+             Some("dedicated renderer queue가 포화되어 inline truthful fallback으로 내려가요."),
++            Some("warm-state-lost"),
++            None,
+         ),
+         "protocol-mismatch" => build_preview_result(
+             request,
+@@ -1223,6 +1671,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("protocol-mismatch"),
+             Some("preview job protocol version이 맞지 않아 fallback path로 내려가요."),
++            None,
++            None,
+         ),
+         "invalid-output" => build_preview_result(
+             request,
+@@ -1230,6 +1680,8 @@ fn synthetic_preview_result_for_test(
+             Some("C:/outside/non-canonical.jpg".into()),
+             Some("invalid-output"),
+             Some("non-canonical output을 감지해 fallback path로 내려가요."),
++            Some("warm-hit"),
++            None,
+         ),
+         "restarted" => build_preview_result(
+             request,
+@@ -1237,6 +1689,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("renderer-restarted"),
+             Some("renderer restart가 감지되어 fallback path로 내려가요."),
++            Some("warm-state-lost"),
++            None,
+         ),
+         _ => build_preview_result(
+             request,
+@@ -1244,6 +1698,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("sidecar-unavailable"),
+             Some("test fallback path"),
++            None,
++            None,
+         ),
+     })
+ }
+@@ -1289,15 +1745,15 @@ fn current_time_ms() -> Result<u64, HostErrorEnvelope> {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use std::{fs, path::Path, thread, time::Duration};
++    use std::{fs, path::Path, process::Command, thread, time::Duration};
+ 
+     use super::{
+         build_preview_result, build_preview_transition_summary_detail, build_warmup_result,
+         fallback_reason_for_missing_preview_result, preview_output_is_fresh_for_request,
+-        resolve_preview_renderer_route_in_dir, validate_preview_job_result,
+-        validate_warmup_result, PreviewRendererRouteKind,
+-        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
+-        DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
++        resolve_preview_renderer_route_in_dir, sidecar_binary_name_for_target,
++        validate_preview_job_result, validate_warmup_result, wait_for_child_exit_with_timeout,
++        PreviewRendererRouteKind, DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION,
++        DEDICATED_RENDERER_RESULT_SCHEMA_VERSION, DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
+         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION,
+         PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
+     };
+@@ -1364,6 +1820,8 @@ mod tests {
+             None,
+             Some("sidecar-unavailable"),
+             Some("fallback"),
++            None,
++            None,
+         );
+         result.schema_version = DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into();
+         result.capture_id = "capture_other".into();
+@@ -1386,6 +1844,8 @@ mod tests {
+             Some("C:/outside/non-canonical.jpg".into()),
+             Some("invalid-output"),
+             Some("fallback"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1406,6 +1866,8 @@ mod tests {
+             None,
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.schema_version = "dedicated-renderer-preview-job-result/v9".into();
+         result.diagnostics_detail_path = expected_result_path.into();
+@@ -1427,6 +1889,8 @@ mod tests {
+             None,
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1447,6 +1911,8 @@ mod tests {
+             Some(request.canonical_preview_output_path.clone()),
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1461,8 +1927,14 @@ mod tests {
+         let request = warmup_request();
+         let expected_result_path =
+             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
+-        let mut result =
+-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
++        let mut result = build_warmup_result(
++            &request,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("warm"),
++            Some("warm-ready"),
++            None,
++        );
+         result.schema_version = DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into();
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1477,8 +1949,14 @@ mod tests {
+         let request = warmup_request();
+         let expected_result_path =
+             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
+-        let mut result =
+-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
++        let mut result = build_warmup_result(
++            &request,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("warm"),
++            Some("warm-ready"),
++            None,
++        );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+@@ -1695,6 +2173,23 @@ mod tests {
+         let _ = fs::remove_dir_all(base_dir);
+     }
+ 
++    #[test]
++    fn local_sidecar_process_times_out_and_is_killed() {
++        let mut child = Command::new("powershell")
++            .args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 4000"])
++            .spawn()
++            .expect("sleeping process should spawn");
++
++        let started_at = std::time::Instant::now();
++        let result = wait_for_child_exit_with_timeout(&mut child, Duration::from_millis(100));
++
++        assert_eq!(result, Err("sidecar-launch-timeout"));
++        assert!(
++            started_at.elapsed() < Duration::from_secs(2),
++            "timed out child should be cut off quickly"
++        );
++    }
++
+     #[test]
+     fn missing_sidecar_result_uses_route_aware_fallback_reason_codes() {
+         assert_eq!(
+@@ -1712,18 +2207,48 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn preview_transition_summary_keeps_original_visible_to_preset_applied_metric() {
++    fn preview_transition_summary_reports_original_visible_delta() {
+         let detail = build_preview_transition_summary_detail(
+             "inline-truthful-fallback",
+             Some("shadow-submission-only"),
+             "shadow",
+             Some(2810),
+             Some(3615),
++            Some("warm-ready"),
+         );
+ 
+         assert!(detail.contains("firstVisibleMs=2810"));
+         assert!(detail.contains("replacementMs=3615"));
+-        assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=3615"));
++        assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=805"));
+         assert!(detail.contains("routeStage=shadow"));
++        assert!(detail.contains("warmState=warm-ready"));
++    }
++
++    #[test]
++    fn sidecar_binary_names_cover_supported_targets() {
++        assert_eq!(
++            sidecar_binary_name_for_target("x86_64-pc-windows-msvc", false).as_deref(),
++            Some("boothy-dedicated-renderer-x86_64-pc-windows-msvc.exe")
++        );
++        assert_eq!(
++            sidecar_binary_name_for_target("x86_64-pc-windows-msvc", true).as_deref(),
++            Some("boothy-dedicated-renderer.exe")
++        );
++        assert_eq!(
++            sidecar_binary_name_for_target("x86_64-unknown-linux-gnu", false).as_deref(),
++            Some("boothy-dedicated-renderer-x86_64-unknown-linux-gnu")
++        );
++        assert_eq!(
++            sidecar_binary_name_for_target("x86_64-unknown-linux-gnu", true).as_deref(),
++            Some("boothy-dedicated-renderer")
++        );
++        assert_eq!(
++            sidecar_binary_name_for_target("aarch64-apple-darwin", false).as_deref(),
++            Some("boothy-dedicated-renderer-aarch64-apple-darwin")
++        );
++        assert_eq!(
++            sidecar_binary_name_for_target("aarch64-apple-darwin", true).as_deref(),
++            Some("boothy-dedicated-renderer")
++        );
+     }
+ }
+diff --git a/src-tauri/tests/dedicated_renderer.rs b/src-tauri/tests/dedicated_renderer.rs
+index 2fe4323..9982da8 100644
+--- a/src-tauri/tests/dedicated_renderer.rs
++++ b/src-tauri/tests/dedicated_renderer.rs
+@@ -15,6 +15,7 @@ use boothy_lib::{
+         },
+     },
+     contracts::dto::{CaptureReadinessInputDto, CaptureRequestInputDto, SessionStartInputDto},
++    diagnostics::recovery::load_operator_recovery_summary_in_dir,
+     preset::{
+         default_catalog::ensure_default_preset_catalog_in_dir,
+         preset_catalog::resolve_published_preset_catalog_dir,
+@@ -322,6 +323,53 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
+     assert!(timing_events.contains("fallbackReason=none"));
+     assert!(timing_events.contains("routeStage=canary"));
+     assert!(timing_events.contains("originalVisibleToPresetAppliedVisibleMs="));
++    let evidence_path = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("dedicated-renderer")
++        .join("preview-promotion-evidence.jsonl");
++    let evidence_lines =
++        fs::read_to_string(&evidence_path).expect("preview promotion evidence should exist");
++    let evidence_record: serde_json::Value = serde_json::from_str(
++        evidence_lines
++            .lines()
++            .last()
++            .expect("preview promotion evidence should include a record"),
++    )
++    .expect("preview promotion evidence should be valid json");
++    assert_eq!(
++        evidence_record
++            .get("schemaVersion")
++            .and_then(|value| value.as_str()),
++        Some("preview-promotion-evidence-record/v1")
++    );
++    assert_eq!(
++        evidence_record
++            .get("laneOwner")
++            .and_then(|value| value.as_str()),
++        Some("dedicated-renderer")
++    );
++    let expected_route_policy_snapshot_path = base_dir
++        .join("branch-config")
++        .join("preview-renderer-policy.json")
++        .to_string_lossy()
++        .replace('\\', "/");
++    assert_eq!(
++        evidence_record
++            .get("routePolicySnapshotPath")
++            .and_then(|value| value.as_str()),
++        Some(expected_route_policy_snapshot_path.as_str())
++    );
++    let expected_timing_events_path = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("timing-events.log")
++        .to_string_lossy()
++        .replace('\\', "/");
++    assert_eq!(
++        evidence_record
++            .get("timingEventsPath")
++            .and_then(|value| value.as_str()),
++        Some(expected_timing_events_path.as_str())
++    );
+ 
+     let _ = fs::remove_dir_all(base_dir);
+ }
+@@ -510,7 +558,8 @@ fn stale_dedicated_renderer_result_is_ignored_when_no_sidecar_run_happens() {
+     assert_eq!(completed_capture.render_status, "previewReady");
+     assert!(timing_events.contains("event=capture_preview_transition_summary"));
+     assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
+-    assert!(timing_events.contains("fallbackReason=sidecar-unavailable"));
++    assert!(timing_events.contains("fallbackReason=resident-not-warmed"));
++    assert!(timing_events.contains("warmState=cold"));
+     assert!(
+         !timing_events.contains("laneOwner=dedicated-renderer"),
+         "stale accepted result should not be reused as the truthful close owner"
+@@ -584,8 +633,559 @@ fn forced_fallback_route_logs_route_policy_rollback_reason() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn resident_warmup_updates_manifest_and_operator_projection_before_preview_close() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-warmup-manifest");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should be readable after warmup"),
++    )
++    .expect("manifest should deserialize after warmup");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .expect("warm state should be recorded after warmup");
++    assert_eq!(warm_state.preset_id, "preset_soft-glow");
++    assert_eq!(warm_state.published_version, "2026.04.10");
++    assert_eq!(warm_state.state, "warm-ready");
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project warm state");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-ready")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_preview_warm_hit_claims_truthful_close_from_dedicated_renderer() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-preview-warm-hit");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("warmed resident renderer should close the truthful preview");
++    assert_eq!(completed_capture.render_status, "previewReady");
++
++    let timing_events = fs::read_to_string(
++        SessionPaths::new(&base_dir, &session.session_id)
++            .diagnostics_dir
++            .join("timing-events.log"),
++    )
++    .expect("timing log should exist");
++    assert!(timing_events.contains("laneOwner=dedicated-renderer"));
++    assert!(timing_events.contains("fallbackReason=none"));
++    assert!(timing_events.contains("warmState=warm-hit"));
++
++    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
++        .renders_previews_dir
++        .join(format!("{}.jpg", capture.capture.capture_id));
++    assert!(
++        canonical_preview_path.is_file(),
++        "resident renderer should produce the canonical preview output"
++    );
++
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(&manifest_path).expect("manifest should be readable after warm hit"),
++    )
++    .expect("manifest should deserialize after warm hit");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .as_ref()
++        .expect("warm state should remain present after placeholder fallback");
++    assert_eq!(warm_state.state, "warm-hit");
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project dedicated renderer warm-hit evidence");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-hit")
++    );
++    assert_eq!(
++        operator_summary.preview_architecture.lane_owner.as_deref(),
++        Some("dedicated-renderer")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn active_preset_warm_state_is_not_overwritten_by_older_capture_completion() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("active-preset-warm-state-guard");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    create_published_bundle_variant(&catalog_root, "preset_cool-tone", "2026.04.11", "Cool Tone");
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("first preset should become active");
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_cool-tone".into(),
++            published_version: "2026.04.11".into(),
++        },
++    )
++    .expect("second preset should become active before preview completion");
++
++    let env_guard = ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "accepted");
++    let _ = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("older capture should still complete safely");
++    drop(env_guard);
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should remain readable"),
++    )
++    .expect("manifest should deserialize after older capture completion");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .expect("active preset warm state should remain present");
++    assert_eq!(warm_state.preset_id, "preset_cool-tone");
++    assert_eq!(warm_state.published_version, "2026.04.11");
++    assert_eq!(warm_state.state, "cold");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_preview_logs_warm_state_loss_falls_back_safely() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-preview-warm-loss");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++    let mut manifest: boothy_lib::session::session_manifest::SessionManifest =
++        serde_json::from_str(
++            &fs::read_to_string(&manifest_path)
++                .expect("manifest should be readable after warm hit"),
++        )
++        .expect("manifest should deserialize after warm hit");
++    let diagnostics_dir = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("dedicated-renderer");
++    let warm_state_detail_path =
++        diagnostics_dir.join("warm-state-preset_soft-glow-2026.04.10.json");
++    fs::remove_file(&warm_state_detail_path).expect("warm state evidence should be removable");
++    manifest.active_preview_renderer_warm_state = Some(
++        boothy_lib::session::session_manifest::PreviewRendererWarmStateSnapshot {
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++            state: "warm-ready".into(),
++            observed_at: "2026-04-12T08:00:00Z".into(),
++            diagnostics_detail_path: Some(
++                warm_state_detail_path.to_string_lossy().replace('\\', "/"),
++            ),
++        },
++    );
++    fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should persist forced warm-loss setup");
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("warm-state loss should fall back safely");
++    assert_eq!(completed_capture.render_status, "previewReady");
++
++    let timing_events = fs::read_to_string(
++        SessionPaths::new(&base_dir, &session.session_id)
++            .diagnostics_dir
++            .join("timing-events.log"),
++    )
++    .expect("timing log should exist");
++    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
++    assert!(timing_events.contains("fallbackReason=warm-state-loss"));
++    assert!(timing_events.contains("warmState=warm-state-lost"));
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project warm-state loss");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-state-lost")
++    );
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("readiness should remain truthful after warm-state loss");
++    assert_eq!(readiness.reason_code, "ready");
++    assert_eq!(readiness.customer_state, "Ready");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_preview_spawn_failure_clears_stale_warm_state_for_operator_truth() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-preview-spawn-failure");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++    let failure_guard = ScopedEnvVarGuard::set(
++        "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE",
++        "sidecar-unavailable",
++    );
++    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("spawn failure should fall back safely");
++    drop(failure_guard);
++
++    assert_eq!(completed_capture.render_status, "previewReady");
++    let timing_events = fs::read_to_string(
++        SessionPaths::new(&base_dir, &session.session_id)
++            .diagnostics_dir
++            .join("timing-events.log"),
++    )
++    .expect("timing log should exist");
++    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
++    assert!(timing_events.contains("fallbackReason=sidecar-unavailable"));
++    assert!(timing_events.contains("warmState=warm-state-lost"));
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should be readable after spawn failure"),
++    )
++    .expect("manifest should deserialize after spawn failure");
++    assert_eq!(
++        manifest
++            .active_preview_renderer_warm_state
++            .as_ref()
++            .map(|snapshot| snapshot.state.as_str()),
++        Some("warm-state-lost")
++    );
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project the degraded warm state");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-state-lost")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_warmup_spawn_failure_clears_stale_warm_state_for_operator_truth() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-warmup-spawn-failure");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let failure_guard = ScopedEnvVarGuard::set(
++        "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE",
++        "sidecar-unavailable",
++    );
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++    drop(failure_guard);
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should be readable after warmup spawn failure"),
++    )
++    .expect("manifest should deserialize after warmup spawn failure");
++    assert_eq!(
++        manifest
++            .active_preview_renderer_warm_state
++            .as_ref()
++            .map(|snapshot| snapshot.state.as_str()),
++        Some("warm-state-lost")
++    );
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project the degraded warm state");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-state-lost")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ fn create_published_bundle(catalog_root: &PathBuf) {
+-    let bundle_dir = catalog_root.join("preset_soft-glow").join("2026.04.10");
++    create_published_bundle_variant(catalog_root, "preset_soft-glow", "2026.04.10", "Soft Glow");
++}
++
++fn create_published_bundle_variant(
++    catalog_root: &PathBuf,
++    preset_id: &str,
++    published_version: &str,
++    display_name: &str,
++) {
++    let bundle_dir = catalog_root.join(preset_id).join(published_version);
+     fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should exist");
+     fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should exist");
+     fs::write(
+@@ -595,7 +1195,7 @@ fn create_published_bundle(catalog_root: &PathBuf) {
+             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+             "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+             "<rdf:Description xmlns:darktable=\"http://darktable.sf.net/\">",
+-            "<darktable:history><rdf:Seq><rdf:li><darktable:module>preset_soft-glow</darktable:module></rdf:li></rdf:Seq></darktable:history>",
++            "<darktable:history><rdf:Seq><rdf:li><darktable:module>bundle</darktable:module></rdf:li></rdf:Seq></darktable:history>",
+             "</rdf:Description></rdf:RDF></x:xmpmeta>"
+         ),
+     )
+@@ -603,9 +1203,9 @@ fn create_published_bundle(catalog_root: &PathBuf) {
+ 
+     let bundle = serde_json::json!({
+       "schemaVersion": "published-preset-bundle/v1",
+-      "presetId": "preset_soft-glow",
+-      "displayName": "Soft Glow",
+-      "publishedVersion": "2026.04.10",
++      "presetId": preset_id,
++      "displayName": display_name,
++      "publishedVersion": published_version,
+       "lifecycleStatus": "published",
+       "boothStatus": "booth-safe",
+       "darktableVersion": "5.4.1",
+@@ -710,7 +1310,13 @@ fn request_capture_with_helper_success(
+         base_dir,
+         CaptureRequestInputDto {
+             session_id: session_id.into(),
+-            request_id: Some("request_20260410_001".into()),
++            request_id: Some(format!(
++                "request_{}",
++                SystemTime::now()
++                    .duration_since(UNIX_EPOCH)
++                    .unwrap_or_default()
++                    .as_nanos()
++            )),
+         },
+     )
+     .expect("capture should save");
+diff --git a/tests/fixtures/contracts/preview-promotion-evidence-record-v1.json b/tests/fixtures/contracts/preview-promotion-evidence-record-v1.json
+new file mode 100644
+index 0000000..efabc53
+--- /dev/null
++++ b/tests/fixtures/contracts/preview-promotion-evidence-record-v1.json
+@@ -0,0 +1,23 @@
++{
++  "schemaVersion": "preview-promotion-evidence-record/v1",
++  "observedAt": "2026-04-12T08:00:15+09:00",
++  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
++  "requestId": "request_20260410_001",
++  "captureId": "capture_20260410_001",
++  "presetId": "preset_soft-glow",
++  "publishedVersion": "2026.04.10",
++  "laneOwner": "dedicated-renderer",
++  "fallbackReasonCode": null,
++  "routeStage": "canary",
++  "warmState": "warm-ready",
++  "firstVisibleMs": 2810,
++  "replacementMs": 3615,
++  "originalVisibleToPresetAppliedVisibleMs": 805,
++  "sessionManifestPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/session.json",
++  "timingEventsPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/timing-events.log",
++  "routePolicySnapshotPath": "C:/Users/Example/Pictures/dabi_shoot/branch-config/preview-renderer-policy.json",
++  "publishedBundlePath": "C:/Users/Example/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
++  "catalogStatePath": "C:/Users/Example/Pictures/dabi_shoot/preset-catalog/catalog-state.json",
++  "previewAssetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
++  "warmStateDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
++}
+diff --git a/tests/hardware-evidence-scripts.test.ts b/tests/hardware-evidence-scripts.test.ts
+new file mode 100644
+index 0000000..3c25db7
+--- /dev/null
++++ b/tests/hardware-evidence-scripts.test.ts
+@@ -0,0 +1,324 @@
++import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { spawnSync } from 'node:child_process'
++import { afterEach, describe, expect, it } from 'vitest'
++
++const createdRoots: string[] = []
++
++function createFixtureRepo() {
++  const repoRoot = mkdtempSync(path.join(tmpdir(), 'boothy-hardware-scripts-'))
++  createdRoots.push(repoRoot)
++
++  const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
++  const captureId = 'capture_20260410_001'
++  const requestId = 'request_20260410_001'
++  const presetId = 'preset_soft-glow'
++  const publishedVersion = '2026.04.10'
++  const sessionRoot = path.join(repoRoot, 'sessions', sessionId)
++
++  mkdirSync(path.join(sessionRoot, 'diagnostics', 'dedicated-renderer'), {
++    recursive: true,
++  })
++  mkdirSync(path.join(sessionRoot, 'renders', 'previews'), { recursive: true })
++  mkdirSync(path.join(repoRoot, 'branch-config'), { recursive: true })
++  mkdirSync(
++    path.join(
++      repoRoot,
++      'preset-catalog',
++      'published',
++      presetId,
++      publishedVersion,
++    ),
++    { recursive: true },
++  )
++
++  writeFileSync(
++    path.join(sessionRoot, 'session.json'),
++    JSON.stringify(
++      {
++        schemaVersion: 'session-manifest/v1',
++        sessionId,
++        boothAlias: 'Kim 4821',
++        customer: {
++          name: 'Kim',
++          phoneLastFour: '4821',
++        },
++        createdAt: '2026-04-12T00:00:00Z',
++        updatedAt: '2026-04-12T00:00:15Z',
++        lifecycle: {
++          status: 'active',
++          stage: 'preview-ready',
++        },
++        activePreset: {
++          presetId,
++          publishedVersion,
++        },
++        activePresetId: presetId,
++        captures: [
++          {
++            schemaVersion: 'session-capture/v1',
++            sessionId,
++            boothAlias: 'Kim 4821',
++            activePresetId: presetId,
++            activePresetVersion: publishedVersion,
++            activePresetDisplayName: 'Soft Glow',
++            captureId,
++            requestId,
++            raw: {
++              assetPath: path.join(sessionRoot, 'captures', 'originals', 'capture.cr3'),
++              persistedAtMs: 100,
++            },
++            preview: {
++              assetPath: path.join(
++                sessionRoot,
++                'renders',
++                'previews',
++                `${captureId}.jpg`,
++              ),
++              enqueuedAtMs: 150,
++              readyAtMs: 900,
++            },
++            final: {
++              assetPath: null,
++              readyAtMs: null,
++            },
++            renderStatus: 'previewReady',
++            postEndState: 'activeSession',
++            timing: {
++              captureAcknowledgedAtMs: 100,
++              previewVisibleAtMs: 900,
++              fastPreviewVisibleAtMs: 2810,
++              xmpPreviewReadyAtMs: 6425,
++              captureBudgetMs: 1000,
++              previewBudgetMs: 5000,
++              previewBudgetState: 'overBudget',
++            },
++          },
++        ],
++        postEnd: null,
++      },
++      null,
++      2,
++    ),
++  )
++  writeFileSync(
++    path.join(sessionRoot, 'diagnostics', 'timing-events.log'),
++    [
++      '2026-04-12T08:00:15+09:00\tsession=' +
++        sessionId +
++        '\tcapture=' +
++        captureId +
++        '\trequest=' +
++        requestId +
++        '\tevent=capture_preview_transition_summary\tdetail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;warmState=warm-ready;firstVisibleMs=2810;replacementMs=3615;originalVisibleToPresetAppliedVisibleMs=805',
++    ].join('\n'),
++  )
++  writeFileSync(
++    path.join(
++      sessionRoot,
++      'diagnostics',
++      'dedicated-renderer',
++      'preview-promotion-evidence.jsonl',
++    ),
++    JSON.stringify({
++      schemaVersion: 'preview-promotion-evidence-record/v1',
++      observedAt: '2026-04-12T08:00:15+09:00',
++      sessionId,
++      requestId,
++      captureId,
++      presetId,
++      publishedVersion,
++      laneOwner: 'dedicated-renderer',
++      fallbackReasonCode: null,
++      routeStage: 'canary',
++      warmState: 'warm-ready',
++      firstVisibleMs: 2810,
++      replacementMs: 3615,
++      originalVisibleToPresetAppliedVisibleMs: 805,
++      sessionManifestPath: path.join(sessionRoot, 'session.json').replace(/\\/g, '/'),
++      timingEventsPath: path
++        .join(sessionRoot, 'diagnostics', 'timing-events.log')
++        .replace(/\\/g, '/'),
++      routePolicySnapshotPath: path
++        .join(repoRoot, 'branch-config', 'preview-renderer-policy.json')
++        .replace(/\\/g, '/'),
++      publishedBundlePath: path
++        .join(
++          repoRoot,
++          'preset-catalog',
++          'published',
++          presetId,
++          publishedVersion,
++          'bundle.json',
++        )
++        .replace(/\\/g, '/'),
++      catalogStatePath: path
++        .join(repoRoot, 'preset-catalog', 'catalog-state.json')
++        .replace(/\\/g, '/'),
++      previewAssetPath: path
++        .join(sessionRoot, 'renders', 'previews', `${captureId}.jpg`)
++        .replace(/\\/g, '/'),
++      warmStateDetailPath: path
++        .join(
++          sessionRoot,
++          'diagnostics',
++          'dedicated-renderer',
++          'warm-state-preset_soft-glow-2026.04.10.json',
++        )
++        .replace(/\\/g, '/'),
++    }),
++  )
++  writeFileSync(
++    path.join(repoRoot, 'branch-config', 'preview-renderer-policy.json'),
++    JSON.stringify({ schemaVersion: 'preview-renderer-route-policy/v1' }, null, 2),
++  )
++  writeFileSync(
++    path.join(
++      repoRoot,
++      'preset-catalog',
++      'published',
++      presetId,
++      publishedVersion,
++      'bundle.json',
++    ),
++    JSON.stringify({ schemaVersion: 'published-preset-bundle/v2' }, null, 2),
++  )
++  writeFileSync(
++    path.join(repoRoot, 'preset-catalog', 'catalog-state.json'),
++    JSON.stringify({ schemaVersion: 'preset-catalog-state/v1' }, null, 2),
++  )
++  writeFileSync(
++    path.join(sessionRoot, 'renders', 'previews', `${captureId}.jpg`),
++    Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
++  )
++
++  return {
++    repoRoot,
++    sessionId,
++    captureId,
++    presetId,
++    publishedVersion,
++  }
++}
++
++function runPowershell(scriptPath: string, args: string[]) {
++  const result = spawnSync(
++    'powershell',
++    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...args],
++    {
++      encoding: 'utf8',
++    },
++  )
++
++  if (result.status !== 0) {
++    throw new Error(result.stderr || result.stdout || 'powershell script failed')
++  }
++
++  return JSON.parse(result.stdout)
++}
++
++afterEach(() => {
++  for (const root of createdRoots.splice(0)) {
++    rmSync(root, { recursive: true, force: true })
++  }
++})
++
++describe('hardware evidence scripts', () => {
++  it(
++    'builds a deterministic dry-run trace start plan',
++    () => {
++    const fixture = createFixtureRepo()
++    const result = runPowershell(
++      path.resolve('scripts/hardware/Start-PreviewPromotionTrace.ps1'),
++      [
++        '-RepoRoot',
++        fixture.repoRoot,
++        '-SessionId',
++        fixture.sessionId,
++        '-PresetId',
++        fixture.presetId,
++        '-PublishedVersion',
++        fixture.publishedVersion,
++        '-CaptureId',
++        fixture.captureId,
++        '-DryRun',
++        '-EmitJson',
++      ],
++    )
++
++    expect(result.schemaVersion).toBe('preview-promotion-trace-plan/v1')
++    expect(result.mode).toBe('dry-run')
++    expect(result.traces.wprTracePath).toContain('preview-promotion.etl')
++    expect(result.traces.pixTimingCapturePath).toContain(
++      'preview-promotion-timing.wpix',
++    )
++    },
++    40000,
++  )
++
++  it(
++    'builds a dry-run evidence bundle from the structured promotion record',
++    () => {
++    const fixture = createFixtureRepo()
++    const result = runPowershell(
++      path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'),
++      [
++        '-RepoRoot',
++        fixture.repoRoot,
++        '-SessionId',
++        fixture.sessionId,
++        '-CaptureId',
++        fixture.captureId,
++        '-PresetId',
++        fixture.presetId,
++        '-PublishedVersion',
++        fixture.publishedVersion,
++        '-DryRun',
++        '-EmitJson',
++      ],
++    )
++
++    expect(result.schemaVersion).toBe('preview-promotion-evidence-bundle/v1')
++    expect(result.laneOwner).toBe('dedicated-renderer')
++    expect(result.routeStage).toBe('canary')
++    expect(result.artifacts.sessionManifest.source).toContain('session.json')
++    expect(result.artifacts.routePolicySnapshot.source).toContain(
++      'preview-renderer-policy.json',
++    )
++    expect(result.parity.result).toBe('not-run')
++    expect(result.missingArtifacts).toEqual([])
++    },
++    40000,
++  )
++
++  it(
++    'builds a deterministic dry-run trace stop plan',
++    () => {
++    const fixture = createFixtureRepo()
++    const result = runPowershell(
++      path.resolve('scripts/hardware/Stop-PreviewPromotionTrace.ps1'),
++      [
++        '-RepoRoot',
++        fixture.repoRoot,
++        '-SessionId',
++        fixture.sessionId,
++        '-PresetId',
++        fixture.presetId,
++        '-PublishedVersion',
++        fixture.publishedVersion,
++        '-CaptureId',
++        fixture.captureId,
++        '-DryRun',
++        '-EmitJson',
++      ],
++    )
++
++    expect(result.schemaVersion).toBe('preview-promotion-trace-summary/v1')
++    expect(result.mode).toBe('dry-run')
++    expect(result.traces.wprTracePath).toContain('preview-promotion.etl')
++    expect(result.commands.stopWpr === null || result.commands.stopWpr).toBeTruthy()
++    },
++    40000,
++  )
++})

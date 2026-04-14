@@ -40,7 +40,7 @@ This document defines the implementation-shaping technical decisions for Boothy 
 
 ## System Overview
 
-Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration and darktable rendering remain isolated execution boundaries so booth UI never interprets raw helper or render-engine output directly.
+Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration, resident GPU rendering, and darktable baseline/fallback execution remain isolated boundaries so booth UI never interprets raw helper or render-engine output directly.
 
 ```mermaid
 flowchart LR
@@ -56,12 +56,15 @@ flowchart LR
     Host --> AuditDB["SQLite Audit Store<br/>lifecycle + interventions + rollout"]
     Host --> Config["Local Branch Config"]
     Host --> CameraSidecar["Camera Sidecar / Helper"]
-    Host --> RenderWorker["darktable Render Worker"]
+    Host --> GpuRenderService["Resident GPU Render Service"]
+    Host --> BaselineWorker["darktable Baseline / Fallback / Parity Worker"]
     AuthorUI --> PresetArtifacts["Published Preset Artifacts"]
     Host --> PresetArtifacts
-    RenderWorker --> PresetArtifacts
+    GpuRenderService --> PresetArtifacts
+    BaselineWorker --> PresetArtifacts
     CameraSidecar --> SessionFS
-    RenderWorker --> SessionFS
+    GpuRenderService --> SessionFS
+    BaselineWorker --> SessionFS
 ```
 
 ## Project Context Analysis
@@ -219,8 +222,8 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 
 | Darktable capability or module | Decision | Rust host and booth-safe pipeline mapping | Surface and boundary mapping |
 | --- | --- | --- | --- |
-| XMP sidecar plus history stack | Adopt | The preset manifest stores `xmpTemplatePath`, `darktableVersion`, preview/final profiles, and render policies as the authoritative preset artifact. The Rust host validates that artifact, then records `raw`, `preview`, `final`, and render status separately in the session manifest. | Authoring exports approved XMP-backed presets. Customers never see history stacks or XMP. Operators see preset version, publish status, and render status only. |
-| `darktable-cli` headless apply | Adopt | The approved direction is a host-owned local dedicated renderer lane that invokes the darktable truth path after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied truthful close even when a same-capture first-visible image appeared earlier. | Authoring publishes artifacts that the renderer consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, saturation, and failure diagnostics. |
+| XMP sidecar plus history stack | Adopt | The preset manifest stores canonical recipe compatibility assets such as `xmpTemplatePath`, `darktableVersion`, preview/final profiles, and render policies. The Rust host validates that bundle, then records `raw`, `preview`, `final`, and render status separately in the session manifest. XMP remains compatibility and fallback data, not the only runtime truth representation. | Authoring exports approved XMP-backed presets. Customers never see history stacks or XMP. Operators see preset version, publish status, and render status only. |
+| `darktable-cli` headless apply | Adopt | The approved direction is a host-owned resident GPU-first display lane with darktable retained as baseline, fallback, and parity oracle. The host invokes the darktable truth path after raw ingest only for fallback, parity comparison, or final/export-oriented work, isolates `configdir` and `library` per preview/final mode, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied truthful close even when a same-capture first-visible image appeared earlier. | Authoring publishes artifacts that both the GPU lane and darktable baseline consume. Customers see only booth-safe waiting/ready states. Operators see queue backlog, fallback reason, version pin health, saturation, and failure diagnostics. |
 | Core look modules: `input color profile`, `exposure`, `filmic rgb`, `color balance rgb`, `diffuse or sharpen`, and denoise modules | Adopt | Module parameters stay opaque inside approved XMP artifacts; the Rust host does not reinterpret individual slider semantics. Preview and final profiles may diverge on detail/noise policy, but both remain pinned to the same approved preset version. | Authoring uses these modules to craft and review looks. Booth customers choose preset names/previews only. Operators manage publish/rollback, not per-session grading. |
 | Geometry and optical correction: `lens correction`, `orientation`, `crop`, and `rotate and perspective` | Adopt with bounded use | These are allowed only when baked into an approved preset artifact or a host-owned normalization policy. The pipeline applies them deterministically during render and never exposes ad hoc per-session edits. | Authoring may use them to normalize lens/body output and framing. Customers never adjust geometry. Operators may inspect the active preset version but do not get live booth-floor geometry controls. |
 | Styles and `.dtstyle` | Emulate for publication UX, exclude as runtime truth | Runtime apply never depends on style names or a shared darktable `data.db`. If a style is used during authoring convenience, it must be converted into an approved XMP-backed preset artifact before publication. | Authoring may offer style-like duplication/import/export workflows. Customers and booth operators select published Boothy presets, not raw darktable styles. |
@@ -237,10 +240,14 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Session identity split:** The booth-start flow captures a customer-facing `boothAlias` built from name plus phone-last-four, while the host creates an opaque durable `sessionId` for contracts, storage, and correlation.
 - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
-- **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The approved next structure is `local dedicated renderer + different close topology`, where the host owns one local dedicated renderer lane for preset-applied close and may still promote an approved same-capture first-visible image into the canonical preview path earlier.
+- **Preset recipe truth:** Preset publication is anchored on a canonical preset recipe that both the resident GPU lane and the darktable compatibility path can consume. XMP and other darktable-compatible assets remain adapter artifacts, not the only expression of preset truth.
+- **Preset data model:** Presets are published as immutable versioned artifacts with canonical recipe metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
+- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The approved next structure is `resident GPU-first primary lane + different close topology`, where the host owns one resident GPU service for preset-applied close and may still promote an approved same-capture first-visible image into the canonical preview path earlier. darktable remains the baseline, fallback, and parity oracle rather than the default preview truth owner.
+- **Preview adoption stage:** Preview architecture adoption follows `prototype -> activation -> guarded cutover -> release close`.
+- **Route rollout artifact rule:** `preview-renderer-policy.json` is both a route policy artifact and a rollout artifact, and its promoted `canary/default` state is part of release evidence rather than an implementation detail.
+- **Warm-state rule:** `warm-ready`, `warm-hit`, `cold`, and `warm-state-lost` are not diagnostics-only vocabulary; they are activation-readiness evidence that must be visible in operator-safe proof before guarded cutover can close.
 - **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later preset-applied truthful close produced from the capture-bound published preset artifact by the host-owned dedicated renderer lane.
-- **Alternative-path rule:** `edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge` and `lighter truthful renderer` are not the default booth architecture.
+- **Alternative-path rule:** `edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge`, `lighter truthful renderer`, and `darktable-only preview ownership` are not the default booth architecture.
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
 - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
 - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
@@ -829,9 +836,9 @@ The architecture is now ready to support regenerated implementation stories agai
 
 ## Initial Implementation Priorities
 
-1. Align preview architecture implementation stories to the approved `local dedicated renderer + different close topology` decision, starting with dedicated renderer ownership, dual-close model, and cutover validation gates.
-2. Freeze and expand the dedicated renderer, session-manifest, and sidecar-adjacent contracts so preview truth closes through one host-owned local runtime boundary.
-3. Implement the preview architecture pivot behind a safe booth fallback path and prove `original visible -> preset-applied visible` against approved hardware validation.
+1. Preserve Story 1.18 prototype and Story 1.19 promotion-gate outputs as the pre-activation baseline.
+2. Add an activation story that promotes approved preset scope from `shadow` to `canary/default` through host-owned `preview-renderer-policy.json` and proves resident success-path evidence on real booth sessions.
+3. Run Story 1.13 only after activation proof exists, so guarded cutover and hardware `Go / No-Go` remain release-close work rather than implementation catch-up work.
 4. Continue publication, timing/completion, and release-governance tracks without weakening the approved preview/final truth model.
 
 ## Architecture Validation Results

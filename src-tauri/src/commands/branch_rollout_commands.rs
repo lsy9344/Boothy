@@ -3,12 +3,15 @@ use tauri::Manager;
 use crate::{
     branch_config::{
         apply_branch_rollback_in_dir, apply_branch_rollout_in_dir,
-        load_branch_rollout_overview_in_dir,
+        load_branch_rollout_overview_in_dir, load_preview_renderer_route_status_in_dir,
+        promote_preview_renderer_route_in_dir, rollback_preview_renderer_route_in_dir,
     },
     commands::runtime_commands::resolve_runtime_capability_snapshot,
     contracts::dto::{
         BranchRollbackInputDto, BranchRolloutActionResultDto, BranchRolloutInputDto,
-        BranchRolloutOverviewResultDto, HostErrorEnvelope,
+        BranchRolloutOverviewResultDto, HostErrorEnvelope, PreviewRendererRouteMutationResultDto,
+        PreviewRendererRoutePromotionInputDto, PreviewRendererRouteRollbackInputDto,
+        PreviewRendererRouteStatusInputDto, PreviewRendererRouteStatusResultDto,
     },
     session::session_repository::resolve_app_session_base_dir,
 };
@@ -52,4 +55,46 @@ pub fn apply_branch_rollback(
     let capability_snapshot = resolve_runtime_capability_snapshot();
 
     apply_branch_rollback_in_dir(&base_dir, &capability_snapshot, input)
+}
+
+#[tauri::command]
+pub fn load_preview_renderer_route_status(
+    app: tauri::AppHandle,
+    input: PreviewRendererRouteStatusInputDto,
+) -> Result<PreviewRendererRouteStatusResultDto, HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let capability_snapshot = resolve_runtime_capability_snapshot();
+
+    load_preview_renderer_route_status_in_dir(&base_dir, &capability_snapshot, input)
+}
+
+#[tauri::command]
+pub fn promote_preview_renderer_route(
+    app: tauri::AppHandle,
+    input: PreviewRendererRoutePromotionInputDto,
+) -> Result<PreviewRendererRouteMutationResultDto, HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let capability_snapshot = resolve_runtime_capability_snapshot();
+
+    promote_preview_renderer_route_in_dir(&base_dir, &capability_snapshot, input)
+}
+
+#[tauri::command]
+pub fn rollback_preview_renderer_route(
+    app: tauri::AppHandle,
+    input: PreviewRendererRouteRollbackInputDto,
+) -> Result<PreviewRendererRouteMutationResultDto, HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let capability_snapshot = resolve_runtime_capability_snapshot();
+
+    rollback_preview_renderer_route_in_dir(&base_dir, &capability_snapshot, input)
 }

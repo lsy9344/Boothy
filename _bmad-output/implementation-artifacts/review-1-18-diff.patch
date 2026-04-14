@@ -1,0 +1,2373 @@
+diff --git a/docs/contracts/local-dedicated-renderer.md b/docs/contracts/local-dedicated-renderer.md
+index 5483f22..86946ce 100644
+--- a/docs/contracts/local-dedicated-renderer.md
++++ b/docs/contracts/local-dedicated-renderer.md
+@@ -2,13 +2,7 @@
+ 
+ ## 목적
+ 
+-이 문서는 Boothy의 다음 preview architecture로 승인된 `local dedicated renderer`의 최소 계약을 고정한다.
+-
+-## Ownership
+-
+-- Tauri host가 dedicated renderer lifecycle을 직접 소유한다.
+-- dedicated renderer는 preset-applied truthful close owner다.
+-- first-visible lane은 별도 customer-visible projection일 수 있지만 `previewReady` truth owner가 아니다.
++이 문서는 Boothy의 승인된 preview architecture인 `local dedicated renderer`의 최소 계약을 고정한다.
+ 
+ ## 최소 입력
+ 
+@@ -21,29 +15,16 @@
+ - `xmpTemplatePath`
+ - `previewProfile`
+ 
+-## 최소 동작
++## 해석 규칙
+ 
+-- `warmRenderer`
+-  - preset preload, cache priming, warm-state 확보
+-- `submitPreviewJob`
+-  - capture-bound preset artifact로 same-capture preview close 시도
+-- `previewReady`
+-  - canonical preview path에 실제 preset-applied artifact가 생성된 뒤에만 발생
+-- `queueSaturated`
+-  - host가 truthful fallback을 결정할 수 있게 전달
+-- `fallbackSuggested`
+-  - current booth path로 안전 강등이 필요함을 전달
++- `previewProfile`은 bundle top-level legacy field가 아니라 `canonicalRecipe.previewIntent`에서 유도된다.
++- `xmpTemplatePath`는 `darktableAdapter.xmpTemplatePath`에서 유도된다.
++- dedicated renderer는 same-capture, same-session, capture-bound preset version을 유지해야 한다.
++- dedicated renderer result는 additive warm-state evidence(`warmState`, `warmStateDetailPath`)를 함께 남길 수 있지만, session truth 자체를 직접 소유하면 안 된다.
+ 
+ ## Booth-Safe Rules
+ 
+ - booth는 first-visible image가 먼저 보여도 `previewReady`를 조기 승격하면 안 된다.
+-- dedicated renderer는 same-capture, same-session, capture-bound preset version을 유지해야 한다.
+ - same-path replacement는 기존 canonical preview를 먼저 잃지 않는 방식으로 수행돼야 한다.
+ - queue saturation, warm-state loss, invalid output 시 booth는 `Preview Waiting`과 approved fallback path를 유지해야 한다.
+-
+-## Validation Gate
+-
+-- `original visible -> preset-applied visible <= 2.5s` 목표
+-- wrong-capture `0`
+-- preset mismatch `0`
+-- preview/final truth drift `0`
++- operator/diagnostics용 warm-state vocabulary는 `warm-ready`, `warm-hit`, `cold`, `warm-state-lost` 또는 동등한 typed 값으로 제한한다.
+diff --git a/docs/contracts/render-worker.md b/docs/contracts/render-worker.md
+index 27ae140..9effd43 100644
+--- a/docs/contracts/render-worker.md
++++ b/docs/contracts/render-worker.md
+@@ -2,70 +2,38 @@
+ 
+ ## 목적
+ 
+-이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때 지켜야 하는 기준선을 고정한다. 현재 승인된 다음 구조는 host-owned `local dedicated renderer`이며, 이 문서는 그 구조의 booth-safe contract를 설명한다.
++이 문서는 booth runtime이 published preset bundle을 실제 preview/final 산출물로 연결할 때
++지켜야 하는 기준선을 고정한다.
+ 
+ ## Runtime 입력 기준
+ 
+-- local dedicated renderer는 live catalog pointer가 아니라 capture record에 저장된
+-  `activePresetId + activePresetVersion`을 사용한다.
+-- host는 dedicated renderer를 임의 executable 경로로 직접 띄우지 않는다.
+-  bundle에 포함된 sidecar 이름 `../sidecar/dedicated-renderer/boothy-dedicated-renderer`와
+-  승인된 `--protocol`, `--request`, `--result` 인수만 사용한다.
+ - runtime bundle loader는 최소 아래 필드를 읽어야 한다.
+   - `presetId`
+   - `publishedVersion`
+-  - `darktableVersion`
+-  - `xmpTemplatePath`
+-  - `previewProfile`
+-  - `finalProfile`
+-- `darktableVersion`은 pinned `5.4.1`과 일치해야 한다.
+-- `xmpTemplatePath`는 bundle root 내부의 실제 파일이어야 한다.
+-- preview lane의 기본 invocation은 booth hardware에서 검증된 known-good contract를 사용해야 한다.
+-- speculative 또는 실험적 invocation flag는 별도 승인 없이는 기본 booth path에 포함되면 안 된다.
++  - `canonicalRecipe.previewIntent`
++  - `canonicalRecipe.finalIntent`
++  - `canonicalRecipe.noisePolicy`
++  - `darktableAdapter.darktableVersion`
++  - `darktableAdapter.xmpTemplatePath`
++- `darktableAdapter.darktableVersion`은 pinned `5.4.1`과 일치해야 한다.
++- `darktableAdapter.xmpTemplatePath`는 bundle root 내부의 실제 파일이어야 한다.
++- runtime truth는 editor 내부 표현 하나가 아니라 capture-bound bundle에 고정된다.
+ 
+ ## Preview 규칙
+ 
+-- first-visible preview 경로는 booth UX 보호를 위해 별도 lane으로 존재할 수 있지만, preset-applied truthful close의 owner는 host-owned local dedicated renderer다.
+-- preset 선택 또는 세션 시작 시 dedicated renderer warm-up, preset preload, cache priming을 허용할 수 있지만 capture truth를 막으면 안 된다.
+-- dedicated renderer가 queue saturation, warm-state loss, restart, invalid output에 부딪히면 booth는 false-ready 없이 기존 truthful `Preview Waiting`과 approved fallback path로 내려가야 한다.
+-- preview result의 `schemaVersion`, typed `status`, `sessionId`, `requestId`, `captureId`,
+-  `diagnosticsDetailPath`, canonical preview output path 검증이 실패하면 host는 이를
+-  `protocol-mismatch` 또는 `invalid-output`으로 기록하고 inline truthful fallback을 유지한다.
+-- preview render는 `renders/previews/{captureId}.jpg`를 실제로 만든 뒤에만 `previewReady`를 기록한다.
+-- 같은 capture의 pending first-visible image가 이미 canonical preview path에 있어도, dedicated renderer는 그 경로를 same-path preset-applied output으로 직접 교체할 수 있어야 한다.
+-- first-visible image가 먼저 보였더라도 dedicated renderer만이 truthful `previewReady`와 `preview.readyAtMs`를 올릴 수 있다.
+-- dedicated renderer가 같은 capture의 preset-applied preview file을 성공적으로 만들었다면, 그 시점이 곧 truthful `previewReady` close다.
+-- same-path 교체가 실패하더라도 runtime은 기존 canonical preview를 먼저 잃어버리는 방식으로 downgrade하면 안 된다.
++- first-visible preview 경로는 별도 lane으로 존재할 수 있지만, truthful close owner는 host-owned renderer다.
++- `previewReady`는 canonical recipe intent와 darktable adapter를 사용해 같은 capture의 preset-applied preview file을 실제로 만든 뒤에만 기록한다.
++- first-visible image가 먼저 보여도 booth는 `Preview Waiting`을 유지해야 한다.
+ - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
+-- booth는 dedicated renderer가 실제 preset-applied preview를 만들기 전까지 `Preview Waiting`을 유지해야 한다.
++- resident prototype evidence는 `capture_preview_transition_summary` 계열 진단에서 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`,
++  `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 Story 1.19 seam으로 이어져야 한다.
+ 
+ ## Final 규칙
+ 
+-- final render는 `renders/finals/{captureId}.jpg`를 실제로 만든 뒤에만 `finalReady`를 기록한다.
++- `finalReady`도 canonical recipe final intent와 darktable adapter XMP를 사용한 성공 산출물 뒤에만 기록한다.
+ - post-end `Completed`는 `finalReady`가 없는 상태에서 올라가면 안 된다.
+-- post-end에서 preview만 준비된 상태는 `export-waiting`으로 유지한다.
+ 
+ ## Drift 보호
+ 
+-- capture 이후 publish/rollback 또는 active preset 변경이 있어도,
+-  이미 저장된 capture render는 capture record에 저장된 version으로만 다시 계산한다.
++- capture 이후 publish/rollback 또는 active preset 변경이 있어도, 이미 저장된 capture render는 capture record에 저장된 version으로만 다시 계산한다.
+ - runtime은 capture-bound bundle을 찾지 못하면 조용히 최신 live version으로 대체하면 안 된다.
+-
+-## 진단과 실패
+-
+-- render failure는 customer surface에 darktable/XMP/filesystem 경로를 노출하지 않는다.
+-- diagnostics에는 safe event만 남긴다.
+-  - `preview-render-start`
+-  - `preview-render-ready`
+-  - `preview-render-failed`
+-  - `preview-render-queue-saturated`
+-  - `fast-preview-visible` 또는 동등 first-visible event
+-  - `capture_preview_ready`
+-  - `recent-session-visible`
+-  - `final-render-start`
+-  - `final-render-ready`
+-  - `final-render-failed`
+-  - `final-render-queue-saturated`
+-- warm-up 결과는 최소 `fallback-suggested`, `warmed-up`, `restarted`, `protocol-mismatch`
+-  typed 상태로 남겨 host integration과 seam review에서 구분 가능해야 한다.
+-- preview/final failure는 저장된 RAW와 기존 session asset을 보존한 채 bounded failure truth로 기록한다.
+diff --git a/docs/contracts/session-manifest.md b/docs/contracts/session-manifest.md
+index 940bbc3..19f2213 100644
+--- a/docs/contracts/session-manifest.md
++++ b/docs/contracts/session-manifest.md
+@@ -64,6 +64,18 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+   },
+   "activePresetId": "preset_soft-glow",
+   "activePresetDisplayName": "Soft Glow",
++  "activePreviewRendererRoute": {
++    "route": "local-renderer-sidecar",
++    "routeStage": "canary",
++    "fallbackReasonCode": null
++  },
++  "activePreviewRendererWarmState": {
++    "presetId": "preset_soft-glow",
++    "publishedVersion": "2026.04.10",
++    "state": "warm-ready",
++    "observedAt": "2026-04-10T01:00:12Z",
++    "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
++  },
+   "timing": {
+     "schemaVersion": "session-timing/v1",
+     "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+@@ -95,6 +107,9 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+ - `activePreset`: canonical preset binding
+ - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
+ - `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
++- `activePreviewRendererRoute`: active session이 선택한 preview route snapshot. 이후 policy rollback이 생겨도 이미 선택된 세션 의미를 재해석하면 안 된다.
++- `activePreviewRendererWarmState`: active session 기준 warm-state evidence snapshot. route snapshot과 별개 additive evidence이며, `presetId +
++  publishedVersion + state + observedAt`를 최소 단위로 유지한다.
+ - `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.
+ - `captures[*]`는 `session-capture/v1`을 따른다.
+ - `captures[*].sessionId`, `requestId`, `captureId`: capture correlation baseline
+@@ -112,7 +127,7 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
+   preview path 검증을 통과하기 전에는 `previewReady`나 `xmpPreviewReadyAtMs`를 올리면 안 된다.
+ - dedicated renderer result가 `accepted + canonical output`까지 검증되면 host는 같은 canonical
+   preview path를 truthful close owner로 채택할 수 있고, `capture_preview_transition_summary`
+-  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason을 함께 남긴다.
++  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason, warm state를 함께 남긴다.
+ - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 현재 세션 root 아래 절대경로만 허용
+ - `postEnd`는 아래 셋 중 하나 또는 `null`
+   - `export-waiting`: `{ state, evaluatedAt }`
+diff --git a/sidecar/dedicated-renderer/README.md b/sidecar/dedicated-renderer/README.md
+index ba7d903..5d07d37 100644
+--- a/sidecar/dedicated-renderer/README.md
++++ b/sidecar/dedicated-renderer/README.md
+@@ -2,10 +2,12 @@
+ 
+ 이 디렉터리는 Canon helper와 분리된 `local dedicated renderer` 실행 경계를 고정한다.
+ 
+-## Story 1.11 baseline
++## Story 1.18 resident prototype
+ 
+ - packaged binary 이름 기준: `boothy-dedicated-renderer`
+ - Tauri bundle 기준 externalBin: `../sidecar/dedicated-renderer/boothy-dedicated-renderer`
+-- 현재 단계는 submission/warm-up/fallback contract를 먼저 닫는 shadow baseline이다.
+-- truthful `previewReady` 승격은 여전히 host-owned inline render path가 소유한다.
+-- `scripts/prepare-dedicated-renderer-sidecar.mjs`가 shadow baseline용 최소 실행 파일을 준비해 Tauri packaging proof를 유지한다.
++- 현재 단계는 resident warm-state prototype을 같은 packaging boundary에서 실행한다.
++- warm-up은 `warmup-v1`, preview close 후보는 `preview-job-v1` typed contract로만 통신한다.
++- warm-state evidence는 세션 diagnostics 아래 `diagnostics/dedicated-renderer/`에 남기고, host가 `session.json`과 operator diagnostics로 투영한다.
++- queue saturation, warm-state loss, invalid output, rollback에서는 booth-safe inline truthful fallback이 계속 우선한다.
++- `scripts/prepare-dedicated-renderer-sidecar.mjs`가 resident prototype binary를 준비해 Tauri packaging proof를 유지한다.
+diff --git a/sidecar/dedicated-renderer/main.rs b/sidecar/dedicated-renderer/main.rs
+index 57716dd..5515b8a 100644
+--- a/sidecar/dedicated-renderer/main.rs
++++ b/sidecar/dedicated-renderer/main.rs
+@@ -1,3 +1,331 @@
++use std::{
++    env, fs,
++    path::{Path, PathBuf},
++};
++
+ fn main() {
+-    // Shadow baseline stub: package an executable boundary without claiming preview truth ownership.
++    if let Err(error) = run() {
++        eprintln!("{error}");
++        std::process::exit(1);
++    }
++}
++
++fn run() -> Result<(), String> {
++    let args = parse_args()?;
++    let request_json = fs::read_to_string(&args.request_path)
++        .map_err(|error| format!("failed to read request: {error}"))?;
++
++    match args.protocol.as_str() {
++        "warmup-v1" => handle_warmup(&request_json, &args.result_path),
++        "preview-job-v1" => handle_preview(&request_json, &args.result_path),
++        other => Err(format!("unsupported protocol: {other}")),
++    }
++}
++
++struct SidecarArgs {
++    protocol: String,
++    request_path: PathBuf,
++    result_path: PathBuf,
++}
++
++fn parse_args() -> Result<SidecarArgs, String> {
++    let mut protocol = None;
++    let mut request_path = None;
++    let mut result_path = None;
++    let mut args = env::args().skip(1);
++
++    while let Some(arg) = args.next() {
++        match arg.as_str() {
++            "--protocol" => protocol = args.next(),
++            "--request" => request_path = args.next().map(PathBuf::from),
++            "--result" => result_path = args.next().map(PathBuf::from),
++            _ => {}
++        }
++    }
++
++    Ok(SidecarArgs {
++        protocol: protocol.ok_or_else(|| "missing --protocol".to_string())?,
++        request_path: request_path.ok_or_else(|| "missing --request".to_string())?,
++        result_path: result_path.ok_or_else(|| "missing --result".to_string())?,
++    })
++}
++
++fn handle_warmup(request_json: &str, result_path: &Path) -> Result<(), String> {
++    let session_id = extract_json_string(request_json, "sessionId")?;
++    let preset_id = extract_json_string(request_json, "presetId")?;
++    let published_version = extract_json_string(request_json, "publishedVersion")?;
++    let request_detail_path = extract_json_string(request_json, "diagnosticsDetailPath")?;
++    let warm_state_path = warm_state_detail_path(
++        Path::new(&request_detail_path),
++        &preset_id,
++        &published_version,
++    )?;
++
++    write_warm_state_file(
++        &warm_state_path,
++        &session_id,
++        &preset_id,
++        &published_version,
++        "warm-ready",
++    )?;
++    write_json_file(
++        result_path,
++        &build_warmup_result_json(
++            result_path,
++            &session_id,
++            &preset_id,
++            &published_version,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("resident prototype warm state가 준비됐어요."),
++            Some("warm-ready"),
++            Some(path_to_runtime_string(&warm_state_path)),
++        ),
++    )?;
++
++    Ok(())
++}
++
++fn handle_preview(request_json: &str, result_path: &Path) -> Result<(), String> {
++    let session_id = extract_json_string(request_json, "sessionId")?;
++    let request_id = extract_json_string(request_json, "requestId")?;
++    let capture_id = extract_json_string(request_json, "captureId")?;
++    let preset_id = extract_json_string(request_json, "presetId")?;
++    let published_version = extract_json_string(request_json, "publishedVersion")?;
++    let request_detail_path = extract_json_string(request_json, "diagnosticsDetailPath")?;
++    let diagnostics_detail_path = PathBuf::from(&request_detail_path);
++    let warm_state_path =
++        warm_state_detail_path(&diagnostics_detail_path, &preset_id, &published_version)?;
++    let warmup_result_path = diagnostics_detail_path
++        .parent()
++        .ok_or_else(|| "request diagnostics path must have a parent".to_string())?
++        .join(format!(
++            "warmup-{preset_id}-{published_version}.result.json"
++        ));
++
++    if !warm_state_path.is_file() {
++        let (detail_code, detail_message, warm_state) = if warmup_result_path.is_file() {
++            (
++                "warm-state-loss",
++                "resident prototype warm state가 사라져 booth-safe fallback으로 내려가요.",
++                "warm-state-lost",
++            )
++        } else {
++            (
++                "resident-not-warmed",
++                "resident prototype warm state가 아직 준비되지 않아 booth-safe fallback으로 내려가요.",
++                "cold",
++            )
++        };
++        write_warm_state_file(
++            &warm_state_path,
++            &session_id,
++            &preset_id,
++            &published_version,
++            warm_state,
++        )?;
++        write_json_file(
++            result_path,
++            &build_preview_result_json(
++                result_path,
++                &session_id,
++                &request_id,
++                &capture_id,
++                "fallback-suggested",
++                None,
++                Some(detail_code),
++                Some(detail_message),
++                Some(warm_state),
++                Some(path_to_runtime_string(&warm_state_path)),
++            ),
++        )?;
++        return Ok(());
++    }
++
++    write_warm_state_file(
++        &warm_state_path,
++        &session_id,
++        &preset_id,
++        &published_version,
++        "warm-hit",
++    )?;
++    write_json_file(
++            result_path,
++            &build_preview_result_json(
++                result_path,
++                &session_id,
++                &request_id,
++                &capture_id,
++                "fallback-suggested",
++                None,
++                Some("prototype-placeholder-output"),
++                Some("resident prototype placeholder output은 booth-safe inline truthful close로만 승격돼요."),
++                Some("warm-hit"),
++                Some(path_to_runtime_string(&warm_state_path)),
++            ),
++        )?;
++
++    Ok(())
++}
++
++fn warm_state_detail_path(
++    request_detail_path: &Path,
++    preset_id: &str,
++    published_version: &str,
++) -> Result<PathBuf, String> {
++    let diagnostics_dir = request_detail_path
++        .parent()
++        .ok_or_else(|| "request diagnostics path must have a parent".to_string())?;
++    Ok(diagnostics_dir.join(format!("warm-state-{preset_id}-{published_version}.json")))
++}
++
++fn write_warm_state_file(
++    path: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++    state: &str,
++) -> Result<(), String> {
++    let payload = format!(
++        concat!(
++            "{{\n",
++            "  \"schemaVersion\": \"resident-renderer-warm-state/v1\",\n",
++            "  \"sessionId\": \"{}\",\n",
++            "  \"presetId\": \"{}\",\n",
++            "  \"publishedVersion\": \"{}\",\n",
++            "  \"state\": \"{}\"\n",
++            "}}\n"
++        ),
++        json_escape(session_id),
++        json_escape(preset_id),
++        json_escape(published_version),
++        json_escape(state),
++    );
++    write_json_file(path, &payload)
++}
++
++fn write_json_file(path: &Path, payload: &str) -> Result<(), String> {
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)
++            .map_err(|error| format!("failed to prepare output directory: {error}"))?;
++    }
++    fs::write(path, payload).map_err(|error| format!("failed to write json file: {error}"))
++}
++
++fn build_warmup_result_json(
++    result_path: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++    status: &str,
++    detail_code: Option<&str>,
++    detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
++) -> String {
++    let mut body = vec![
++        json_field(
++            "schemaVersion",
++            "dedicated-renderer-warmup-result/v1".to_string(),
++        ),
++        json_field("sessionId", session_id.to_string()),
++        json_field("presetId", preset_id.to_string()),
++        json_field("publishedVersion", published_version.to_string()),
++        json_field("status", status.to_string()),
++        json_field("diagnosticsDetailPath", path_to_runtime_string(result_path)),
++    ];
++    if let Some(detail_code) = detail_code {
++        body.push(json_field("detailCode", detail_code.to_string()));
++    }
++    if let Some(detail_message) = detail_message {
++        body.push(json_field("detailMessage", detail_message.to_string()));
++    }
++    if let Some(warm_state) = warm_state {
++        body.push(json_field("warmState", warm_state.to_string()));
++    }
++    if let Some(warm_state_detail_path) = warm_state_detail_path {
++        body.push(json_field("warmStateDetailPath", warm_state_detail_path));
++    }
++    format!("{{\n{}\n}}\n", body.join(",\n"))
++}
++
++fn build_preview_result_json(
++    result_path: &Path,
++    session_id: &str,
++    request_id: &str,
++    capture_id: &str,
++    status: &str,
++    output_path: Option<String>,
++    detail_code: Option<&str>,
++    detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
++) -> String {
++    let mut body = vec![
++        json_field(
++            "schemaVersion",
++            "dedicated-renderer-preview-job-result/v1".to_string(),
++        ),
++        json_field("sessionId", session_id.to_string()),
++        json_field("requestId", request_id.to_string()),
++        json_field("captureId", capture_id.to_string()),
++        json_field("status", status.to_string()),
++        json_field("diagnosticsDetailPath", path_to_runtime_string(result_path)),
++    ];
++    if let Some(output_path) = output_path {
++        body.push(json_field("outputPath", output_path));
++    }
++    if let Some(detail_code) = detail_code {
++        body.push(json_field("detailCode", detail_code.to_string()));
++    }
++    if let Some(detail_message) = detail_message {
++        body.push(json_field("detailMessage", detail_message.to_string()));
++    }
++    if let Some(warm_state) = warm_state {
++        body.push(json_field("warmState", warm_state.to_string()));
++    }
++    if let Some(warm_state_detail_path) = warm_state_detail_path {
++        body.push(json_field("warmStateDetailPath", warm_state_detail_path));
++    }
++    format!("{{\n{}\n}}\n", body.join(",\n"))
++}
++
++fn json_field(key: &str, value: String) -> String {
++    format!("  \"{}\": \"{}\"", json_escape(key), json_escape(&value))
++}
++
++fn extract_json_string(document: &str, key: &str) -> Result<String, String> {
++    let key_pattern = format!("\"{key}\"");
++    let key_index = document
++        .find(&key_pattern)
++        .ok_or_else(|| format!("missing json key: {key}"))?;
++    let value_start = document[key_index + key_pattern.len()..]
++        .find(':')
++        .map(|index| key_index + key_pattern.len() + index + 1)
++        .ok_or_else(|| format!("missing json value separator: {key}"))?;
++    let after_colon = &document[value_start..];
++    let opening_quote = after_colon
++        .find('"')
++        .map(|index| value_start + index + 1)
++        .ok_or_else(|| format!("missing opening quote for key: {key}"))?;
++    let remaining = &document[opening_quote..];
++    let closing_quote = remaining
++        .find('"')
++        .map(|index| opening_quote + index)
++        .ok_or_else(|| format!("missing closing quote for key: {key}"))?;
++
++    Ok(document[opening_quote..closing_quote].to_string())
++}
++
++fn path_to_runtime_string(path: &Path) -> String {
++    path.to_string_lossy().replace('\\', "/")
++}
++
++fn json_escape(value: &str) -> String {
++    value
++        .replace('\\', "\\\\")
++        .replace('"', "\\\"")
++        .replace('\n', "\\n")
++        .replace('\r', "\\r")
++        .replace('\t', "\\t")
+ }
+diff --git a/sidecar/protocol/examples/preview-render-result.json b/sidecar/protocol/examples/preview-render-result.json
+index 8fa2b9e..24aff8d 100644
+--- a/sidecar/protocol/examples/preview-render-result.json
++++ b/sidecar/protocol/examples/preview-render-result.json
+@@ -6,5 +6,7 @@
+   "status": "fallback-suggested",
+   "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/capture_20260410_001-request_20260410_001.preview-result.json",
+   "detailCode": "sidecar-unavailable",
+-  "detailMessage": "Story 1.11 baseline keeps the truthful close on the host-owned inline path until the dedicated renderer cutover is approved."
++  "detailMessage": "Story 1.18 resident prototype keeps the booth-safe fallback path until warm state and resident close are both ready.",
++  "warmState": "cold",
++  "warmStateDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
+ }
+diff --git a/src-tauri/build.rs b/src-tauri/build.rs
+index d667948..a5255c3 100644
+--- a/src-tauri/build.rs
++++ b/src-tauri/build.rs
+@@ -1,11 +1,11 @@
+-use std::{env, fs, path::PathBuf};
++use std::{env, fs, path::PathBuf, process::Command};
+ 
+ fn main() {
+-    ensure_dedicated_renderer_placeholder().expect("dedicated renderer placeholder should exist");
++    ensure_dedicated_renderer_sidecar().expect("dedicated renderer sidecar should exist");
+     tauri_build::build()
+ }
+ 
+-fn ensure_dedicated_renderer_placeholder() -> std::io::Result<()> {
++fn ensure_dedicated_renderer_sidecar() -> std::io::Result<()> {
+     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
+     let repo_root = manifest_dir
+         .parent()
+@@ -22,16 +22,33 @@ fn ensure_dedicated_renderer_placeholder() -> std::io::Result<()> {
+         .join("dedicated-renderer")
+         .join(binary_name);
+ 
+-    if binary_path.exists() {
+-        return Ok(());
+-    }
++    let source_path = repo_root
++        .join("sidecar")
++        .join("dedicated-renderer")
++        .join("main.rs");
+ 
+     if let Some(parent) = binary_path.parent() {
+         fs::create_dir_all(parent)?;
+     }
+ 
+-    fs::write(
+-        binary_path,
+-        b"Boothy dedicated renderer placeholder for Story 1.11 packaging baseline.\n",
+-    )
++    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
++    let status = Command::new(rustc)
++        .arg(&source_path)
++        .arg("--edition=2021")
++        .arg("--target")
++        .arg(&target)
++        .arg("-C")
++        .arg("opt-level=0")
++        .arg("-o")
++        .arg(&binary_path)
++        .status()?;
++
++    if status.success() {
++        Ok(())
++    } else {
++        Err(std::io::Error::new(
++            std::io::ErrorKind::Other,
++            "failed to compile dedicated renderer sidecar",
++        ))
++    }
+ }
+diff --git a/src-tauri/src/contracts/dto.rs b/src-tauri/src/contracts/dto.rs
+index b8f652a..6bd0aa1 100644
+--- a/src-tauri/src/contracts/dto.rs
++++ b/src-tauri/src/contracts/dto.rs
+@@ -541,6 +541,31 @@ pub struct DraftNoisePolicyDto {
+     pub reduction_mode: String,
+ }
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[allow(dead_code)]
++#[serde(rename_all = "camelCase")]
++pub struct CanonicalPresetRecipeDto {
++    pub schema_version: String,
++    pub preset_id: String,
++    pub published_version: String,
++    pub display_name: String,
++    pub booth_status: String,
++    pub preview_intent: DraftRenderProfileDto,
++    pub final_intent: DraftRenderProfileDto,
++    pub noise_policy: DraftNoisePolicyDto,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[allow(dead_code)]
++#[serde(rename_all = "camelCase")]
++pub struct DarktablePresetAdapterDto {
++    pub schema_version: String,
++    pub darktable_version: String,
++    pub xmp_template_path: String,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub darktable_project_path: Option<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct DraftValidationFindingDto {
+@@ -939,6 +964,10 @@ pub struct OperatorPreviewArchitectureSummaryDto {
+     pub lane_owner: Option<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub fallback_reason_code: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state_observed_at: Option<String>,
+     pub hardware_capability: String,
+ }
+ 
+@@ -1646,6 +1675,10 @@ pub struct DedicatedRendererWarmupResultDto {
+     pub detail_code: Option<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub detail_message: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state_detail_path: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+@@ -1680,6 +1713,10 @@ pub struct DedicatedRendererPreviewJobResultDto {
+     pub detail_code: Option<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub detail_message: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub warm_state_detail_path: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+diff --git a/src-tauri/src/diagnostics/mod.rs b/src-tauri/src/diagnostics/mod.rs
+index 2724373..f16cf73 100644
+--- a/src-tauri/src/diagnostics/mod.rs
++++ b/src-tauri/src/diagnostics/mod.rs
+@@ -12,16 +12,16 @@ use crate::{
+     capture::normalized_state::normalize_capture_readiness,
+     contracts::dto::{
+         CapabilitySnapshotDto, HostErrorEnvelope, LiveCaptureTruthDto, OperatorBoundarySummaryDto,
+-        OperatorCameraConnectionSummaryDto, OperatorRecentFailureSummaryDto,
+-        OperatorPreviewArchitectureSummaryDto, OperatorSessionSummaryDto,
++        OperatorCameraConnectionSummaryDto, OperatorPreviewArchitectureSummaryDto,
++        OperatorRecentFailureSummaryDto, OperatorSessionSummaryDto,
+     },
+     handoff::project_post_end_state_in_dir,
+     render::dedicated_renderer::dedicated_renderer_hardware_capability,
+     session::{
+         session_manifest::{
+-            rfc3339_to_unix_seconds, PreviewRendererRouteSnapshot, SessionManifest,
+-            SESSION_POST_END_COMPLETED, SESSION_POST_END_EXPORT_WAITING,
+-            SESSION_POST_END_PHONE_REQUIRED,
++            rfc3339_to_unix_seconds, PreviewRendererRouteSnapshot,
++            PreviewRendererWarmStateSnapshot, SessionManifest, SESSION_POST_END_COMPLETED,
++            SESSION_POST_END_EXPORT_WAITING, SESSION_POST_END_PHONE_REQUIRED,
+         },
+         session_paths::SessionPaths,
+         session_repository::read_session_manifest,
+@@ -40,14 +40,18 @@ struct DiagnosticsContext {
+     lane_owner: Option<String>,
+     fallback_reason_code: Option<String>,
+     route_stage: Option<String>,
++    warm_state: Option<String>,
++    warm_state_observed_at: Option<String>,
+     malformed: bool,
+ }
+ 
+ #[derive(Debug, Default)]
+ struct PreviewTransitionSummaryContext {
++    observed_at: Option<String>,
+     lane_owner: Option<String>,
+     fallback_reason_code: Option<String>,
+     route_stage: Option<String>,
++    warm_state: Option<String>,
+     saw_lane_owner: bool,
+     saw_fallback_reason: bool,
+     saw_route_stage: bool,
+@@ -114,6 +118,7 @@ pub fn load_operator_session_summary_in_dir(
+             .as_ref()
+             .and_then(|capture| capture.preview_renderer_route.as_ref())
+             .or(manifest.active_preview_renderer_route.as_ref()),
++        manifest.active_preview_renderer_warm_state.as_ref(),
+         &diagnostics,
+     );
+ 
+@@ -221,6 +226,7 @@ fn build_no_session_summary() -> OperatorSessionSummaryDto {
+             "현재 세션이 시작되면 completion 경계 진단을 함께 보여 드릴게요.",
+         ),
+         preview_architecture: build_preview_architecture_summary(
++            None,
+             None,
+             &DiagnosticsContext::default(),
+         ),
+@@ -540,6 +546,8 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
+             context.lane_owner = summary.lane_owner;
+             context.fallback_reason_code = summary.fallback_reason_code;
+             context.route_stage = summary.route_stage;
++            context.warm_state = summary.warm_state;
++            context.warm_state_observed_at = summary.observed_at;
+             break;
+         }
+     }
+@@ -549,8 +557,41 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
+ 
+ fn build_preview_architecture_summary(
+     route_snapshot: Option<&PreviewRendererRouteSnapshot>,
++    warm_state_snapshot: Option<&PreviewRendererWarmStateSnapshot>,
+     diagnostics: &DiagnosticsContext,
+ ) -> OperatorPreviewArchitectureSummaryDto {
++    let prefer_snapshot_warm_state = warm_state_snapshot
++        .map(|snapshot| {
++            let Some(snapshot_seconds) = rfc3339_seconds_lossy(&snapshot.observed_at) else {
++                return diagnostics.warm_state.is_none();
++            };
++            let Some(diagnostics_seconds) = diagnostics
++                .warm_state_observed_at
++                .as_deref()
++                .and_then(rfc3339_seconds_lossy)
++            else {
++                return true;
++            };
++            snapshot_seconds >= diagnostics_seconds
++        })
++        .unwrap_or(false);
++    let warm_state = if prefer_snapshot_warm_state {
++        warm_state_snapshot.map(|snapshot| snapshot.state.clone())
++    } else {
++        diagnostics
++            .warm_state
++            .clone()
++            .or_else(|| warm_state_snapshot.map(|snapshot| snapshot.state.clone()))
++    };
++    let warm_state_observed_at = if prefer_snapshot_warm_state {
++        warm_state_snapshot.map(|snapshot| snapshot.observed_at.clone())
++    } else {
++        diagnostics
++            .warm_state_observed_at
++            .clone()
++            .or_else(|| warm_state_snapshot.map(|snapshot| snapshot.observed_at.clone()))
++    };
++
+     OperatorPreviewArchitectureSummaryDto {
+         route: route_snapshot.map(|snapshot| snapshot.route.clone()),
+         route_stage: diagnostics
+@@ -561,13 +602,17 @@ fn build_preview_architecture_summary(
+         fallback_reason_code: diagnostics
+             .fallback_reason_code
+             .clone()
+-            .or_else(|| {
+-                route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())
+-            }),
++            .or_else(|| route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())),
++        warm_state,
++        warm_state_observed_at,
+         hardware_capability: dedicated_renderer_hardware_capability().into(),
+     }
+ }
+ 
++fn rfc3339_seconds_lossy(timestamp: &str) -> Option<u64> {
++    rfc3339_to_unix_seconds(timestamp).ok()
++}
++
+ fn normalize_diagnostics_value(value: &str) -> Option<String> {
+     match value.trim() {
+         "" | "none" => None,
+@@ -580,8 +625,15 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
+         return None;
+     }
+ 
++    let observed_at = line.split('\t').next()?.to_string();
++    if rfc3339_to_unix_seconds(&observed_at).is_err() {
++        return None;
++    }
+     let detail = line.split("\tdetail=").nth(1)?;
+-    let mut summary = PreviewTransitionSummaryContext::default();
++    let mut summary = PreviewTransitionSummaryContext {
++        observed_at: Some(observed_at),
++        ..PreviewTransitionSummaryContext::default()
++    };
+ 
+     for fragment in detail.split(';') {
+         let Some((key, value)) = fragment.split_once('=') else {
+@@ -601,6 +653,9 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
+                 summary.saw_route_stage = true;
+                 summary.route_stage = normalize_diagnostics_value(value);
+             }
++            "warmState" => {
++                summary.warm_state = normalize_diagnostics_value(value);
++            }
+             _ => {}
+         }
+     }
+diff --git a/src-tauri/src/render/dedicated_renderer.rs b/src-tauri/src/render/dedicated_renderer.rs
+index 9270e23..3487380 100644
+--- a/src-tauri/src/render/dedicated_renderer.rs
++++ b/src-tauri/src/render/dedicated_renderer.rs
+@@ -1,6 +1,7 @@
+ use std::{
+     env, fs,
+     path::{Path, PathBuf},
++    process::Command,
+     time::{SystemTime, UNIX_EPOCH},
+ };
+ 
+@@ -26,9 +27,12 @@ use crate::{
+         RenderIntent, RenderedCaptureAsset,
+     },
+     session::{
+-        session_manifest::{PreviewRendererRouteSnapshot, SessionCaptureRecord},
++        session_manifest::{
++            current_timestamp, PreviewRendererRouteSnapshot, PreviewRendererWarmStateSnapshot,
++            SessionCaptureRecord,
++        },
+         session_paths::SessionPaths,
+-        session_repository::read_session_manifest,
++        session_repository::{read_session_manifest, write_session_manifest},
+     },
+     timing::{append_session_timing_event_in_dir, SessionTimingEventInput},
+ };
+@@ -137,6 +141,20 @@ pub fn schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
+             submit_warmup_request(app_handle, &request, &request_path, &result_path, &route);
+         if let Ok(result) = result {
+             let _ = write_json_file(&result_path, &result);
++            let _ = sync_active_preview_warm_state_in_manifest(
++                base_dir,
++                session_id,
++                &request.preset_id,
++                &request.published_version,
++                result
++                    .warm_state
++                    .as_deref()
++                    .or_else(|| match result.status.as_str() {
++                        "warmed-up" => Some("warm-ready"),
++                        _ => None,
++                    }),
++                result.warm_state_detail_path.as_deref(),
++            );
+         }
+     }
+ 
+@@ -196,6 +214,15 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+                 "dedicated-renderer",
+                 None,
+                 route.route_stage,
++                result.warm_state.as_deref(),
++            );
++            let _ = sync_active_preview_warm_state_in_manifest(
++                base_dir,
++                session_id,
++                &request.preset_id,
++                &request.published_version,
++                result.warm_state.as_deref(),
++                result.warm_state_detail_path.as_deref(),
+             );
+             return Ok(capture);
+         }
+@@ -210,7 +237,20 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
+             .as_ref()
+             .and_then(|result| result.detail_code.as_deref()),
+         route.route_stage,
++        preview_result
++            .as_ref()
++            .and_then(|result| result.warm_state.as_deref()),
+     );
++    if let Some(result) = preview_result.as_ref() {
++        let _ = sync_active_preview_warm_state_in_manifest(
++            base_dir,
++            session_id,
++            &request.preset_id,
++            &request.published_version,
++            result.warm_state.as_deref(),
++            result.warm_state_detail_path.as_deref(),
++        );
++    }
+ 
+     Ok(capture)
+ }
+@@ -338,23 +378,23 @@ fn submit_warmup_request(
+                 "fallback-suggested",
+                 route.fallback_reason_code,
+                 Some("승인된 shadow route를 유지해 inline warm-up을 계속 사용해요."),
++                None,
++                None,
+             ),
+             result_path,
+         ));
+     }
+ 
+-    if app_handle.is_some() {
+-        if let Err(reason_code) = try_spawn_dedicated_renderer(
+-            app_handle,
+-            DEDICATED_RENDERER_WARMUP_PROTOCOL,
+-            request_path,
++    if let Err(reason_code) = try_start_dedicated_renderer(
++        app_handle,
++        DEDICATED_RENDERER_WARMUP_PROTOCOL,
++        request_path,
++        result_path,
++    ) {
++        return Ok(with_warmup_result_detail_path(
++            build_warmup_spawn_failure_result(request, reason_code),
+             result_path,
+-        ) {
+-            return Ok(with_warmup_result_detail_path(
+-                build_warmup_spawn_failure_result(request, reason_code),
+-                result_path,
+-            ));
+-        }
++        ));
+     }
+ 
+     if let Ok(bytes) = fs::read_to_string(result_path) {
+@@ -370,6 +410,8 @@ fn submit_warmup_request(
+                             Some(
+                                 "warm-up result schema 또는 상태 값이 계약과 맞지 않아 shadow fallback으로 유지해요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -383,6 +425,8 @@ fn submit_warmup_request(
+                             Some(
+                                 "warm-up result correlation이 맞지 않아 host-owned inline warm-up을 유지해요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -397,6 +441,8 @@ fn submit_warmup_request(
+                         Some(
+                             "warm-up result를 dedicated renderer 계약으로 해석하지 못해 shadow fallback으로 유지해요.",
+                         ),
++                        None,
++                        None,
+                     ),
+                     result_path,
+                 ));
+@@ -410,6 +456,8 @@ fn submit_warmup_request(
+             "fallback-suggested",
+             Some("shadow-inline-warmup"),
+             Some("approved cutover 전까지 warm-up은 host-owned inline renderer가 계속 소유해요."),
++            None,
++            None,
+         ),
+         result_path,
+     ))
+@@ -436,47 +484,21 @@ fn submit_preview_job(
+                 None,
+                 route.fallback_reason_code,
+                 Some("승인된 shadow route를 유지해 inline truthful close로 내려가요."),
++                None,
++                None,
+             ),
+             result_path,
+         ));
+     }
+ 
+-    if app_handle.is_some() {
+-        if let Err(reason_code) = try_spawn_dedicated_renderer(
+-            app_handle,
+-            DEDICATED_RENDERER_PREVIEW_PROTOCOL,
+-            request_path,
+-            result_path,
+-        ) {
+-            return Ok(with_preview_result_detail_path(
+-                build_preview_spawn_failure_result(request, reason_code),
+-                result_path,
+-            ));
+-        }
+-    } else if resolve_dedicated_renderer_executable().is_none() {
+-        return Ok(with_preview_result_detail_path(
+-            build_preview_result(
+-                request,
+-                "fallback-suggested",
+-                None,
+-                Some("sidecar-unavailable"),
+-                Some(
+-                    "dedicated renderer binary가 아직 bundle/runtime에서 확인되지 않아 truthful fallback path로 내려가요.",
+-                ),
+-            ),
+-            result_path,
+-        ));
+-    } else {
++    if let Err(reason_code) = try_start_dedicated_renderer(
++        app_handle,
++        DEDICATED_RENDERER_PREVIEW_PROTOCOL,
++        request_path,
++        result_path,
++    ) {
+         return Ok(with_preview_result_detail_path(
+-            build_preview_result(
+-                request,
+-                "fallback-suggested",
+-                None,
+-                Some("sidecar-unavailable"),
+-                Some(
+-                    "승인된 local renderer route지만 현재 runtime handle이 없어 truthful fallback path로 내려가요.",
+-                ),
+-            ),
++            build_preview_spawn_failure_result(request, reason_code),
+             result_path,
+         ));
+     }
+@@ -495,6 +517,8 @@ fn submit_preview_job(
+                             Some(
+                                 "preview job result schema 또는 상태 값이 계약과 맞지 않아 fallback path로 내려가요.",
+                             ),
++                            None,
++                            None,
+                         ),
+                         result_path,
+                     ));
+@@ -509,6 +533,8 @@ fn submit_preview_job(
+                             Some(
+                                 "preview job result correlation 또는 canonical output 검증에 실패해 fallback path로 내려가요.",
+                             ),
++                            result.warm_state.as_deref(),
++                            result.warm_state_detail_path.clone(),
+                         ),
+                         result_path,
+                     ));
+@@ -524,6 +550,8 @@ fn submit_preview_job(
+                         Some(
+                             "preview job result를 dedicated renderer 계약으로 해석하지 못해 fallback path로 내려가요.",
+                         ),
++                        None,
++                        None,
+                     ),
+                     result_path,
+                 ));
+@@ -536,8 +564,12 @@ fn submit_preview_job(
+             request,
+             "fallback-suggested",
+             None,
+-            Some(fallback_reason_for_missing_preview_result(route.route_stage)),
++            Some(fallback_reason_for_missing_preview_result(
++                route.route_stage,
++            )),
+             Some(missing_preview_result_message(route.route_stage)),
++            Some("cold"),
++            None,
+         ),
+         result_path,
+     ))
+@@ -679,11 +711,12 @@ fn build_dedicated_renderer_ready_detail(
+     ready_at_ms: u64,
+ ) -> String {
+     format!(
+-        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={}",
++        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={};warmState={}",
+         request.preset_id,
+         request.published_version,
+         result.status,
+         result.detail_code.as_deref().unwrap_or("accepted"),
++        result.warm_state.as_deref().unwrap_or("none"),
+     )
+ }
+ 
+@@ -693,6 +726,7 @@ fn append_preview_transition_summary_in_dir(
+     lane_owner: &str,
+     fallback_reason: Option<&str>,
+     route_stage: &str,
++    warm_state: Option<&str>,
+ ) {
+     let first_visible_ms = capture
+         .timing
+@@ -715,6 +749,7 @@ fn append_preview_transition_summary_in_dir(
+         route_stage,
+         first_visible_ms,
+         replacement_ms,
++        warm_state,
+     );
+     let _ = append_session_timing_event_in_dir(
+         base_dir,
+@@ -751,16 +786,62 @@ fn build_preview_transition_summary_detail(
+     route_stage: &str,
+     first_visible_ms: Option<u64>,
+     replacement_ms: Option<u64>,
++    warm_state: Option<&str>,
+ ) -> String {
+     format!(
+-        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
++        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
+         fallback_reason.unwrap_or("none"),
++        warm_state.unwrap_or("none"),
+         format_optional_metric(first_visible_ms),
+         format_optional_metric(replacement_ms),
+         format_optional_metric(replacement_ms),
+     )
+ }
+ 
++fn sync_active_preview_warm_state_in_manifest(
++    base_dir: &Path,
++    session_id: &str,
++    preset_id: &str,
++    published_version: &str,
++    warm_state: Option<&str>,
++    diagnostics_detail_path: Option<&str>,
++) -> Result<(), HostErrorEnvelope> {
++    let Some(warm_state) = warm_state else {
++        return Ok(());
++    };
++    let paths = SessionPaths::try_new(base_dir, session_id)?;
++    let mut manifest = read_session_manifest(&paths.manifest_path)?;
++    let active_preset_matches = manifest
++        .active_preset
++        .as_ref()
++        .map(|binding| {
++            binding.preset_id == preset_id && binding.published_version == published_version
++        })
++        .or_else(|| {
++            Some(
++                manifest.active_preset_id.as_deref() == Some(preset_id)
++                    && manifest
++                        .active_preview_renderer_warm_state
++                        .as_ref()
++                        .map(|snapshot| snapshot.published_version.as_str())
++                        .unwrap_or(published_version)
++                        == published_version,
++            )
++        })
++        .unwrap_or(false);
++    if !active_preset_matches {
++        return Ok(());
++    }
++    manifest.active_preview_renderer_warm_state = Some(PreviewRendererWarmStateSnapshot {
++        preset_id: preset_id.into(),
++        published_version: published_version.into(),
++        state: warm_state.into(),
++        observed_at: current_timestamp(SystemTime::now())?,
++        diagnostics_detail_path: diagnostics_detail_path.map(str::to_string),
++    });
++    write_session_manifest(&paths.manifest_path, &manifest)
++}
++
+ fn clear_previous_result_file(result_path: &Path) {
+     if let Err(error) = fs::remove_file(result_path) {
+         if error.kind() != std::io::ErrorKind::NotFound {
+@@ -831,25 +912,44 @@ fn log_preview_submission_result(
+     }
+ }
+ 
+-fn try_spawn_dedicated_renderer(
++fn try_start_dedicated_renderer(
+     app_handle: Option<&AppHandle>,
+     protocol: &str,
+     request_path: &Path,
+     result_path: &Path,
+ ) -> Result<(), &'static str> {
+-    let app_handle = app_handle.ok_or("sidecar-unavailable")?;
+-    let command = app_handle
+-        .shell()
+-        .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
+-        .map_err(|_| "sidecar-unavailable")?
++    if let Some(app_handle) = app_handle {
++        let command = app_handle
++            .shell()
++            .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
++            .map_err(|_| "sidecar-unavailable")?
++            .arg("--protocol")
++            .arg(protocol)
++            .arg("--request")
++            .arg(request_path)
++            .arg("--result")
++            .arg(result_path);
++
++        let status =
++            async_runtime::block_on(command.status()).map_err(|_| "sidecar-launch-failed")?;
++        return if status.success() {
++            Ok(())
++        } else {
++            Err("sidecar-launch-failed")
++        };
++    }
++
++    let executable = resolve_dedicated_renderer_executable().ok_or("sidecar-unavailable")?;
++    let status = Command::new(executable)
+         .arg("--protocol")
+         .arg(protocol)
+         .arg("--request")
+         .arg(request_path)
+         .arg("--result")
+-        .arg(result_path);
++        .arg(result_path)
++        .status()
++        .map_err(|_| "sidecar-launch-failed")?;
+ 
+-    let status = async_runtime::block_on(command.status()).map_err(|_| "sidecar-launch-failed")?;
+     if status.success() {
+         Ok(())
+     } else {
+@@ -1100,6 +1200,8 @@ fn build_preview_result(
+     output_path: Option<String>,
+     detail_code: Option<&str>,
+     detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
+ ) -> DedicatedRendererPreviewJobResultDto {
+     DedicatedRendererPreviewJobResultDto {
+         schema_version: DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into(),
+@@ -1111,6 +1213,8 @@ fn build_preview_result(
+         output_path,
+         detail_code: detail_code.map(str::to_string),
+         detail_message: detail_message.map(str::to_string),
++        warm_state: warm_state.map(str::to_string),
++        warm_state_detail_path,
+     }
+ }
+ 
+@@ -1132,6 +1236,8 @@ fn build_preview_spawn_failure_result(
+             }
+             _ => "dedicated renderer sidecar를 시작하지 못해 truthful fallback path로 내려가요.",
+         }),
++        None,
++        None,
+     )
+ }
+ 
+@@ -1148,6 +1254,8 @@ fn build_warmup_result(
+     status: &str,
+     detail_code: Option<&str>,
+     detail_message: Option<&str>,
++    warm_state: Option<&str>,
++    warm_state_detail_path: Option<String>,
+ ) -> DedicatedRendererWarmupResultDto {
+     DedicatedRendererWarmupResultDto {
+         schema_version: DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into(),
+@@ -1158,6 +1266,8 @@ fn build_warmup_result(
+         diagnostics_detail_path: request.diagnostics_detail_path.clone(),
+         detail_code: detail_code.map(str::to_string),
+         detail_message: detail_message.map(str::to_string),
++        warm_state: warm_state.map(str::to_string),
++        warm_state_detail_path,
+     }
+ }
+ 
+@@ -1178,6 +1288,8 @@ fn build_warmup_spawn_failure_result(
+             }
+             _ => "dedicated renderer sidecar를 시작하지 못해 inline warm-up을 유지해요.",
+         }),
++        None,
++        None,
+     )
+ }
+ 
+@@ -1208,6 +1320,8 @@ fn synthetic_preview_result_for_test(
+                 Some(request.canonical_preview_output_path.clone()),
+                 Some("accepted"),
+                 Some("accepted"),
++                Some("warm-hit"),
++                None,
+             )
+         }
+         "queue-saturated" => build_preview_result(
+@@ -1216,6 +1330,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("render-queue-saturated"),
+             Some("dedicated renderer queue가 포화되어 inline truthful fallback으로 내려가요."),
++            Some("warm-state-lost"),
++            None,
+         ),
+         "protocol-mismatch" => build_preview_result(
+             request,
+@@ -1223,6 +1339,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("protocol-mismatch"),
+             Some("preview job protocol version이 맞지 않아 fallback path로 내려가요."),
++            None,
++            None,
+         ),
+         "invalid-output" => build_preview_result(
+             request,
+@@ -1230,6 +1348,8 @@ fn synthetic_preview_result_for_test(
+             Some("C:/outside/non-canonical.jpg".into()),
+             Some("invalid-output"),
+             Some("non-canonical output을 감지해 fallback path로 내려가요."),
++            Some("warm-hit"),
++            None,
+         ),
+         "restarted" => build_preview_result(
+             request,
+@@ -1237,6 +1357,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("renderer-restarted"),
+             Some("renderer restart가 감지되어 fallback path로 내려가요."),
++            Some("warm-state-lost"),
++            None,
+         ),
+         _ => build_preview_result(
+             request,
+@@ -1244,6 +1366,8 @@ fn synthetic_preview_result_for_test(
+             None,
+             Some("sidecar-unavailable"),
+             Some("test fallback path"),
++            None,
++            None,
+         ),
+     })
+ }
+@@ -1294,10 +1418,9 @@ mod tests {
+     use super::{
+         build_preview_result, build_preview_transition_summary_detail, build_warmup_result,
+         fallback_reason_for_missing_preview_result, preview_output_is_fresh_for_request,
+-        resolve_preview_renderer_route_in_dir, validate_preview_job_result,
+-        validate_warmup_result, PreviewRendererRouteKind,
+-        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
+-        DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
++        resolve_preview_renderer_route_in_dir, validate_preview_job_result, validate_warmup_result,
++        PreviewRendererRouteKind, DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION,
++        DEDICATED_RENDERER_RESULT_SCHEMA_VERSION, DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
+         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION,
+         PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
+     };
+@@ -1364,6 +1487,8 @@ mod tests {
+             None,
+             Some("sidecar-unavailable"),
+             Some("fallback"),
++            None,
++            None,
+         );
+         result.schema_version = DEDICATED_RENDERER_RESULT_SCHEMA_VERSION.into();
+         result.capture_id = "capture_other".into();
+@@ -1386,6 +1511,8 @@ mod tests {
+             Some("C:/outside/non-canonical.jpg".into()),
+             Some("invalid-output"),
+             Some("fallback"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1406,6 +1533,8 @@ mod tests {
+             None,
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.schema_version = "dedicated-renderer-preview-job-result/v9".into();
+         result.diagnostics_detail_path = expected_result_path.into();
+@@ -1427,6 +1556,8 @@ mod tests {
+             None,
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1447,6 +1578,8 @@ mod tests {
+             Some(request.canonical_preview_output_path.clone()),
+             Some("accepted"),
+             Some("accepted"),
++            None,
++            None,
+         );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1461,8 +1594,14 @@ mod tests {
+         let request = warmup_request();
+         let expected_result_path =
+             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
+-        let mut result =
+-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
++        let mut result = build_warmup_result(
++            &request,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("warm"),
++            Some("warm-ready"),
++            None,
++        );
+         result.schema_version = DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION.into();
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+@@ -1477,8 +1616,14 @@ mod tests {
+         let request = warmup_request();
+         let expected_result_path =
+             "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warmup-result.json";
+-        let mut result =
+-            build_warmup_result(&request, "warmed-up", Some("renderer-warm"), Some("warm"));
++        let mut result = build_warmup_result(
++            &request,
++            "warmed-up",
++            Some("renderer-warm"),
++            Some("warm"),
++            Some("warm-ready"),
++            None,
++        );
+         result.diagnostics_detail_path = expected_result_path.into();
+ 
+         assert_eq!(
+@@ -1719,11 +1864,13 @@ mod tests {
+             "shadow",
+             Some(2810),
+             Some(3615),
++            Some("warm-ready"),
+         );
+ 
+         assert!(detail.contains("firstVisibleMs=2810"));
+         assert!(detail.contains("replacementMs=3615"));
+         assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=3615"));
+         assert!(detail.contains("routeStage=shadow"));
++        assert!(detail.contains("warmState=warm-ready"));
+     }
+ }
+diff --git a/src-tauri/src/session/session_manifest.rs b/src-tauri/src/session/session_manifest.rs
+index b1ab77c..8e2bafb 100644
+--- a/src-tauri/src/session/session_manifest.rs
++++ b/src-tauri/src/session/session_manifest.rs
+@@ -237,6 +237,17 @@ pub struct PreviewRendererRouteSnapshot {
+     pub fallback_reason_code: Option<String>,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PreviewRendererWarmStateSnapshot {
++    pub preset_id: String,
++    pub published_version: String,
++    pub state: String,
++    pub observed_at: String,
++    #[serde(default)]
++    pub diagnostics_detail_path: Option<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct SessionCaptureRecord {
+@@ -284,6 +295,8 @@ pub struct SessionManifest {
+     #[serde(default)]
+     pub active_preview_renderer_route: Option<PreviewRendererRouteSnapshot>,
+     #[serde(default)]
++    pub active_preview_renderer_warm_state: Option<PreviewRendererWarmStateSnapshot>,
++    #[serde(default)]
+     pub timing: Option<SessionTiming>,
+     #[serde(default)]
+     pub captures: Vec<SessionCaptureRecord>,
+@@ -408,6 +421,7 @@ pub fn build_session_manifest_at(
+         active_preset_id: None,
+         active_preset_display_name: None,
+         active_preview_renderer_route: None,
++        active_preview_renderer_warm_state: None,
+         timing: Some(timing),
+         captures: Vec::new(),
+         post_end: None,
+diff --git a/src-tauri/src/session/session_repository.rs b/src-tauri/src/session/session_repository.rs
+index ecb7ae1..616d430 100644
+--- a/src-tauri/src/session/session_repository.rs
++++ b/src-tauri/src/session/session_repository.rs
+@@ -29,7 +29,8 @@ use crate::{
+     session::{
+         session_manifest::{
+             build_session_manifest, current_timestamp, normalize_legacy_manifest,
+-            validate_session_start_input, ActivePresetBinding, SessionManifest,
++            validate_session_start_input, ActivePresetBinding, PreviewRendererWarmStateSnapshot,
++            SessionManifest,
+         },
+         session_paths::SessionPaths,
+     },
+@@ -146,6 +147,13 @@ pub fn select_active_preset_in_dir(
+         &selected_preset.preset_id,
+         &selected_preset.published_version,
+     );
++    let selected_warm_state = PreviewRendererWarmStateSnapshot {
++        preset_id: selected_preset.preset_id.clone(),
++        published_version: selected_preset.published_version.clone(),
++        state: "cold".into(),
++        observed_at: manifest.updated_at.clone(),
++        diagnostics_detail_path: None,
++    };
+ 
+     if manifest.active_preset.as_ref() == Some(&active_preset) {
+         let mut changed = false;
+@@ -167,6 +175,11 @@ pub fn select_active_preset_in_dir(
+             changed = true;
+         }
+ 
++        if manifest.active_preview_renderer_warm_state.is_none() {
++            manifest.active_preview_renderer_warm_state = Some(selected_warm_state);
++            changed = true;
++        }
++
+         if changed {
+             write_session_manifest(&paths.manifest_path, &manifest)?;
+         }
+@@ -183,6 +196,13 @@ pub fn select_active_preset_in_dir(
+     manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
+     manifest.active_preview_renderer_route = Some(route_snapshot);
+     manifest.updated_at = current_timestamp(SystemTime::now())?;
++    manifest.active_preview_renderer_warm_state = Some(PreviewRendererWarmStateSnapshot {
++        preset_id: selected_preset.preset_id.clone(),
++        published_version: selected_preset.published_version.clone(),
++        state: "cold".into(),
++        observed_at: manifest.updated_at.clone(),
++        diagnostics_detail_path: None,
++    });
+     if manifest.lifecycle.stage == "session-started" {
+         manifest.lifecycle.stage = "preset-selected".into();
+     }
+diff --git a/src-tauri/tests/contracts_baseline.rs b/src-tauri/tests/contracts_baseline.rs
+index e822ab3..80f8903 100644
+--- a/src-tauri/tests/contracts_baseline.rs
++++ b/src-tauri/tests/contracts_baseline.rs
+@@ -100,10 +100,26 @@ fn parses_frozen_helper_protocol_examples() {
+ #[test]
+ fn loads_the_frozen_published_preset_bundle_fixture() {
+     let bundle_dir =
+-        repo_root().join("tests/fixtures/contracts/preset-bundle-v1/preset_soft-glow/2026.04.10");
++        repo_root().join("tests/fixtures/contracts/preset-bundle-v2/preset_soft-glow/2026.04.10");
++    let bundle_fixture = read_json_fixture(
++        "tests/fixtures/contracts/preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json",
++    );
++    let bundle_value: Value =
++        serde_json::from_str(&bundle_fixture).expect("bundle fixture should deserialize");
+     let bundle = load_published_preset_runtime_bundle(&bundle_dir)
+         .expect("published preset bundle fixture should load");
+ 
++    assert_eq!(
++        bundle_value.get("schemaVersion").and_then(Value::as_str),
++        Some("published-preset-bundle/v2")
++    );
++    assert_eq!(
++        bundle_value
++            .get("canonicalRecipe")
++            .and_then(|value| value.get("schemaVersion"))
++            .and_then(Value::as_str),
++        Some("canonical-preset-recipe/v1")
++    );
+     assert_eq!(bundle.preset_id, "preset_soft-glow");
+     assert_eq!(bundle.published_version, "2026.04.10");
+     assert_eq!(bundle.preview_profile.profile_id, "soft-glow-preview");
+@@ -133,6 +149,7 @@ fn parses_dedicated_renderer_preview_protocol_examples() {
+     );
+     assert_eq!(result.status, "fallback-suggested");
+     assert_eq!(result.request_id, "request_20260410_001");
++    assert_eq!(result.warm_state.as_deref(), Some("cold"));
+ }
+ 
+ #[test]
+diff --git a/src-tauri/tests/dedicated_renderer.rs b/src-tauri/tests/dedicated_renderer.rs
+index 2fe4323..84424ec 100644
+--- a/src-tauri/tests/dedicated_renderer.rs
++++ b/src-tauri/tests/dedicated_renderer.rs
+@@ -15,6 +15,7 @@ use boothy_lib::{
+         },
+     },
+     contracts::dto::{CaptureReadinessInputDto, CaptureRequestInputDto, SessionStartInputDto},
++    diagnostics::recovery::load_operator_recovery_summary_in_dir,
+     preset::{
+         default_catalog::ensure_default_preset_catalog_in_dir,
+         preset_catalog::resolve_published_preset_catalog_dir,
+@@ -510,7 +511,8 @@ fn stale_dedicated_renderer_result_is_ignored_when_no_sidecar_run_happens() {
+     assert_eq!(completed_capture.render_status, "previewReady");
+     assert!(timing_events.contains("event=capture_preview_transition_summary"));
+     assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
+-    assert!(timing_events.contains("fallbackReason=sidecar-unavailable"));
++    assert!(timing_events.contains("fallbackReason=resident-not-warmed"));
++    assert!(timing_events.contains("warmState=cold"));
+     assert!(
+         !timing_events.contains("laneOwner=dedicated-renderer"),
+         "stale accepted result should not be reused as the truthful close owner"
+@@ -584,8 +586,367 @@ fn forced_fallback_route_logs_route_policy_rollback_reason() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn resident_warmup_updates_manifest_and_operator_projection_before_preview_close() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-warmup-manifest");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should be readable after warmup"),
++    )
++    .expect("manifest should deserialize after warmup");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .expect("warm state should be recorded after warmup");
++    assert_eq!(warm_state.preset_id, "preset_soft-glow");
++    assert_eq!(warm_state.published_version, "2026.04.10");
++    assert_eq!(warm_state.state, "warm-ready");
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project warm state");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-ready")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_preview_prototype_keeps_warm_hit_but_does_not_claim_truthful_close() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-preview-warm-hit");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("prototype placeholder output should still fall back safely");
++    assert_eq!(completed_capture.render_status, "previewReady");
++
++    let timing_events = fs::read_to_string(
++        SessionPaths::new(&base_dir, &session.session_id)
++            .diagnostics_dir
++            .join("timing-events.log"),
++    )
++    .expect("timing log should exist");
++    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
++    assert!(timing_events.contains("fallbackReason=prototype-placeholder-output"));
++    assert!(timing_events.contains("warmState=warm-hit"));
++
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(&manifest_path).expect("manifest should be readable after warm hit"),
++    )
++    .expect("manifest should deserialize after warm hit");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .as_ref()
++        .expect("warm state should remain present after placeholder fallback");
++    assert_eq!(warm_state.state, "warm-hit");
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should still project warm-hit evidence");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-hit")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn active_preset_warm_state_is_not_overwritten_by_older_capture_completion() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("active-preset-warm-state-guard");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    create_published_bundle_variant(&catalog_root, "preset_cool-tone", "2026.04.11", "Cool Tone");
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("first preset should become active");
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_cool-tone".into(),
++            published_version: "2026.04.11".into(),
++        },
++    )
++    .expect("second preset should become active before preview completion");
++
++    let env_guard = ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "accepted");
++    let _ = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("older capture should still complete safely");
++    drop(env_guard);
++
++    let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
++        &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
++            .expect("manifest should remain readable"),
++    )
++    .expect("manifest should deserialize after older capture completion");
++    let warm_state = manifest
++        .active_preview_renderer_warm_state
++        .expect("active preset warm state should remain present");
++    assert_eq!(warm_state.preset_id, "preset_cool-tone");
++    assert_eq!(warm_state.published_version, "2026.04.11");
++    assert_eq!(warm_state.state, "cold");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
++#[test]
++fn resident_preview_logs_warm_state_loss_falls_back_safely() {
++    let _env_lock = lock_dedicated_renderer_test_env();
++    let base_dir = unique_test_root("resident-preview-warm-loss");
++    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
++    let session = start_session_in_dir(
++        &base_dir,
++        SessionStartInputDto {
++            name: "Kim".into(),
++            phone_last_four: "4821".into(),
++        },
++    )
++    .expect("session should be created");
++    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
++
++    create_published_bundle(&catalog_root);
++    write_preview_renderer_policy(
++        &base_dir,
++        serde_json::json!({
++          "schemaVersion": "preview-renderer-route-policy/v1",
++          "defaultRoute": "local-renderer-sidecar",
++          "canaryRoutes": [],
++          "forcedFallbackRoutes": []
++        }),
++    );
++    select_active_preset_in_dir(
++        &base_dir,
++        boothy_lib::contracts::dto::PresetSelectionInputDto {
++            session_id: session.session_id.clone(),
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++        },
++    )
++    .expect("preset should become active");
++
++    boothy_lib::render::dedicated_renderer::schedule_preview_renderer_warmup_with_dedicated_sidecar_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        "preset_soft-glow",
++        "2026.04.10",
++    );
++
++    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
++    let mut manifest: boothy_lib::session::session_manifest::SessionManifest =
++        serde_json::from_str(
++            &fs::read_to_string(&manifest_path)
++                .expect("manifest should be readable after warm hit"),
++        )
++        .expect("manifest should deserialize after warm hit");
++    let diagnostics_dir = SessionPaths::new(&base_dir, &session.session_id)
++        .diagnostics_dir
++        .join("dedicated-renderer");
++    let warm_state_detail_path =
++        diagnostics_dir.join("warm-state-preset_soft-glow-2026.04.10.json");
++    fs::remove_file(&warm_state_detail_path).expect("warm state evidence should be removable");
++    manifest.active_preview_renderer_warm_state = Some(
++        boothy_lib::session::session_manifest::PreviewRendererWarmStateSnapshot {
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.04.10".into(),
++            state: "warm-ready".into(),
++            observed_at: "2026-04-12T08:00:00Z".into(),
++            diagnostics_detail_path: Some(
++                warm_state_detail_path.to_string_lossy().replace('\\', "/"),
++            ),
++        },
++    );
++    fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
++    )
++    .expect("manifest should persist forced warm-loss setup");
++
++    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
++    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
++        None,
++        &base_dir,
++        &session.session_id,
++        &capture.capture.capture_id,
++    )
++    .expect("warm-state loss should fall back safely");
++    assert_eq!(completed_capture.render_status, "previewReady");
++
++    let timing_events = fs::read_to_string(
++        SessionPaths::new(&base_dir, &session.session_id)
++            .diagnostics_dir
++            .join("timing-events.log"),
++    )
++    .expect("timing log should exist");
++    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
++    assert!(timing_events.contains("fallbackReason=warm-state-loss"));
++    assert!(timing_events.contains("warmState=warm-state-lost"));
++
++    let capability_snapshot =
++        boothy_lib::commands::runtime_commands::capability_snapshot_for_profile(
++            "operator-enabled",
++            true,
++        );
++    let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("operator summary should project warm-state loss");
++    assert_eq!(
++        operator_summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-state-lost")
++    );
++
++    let readiness = get_capture_readiness_in_dir(
++        &base_dir,
++        CaptureReadinessInputDto {
++            session_id: session.session_id.clone(),
++        },
++    )
++    .expect("readiness should remain truthful after warm-state loss");
++    assert_eq!(readiness.reason_code, "ready");
++    assert_eq!(readiness.customer_state, "Ready");
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ fn create_published_bundle(catalog_root: &PathBuf) {
+-    let bundle_dir = catalog_root.join("preset_soft-glow").join("2026.04.10");
++    create_published_bundle_variant(catalog_root, "preset_soft-glow", "2026.04.10", "Soft Glow");
++}
++
++fn create_published_bundle_variant(
++    catalog_root: &PathBuf,
++    preset_id: &str,
++    published_version: &str,
++    display_name: &str,
++) {
++    let bundle_dir = catalog_root.join(preset_id).join(published_version);
+     fs::create_dir_all(bundle_dir.join("xmp")).expect("xmp directory should exist");
+     fs::write(bundle_dir.join("preview.jpg"), b"preview").expect("preview should exist");
+     fs::write(
+@@ -595,7 +956,7 @@ fn create_published_bundle(catalog_root: &PathBuf) {
+             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+             "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+             "<rdf:Description xmlns:darktable=\"http://darktable.sf.net/\">",
+-            "<darktable:history><rdf:Seq><rdf:li><darktable:module>preset_soft-glow</darktable:module></rdf:li></rdf:Seq></darktable:history>",
++            "<darktable:history><rdf:Seq><rdf:li><darktable:module>bundle</darktable:module></rdf:li></rdf:Seq></darktable:history>",
+             "</rdf:Description></rdf:RDF></x:xmpmeta>"
+         ),
+     )
+@@ -603,9 +964,9 @@ fn create_published_bundle(catalog_root: &PathBuf) {
+ 
+     let bundle = serde_json::json!({
+       "schemaVersion": "published-preset-bundle/v1",
+-      "presetId": "preset_soft-glow",
+-      "displayName": "Soft Glow",
+-      "publishedVersion": "2026.04.10",
++      "presetId": preset_id,
++      "displayName": display_name,
++      "publishedVersion": published_version,
+       "lifecycleStatus": "published",
+       "boothStatus": "booth-safe",
+       "darktableVersion": "5.4.1",
+@@ -710,7 +1071,13 @@ fn request_capture_with_helper_success(
+         base_dir,
+         CaptureRequestInputDto {
+             session_id: session_id.into(),
+-            request_id: Some("request_20260410_001".into()),
++            request_id: Some(format!(
++                "request_{}",
++                SystemTime::now()
++                    .duration_since(UNIX_EPOCH)
++                    .unwrap_or_default()
++                    .as_nanos()
++            )),
+         },
+     )
+     .expect("capture should save");
+diff --git a/src-tauri/tests/operator_diagnostics.rs b/src-tauri/tests/operator_diagnostics.rs
+index 8660e8b..c84944b 100644
+--- a/src-tauri/tests/operator_diagnostics.rs
++++ b/src-tauri/tests/operator_diagnostics.rs
+@@ -196,6 +196,15 @@ fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover()
+         active_preset_id: Some("preset_soft-glow".into()),
+         active_preset_display_name: Some("Soft Glow".into()),
+         active_preview_renderer_route: capture.preview_renderer_route.clone(),
++        active_preview_renderer_warm_state: Some(
++            boothy_lib::session::session_manifest::PreviewRendererWarmStateSnapshot {
++                preset_id: "preset_soft-glow".into(),
++                published_version: "2026.03.26".into(),
++                state: "warm-ready".into(),
++                observed_at: "2026-03-26T00:10:00Z".into(),
++                diagnostics_detail_path: None,
++            },
++        ),
+         captures: vec![capture],
+         ..base_manifest(session_id)
+     };
+@@ -239,6 +248,10 @@ fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover()
+         summary.preview_architecture.hardware_capability,
+         "dedicated-renderer-available"
+     );
++    assert_eq!(
++        summary.preview_architecture.warm_state.as_deref(),
++        Some("warm-ready")
++    );
+ 
+     let _ = fs::remove_dir_all(base_dir);
+ }
+@@ -316,6 +329,79 @@ fn operator_diagnostics_ignores_partial_preview_transition_lines() {
+     let _ = fs::remove_dir_all(base_dir);
+ }
+ 
++#[test]
++fn operator_diagnostics_prefers_newer_manifest_warm_state_snapshot() {
++    let base_dir = unique_test_root("preview-architecture-newer-warm-state");
++    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
++    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1ac";
++    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
++    let mut capture = preview_waiting_capture(session_id);
++    capture.preview_renderer_route = Some(
++        boothy_lib::session::session_manifest::PreviewRendererRouteSnapshot {
++            route: "local-renderer-sidecar".into(),
++            route_stage: "canary".into(),
++            fallback_reason_code: None,
++        },
++    );
++    let manifest = SessionManifest {
++        lifecycle: SessionLifecycle {
++            status: "active".into(),
++            stage: "preview-waiting".into(),
++        },
++        active_preset: Some(ActivePresetBinding {
++            preset_id: "preset_soft-glow".into(),
++            published_version: "2026.03.26".into(),
++        }),
++        active_preset_id: Some("preset_soft-glow".into()),
++        active_preset_display_name: Some("Soft Glow".into()),
++        active_preview_renderer_route: capture.preview_renderer_route.clone(),
++        active_preview_renderer_warm_state: Some(
++            boothy_lib::session::session_manifest::PreviewRendererWarmStateSnapshot {
++                preset_id: "preset_soft-glow".into(),
++                published_version: "2026.03.26".into(),
++                state: "cold".into(),
++                observed_at: "2026-03-26T00:10:02Z".into(),
++                diagnostics_detail_path: None,
++            },
++        ),
++        captures: vec![capture],
++        ..base_manifest(session_id)
++    };
++
++    write_manifest(&base_dir, &manifest);
++    write_ready_helper_status(&base_dir, session_id);
++
++    let paths = SessionPaths::new(&base_dir, session_id);
++    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
++    fs::write(
++        paths.diagnostics_dir.join("timing-events.log"),
++        concat!(
++            "2026-03-26T00:10:01Z\t",
++            "session=session_01hs6n1r8b8zc5v4ey2x7b9g1ac\t",
++            "event=capture_preview_transition_summary\t",
++            "detail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;warmState=warm-hit;firstVisibleMs=2810;replacementMs=3615;originalVisibleToPresetAppliedVisibleMs=3615"
++        ),
++    )
++    .expect("summary log should write");
++
++    let summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
++        .expect("preview architecture summary should load");
++
++    assert_eq!(
++        summary.preview_architecture.warm_state.as_deref(),
++        Some("cold")
++    );
++    assert_eq!(
++        summary
++            .preview_architecture
++            .warm_state_observed_at
++            .as_deref(),
++        Some("2026-03-26T00:10:02Z")
++    );
++
++    let _ = fs::remove_dir_all(base_dir);
++}
++
+ #[test]
+ fn operator_diagnostics_classifies_post_end_blocked_sessions() {
+     let base_dir = unique_test_root("post-end-blocked");
+@@ -845,6 +931,7 @@ fn base_manifest(session_id: &str) -> SessionManifest {
+         active_preset_id: None,
+         active_preset_display_name: None,
+         active_preview_renderer_route: None,
++        active_preview_renderer_warm_state: None,
+         timing: None,
+         captures: Vec::new(),
+         post_end: None,
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.test.tsx b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+index d700848..bdc1909 100644
+--- a/src/operator-console/screens/OperatorSummaryScreen.test.tsx
++++ b/src/operator-console/screens/OperatorSummaryScreen.test.tsx
+@@ -63,6 +63,8 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     ...overrides,
+   }
+@@ -266,6 +268,8 @@ describe('OperatorSummaryScreen', () => {
+           laneOwner: 'dedicated-renderer',
+           fallbackReasonCode: 'none',
+           hardwareCapability: 'dedicated-renderer-available',
++          warmState: 'warm-ready',
++          warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+         },
+       }),
+     )
+@@ -286,6 +290,7 @@ describe('OperatorSummaryScreen', () => {
+     expect(screen.getByText(/^dedicated-renderer$/i)).toBeInTheDocument()
+     expect(screen.getByText(/canary/i)).toBeInTheDocument()
+     expect(screen.getByText(/dedicated-renderer-available/i)).toBeInTheDocument()
++    expect(screen.getByText(/warm-ready/i)).toBeInTheDocument()
+   })
+ 
+   it('renders a safe empty state when no active session exists', async () => {
+diff --git a/src/operator-console/screens/OperatorSummaryScreen.tsx b/src/operator-console/screens/OperatorSummaryScreen.tsx
+index 73ddbfc..6d8e141 100644
+--- a/src/operator-console/screens/OperatorSummaryScreen.tsx
++++ b/src/operator-console/screens/OperatorSummaryScreen.tsx
+@@ -173,6 +173,14 @@ function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary
+           <dt>Fallback Reason</dt>
+           <dd>{formatFieldValue(architecture.fallbackReasonCode)}</dd>
+         </div>
++        <div className="operator-console__fact">
++          <dt>Warm State</dt>
++          <dd>{formatFieldValue(architecture.warmState)}</dd>
++        </div>
++        <div className="operator-console__fact">
++          <dt>Warm State Updated</dt>
++          <dd>{formatFieldValue(architecture.warmStateObservedAt)}</dd>
++        </div>
+         <div className="operator-console__fact">
+           <dt>Hardware Capability</dt>
+           <dd>{formatFieldValue(architecture.hardwareCapability)}</dd>
+diff --git a/src/operator-console/services/operator-diagnostics-service.test.ts b/src/operator-console/services/operator-diagnostics-service.test.ts
+index fd87b41..576ff8c 100644
+--- a/src/operator-console/services/operator-diagnostics-service.test.ts
++++ b/src/operator-console/services/operator-diagnostics-service.test.ts
+@@ -64,6 +64,8 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     ...overrides,
+   }
+@@ -211,6 +213,9 @@ describe('operator diagnostics service', () => {
+     await expect(service.loadOperatorRecoverySummary()).resolves.toMatchObject({
+       boothAlias: 'Kim 4821',
+       blockedCategory: 'preview-or-render',
++      previewArchitecture: {
++        warmState: 'warm-ready',
++      },
+     })
+   })
+ 
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 374b688..f90addb 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -260,6 +260,8 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     liveCaptureTruth: {
+       source: 'canon-helper-sidecar',
+@@ -328,6 +330,8 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
+       hardwareCapability: 'dedicated-renderer-available',
++      warmState: 'warm-ready',
++      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+     },
+     ...overrides,
+   }
+@@ -382,23 +386,46 @@ describe('shared contracts baseline', () => {
+ 
+   it('parses the frozen published preset bundle fixture used by the booth runtime loader', () => {
+     const parsed = publishedPresetBundleSchema.parse(
+-      readContractFixture('preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json'),
++      readContractFixture('preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json'),
+     )
+ 
+-    expect(parsed.previewProfile.profileId).toBe('soft-glow-preview')
+-    expect(parsed.finalProfile.profileId).toBe('soft-glow-final')
+-    expect(parsed.xmpTemplatePath).toBe('xmp/template.xmp')
++    expect(parsed.schemaVersion).toBe('published-preset-bundle/v2')
++    expect(parsed.canonicalRecipe.schemaVersion).toBe('canonical-preset-recipe/v1')
++    expect(parsed.canonicalRecipe.previewIntent.profileId).toBe('soft-glow-preview')
++    expect(parsed.canonicalRecipe.finalIntent.profileId).toBe('soft-glow-final')
++    expect(parsed.canonicalRecipe.noisePolicy.policyId).toBe('balanced-noise')
++    expect(parsed.darktableAdapter.xmpTemplatePath).toBe('xmp/template.xmp')
+   })
+ 
+-  it('rejects published preset bundles that escape the bundle root or add unknown fields', () => {
++  it('rejects published preset bundles that miss canonical recipe truth, escape the bundle root, or add unknown fields', () => {
+     const fixture = readContractFixture(
+-      'preset-bundle-v1/preset_soft-glow/2026.04.10/bundle.json',
++      'preset-bundle-v2/preset_soft-glow/2026.04.10/bundle.json',
+     )
+ 
+     expect(() =>
+       publishedPresetBundleSchema.parse({
+         ...fixture,
+-        xmpTemplatePath: '../outside/template.xmp',
++        canonicalRecipe: undefined,
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        darktableAdapter: {
++          ...(fixture.darktableAdapter as Record<string, unknown>),
++          darktableVersion: '5.5.0',
++        },
++      }),
++    ).toThrow()
++
++    expect(() =>
++      publishedPresetBundleSchema.parse({
++        ...fixture,
++        darktableAdapter: {
++          ...(fixture.darktableAdapter as Record<string, unknown>),
++          xmpTemplatePath: '../outside/template.xmp',
++        },
+       }),
+     ).toThrow()
+ 
+@@ -789,6 +816,8 @@ describe('shared contracts baseline', () => {
+         laneOwner: 'inline-truthful-fallback',
+         fallbackReasonCode: 'route-policy-shadow',
+         hardwareCapability: 'dedicated-renderer-available',
++        warmState: 'warm-ready',
++        warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+       },
+     })
+   })
+@@ -828,6 +857,7 @@ describe('shared contracts baseline', () => {
+       previewArchitecture: {
+         routeStage: 'canary',
+         laneOwner: 'inline-truthful-fallback',
++        warmState: 'warm-ready',
+       },
+     })
+     expect(parsedAction).toBe('approved-boundary-restart')
+diff --git a/src/shared-contracts/schemas/dedicated-renderer.ts b/src/shared-contracts/schemas/dedicated-renderer.ts
+index 8e30145..05dc22f 100644
+--- a/src/shared-contracts/schemas/dedicated-renderer.ts
++++ b/src/shared-contracts/schemas/dedicated-renderer.ts
+@@ -56,5 +56,7 @@ export const dedicatedRendererPreviewJobResultSchema = z
+     outputPath: runtimePathSchema.nullable().optional(),
+     detailCode: z.string().trim().min(1).nullable().optional(),
+     detailMessage: z.string().trim().min(1).nullable().optional(),
++    warmState: z.string().trim().min(1).nullable().optional(),
++    warmStateDetailPath: runtimePathSchema.nullable().optional(),
+   })
+   .strict()
+diff --git a/src/shared-contracts/schemas/operator-diagnostics.ts b/src/shared-contracts/schemas/operator-diagnostics.ts
+index 1f0da7b..ef44d19 100644
+--- a/src/shared-contracts/schemas/operator-diagnostics.ts
++++ b/src/shared-contracts/schemas/operator-diagnostics.ts
+@@ -52,6 +52,8 @@ export const operatorPreviewArchitectureSummarySchema = z.object({
+   routeStage: z.string().trim().min(1).nullable().optional(),
+   laneOwner: z.string().trim().min(1).nullable().optional(),
+   fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
++  warmState: z.string().trim().min(1).nullable().optional(),
++  warmStateObservedAt: z.string().datetime({ offset: true }).nullable().optional(),
+   hardwareCapability: z.string().trim().min(1),
+ })
+ 
+diff --git a/src/shared-contracts/schemas/session-manifest.ts b/src/shared-contracts/schemas/session-manifest.ts
+index 3db16cd..db57140 100644
+--- a/src/shared-contracts/schemas/session-manifest.ts
++++ b/src/shared-contracts/schemas/session-manifest.ts
+@@ -76,6 +76,20 @@ export const boothAliasSchema = z
+   .trim()
+   .min(1, '고객 별칭이 비어 있을 수 없어요.')
+ 
++export const previewRendererRouteSnapshotSchema = z.object({
++  route: z.string().trim().min(1),
++  routeStage: z.string().trim().min(1),
++  fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
++})
++
++export const previewRendererWarmStateSnapshotSchema = z.object({
++  presetId: z.string().trim().min(1),
++  publishedVersion: z.string().trim().min(1),
++  state: z.string().trim().min(1),
++  observedAt: z.string().datetime({ offset: true }),
++  diagnosticsDetailPath: z.string().trim().min(1).nullable().optional(),
++})
++
+ export const customerNameSchema = z
+   .string()
+   .trim()
+@@ -109,6 +123,12 @@ export const sessionManifestSchema = z
+     activePreset: activePresetBindingSchema.nullable(),
+     activePresetId: z.string().trim().min(1).nullable().optional(),
+     activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
++    activePreviewRendererRoute: previewRendererRouteSnapshotSchema
++      .nullable()
++      .optional(),
++    activePreviewRendererWarmState: previewRendererWarmStateSnapshotSchema
++      .nullable()
++      .optional(),
+     timing: sessionTimingSnapshotSchema.nullable().optional(),
+     captures: z.array(sessionCaptureRecordSchema),
+     postEnd: sessionPostEndSchema.nullable(),

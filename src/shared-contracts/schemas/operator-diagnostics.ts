@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { liveCaptureTruthSchema } from './capture-readiness'
+import { previewRendererWarmStateSchema } from './dedicated-renderer'
 import { presetDisplayNameSchema, presetIdSchema, publishedVersionSchema } from './preset-core'
 import { sessionIdSchema } from './ids'
 import { sessionPostEndStateSchema } from './session-manifest'
@@ -52,6 +53,16 @@ export const operatorPreviewArchitectureSummarySchema = z.object({
   routeStage: z.string().trim().min(1).nullable().optional(),
   laneOwner: z.string().trim().min(1).nullable().optional(),
   fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+  warmState: previewRendererWarmStateSchema.nullable().optional(),
+  warmStateObservedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  firstVisibleMs: z.number().int().nonnegative().nullable().optional(),
+  replacementMs: z.number().int().nonnegative().nullable().optional(),
+  originalVisibleToPresetAppliedVisibleMs: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .optional(),
   hardwareCapability: z.string().trim().min(1),
 })
 

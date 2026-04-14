@@ -86,13 +86,17 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 
 - `automated proof` and `hardware proof` are separate release gates.
 - The canonical hardware close record lives in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
+- Story 1.20 is the preview architecture activation owner; Story 1.13 remains the final guarded cutover / release-close owner.
 - Story 1.13 is the canonical preview architecture close owner for guarded cutover, rollback evidence, and `preview-renderer-policy.json` proof.
 - Automated build/test success can prove implementation readiness, but booth `Ready` / `Completed` truth is not release-claimable until the ledger records `Go`.
 - Any `No-Go`, missing evidence package, or unresolved blocker in the ledger keeps the branch on `release hold`.
 - Failed or skipped automation proof keeps `Promotion state` on `release hold` even if earlier hardware evidence exists.
 - CI proof artifacts remain evidence only; `Promotion state` stays non-release until the hardware ledger clears the gated stories for close.
 - Preview architecture promotion evidence must include the host-owned `branch-config/preview-renderer-policy.json` state together with the booth session package so shadow, canary, default, and rollback boundaries stay auditable.
+- The canonical booth package must preserve capture-time route-policy and catalog snapshots inside the session diagnostics bundle before evidence is assembled.
 - Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
+- Preview promotion sign-off also reads latency, parity, fallback ratio, route policy state, and rollback evidence together; speed alone cannot produce `Go`.
+- Repeated `canary` success-path evidence and one-action rollback proof are prerequisites before any `default` route claim is considered.
 
 ## Current State
 

@@ -202,6 +202,52 @@ function createActionResult() {
   }
 }
 
+function createPreviewRouteResult(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 'preview-renderer-route-mutation-result/v1',
+    action: 'promote',
+    presetId: 'preset_new-draft-2',
+    publishedVersion: '2026.04.10',
+    routeStage: 'canary',
+    approval: {
+      approvedAt: '2026-04-14T01:45:00.000Z',
+      actorId: 'release-kim',
+      actorLabel: 'Kim Release',
+    },
+    auditEntry: {
+      schemaVersion: 'preview-renderer-route-policy-audit-entry/v1',
+      auditId: 'preview-route-promote-20260414-0001',
+      action: 'promote',
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+      targetRouteStage: 'canary',
+      approval: {
+        approvedAt: '2026-04-14T01:45:00.000Z',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      },
+      result: 'applied',
+      canarySuccessCount: 1,
+      notedAt: '2026-04-14T01:45:02.000Z',
+    },
+    message: 'preview route canary 승격을 적용했어요.',
+    ...overrides,
+  }
+}
+
+function createPreviewRouteStatusResult(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 'preview-renderer-route-status-result/v1',
+    presetId: 'preset_new-draft-2',
+    publishedVersion: '2026.04.10',
+    routeStage: 'canary',
+    resolvedRoute: 'local-renderer-sidecar',
+    reason: 'operator-canary',
+    message: '이 프리셋 버전은 canary 상태예요.',
+    ...overrides,
+  }
+}
+
 function renderScreen(branchRolloutService: BranchRolloutService) {
   render(<SettingsScreen branchRolloutService={branchRolloutService} />)
 }
@@ -212,13 +258,18 @@ describe('SettingsScreen', () => {
       loadOverview: vi.fn().mockResolvedValue(createOverview()),
       applyRollout: vi.fn(),
       applyRollback: vi.fn(),
+      loadPreviewRendererRouteStatus: vi.fn().mockResolvedValue(
+        createPreviewRouteStatusResult(),
+      ),
+      promotePreviewRendererRoute: vi.fn(),
+      rollbackPreviewRendererRoute: vi.fn(),
     })
 
     expect(
       await screen.findByRole('heading', { name: /Branch Rollout Governance/i }),
     ).toBeInTheDocument()
     expect(screen.getByText(/지점 연락처와 승인된 운영 토글은 그대로 유지돼요\./i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/승인자 ID/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^승인자 ID$/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/대상 지점 선택/i)).toBeInTheDocument()
   })
 
@@ -230,6 +281,11 @@ describe('SettingsScreen', () => {
       loadOverview,
       applyRollout,
       applyRollback: vi.fn(),
+      loadPreviewRendererRouteStatus: vi.fn().mockResolvedValue(
+        createPreviewRouteStatusResult(),
+      ),
+      promotePreviewRendererRoute: vi.fn(),
+      rollbackPreviewRendererRoute: vi.fn(),
     })
 
     const user = userEvent.setup()
@@ -241,8 +297,8 @@ describe('SettingsScreen', () => {
       screen.getByLabelText(/배포 target baseline/i),
       'boothy-2026.03.27.1 :: catalog-2026.03.27',
     )
-    await user.type(screen.getByLabelText(/승인자 ID/i), 'release-kim')
-    await user.type(screen.getByLabelText(/승인자 이름/i), 'Kim Release')
+    await user.type(screen.getByLabelText(/^승인자 ID$/i), 'release-kim')
+    await user.type(screen.getByLabelText(/^승인자 이름$/i), 'Kim Release')
     await user.click(screen.getByRole('button', { name: /선택한 지점에 rollout/i }))
 
     await waitFor(() => {
@@ -265,5 +321,81 @@ describe('SettingsScreen', () => {
     ).toBeInTheDocument()
     expect(screen.getByText(/세션 종료 후 staged rollout이 적용돼요\./i)).toBeInTheDocument()
     expect(screen.queryByText(/active-session-deferred/i)).not.toBeInTheDocument()
+  })
+
+  it('submits preview route promotion from the settings surface', async () => {
+    const promotePreviewRendererRoute = vi
+      .fn()
+      .mockResolvedValue(createPreviewRouteResult())
+
+    renderScreen({
+      loadOverview: vi.fn().mockResolvedValue(createOverview()),
+      applyRollout: vi.fn(),
+      applyRollback: vi.fn(),
+      loadPreviewRendererRouteStatus: vi.fn().mockResolvedValue(
+        createPreviewRouteStatusResult(),
+      ),
+      promotePreviewRendererRoute,
+      rollbackPreviewRendererRoute: vi.fn(),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: /Preview Route Governance/i })
+    await user.type(screen.getByLabelText(/프리셋 ID/i), 'preset_new-draft-2')
+    await user.type(screen.getByLabelText(/게시 버전/i), '2026.04.10')
+    await user.selectOptions(screen.getByLabelText(/승격 단계/i), 'canary')
+    await user.type(screen.getByLabelText(/Preview route 승인자 ID/i), 'release-kim')
+    await user.type(
+      screen.getByLabelText(/Preview route 승인자 이름/i),
+      'Kim Release',
+    )
+    await user.click(screen.getByRole('button', { name: /canary 승격 적용/i }))
+
+    await waitFor(() => {
+      expect(promotePreviewRendererRoute).toHaveBeenCalledWith({
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+        targetRouteStage: 'canary',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      })
+    })
+
+    expect(
+      await screen.findByText(/preview route canary 승격을 적용했어요\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the current preview route stage for the entered preset version', async () => {
+    const loadPreviewRendererRouteStatus = vi
+      .fn()
+      .mockResolvedValue(createPreviewRouteStatusResult())
+
+    renderScreen({
+      loadOverview: vi.fn().mockResolvedValue(createOverview()),
+      applyRollout: vi.fn(),
+      applyRollback: vi.fn(),
+      loadPreviewRendererRouteStatus,
+      promotePreviewRendererRoute: vi.fn(),
+      rollbackPreviewRendererRoute: vi.fn(),
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: /Preview Route Governance/i })
+    await user.type(screen.getByLabelText(/프리셋 ID/i), 'preset_new-draft-2')
+    await user.type(screen.getByLabelText(/게시 버전/i), '2026.04.10')
+
+    await waitFor(() => {
+      expect(loadPreviewRendererRouteStatus).toHaveBeenCalledWith({
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+      })
+    })
+
+    expect(await screen.findByText(/현재 상태: canary/i)).toBeInTheDocument()
+    expect(screen.getByText(/적용 경로: local-renderer-sidecar/i)).toBeInTheDocument()
+    expect(screen.getByText(/이 프리셋 버전은 canary 상태예요\./i)).toBeInTheDocument()
   })
 })

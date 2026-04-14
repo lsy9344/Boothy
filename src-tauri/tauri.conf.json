@@ -5,8 +5,8 @@
   "identifier": "com.boothy.desktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm run prepare:dedicated-renderer && pnpm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "pnpm run prepare:dedicated-renderer && pnpm run build && pnpm run preview:desktop",
     "beforeBuildCommand": "pnpm run prepare:dedicated-renderer && pnpm run build"
   },
   "app": {

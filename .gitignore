@@ -47,3 +47,14 @@ sidecar/canon-helper/.tmp-runtime-publish/
 src-tauri/target/
 src-tauri/target-*/
 .codex/hook-state/
+
+# Local throwaway build outputs and debug artifacts
+/target-codex*/
+/target-reviewfix*/
+/target-*-sidecar-tests.exe
+/target-*-sidecar-tests.pdb
+/sidecar/dedicated-renderer/*.pdb
+
+# Local screenshots and manual check artifacts
+/tmp-*.png
+/UsersKimYSAppDataLocalTempmanual-check-*.jpg

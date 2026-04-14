@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   branchRolloutActionResultSchema,
   branchRolloutOverviewResultSchema,
+  previewRendererRouteMutationResultSchema,
+  previewRendererRouteStatusResultSchema,
 } from './index'
 
 function createReleaseBaseline(overrides: Record<string, unknown> = {}) {
@@ -215,5 +217,56 @@ describe('branch rollout contracts', () => {
         message: 'rollback을 진행하지 않았어요.',
       }),
     ).toThrow()
+  })
+
+  it('parses preview route promotion results with auditable stage metadata', () => {
+    const parsed = previewRendererRouteMutationResultSchema.parse({
+      schemaVersion: 'preview-renderer-route-mutation-result/v1',
+      action: 'promote',
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+      routeStage: 'canary',
+      approval: {
+        approvedAt: '2026-04-14T01:45:00.000Z',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      },
+      auditEntry: {
+        schemaVersion: 'preview-renderer-route-policy-audit-entry/v1',
+        auditId: 'preview-route-promote-20260414-0001',
+        action: 'promote',
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+        targetRouteStage: 'canary',
+        approval: {
+          approvedAt: '2026-04-14T01:45:00.000Z',
+          actorId: 'release-kim',
+          actorLabel: 'Kim Release',
+        },
+        result: 'applied',
+        canarySuccessCount: 1,
+        notedAt: '2026-04-14T01:45:02.000Z',
+      },
+      message: 'preview route canary 승격을 적용했어요.',
+    })
+
+    expect(parsed.routeStage).toBe('canary')
+    expect(parsed.auditEntry.targetRouteStage).toBe('canary')
+    expect(parsed.auditEntry.result).toBe('applied')
+  })
+
+  it('parses preview route status results for a promoted preset version', () => {
+    const parsed = previewRendererRouteStatusResultSchema.parse({
+      schemaVersion: 'preview-renderer-route-status-result/v1',
+      presetId: 'preset_new-draft-2',
+      publishedVersion: '2026.04.10',
+      routeStage: 'canary',
+      resolvedRoute: 'local-renderer-sidecar',
+      reason: 'operator-canary',
+      message: '이 프리셋 버전은 canary 상태예요.',
+    })
+
+    expect(parsed.routeStage).toBe('canary')
+    expect(parsed.resolvedRoute).toBe('local-renderer-sidecar')
   })
 })

@@ -6,5 +6,7 @@
   "status": "fallback-suggested",
   "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/capture_20260410_001-request_20260410_001.preview-result.json",
   "detailCode": "sidecar-unavailable",
-  "detailMessage": "Story 1.11 baseline keeps the truthful close on the host-owned inline path until the dedicated renderer cutover is approved."
+  "detailMessage": "Story 1.18 resident prototype keeps the booth-safe fallback path until warm state and resident close are both ready.",
+  "warmState": "cold",
+  "warmStateDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
 }

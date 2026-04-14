@@ -40,10 +40,10 @@ const storyFiles = [
   },
   {
     file: '_bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md',
-    status: 'review',
+    status: 'in-progress',
     gate: 'No-Go',
     gateHeading: '### Validation Gate Reference',
-    automationMarker: 'automated proof',
+    automationMarker: 'automated regression/build proof',
   },
   {
     file: '_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md',
@@ -113,6 +113,11 @@ describe('hardware validation governance baseline', () => {
     expect(ledger).toContain('Automated Pass')
     expect(ledger).toContain('Hardware Pass')
     expect(ledger).toContain('Go / No-Go')
+    expect(ledger).toContain('Latency')
+    expect(ledger).toContain('Parity')
+    expect(ledger).toContain('Fallback Ratio')
+    expect(ledger).toContain('Route Policy State')
+    expect(ledger).toContain('Rollback Evidence')
     expect(ledger).toContain('Blocker')
     expect(ledger).toContain('Owner')
     expect(ledger).toContain('Evidence Path')
@@ -125,6 +130,11 @@ describe('hardware validation governance baseline', () => {
     expect(ledger).toContain('camera model')
     expect(ledger).toContain('darktable pin')
     expect(ledger).toContain('helper identifier')
+    expect(ledger).toContain('latency')
+    expect(ledger).toContain('parity')
+    expect(ledger).toContain('fallback ratio')
+    expect(ledger).toContain('route policy state')
+    expect(ledger).toContain('rollback evidence')
     expect(ledger).toContain('release blocker')
     expect(ledger).toContain('follow-up owner')
     expect(ledger).toContain('core evidence paths')
@@ -139,11 +149,15 @@ describe('hardware validation governance baseline', () => {
     expect(runbook).toContain('Story 1.13')
     expect(runbook).not.toContain('- Story 1.3: 승인된 프리셋 카탈로그 표시와 활성 프리셋 선택')
     expect(runbook).toContain('Story 2.3')
+    expect(runbook).toContain('Story 1.19')
     expect(runbook).toContain('hardware-validation-ledger.md')
     expect(runbook).toContain('HV-00, HV-01, HV-02, HV-03, HV-04, HV-05, HV-07, HV-09, HV-10, HV-11, HV-12')
     expect(runbook).toContain('Story 1.5를 `review`로 되돌린다')
     expect(runbook).toContain('Story 2.3 / 4.3 경계를 우선 재점검한다')
     expect(runbook).toContain('HV-09 실패: Story 4.2 경계를 우선 재점검한다')
+    expect(runbook).toContain('preview-promotion-evidence.jsonl')
+    expect(runbook).toContain('Start-PreviewPromotionTrace.ps1')
+    expect(runbook).toContain('New-PreviewPromotionEvidenceBundle.ps1')
 
     expect(releaseBaseline).toContain('automated proof')
     expect(releaseBaseline).toContain('hardware proof')
@@ -153,6 +167,7 @@ describe('hardware validation governance baseline', () => {
     expect(releaseBaseline).toContain('release hold')
     expect(releaseBaseline).toContain('Story 1.13')
     expect(releaseBaseline).toContain('preview-renderer-policy.json')
+    expect(releaseBaseline).toContain('latency, parity, fallback ratio, route policy state, and rollback evidence')
   })
 
   it('keeps sprint status aligned with the ledger-recorded close state', () => {
@@ -164,7 +179,7 @@ describe('hardware validation governance baseline', () => {
 
     expect(sprintStatus).toContain('hardware_validation_ledger:')
     expect(sprintStatus).toContain(
-      '1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: review',
+      '1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: in-progress',
     )
     expect(sprintStatus).toContain('1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done')
     expect(sprintStatus).toContain('1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done')

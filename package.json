@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "preview:desktop": "vite preview --host 127.0.0.1 --port 5173 --strictPort",
     "dev:desktop": "pnpm tauri dev",
     "dev:desktop:stable": "pnpm tauri dev --no-watch",
     "build": "tsc -b && vite build",

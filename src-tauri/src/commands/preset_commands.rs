@@ -14,8 +14,8 @@ use crate::{
     preset::{
         authoring_pipeline::{
             create_draft_preset_in_dir, load_authoring_workspace_in_dir,
-            publish_validated_preset_in_dir, repair_invalid_draft_in_dir,
-            save_draft_preset_in_dir, validate_draft_preset_in_dir,
+            publish_validated_preset_in_dir, repair_invalid_draft_in_dir, save_draft_preset_in_dir,
+            validate_draft_preset_in_dir,
         },
         preset_catalog::load_preset_catalog_in_dir,
         preset_catalog_state::{
@@ -153,12 +153,7 @@ pub fn publish_validated_preset(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     let capability_snapshot = resolve_runtime_capability_snapshot();
 
-    publish_validated_preset_at_base_dir(
-        &base_dir,
-        window.label(),
-        &capability_snapshot,
-        input,
-    )
+    publish_validated_preset_at_base_dir(&base_dir, window.label(), &capability_snapshot, input)
 }
 
 #[tauri::command]
@@ -349,8 +344,11 @@ mod tests {
         .expect("xmp should write");
         fs::write(draft_root.join("previews").join("soft-glow.jpg"), "preview")
             .expect("preview should write");
-        fs::write(draft_root.join("samples").join("soft-glow-cut.jpg"), "sample")
-            .expect("sample cut should write");
+        fs::write(
+            draft_root.join("samples").join("soft-glow-cut.jpg"),
+            "sample",
+        )
+        .expect("sample cut should write");
         fs::write(
             draft_root.join("darktable").join("soft-glow.dtpreset"),
             "darktable project",

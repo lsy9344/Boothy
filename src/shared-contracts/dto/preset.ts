@@ -7,6 +7,8 @@ import {
   catalogVersionHistoryActionSchema,
   catalogVersionHistoryItemSchema,
   activePresetBindingSchema,
+  canonicalPresetRecipeSchema,
+  darktableAdapterReferenceSchema,
   draftPresetEditPayloadSchema,
   draftPresetSummarySchema,
   draftValidationFindingSchema,
@@ -26,6 +28,7 @@ import {
   presetLifecycleStateSchema,
   presetCatalogResultSchema,
   publishedPresetBundleSchema,
+  publishedPresetNoisePolicySchema,
   publishedPresetRenderProfileSchema,
   presetSelectionInputSchema,
   presetSelectionResultSchema,
@@ -78,6 +81,13 @@ export type PublishValidatedPresetResult = z.infer<
 >
 export type PublishedPresetRenderProfile = z.infer<
   typeof publishedPresetRenderProfileSchema
+>
+export type PublishedPresetNoisePolicy = z.infer<
+  typeof publishedPresetNoisePolicySchema
+>
+export type CanonicalPresetRecipe = z.infer<typeof canonicalPresetRecipeSchema>
+export type DarktableAdapterReference = z.infer<
+  typeof darktableAdapterReferenceSchema
 >
 export type PublishedPresetBundle = z.infer<typeof publishedPresetBundleSchema>
 export type PublishedPresetSummary = z.infer<typeof publishedPresetSummarySchema>

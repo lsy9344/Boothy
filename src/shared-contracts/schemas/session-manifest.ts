@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { previewRendererWarmStateSchema } from './dedicated-renderer'
 import { sessionIdSchema } from './ids'
 import {
   activePresetBindingSchema,
@@ -76,6 +77,20 @@ export const boothAliasSchema = z
   .trim()
   .min(1, '고객 별칭이 비어 있을 수 없어요.')
 
+export const previewRendererRouteSnapshotSchema = z.object({
+  route: z.string().trim().min(1),
+  routeStage: z.string().trim().min(1),
+  fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+})
+
+export const previewRendererWarmStateSnapshotSchema = z.object({
+  presetId: z.string().trim().min(1),
+  publishedVersion: z.string().trim().min(1),
+  state: previewRendererWarmStateSchema,
+  observedAt: z.string().datetime({ offset: true }),
+  diagnosticsDetailPath: z.string().trim().min(1).nullable().optional(),
+})
+
 export const customerNameSchema = z
   .string()
   .trim()
@@ -109,6 +124,12 @@ export const sessionManifestSchema = z
     activePreset: activePresetBindingSchema.nullable(),
     activePresetId: z.string().trim().min(1).nullable().optional(),
     activePresetDisplayName: presetDisplayNameSchema.nullable().optional(),
+    activePreviewRendererRoute: previewRendererRouteSnapshotSchema
+      .nullable()
+      .optional(),
+    activePreviewRendererWarmState: previewRendererWarmStateSnapshotSchema
+      .nullable()
+      .optional(),
     timing: sessionTimingSnapshotSchema.nullable().optional(),
     captures: z.array(sessionCaptureRecordSchema),
     postEnd: sessionPostEndSchema.nullable(),

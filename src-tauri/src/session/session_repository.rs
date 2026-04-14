@@ -29,7 +29,8 @@ use crate::{
     session::{
         session_manifest::{
             build_session_manifest, current_timestamp, normalize_legacy_manifest,
-            validate_session_start_input, ActivePresetBinding, SessionManifest,
+            validate_session_start_input, ActivePresetBinding, PreviewRendererWarmStateSnapshot,
+            SessionManifest,
         },
         session_paths::SessionPaths,
     },
@@ -146,6 +147,13 @@ pub fn select_active_preset_in_dir(
         &selected_preset.preset_id,
         &selected_preset.published_version,
     );
+    let selected_warm_state = PreviewRendererWarmStateSnapshot {
+        preset_id: selected_preset.preset_id.clone(),
+        published_version: selected_preset.published_version.clone(),
+        state: "cold".into(),
+        observed_at: current_timestamp(SystemTime::now())?,
+        diagnostics_detail_path: None,
+    };
 
     if manifest.active_preset.as_ref() == Some(&active_preset) {
         let mut changed = false;
@@ -167,6 +175,11 @@ pub fn select_active_preset_in_dir(
             changed = true;
         }
 
+        if manifest.active_preview_renderer_warm_state.is_none() {
+            manifest.active_preview_renderer_warm_state = Some(selected_warm_state);
+            changed = true;
+        }
+
         if changed {
             write_session_manifest(&paths.manifest_path, &manifest)?;
         }
@@ -183,6 +196,13 @@ pub fn select_active_preset_in_dir(
     manifest.active_preset_display_name = Some(selected_preset.display_name.clone());
     manifest.active_preview_renderer_route = Some(route_snapshot);
     manifest.updated_at = current_timestamp(SystemTime::now())?;
+    manifest.active_preview_renderer_warm_state = Some(PreviewRendererWarmStateSnapshot {
+        preset_id: selected_preset.preset_id.clone(),
+        published_version: selected_preset.published_version.clone(),
+        state: "cold".into(),
+        observed_at: manifest.updated_at.clone(),
+        diagnostics_detail_path: None,
+    });
     if manifest.lifecycle.stage == "session-started" {
         manifest.lifecycle.stage = "preset-selected".into();
     }

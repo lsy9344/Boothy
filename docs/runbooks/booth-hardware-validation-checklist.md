@@ -25,6 +25,7 @@ supporting regression / follow-up scope:
 
 - Story 1.7: `HV-04` / `HV-05` capture correlation evidence를 Story 1.5 close review에 공급하는 supporting story
 - Story 1.11 / 1.12: preview architecture supporting evidence를 공급하지만 canonical release close owner는 아니다.
+- Story 1.19: ETW/WPR/WPA/PIX + parity diff gate를 위한 evidence package와 rerun 판단 기준을 고정하는 supporting governance story
 - Story 2.3: `HV-06` 후속 validation note와 preset switch regression 확인 범위
 - canonical close record는 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`가 소유한다.
 
@@ -68,6 +69,7 @@ supporting regression / follow-up scope:
 - preview 파일이 없는데 `previewReady`로 보이거나, post-end truth 없이 `Completed`가 보임
 - 고객 화면에 darktable, XMP, helper, library, OpenCL, SDK 용어가 노출됨
 - 증거 패키지에서 `session.json`, `bundle.json`, `timing-events.log`, 화면 캡처 중 핵심 항목이 누락됨
+- Story 1.19 evidence package에서 `preview-promotion-evidence.jsonl`, route policy snapshot, parity oracle result, rollback evidence가 빠짐
 
 ## 운영 고정값
 
@@ -253,6 +255,17 @@ operator 화면에서 함께 볼 항목:
 - `bundle.json`과 `catalog-state.json` 근거
 - pass / fail 판정
 - 실패 시 관찰 메모
+
+### Story 1.19 Evidence Package
+
+- Story 1.19 rerun은 `docs/runbooks/preview-promotion-evidence-package.md`를 기준으로 준비한다.
+- trace planning/start는 `scripts/hardware/Start-PreviewPromotionTrace.ps1`를 사용한다.
+- trace stop/export planning은 `scripts/hardware/Stop-PreviewPromotionTrace.ps1`를 사용한다.
+- booth package assemble은 `scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1`를 사용한다.
+- evidence package는 최소 `session.json`, `timing-events.log`, `preview-promotion-evidence.jsonl`, route policy snapshot, published `bundle.json`,
+  `catalog-state.json`, booth/operator visual evidence를 같이 보관해야 한다.
+- parity diff는 same-capture / same-session / same-preset-version 비교만 허용한다.
+- fallback-only evidence, rollback evidence 누락, parity threshold fail은 모두 `No-Go`다.
 
 ## 시나리오
 

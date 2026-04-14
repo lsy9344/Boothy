@@ -1,201 +1,191 @@
 # Story 1.13: guarded cutover와 original-visible-to-preset-applied-visible hardware validation gate
 
-Status: review
+Status: in-progress
 
-Architecture Pivot Note: `epics.md` 본문은 아직 1.11~1.13을 개별 스토리로 재생성하지 않았지만, 2026-04-09 승인된 preview architecture decision과 Story 1.11/1.12 handoff에 따라 이번 스토리는 `local dedicated renderer + different close topology`의 세 번째 단계인 guarded cutover, 실장비 latency close 검증, release-truth `Go` 판단 범위를 복원한다.
+Architecture Sequencing Note: 2026-04-13 승인된 preview activation 보정 이후, preview architecture adoption 순서는 `1.18 prototype -> 1.19 gate establishment -> 1.20 activation -> 1.13 guarded cutover / release close`로 고정된다. 이번 스토리는 resident lane를 새로 활성화하는 단계가 아니라, Story 1.20이 만든 promoted route를 승인된 부스 장비에서 최종 `Go / No-Go`로 닫는 canonical release-close owner다.
 
 ### Validation Gate Reference
 
+- Prerequisite:
+  - Story 1.20 activation 완료
+  - approved preset/version scope가 host-owned `preview-renderer-policy.json`에서 `shadow` 밖 `canary|default`로 승격된 상태
+  - repeated resident success-path evidence 확보
 - Supporting evidence family:
   - `HV-00`, `HV-04`, `HV-05`, `HV-07`, `HV-08`, `HV-10`, `HV-11`, `HV-12`
-  - capture-correlated seam package (`request-capture -> file-arrived -> fast-preview-visible -> capture_preview_ready -> recent-session-visible`)
-  - `original visible -> preset-applied visible` p50/p95 hardware latency package
-  - lane owner / fallback reason / canary-vs-default cutover proof
-  - hardware ledger canonical `Go / No-Go` row
+  - `session.json`, `timing-events.log`, `preview-promotion-evidence.jsonl`
+  - route policy snapshot (`branch-config/preview-renderer-policy.json`)
+  - published `bundle.json`, `catalog-state.json`
+  - booth/operator visual evidence
+  - one-action rollback proof
+  - canonical hardware ledger `Go / No-Go` row
 - Current hardware gate: `No-Go`
 - Close policy:
-  - automated proof만으로는 release-truth `Go`를 주장하지 않는다.
-  - 이번 스토리는 dedicated renderer를 무조건 기본값으로 켜는 단계가 아니라, guarded cutover와 rollback 가능한 운영 경계 위에서 실장비 증거를 닫는 단계다.
-  - latency 목표 미달, fallback 상시 발생, same-capture mismatch, false-ready/false-complete가 남으면 `No-Go`로 유지하고 기존 approved path로 즉시 rollback 가능해야 한다.
+  - Story 1.19 evidence package와 automated pass만으로는 release-truth `Go`를 주장하지 않는다.
+  - Story 1.13은 activation 이전의 implementation corrective를 흡수하지 않는다.
+  - promoted resident lane success path, parity, fallback 안정성, rollback evidence 중 하나라도 비면 `No-Go`로 유지한다.
 
 ## Story
 
 As a owner / brand operator,
-I want local dedicated renderer path를 guarded cutover하고 실장비 evidence로 최종 검증하고 싶다,
-so that booth가 same-capture truthful preview를 목표 latency 안에서 release-safe하게 제공한다고 자신 있게 승격할 수 있다.
+I want activation이 끝난 resident preview lane를 guarded cutover 기준으로 최종 검증하고 싶다,
+so that booth가 original-visible responsiveness와 preset-applied truth, rollback safety를 함께 만족한 구조만 release-safe하게 승격할 수 있다.
 
 ## Acceptance Criteria
 
-1. dedicated renderer truth lane의 승격은 `shadow -> limited canary -> default` 또는 동등한 guarded rollout 순서를 따라야 한다. cutover는 host-owned 설정 또는 승인된 rollout boundary로만 제어되어야 하며, dev-only ad-hoc 토글에 의존하면 안 된다. active session은 forced update 없이 기존 truth를 유지해야 하고, `No-Go` 시 한 액션 rollback 경로가 남아 있어야 한다.
-2. 승인된 Windows booth hardware에서 동일 capture 단위 correlation으로 `request-capture`, `file-arrived`, `fast-preview-visible`, `capture_preview_ready`, `recent-session-visible`, lane owner, fallback reason, `first-visible-ms`, `replacement-ms`, `originalVisibleToPresetAppliedVisibleMs`를 다시 읽을 수 있는 canonical evidence package가 수집돼야 한다. 이 패키지는 `original visible -> preset-applied visible <= 2.5s` 목표와 warm p50/p95, fallback 비율, mismatch `0` 여부를 판단할 수 있어야 한다.
-3. cutover된 booth runtime은 same-capture guarantee, preset fidelity, session isolation, truthful `Preview Waiting`, same-slot replacement를 유지해야 한다. dedicated renderer lane이 실패하거나 queue saturation, warm-state loss, protocol mismatch, invalid output, wrong-session output, stale bundle이 발생하면 booth는 false-ready, false-complete, cross-session leakage 없이 approved inline truthful fallback path로 내려가야 한다.
-4. operator-safe diagnostics와 governance evidence는 현재 lane owner, fallback reason, canary/default 상태, hardware capability, blocker 여부를 읽을 수 있어야 한다. 하지만 customer-facing copy는 계속 booth-safe plain language만 사용해야 하며, darktable, sidecar, protocol, queue, OpenCL 같은 내부 용어를 노출하면 안 된다.
-5. `docs/runbooks/booth-hardware-validation-checklist.md`, `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`, `docs/release-baseline.md`는 Story 1.13이 preview architecture track의 canonical `Go / No-Go` close owner라는 사실을 반영해야 한다. evidence path, blocker, owner, rerun prerequisite, promotion hold 상태가 문서 간에 같은 의미로 정렬돼야 한다.
-6. Story 1.13은 automated regression/build proof와 canonical hardware ledger `Go`가 모두 준비되기 전까지 `done`으로 닫히면 안 된다. 목표 미달 시에는 `No-Go`와 rollback 이유를 남기고, supporting story(1.11/1.12) evidence를 release close와 혼동하지 않도록 유지해야 한다.
+1. Story 1.20 activation이 완료된 approved scope에서만 Story 1.13 rerun이 시작되어야 한다. `preview-renderer-policy.json`은 host-owned rollout artifact로만 제어되어야 하며, active session은 route policy 변경으로 재해석되면 안 된다. `No-Go` 시 one-action rollback 경로가 남아 있어야 한다.
+2. 승인된 Windows booth hardware에서 canonical evidence package를 fresh capture 기준으로 다시 수집해야 한다. 패키지는 최소 `session.json`, `timing-events.log`, `preview-promotion-evidence.jsonl`, route policy snapshot, published `bundle.json`, `catalog-state.json`, booth/operator visual evidence, rollback proof를 포함해야 하며, `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`, `laneOwner`, `fallbackReason`, `routeStage`, `warmState`, parity 결과, fallback ratio를 함께 읽을 수 있어야 한다.
+3. promoted resident lane cutover 이후에도 same-capture guarantee, same-slot truthful replacement, preset fidelity, session isolation, truthful `Preview Waiting`, post-end truth가 유지돼야 한다. queue saturation, warm-state loss, invalid output, wrong-session output, stale bundle, protocol mismatch, rollback trigger가 발생하면 booth는 false-ready, false-complete, cross-session leakage 없이 approved inline truthful fallback으로 내려가야 한다.
+4. operator-safe diagnostics와 governance evidence는 현재 lane owner, fallback reason, route stage, warm state, parity 판정, rollback 상태, blocker를 읽을 수 있어야 한다. 하지만 customer-facing copy는 계속 booth-safe plain language만 사용해야 하며, darktable, sidecar, protocol, queue, OpenCL, PIX 같은 내부 용어를 노출하면 안 된다.
+5. `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`, `docs/runbooks/booth-hardware-validation-checklist.md`, `docs/release-baseline.md`는 Story 1.13의 fresh rerun 결과를 기준으로 같은 `Go / No-Go`, blocker, owner, evidence path, rerun prerequisite 의미를 유지해야 한다. Story 1.19와 Story 1.20은 supporting evidence owner일 뿐 canonical close owner가 아니다.
+6. Story 1.13은 automated regression/build proof와 canonical hardware ledger `Go`가 모두 준비되기 전까지 `done`으로 닫히면 안 된다. 목표 미달 시에는 `No-Go`, rollback reason, rerun prerequisite를 남기고 branch를 `release hold`에 유지해야 한다.
 
 ## Tasks / Subtasks
 
-- [ ] guarded cutover control과 rollback boundary를 고정한다. (AC: 1, 3, 6)
-  - [x] `src-tauri/src/render/dedicated_renderer.rs`, `src-tauri/src/render/mod.rs`에서 dedicated renderer enablement를 승인된 runtime/rollout 경계로만 승격하고, dev-only spawn opt-in이 release 경로를 대신하지 못하게 정리한다.
-  - [ ] `src-tauri/src/branch_config/mod.rs`, `src-tauri/src/commands/branch_rollout_commands.rs`, `src-tauri/tests/branch_rollout.rs` 또는 동등 경로에서 cutover/rollback이 active session을 강제 재해석하지 않는다는 규칙을 잠근다.
-  - [ ] fallback path 제거는 `Go` 이후 별도 승인 범위로 남기고, 이번 스토리에서는 one-action rollback 가능성을 유지한다.
+- [ ] Story 1.20 activation prerequisite를 확인한다. (AC: 1, 6)
+  - [ ] `preview-renderer-policy.json`이 approved scope를 `shadow` 밖 `canary|default`로 승격했는지 확인한다.
+  - [ ] repeated resident success-path evidence에서 `laneOwner=dedicated-renderer`, `fallbackReason=none`, `routeStage=canary|default`, `warmState=warm-ready|warm-hit`를 확인한다.
+  - [ ] inline fallback 제거 없이 one-action rollback 경로가 남아 있는지 확인한다.
 
-- [ ] hardware evidence와 seam 계측 패키지를 완성한다. (AC: 2, 3, 4)
-  - [x] `capture_preview_transition_summary`와 동등 evidence가 `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`, lane owner, fallback reason을 stable하게 남기도록 점검한다.
-  - [x] canary/default lane 구분, fallback rate, queue saturation, renderer restart, invalid output, wrong-session rejection을 한 회차 evidence package에서 읽을 수 있게 정리한다.
-  - [ ] 필요하면 `tests/hardware/dual-close-topology/*` 또는 동등한 evidence path를 추가해 실장비 패키지 구조를 고정한다.
+- [ ] canonical hardware evidence bundle을 fresh run으로 다시 수집한다. (AC: 2, 3, 4, 6)
+  - [ ] Tauri booth 앱과 실카메라 기준으로 `HV-00`, `HV-04`, `HV-05`, `HV-07`, `HV-08`, `HV-10`, `HV-11`, `HV-12`를 실행한다.
+  - [ ] `session.json`, `timing-events.log`, `preview-promotion-evidence.jsonl`, route policy snapshot, `bundle.json`, `catalog-state.json`, booth/operator visual evidence, rollback proof를 한 canonical package로 묶는다.
+  - [ ] `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`, parity, fallback ratio를 same-capture correlation 기준으로 기록한다.
 
-- [ ] approved booth hardware validation matrix를 실제로 수행한다. (AC: 2, 3, 5, 6)
-  - [ ] Tauri booth 앱 기준으로 `HV-00`, `HV-04`, `HV-05`, `HV-07`, `HV-08`, `HV-10`, `HV-11`, `HV-12`를 실행한다.
-  - [ ] `session.json`, `timing-events.log`, preview/final output, `bundle.json`, `catalog-state.json`, operator evidence, booth 화면 증거를 canonical package로 묶는다.
-  - [ ] `original visible -> preset-applied visible` 목표 미달, fallback 상시 발생, mismatch 발생 시 즉시 `No-Go`로 기록하고 rollback 근거를 남긴다.
+- [ ] promoted lane 기준 guarded cutover / rollback 안전성을 검증한다. (AC: 1, 3, 4, 6)
+  - [ ] route policy 변경이 active session truth를 재해석하지 않는지 확인한다.
+  - [ ] warm-state loss, queue saturation, invalid output, wrong-session output, stale bundle, rollback trigger가 모두 inline truthful fallback으로 내려가며 false-ready/false-complete를 만들지 않는지 확인한다.
+  - [ ] same-slot replacement, truthful `Preview Waiting`, post-end truth가 promoted lane에서도 유지되는지 확인한다.
 
-- [x] governance / runbook / ledger를 Story 1.13 ownership에 맞게 정렬한다. (AC: 4, 5, 6)
-  - [x] `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`에 Story 1.13 canonical close row를 추가하거나 동등 수준으로 정리한다.
-  - [x] `docs/runbooks/booth-hardware-validation-checklist.md`와 `docs/runbooks/booth-hardware-validation-architecture-research.md`에 guarded cutover와 preview architecture close owner 기준을 반영한다.
-  - [x] `docs/release-baseline.md`와 `src/governance/hardware-validation-governance.test.ts`, `src/governance/release-baseline-governance.test.ts`에서 preview architecture `Go / No-Go` hold 조건을 검증한다.
+- [ ] governance와 release-truth artifact를 fresh rerun 결과로 닫는다. (AC: 4, 5, 6)
+  - [ ] hardware ledger에 fresh `Go / No-Go` row, blocker, owner, evidence path, rerun prerequisite를 기록한다.
+  - [ ] `docs/runbooks/booth-hardware-validation-checklist.md`, `docs/release-baseline.md`와 ledger 의미가 같은지 확인한다.
+  - [ ] customer-facing surface에는 내부 진단어를 남기지 않고, operator-safe evidence에만 기술 상세를 남긴다.
 
-- [ ] automated regression과 packaging proof를 release close 기준으로 다시 실행한다. (AC: 1, 3, 4, 6)
-  - [x] `src-tauri/tests/dedicated_renderer.rs`, `src-tauri/tests/operator_diagnostics.rs`, shared contract/UI test, `pnpm build:desktop` 또는 동등 proof path를 Story 1.13 cutover 문맥으로 재실행한다.
-  - [ ] canary/default 전환 후에도 same-slot replacement, `Preview Waiting`, operator-safe diagnostics, branch rollout safety가 깨지지 않는지 검증한다.
-  - [x] automated pass와 hardware pass가 동시에 닫히기 전에는 sprint/release 상태를 `hold`로 유지한다.
+- [ ] release-close 문맥에서 자동 검증을 다시 실행한다. (AC: 3, 4, 6)
+  - [ ] dedicated renderer, operator diagnostics, branch rollout, shared contract, governance test를 Story 1.13 cutover 문맥으로 재실행한다.
+  - [ ] promoted route 이후에도 same-slot replacement, truthful `Preview Waiting`, branch rollout safety가 깨지지 않는지 확인한다.
+  - [ ] automated pass와 hardware `Go`가 동시에 닫히기 전에는 sprint/release 상태를 `hold`로 유지한다.
+
+### Review Findings
+
+- [x] [Review][Patch] Preview promotion evidence bundle accepts missing booth/operator visuals and rollback proof [scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1:436]
+- [x] [Review][Patch] Preview promotion evidence bundle re-copies live route policy and catalog state instead of the capture-time snapshot [scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1:337]
+- [x] [Review][Patch] Hardware validation governance baseline still expects Story 1.13 to remain `review` after review-driven status sync [src/governance/hardware-validation-governance.test.ts:42]
 
 ## Dev Notes
 
 ### 스토리 범위와 목적
 
-- 이번 스토리는 `1.11 protocol baseline -> 1.12 dual-close semantics` 다음 단계로, dedicated renderer를 실제 booth preview architecture의 release-truth candidate로 검증하는 단계다.
-- 목적은 “코드상 가능하다”를 넘어서, approved booth hardware에서 same-capture truthful close가 목표 latency와 guarded rollout 규칙을 동시에 만족하는지 증명하는 것이다.
-- 고객 경험 약속은 유지한다. 먼저 같은 촬영이 보일 수 있어도 truthful close 전까지는 `Preview Waiting`이고, 실패 시에는 booth-safe fallback만 허용된다.
+- 이번 스토리는 resident lane activation 자체를 구현하는 단계가 아니다.
+- 목적은 Story 1.20이 승격한 route를 실제 부스 장비에서 최종 `Go / No-Go`로 판정하는 것이다.
+- 제품 관점의 핵심은 속도 개선 주장 자체가 아니라, same-capture truth와 rollback safety를 유지한 채 release-safe하게 승격할 수 있느냐다.
 
-### 왜 이 스토리가 새로 필요해졌는가
+### 왜 이 스토리가 다시 정리돼야 하는가
 
-- Story 1.11은 dedicated renderer sidecar boundary와 capture-bound protocol을 닫았지만, hardware ledger `Go`는 후속 story가 닫아야 한다고 명시했다. [Source: _bmad-output/implementation-artifacts/1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입.md]
-- Story 1.12는 dual-close topology, same-slot replacement, summary metric을 정착시켰지만, 실제 booth-wide cutover와 release `Go`는 Story 1.13 소유라고 남겼다. [Source: _bmad-output/implementation-artifacts/1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환.md]
-- hardware ledger도 supporting note에서 “guarded cutover 최종 hardware gate는 Story 1.13이 이어받는다”고 명시한다. [Source: _bmad-output/implementation-artifacts/hardware-validation-ledger.md]
-- architecture와 research는 preview architecture 실행 우선순위를 `dedicated renderer ownership -> cutover validation -> release proof`로 정리한다. [Source: _bmad-output/planning-artifacts/architecture.md#Initial Implementation Priorities] [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Implementation Roadmap]
+- 2026-04-13 승인된 correct-course는 preview architecture adoption에 `activation` owner가 빠져 있었다고 판단했고, Story 1.20을 새 선행 단계로 추가했다. [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260413-155159.md]
+- 같은 날 implementation readiness report도 다음 실행 순서를 `1.18 -> 1.19 -> 1.20 -> 1.13`으로 고정하고, Story 1.20 implementation artifact 생성이 필요하다고 명시했다. [Source: _bmad-output/planning-artifacts/implementation-readiness-report-20260413.md]
+- 따라서 Story 1.13은 더 이상 activation gap을 메우는 스토리가 아니라, activation 이후 rerun되는 final validation / release-close owner로 읽어야 한다.
 
 ### 스토리 기반 요구사항
 
-- PRD는 first-visible latency, `original visible -> preset-applied visible` close latency, preset-applied readiness latency를 분리 계측해야 한다고 고정한다. [Source: _bmad-output/planning-artifacts/prd.md#KPI Table] [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
-- PRD는 capture truth, preview truth, final completion truth가 분리된 진실값이어야 하며, booth는 preview/final이 준비되기 전 완료를 암시하면 안 된다고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate] [Source: _bmad-output/planning-artifacts/prd.md#Booth-Safe Runtime Boundary]
-- Architecture는 preview pipeline을 `first-visible lane`과 `truth lane`으로 분리하고, host-owned local dedicated renderer lane이 preset-applied close owner라고 명시한다. [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture] [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
-- UX는 same-capture first-visible이 먼저 보여도 `Preview Waiting`을 유지하고, latest slot은 같은 자리 replacement로 닫혀야 한다고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름] [Source: _bmad-output/planning-artifacts/ux-design-specification.md#최신 사진 레일 (Latest Photo Rail)]
-- runbook과 release baseline은 hardware proof와 automated proof가 별도 gate이며, canonical close record는 hardware ledger가 소유한다고 고정한다. [Source: docs/runbooks/booth-hardware-validation-checklist.md] [Source: docs/release-baseline.md#Release Truth Gates]
+- `epics.md`는 Story 1.20 activation 완료 후에만 Story 1.13 rerun이 final cutover/hardware `Go / No-Go` 판단을 수행해야 한다고 고정한다. [Source: _bmad-output/planning-artifacts/epics.md]
+- architecture는 초기 실행 우선순위를 `1.18 prototype -> 1.19 gate establishment -> 1.20 activation -> 1.13 release close`로 재정렬했다. [Source: _bmad-output/planning-artifacts/architecture.md#Initial Implementation Priorities]
+- PRD는 `first-visible`과 later preset-applied close를 분리 측정하고, capture truth / preview truth / final completion truth를 섞지 말라고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness] [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
+- UX는 same-capture first-visible이 먼저 보여도 truthful close 전까지 `Preview Waiting`을 유지하고, latest slot은 같은 자리 replacement로 닫혀야 한다고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름] [Source: _bmad-output/planning-artifacts/ux-design-specification.md#최신 사진 레일 (Latest Photo Rail)]
+- runbook과 release baseline은 Story 1.13이 preview architecture canonical close owner이고, hardware ledger `Go` 전까지 branch가 `release hold`에 머물러야 한다고 고정한다. [Source: docs/runbooks/booth-hardware-validation-checklist.md] [Source: docs/release-baseline.md]
 
-### 현재 워크스페이스 상태
+### 현재 워크스페이스와 제품 상태
 
-- `src-tauri/src/render/dedicated_renderer.rs`는 dedicated renderer spawn을 여전히 explicit opt-in 환경 변수와 runtime handle 존재 여부에 묶고 있다. 즉 release cutover 기본 경로는 아직 별도 운영 경계로 닫히지 않았다.
-- 같은 파일과 `src-tauri/tests/dedicated_renderer.rs`는 accepted dedicated renderer result가 inline overwrite 없이 truthful close를 닫는 경로와 queue saturation fallback을 이미 테스트한다. 즉 story의 핵심 공백은 “기본 기능 부재”보다 “guarded rollout과 canonical hardware close”에 가깝다.
-- `capture_preview_transition_summary` metric 회귀는 Story 1.12에서 다시 잠갔지만, hardware ledger canonical row와 runbook scope에는 Story 1.13 close owner가 아직 직접 등록되지 않았다.
-- `docs/runbooks/booth-hardware-validation-checklist.md`의 canonical release-gated story 목록에는 Story 1.13이 아직 포함되지 않는다. 반면 ledger supporting note는 Story 1.13 ownership을 이미 암시한다.
-- `docs/release-baseline.md`는 automated proof와 hardware proof 분리를 고정하지만, preview architecture cutover를 Story 1.13 owner로 직접 연결한 문구는 아직 없다.
-- 현재 worktree는 render, operator diagnostics, session selector, hardware ledger 등 여러 스토리의 변경이 섞여 있다. 1.13 implementer는 unrelated dirty changes를 되돌리지 말고, cutover/governance/hardware evidence 범위로 좁혀 작업해야 한다.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` 기준으로 Story 1.13은 현재 `review`, Story 1.20은 `backlog`다. 즉 스토리 상태를 뒤로 되돌리기보다 prerequisite를 명확히 하는 편이 맞다. [Source: _bmad-output/implementation-artifacts/sprint-status.yaml]
+- hardware ledger와 release baseline은 아직 promoted cutover proof가 없어서 Story 1.13을 `No-Go` / `release hold`로 남긴다. 관찰된 route policy는 `defaultRoute=darktable`, recorded booth package는 `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, `originalVisibleToPresetAppliedVisibleMs=none` 상태였다. [Source: _bmad-output/implementation-artifacts/hardware-validation-ledger.md] [Source: docs/release-baseline.md]
+- 반대로 repo에는 이미 Story 1.19가 고정한 promotion evidence 계약과 도구가 존재한다. `preview-promotion-evidence.jsonl`, route policy snapshot, parity bundle 규칙, hardware scripts, governance/contract tests는 Story 1.13 rerun에서 그대로 재사용해야 한다. [Source: _bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착.md] [Source: docs/runbooks/preview-promotion-evidence-package.md]
+- dedicated renderer 및 operator diagnostics 테스트는 이미 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`, `originalVisibleToPresetAppliedVisibleMs`를 읽는 회귀를 포함한다. Story 1.13은 새 telemetry family를 만드는 대신 이 계약 위에서 release-close proof를 닫아야 한다. 이 문장은 repo 테스트와 계약 문서를 종합한 해석이다. [Source: src-tauri/tests/dedicated_renderer.rs] [Source: src-tauri/tests/operator_diagnostics.rs] [Source: docs/contracts/local-dedicated-renderer.md]
+- `project-context.md`는 발견되지 않았다.
 
 ### 이전 스토리 인텔리전스
 
-- Story 1.11은 dedicated renderer sidecar boundary를 공식 allowlist와 protocol contract로 고정했고, hardware close는 후속 story 소유라고 남겼다. [Source: _bmad-output/implementation-artifacts/1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입.md]
-- Story 1.12는 same-slot truthful replacement와 summary metric을 정착시키고 supporting hardware run을 확인했지만, release-truth `Go` row는 만들지 않았다. [Source: _bmad-output/implementation-artifacts/1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환.md]
-- hardware ledger에는 1.10과 1.12 supporting proof가 이미 있어, 1.13은 “새로운 제품 약속을 발명”하기보다 “existing supporting evidence를 canonical cutover close로 승격할 수 있는지 판정”하는 단계로 보는 편이 맞다. [Source: _bmad-output/implementation-artifacts/hardware-validation-ledger.md]
+- Story 1.12는 dual-close topology와 same-slot truthful replacement를 supporting implementation 단계로 `done` 처리했고, guarded cutover와 canonical release-truth `Go / No-Go`는 계속 Story 1.13이 소유한다고 명시했다. [Source: _bmad-output/implementation-artifacts/1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환.md]
+- Story 1.19는 ETW/WPR/WPA/PIX + parity diff 기반 gate establishment와 evidence package 구조를 고정했지만, canonical close owner를 가져오지 않았다. [Source: _bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착.md]
+- Story 1.20은 planning 문서에는 추가됐지만 아직 dedicated implementation artifact가 없다. Story 1.13 implementer가 activation work를 대신 흡수하면 sequencing이 다시 무너진다. [Source: _bmad-output/planning-artifacts/epics.md] [Source: _bmad-output/planning-artifacts/implementation-readiness-report-20260413.md]
 
 ### 구현 가드레일
 
-- `big bang` enablement를 하지 말 것. research가 권장한 `shadow -> canary -> default` guarded adoption을 유지할 것.
-- active session 중 forced update, preset rebinding, truth owner 재해석을 허용하지 말 것.
-- latency 목표가 좋아 보여도 same-capture mismatch, fallback 상시 발생, false-ready/false-complete가 하나라도 남으면 `Go`를 주장하지 말 것.
-- booth hardware evidence는 브라우저 preview가 아니라 Tauri 앱과 실제 카메라로만 수집할 것.
-- customer-facing copy는 계속 plain language만 사용하고, operator/ledger evidence에만 기술 상세를 남길 것.
-- Story 1.13에서도 fallback path를 삭제하지 말 것. fallback 제거는 `Go` 이후 별도 승인 범위다.
-
-### 아키텍처 준수사항
-
-- Tauri v2 공식 sidecar 문서는 2026-04-11 기준 `externalBin` 번들링과 `app.shell().sidecar(name)` 기반 실행 경로를 기준으로 설명한다. 이번 스토리는 dedicated renderer enablement가 그 승인 경계를 우회하지 않게 유지해야 한다. [Source: https://v2.tauri.app/ko/develop/sidecar/]
-- darktable 공식 문서는 `darktable-cli`가 headless export 경로이고 XMP sidecar가 편집 이력 artifact라는 점을 유지한다. dedicated renderer cutover는 새 truth engine 발명이 아니라 이 경로를 faster local topology로 운영하는 문제다. [Source: https://docs.darktable.org/usermanual/development/en/special-topics/program-invocation/darktable-cli/] [Source: https://docs.darktable.org/usermanual/development/en/overview/sidecar-files/sidecar/]
-- Playwright 공식 trace viewer 문서는 저장된 trace를 재생 가능한 증거로 남길 수 있다고 설명한다. 현재 replay proof가 필수는 아니더라도, close regression을 읽는 evidence 형식으로는 계속 유효하다. [Source: https://playwright.dev/docs/trace-viewer]
-- research는 Strangler Fig 방식의 점진 치환과 hardware-in-loop 검증을 권장한다. 이 문장은 공식 Strangler Fig 패턴과 research 결론을 현재 repo에 적용한 해석이다. [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Technology Adoption Strategies]
+- Story 1.13에서 activation 설계를 새로 발명하지 말 것. activation owner는 Story 1.20이다.
+- host-owned `preview-renderer-policy.json`만 승격/rollback 경계를 제어해야 한다. dev-only 토글이나 ad-hoc override를 release substitute로 쓰면 안 된다.
+- active session truth, preset binding, catalog snapshot은 route policy 변경으로 재해석되면 안 된다.
+- promoted lane proof가 좋아 보여도 parity drift, fallback 상시 발생, rollback proof 부재, false-ready, false-complete가 하나라도 남으면 `Go`를 주장하지 말 것.
+- customer-facing copy에는 darktable, sidecar, protocol, queue, ETW, PIX 같은 내부 용어를 노출하지 말 것.
+- fallback path 제거는 `Go` 이후 별도 승인 범위다. 이번 스토리에서는 rollback 가능성과 inline truthful fallback을 유지해야 한다.
 
 ### 프로젝트 구조 요구사항
 
-- 우선 수정 후보 경로:
-  - `src-tauri/src/render/dedicated_renderer.rs`
-  - `src-tauri/src/render/mod.rs`
-  - `src-tauri/src/branch_config/mod.rs`
-  - `src-tauri/src/commands/branch_rollout_commands.rs`
+- 우선 확인/수정 후보 경로:
+  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+  - `docs/runbooks/booth-hardware-validation-checklist.md`
+  - `docs/runbooks/preview-promotion-evidence-package.md`
+  - `docs/release-baseline.md`
+  - `src/governance/hardware-validation-governance.test.ts`
+  - `src/governance/release-baseline-governance.test.ts`
+  - `src/shared-contracts/schemas/hardware-validation.ts`
+  - `src/shared-contracts/schemas/operator-diagnostics.ts`
   - `src-tauri/tests/dedicated_renderer.rs`
   - `src-tauri/tests/operator_diagnostics.rs`
   - `src-tauri/tests/branch_rollout.rs`
-  - `src/governance/hardware-validation-governance.test.ts`
-  - `src/governance/release-baseline-governance.test.ts`
-  - `docs/runbooks/booth-hardware-validation-checklist.md`
-  - `docs/runbooks/booth-hardware-validation-architecture-research.md`
-  - `docs/release-baseline.md`
-  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
-- 새로 추가될 가능성이 큰 경로:
-  - `tests/hardware/dual-close-topology/*`
-  - `_bmad-output/implementation-artifacts/hardware-proof-1-13/*`
-  - `docs/runbooks/cutover-evidence-template.md` 또는 동등 보조 문서
-- Story 1.13은 새로운 customer UI surface를 만들기보다, existing booth flow와 governance/runbook/evidence 경계를 닫는 편이 우선이다.
+  - `tests/hardware-evidence-scripts.test.ts`
+  - `scripts/hardware/Start-PreviewPromotionTrace.ps1`
+  - `scripts/hardware/Stop-PreviewPromotionTrace.ps1`
+  - `scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1`
+- Story 1.13은 새로운 customer surface를 만드는 범위가 아니라, existing governance/runbook/evidence/runtime boundary를 release-close 수준으로 재검증하는 범위다.
 
 ### 테스트 요구사항
 
 - 최소 필수 자동 검증:
-  - dedicated renderer accepted path가 truthful close를 닫고 same-slot replacement를 보존한다.
-  - queue saturation / protocol mismatch / invalid output / wrong-session output이 inline truthful fallback으로 내려가며 false-ready를 만들지 않는다.
-  - operator diagnostics는 latest invalid session fallback을 허용하지 않고 blocker를 정확히 유지한다.
-  - branch rollout / rollback이 active session을 강제 변경하지 않는다.
-  - release baseline governance와 hardware validation governance가 Story 1.13 gate ownership을 반영한다.
+  - promoted route에서도 same-slot replacement와 truthful `Preview Waiting`이 유지된다.
+  - route policy change와 rollback이 active session truth를 재해석하지 않는다.
+  - `laneOwner`, `fallbackReason`, `routeStage`, `warmState`, `originalVisibleToPresetAppliedVisibleMs` 계약이 drift하지 않는다.
+  - governance/release baseline test가 Story 1.13 close owner semantics를 계속 잠근다.
+  - hardware evidence script와 contract가 canonical bundle 필수 항목을 빠짐없이 요구한다.
 - 최소 필수 실장비 검증:
   - `HV-00`, `HV-04`, `HV-05`, `HV-07`, `HV-08`, `HV-10`, `HV-11`, `HV-12`
-  - `original visible -> preset-applied visible` warm p50 / warm p95
-  - mismatch `0`, cross-session leak `0`, false-ready `0`, false-complete `0`
-  - canary/default enablement과 rollback 결과 비교
-- 권장 추가 검증:
-  - replay 가능한 UI evidence 또는 동등한 operator-safe replay package
-  - GPU/OpenCL capability 차이에 따른 fallback rate 비교
+  - same-capture correlation 기준 latency, parity, fallback ratio
+  - one-action rollback evidence
+  - cross-session leak `0`, false-ready `0`, false-complete `0`
 
 ### 최신 기술 / 제품 컨텍스트
 
-- 2026-04-09 research는 `local dedicated renderer + different close topology`를 즉시 시작할 next structure로 선택했고, 목표 미달 시에만 `edge appliance`를 2차안으로 검토하라고 정리했다. [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Final Recommendation] [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Technical Research Conclusion]
-- 같은 research는 가장 안전한 adoption strategy를 `shadow lane -> limited booth canary -> default 승격` 순서로 본다. 이 문장은 research 결론을 Story 1.13 cutover 범위에 직접 적용한 해석이다. [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Technology Adoption Strategies]
-- 공식 darktable 문서와 현재 contract는 pinned `5.4.1` runtime을 전제로 한다. Story 1.13은 version pin drift 없이 hardware package를 닫아야 한다. [Source: docs/contracts/render-worker.md] [Source: docs/runbooks/booth-hardware-validation-checklist.md]
-
-### Git 인텔리전스
-
-- 최근 5개 commit title:
-  - `4611eb5 feat: add local renderer contracts and release baseline`
-  - `8c30be7 Improve focus retry guidance`
-  - `2c89c40 Finalize thumbnail latency worker updates and docs`
-  - `9c56c37 Add session seam logging for thumbnail latency reduction`
-  - `b24cfc4 Reduce recent-session preview latency and capture wait blocking`
-- 최근 흐름은 local renderer contract 정리, seam logging 강화, first-visible latency correction으로 이어진다.
-- 따라서 1.13은 별도 새 방향을 만드는 것보다, 이미 형성된 renderer contract와 seam evidence를 guarded release gate로 닫는 것이 자연스럽다.
+- Tauri v2 sidecar 문서는 sidecar 바이너리를 `externalBin`으로 번들링하고, `Command.sidecar(...)` 호출이 그 설정과 일치해야 한다고 설명한다. Story 1.13은 preview truth 경계가 이 host-owned 배포/실행 규칙을 우회하지 않게 유지해야 한다. [Source: https://v2.tauri.app/ko/develop/sidecar/]
+- darktable 공식 문서는 `darktable-cli`를 headless export 경로로 설명하고, XMP sidecar를 편집/복구 기준 artifact로 유지한다. Story 1.13은 dedicated renderer를 새 truth engine으로 취급하지 말고, darktable oracle against promoted lane proof를 닫는 문제로 다뤄야 한다. [Source: https://docs.darktable.org/usermanual/development/en/special-topics/program-invocation/darktable-cli/] [Source: https://docs.darktable.org/usermanual/development/en/overview/sidecar-files/sidecar/]
+- Playwright Trace Viewer는 저장된 trace를 로컬 또는 `trace.playwright.dev`에서 재생해 볼 수 있다. 현재 Story 1.19 bundle이 canonical replay artifact를 제공한다면, Story 1.13은 그 증거를 reread 가능한 release-close proof로 활용할 수 있다. [Source: https://playwright.dev/docs/trace-viewer]
+- Microsoft ETW와 PIX timing capture 문서는 저오버헤드 tracing과 CPU/GPU/file I/O 상관분석을 지원한다. Story 1.13은 새 계측 체계를 발명하기보다 Story 1.19가 고정한 이 evidence stack을 release-close rerun에 그대로 써야 한다. [Source: https://learn.microsoft.com/en-us/windows-hardware/test/weg/instrumenting-your-code-with-etw] [Source: https://devblogs.microsoft.com/pix/timing-captures-new/]
 
 ### References
 
-- [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture]
-- [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
+- [Source: _bmad-output/planning-artifacts/epics.md]
 - [Source: _bmad-output/planning-artifacts/architecture.md#Initial Implementation Priorities]
-- [Source: _bmad-output/planning-artifacts/prd.md#KPI Table]
-- [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
+- [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 - [Source: _bmad-output/planning-artifacts/ux-design-specification.md#최신 사진 레일 (Latest Photo Rail)]
-- [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Implementation Roadmap]
-- [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Technology Adoption Strategies]
-- [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Final Recommendation]
-- [Source: _bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md#Technical Research Conclusion]
-- [Source: _bmad-output/implementation-artifacts/1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입.md]
-- [Source: _bmad-output/implementation-artifacts/1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환.md]
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260413-155159.md]
+- [Source: _bmad-output/planning-artifacts/implementation-readiness-report-20260413.md]
+- [Source: _bmad-output/implementation-artifacts/sprint-status.yaml]
 - [Source: _bmad-output/implementation-artifacts/hardware-validation-ledger.md]
-- [Source: docs/contracts/render-worker.md]
-- [Source: docs/contracts/session-manifest.md]
-- [Source: docs/contracts/local-dedicated-renderer.md]
+- [Source: _bmad-output/implementation-artifacts/1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환.md]
+- [Source: _bmad-output/implementation-artifacts/1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착.md]
 - [Source: docs/runbooks/booth-hardware-validation-checklist.md]
+- [Source: docs/runbooks/preview-promotion-evidence-package.md]
 - [Source: docs/release-baseline.md]
+- [Source: docs/contracts/local-dedicated-renderer.md]
+- [Source: src-tauri/tests/dedicated_renderer.rs]
+- [Source: src-tauri/tests/operator_diagnostics.rs]
+- [Source: src-tauri/tests/branch_rollout.rs]
+- [Source: tests/hardware-evidence-scripts.test.ts]
 - [Source: https://v2.tauri.app/ko/develop/sidecar/]
 - [Source: https://docs.darktable.org/usermanual/development/en/special-topics/program-invocation/darktable-cli/]
 - [Source: https://docs.darktable.org/usermanual/development/en/overview/sidecar-files/sidecar/]
 - [Source: https://playwright.dev/docs/trace-viewer]
+- [Source: https://learn.microsoft.com/en-us/windows-hardware/test/weg/instrumenting-your-code-with-etw]
+- [Source: https://devblogs.microsoft.com/pix/timing-captures-new/]
 
 ## Dev Agent Record
 
@@ -205,42 +195,33 @@ GPT-5 Codex
 
 ### Debug Log References
 
-- 2026-04-11 11:09:22 +09:00 - `bmad-create-story` workflow 기준으로 config, sprint-status, epics, PRD, architecture, UX, Story 1.11/1.12, hardware ledger, runbook, release baseline, current dedicated renderer / governance / rollout 관련 경로를 교차 분석했다.
-- 2026-04-11 11:09:22 +09:00 - `epics.md`에 1.13 본문이 아직 직접 생성되지 않아, approved architecture pivot 우선순위(`dedicated renderer protocol -> close topology 분리 -> hardware validation / cutover`)와 Story 1.11/1.12 handoff를 근거로 스토리 제목과 범위를 복원했다.
-- 2026-04-11 11:09:22 +09:00 - 현재 repo가 dedicated renderer accepted/fallback test와 supporting hardware proof는 보유하지만 canonical release `Go` owner와 guarded cutover governance는 아직 비어 있다는 점을 Story 1.13 범위에 반영했다.
-- 2026-04-11 11:09:22 +09:00 - Tauri sidecar, darktable CLI/XMP, Playwright trace viewer 공식 문서를 다시 확인해 Story 1.13의 최신 운영 가드레일에 반영했다.
-- 2026-04-11 11:28:23 +09:00 - `preview-renderer-policy.json` 기반 shadow/canary/default route resolution을 dedicated renderer path에 연결하고, route stage 및 fallback reason이 `capture_preview_transition_summary`와 dedicated renderer integration test evidence에 남도록 정리했다.
-- 2026-04-11 11:33:04 +09:00 - `pnpm test:run src/governance/hardware-validation-governance.test.ts src/governance/release-baseline-governance.test.ts`를 다시 실행해 Story 1.13 ledger/runbook/release hold 정렬이 통과하는지 확인했다.
-- 2026-04-11 11:34:46 +09:00 - `cargo test --test dedicated_renderer`, `cargo test --test branch_rollout`를 Story 1.13 cutover 문맥으로 재실행했고, queue saturation/stale result test를 route policy 기준으로 갱신한 뒤 전체 통과를 확인했다.
+- 2026-04-13 16:28:51 +09:00 - `bmad-create-story` workflow 기준으로 config, sprint status, epics, architecture, PRD, UX, Story 1.12, Story 1.19, hardware ledger, release baseline, runbook, preview activation corrective artifacts를 다시 교차 분석했다.
+- 2026-04-13 16:28:51 +09:00 - Story 1.13 implementation artifact가 이미 존재하고 상태가 `review`이므로, 상태를 되돌리지 않고 최신 sequencing과 prerequisite를 반영하도록 갱신했다.
+- 2026-04-13 16:28:51 +09:00 - 2026-04-13 승인된 correct-course와 readiness report를 근거로 Story 1.13을 activation 이후 final validation / release-close owner로 재정렬했다.
+- 2026-04-13 16:28:51 +09:00 - Tauri sidecar, darktable CLI/XMP, Playwright trace viewer, Microsoft ETW/PIX 공식 문서를 다시 확인해 latest technical guardrail을 스토리 문맥에 연결했다.
+- 2026-04-13 16:39:48 +09:00 - Story 1.13 acceptance criteria의 `fallback ratio` 근거가 canonical evidence bundle 계약에 실제로 존재하지 않는 것을 확인하고, bundle schema/assembler/runbook/contracts를 같은 의미로 잠갔다.
+- 2026-04-13 16:39:48 +09:00 - `tests/hardware-evidence-scripts.test.ts`, `src/shared-contracts/contracts.test.ts`, `src/governance/hardware-validation-governance.test.ts`, `src/governance/release-baseline-governance.test.ts`를 재실행해 Story 1.13 release-close evidence 회귀를 확인했다.
+- 2026-04-13 16:39:48 +09:00 - Story 1.20 activation이 아직 `backlog`라서 promoted hardware rerun과 canonical `Go / No-Go` close는 이번 턴에서 계속 차단된 상태로 유지했다.
 
 ### Completion Notes List
 
-- host-owned `preview-renderer-policy.json`이 dedicated renderer 승격 경계를 소유하도록 정리했고, dev-only opt-in이 release 경로를 대신하지 못하도록 shadow 기본값을 잠갔다.
-- Story 1.13 canonical close owner를 runbook, release baseline, hardware ledger, sprint status에 반영했고 현재 hardware gate를 `No-Go`로 기록했다.
-- 실장비 근거는 여전히 shadow-only 상태다. `session_000000000018a5007b5fecf020`에서 `laneOwner=inline-truthful-fallback`, `fallbackReason=shadow-submission-only`, `originalVisibleToPresetAppliedVisibleMs=none`이 관찰돼 story status를 `review`로 유지한다.
-- 자동 검증은 통과했다: `pnpm test:run src/governance/hardware-validation-governance.test.ts src/governance/release-baseline-governance.test.ts`, `cargo test --test dedicated_renderer`, `cargo test --test branch_rollout`.
+- Story 1.13을 최신 planning 기준으로 다시 정렬했다.
+- 스토리 범위를 activation 구현이 아니라 guarded cutover와 canonical hardware `Go / No-Go` close owner로 좁혔다.
+- Story 1.20 completion을 명시적 prerequisite로 추가했다.
+- Story 1.19 evidence package와 현재 governance/runbook/contract 자산을 그대로 재사용하도록 가드레일을 정리했다.
+- 현재 `review` 상태는 유지했고, `ready-for-dev`로 되돌리지 않았다.
+- canonical preview promotion evidence bundle이 `fallbackRatio`를 직접 기록하도록 고정했다.
+- same session/preset/version evidence family 안에서 fallback 발생 비율을 계산하도록 bundle assembler를 보강했다.
+- Story 1.13 관련 contract/script/governance 회귀 테스트를 다시 통과시켰다.
+- Story 1.20 activation 미완료로 인해 hardware rerun prerequisite와 `release hold`는 그대로 유지했다.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md
-- _bmad-output/implementation-artifacts/hardware-validation-ledger.md
-- _bmad-output/implementation-artifacts/sprint-status.yaml
-- docs/release-baseline.md
-- release-baseline.md
-- docs/runbooks/booth-hardware-validation-checklist.md
-- docs/runbooks/booth-hardware-validation-architecture-research.md
-- src-tauri/src/render/dedicated_renderer.rs
-- src-tauri/tests/dedicated_renderer.rs
+- docs/contracts/local-dedicated-renderer.md
+- docs/runbooks/preview-promotion-evidence-package.md
+- scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1
 - src/governance/hardware-validation-governance.test.ts
-
-### Change Log
-
-- 2026-04-11 - host-owned preview renderer route policy를 dedicated renderer truth lane에 연결하고, Story 1.13 `No-Go` ledger/runbook/release hold 기준을 정렬했다.
-
-### Review Findings
-
-- [x] [Review][Patch] Story 1.13 governance proof still expects Story 4.2 to remain `review` / `No-Go`, so the current automated gate fails immediately [src/governance/hardware-validation-governance.test.ts:34]
-- [x] [Review][Patch] Story 1.13 is the canonical preview close owner, but the impacted-story governance guard still omits its own story document, leaving `Status` / hardware-gate drift untested [src/governance/hardware-validation-governance.test.ts:12]
-- [x] [Review][Patch] Same-preset reselection can reinterpret an active session's rollout lane [src-tauri/src/session/session_repository.rs:144]
-- [x] [Review][Patch] Partial preview-transition logs can mix stale and current rollout diagnostics [src-tauri/src/diagnostics/mod.rs:524]
-- [x] [Review][Patch] Invalid preview route policy is silently recorded as intentional shadow mode [src-tauri/src/render/dedicated_renderer.rs:1000]
+- src/shared-contracts/contracts.test.ts
+- src/shared-contracts/schemas/hardware-validation.ts
+- tests/hardware-evidence-scripts.test.ts

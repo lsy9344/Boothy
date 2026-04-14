@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "published-preset-bundle/v2",
+  "presetId": "preset_soft-glow",
+  "displayName": "Soft Glow",
+  "publishedVersion": "2026.04.10",
+  "lifecycleStatus": "published",
+  "boothStatus": "booth-safe",
+  "canonicalRecipe": {
+    "schemaVersion": "canonical-preset-recipe/v1",
+    "presetId": "preset_soft-glow",
+    "publishedVersion": "2026.04.10",
+    "displayName": "Soft Glow",
+    "boothStatus": "booth-safe",
+    "previewIntent": {
+      "profileId": "soft-glow-preview",
+      "displayName": "Soft Glow Preview",
+      "outputColorSpace": "sRGB"
+    },
+    "finalIntent": {
+      "profileId": "soft-glow-final",
+      "displayName": "Soft Glow Final",
+      "outputColorSpace": "sRGB"
+    },
+    "noisePolicy": {
+      "policyId": "balanced-noise",
+      "displayName": "Balanced Noise",
+      "reductionMode": "balanced"
+    }
+  },
+  "darktableAdapter": {
+    "schemaVersion": "darktable-preset-adapter/v1",
+    "darktableVersion": "5.4.1",
+    "darktableProjectPath": "darktable/soft-glow.dtpreset",
+    "xmpTemplatePath": "xmp/template.xmp"
+  },
+  "preview": {
+    "kind": "preview-tile",
+    "assetPath": "preview.jpg",
+    "altText": "Soft Glow sample portrait"
+  },
+  "sourceDraftVersion": 3,
+  "publishedAt": "2026-04-10T01:20:00Z",
+  "publishedBy": "Kim Manager"
+}

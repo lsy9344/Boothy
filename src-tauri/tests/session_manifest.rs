@@ -1147,6 +1147,88 @@ fn reselecting_the_same_preset_keeps_the_existing_route_snapshot() {
 }
 
 #[test]
+fn reselecting_the_same_preset_backfills_missing_warm_state_with_a_fresh_observed_at() {
+    let base_dir = unique_test_root("preset-selection-backfills-warm-state");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should exist before selecting a preset");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+
+    create_published_bundle(
+        &catalog_root,
+        "preset_soft-glow",
+        "2026.03.20",
+        "Soft Glow",
+        "published",
+        true,
+        None,
+        None,
+    );
+
+    select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("first selection should persist");
+
+    let mut manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+    manifest.updated_at = "2026-03-20T00:05:00Z".into();
+    manifest.active_preview_renderer_warm_state = None;
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+
+    let result = select_active_preset_in_dir(
+        &base_dir,
+        PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("re-selecting the same preset should backfill missing warm-state");
+
+    let persisted_manifest: SessionManifest = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+    )
+    .expect("manifest should deserialize");
+
+    assert_eq!(result.manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(persisted_manifest.updated_at, "2026-03-20T00:05:00Z");
+    assert_eq!(
+        persisted_manifest
+            .active_preview_renderer_warm_state
+            .as_ref()
+            .map(|snapshot| snapshot.state.as_str()),
+        Some("cold")
+    );
+    assert_ne!(
+        persisted_manifest
+            .active_preview_renderer_warm_state
+            .as_ref()
+            .map(|snapshot| snapshot.observed_at.as_str()),
+        Some("2026-03-20T00:05:00Z")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn selecting_a_preset_for_a_missing_session_reports_session_not_found_first() {
     let base_dir = unique_test_root("preset-selection-missing-session");
     let catalog_root = resolve_published_preset_catalog_dir(&base_dir);

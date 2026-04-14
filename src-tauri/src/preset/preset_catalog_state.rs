@@ -917,7 +917,8 @@ mod tests {
         let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
 
         create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.20", "Soft Glow");
-        let _ = load_or_initialize_catalog_state(&base_dir).expect("initial catalog state should load");
+        let _ =
+            load_or_initialize_catalog_state(&base_dir).expect("initial catalog state should load");
         create_published_bundle(&catalog_root, "preset_soft-glow", "2026.03.26", "Soft Glow");
 
         let error = activate_catalog_preset_version_with_summary_builder(
@@ -944,8 +945,14 @@ mod tests {
             .expect("catalog state should exist");
         assert_eq!(persisted_state.catalog_revision, 1);
         assert_eq!(persisted_state.live_presets.len(), 1);
-        assert_eq!(persisted_state.live_presets[0].preset_id, "preset_soft-glow");
-        assert_eq!(persisted_state.live_presets[0].published_version, "2026.03.20");
+        assert_eq!(
+            persisted_state.live_presets[0].preset_id,
+            "preset_soft-glow"
+        );
+        assert_eq!(
+            persisted_state.live_presets[0].published_version,
+            "2026.03.20"
+        );
 
         let history = load_catalog_history(&base_dir, "preset_soft-glow")
             .expect("catalog history should remain readable");

@@ -63,7 +63,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      firstVisibleMs: 2810,
+      replacementMs: 3615,
+      originalVisibleToPresetAppliedVisibleMs: 805,
       hardwareCapability: 'dedicated-renderer-available',
+      warmState: 'warm-ready',
+      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
     },
     ...overrides,
   }
@@ -211,6 +216,10 @@ describe('operator diagnostics service', () => {
     await expect(service.loadOperatorRecoverySummary()).resolves.toMatchObject({
       boothAlias: 'Kim 4821',
       blockedCategory: 'preview-or-render',
+      previewArchitecture: {
+        replacementMs: 3615,
+        warmState: 'warm-ready',
+      },
     })
   })
 

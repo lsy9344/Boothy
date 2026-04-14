@@ -62,7 +62,12 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      firstVisibleMs: 2903,
+      replacementMs: 6927,
+      originalVisibleToPresetAppliedVisibleMs: 4024,
       hardwareCapability: 'dedicated-renderer-available',
+      warmState: 'warm-ready',
+      warmStateObservedAt: '2026-04-12T08:00:00.000Z',
     },
     ...overrides,
   }
@@ -181,12 +186,17 @@ function createDeferred<T>() {
 
 function renderOperatorScreen(
   operatorDiagnosticsService: OperatorDiagnosticsService,
+  {
+    allowedSurfaces = ['booth', 'operator'] as string[],
+  }: {
+    allowedSurfaces?: string[]
+  } = {},
 ) {
   const router = createMemoryRouter(
     createAppRoutes({
       capabilityService: createCapabilityService({
         isAdminAuthenticated: true,
-        allowedSurfaces: ['booth', 'operator'],
+        allowedSurfaces,
         currentWindowLabel: 'operator-window',
       }),
       operatorDiagnosticsService,
@@ -197,9 +207,47 @@ function renderOperatorScreen(
   )
 
   render(<RouterProvider router={router} />)
+
+  return router
 }
 
 describe('OperatorSummaryScreen', () => {
+  it('opens settings governance from the operator window when settings access is allowed', async () => {
+    const loadOperatorRecoverySummary = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoverySummary())
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValue(createOperatorAuditHistory())
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    const router = renderOperatorScreen(
+      {
+        loadOperatorRecoverySummary,
+        loadOperatorAuditHistory,
+        runOperatorRecoveryAction,
+      },
+      {
+        allowedSurfaces: ['booth', 'operator', 'settings'],
+      },
+    )
+
+    const user = userEvent.setup()
+
+    expect(
+      await screen.findByRole('heading', { name: /Operator Console/i }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: /운영 설정/i }))
+
+    expect(
+      await screen.findByRole('heading', { name: /Settings Governance/i }),
+    ).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/settings')
+  })
+
   it('shows current session context and only the allowed policy actions', async () => {
     const loadOperatorRecoverySummary = vi.fn().mockResolvedValue(
       createOperatorRecoverySummary({
@@ -265,7 +313,12 @@ describe('OperatorSummaryScreen', () => {
           routeStage: 'canary',
           laneOwner: 'dedicated-renderer',
           fallbackReasonCode: 'none',
+          firstVisibleMs: 1280,
+          replacementMs: 1840,
+          originalVisibleToPresetAppliedVisibleMs: 560,
           hardwareCapability: 'dedicated-renderer-available',
+          warmState: 'warm-ready',
+          warmStateObservedAt: '2026-04-12T08:00:00.000Z',
         },
       }),
     )
@@ -286,6 +339,11 @@ describe('OperatorSummaryScreen', () => {
     expect(screen.getByText(/^dedicated-renderer$/i)).toBeInTheDocument()
     expect(screen.getByText(/canary/i)).toBeInTheDocument()
     expect(screen.getByText(/dedicated-renderer-available/i)).toBeInTheDocument()
+    expect(screen.getByText(/warm-ready/i)).toBeInTheDocument()
+    expect(screen.getByText(/1\.3초 \(1280ms\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/1\.8초 \(1840ms\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/0\.6초 \(560ms\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/목표 2\.0초 이하 · 현재 1\.8초/i)).toBeInTheDocument()
   })
 
   it('renders a safe empty state when no active session exists', async () => {

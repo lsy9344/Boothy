@@ -15,6 +15,8 @@ export const catalogRevisionSchema = z
   .int()
   .nonnegative('catalog revision은 0 이상의 정수여야 해요.')
 
+const pinnedDarktableVersion = '5.4.1' as const
+
 const bundleRelativePathSchema = z
   .string()
   .trim()
@@ -66,17 +68,43 @@ export const publishedPresetRenderProfileSchema = z
   })
   .strict()
 
-export const publishedPresetSummarySchema = z
+export const publishedPresetNoisePolicySchema = z
   .object({
-    presetId: presetIdSchema,
+    policyId: z.string().trim().min(1),
     displayName: z.string().trim().min(1),
-    publishedVersion: publishedVersionSchema,
-    boothStatus: z.literal('booth-safe'),
-    preview: runtimePresetPreviewAssetSchema,
+    reductionMode: z.string().trim().min(1),
   })
   .strict()
 
-export const publishedPresetBundleSchema = z
+export const canonicalPresetRecipeSchema = z
+  .object({
+    schemaVersion: z.literal('canonical-preset-recipe/v1'),
+    presetId: presetIdSchema,
+    publishedVersion: publishedVersionSchema,
+    displayName: z.string().trim().min(1),
+    boothStatus: z.literal('booth-safe'),
+    previewIntent: publishedPresetRenderProfileSchema,
+    finalIntent: publishedPresetRenderProfileSchema,
+    noisePolicy: publishedPresetNoisePolicySchema,
+  })
+  .strict()
+
+export const darktableAdapterReferenceSchema = z
+  .object({
+    schemaVersion: z.literal('darktable-preset-adapter/v1'),
+    darktableVersion: z
+      .string()
+      .trim()
+      .refine(
+        (value) => value === pinnedDarktableVersion,
+        `published bundle은 pinned darktable ${pinnedDarktableVersion}만 허용돼요.`,
+      ),
+    xmpTemplatePath: bundleRelativePathSchema,
+    darktableProjectPath: bundleRelativePathSchema.optional(),
+  })
+  .strict()
+
+const publishedPresetBundleV1Schema = z
   .object({
     schemaVersion: z.literal('published-preset-bundle/v1'),
     presetId: presetIdSchema,
@@ -87,7 +115,10 @@ export const publishedPresetBundleSchema = z
     darktableVersion: z
       .string()
       .trim()
-      .regex(/^\d+\.\d+\.\d+$/, 'darktable version 형식이 올바르지 않아요.'),
+      .refine(
+        (value) => value === pinnedDarktableVersion,
+        `published bundle은 pinned darktable ${pinnedDarktableVersion}만 허용돼요.`,
+      ),
     darktableProjectPath: bundleRelativePathSchema.optional(),
     xmpTemplatePath: bundleRelativePathSchema,
     previewProfile: publishedPresetRenderProfileSchema,
@@ -99,6 +130,72 @@ export const publishedPresetBundleSchema = z
     publishedBy: z.string().trim().min(1).optional(),
   })
   .strict()
+
+const publishedPresetBundleV2Schema = z
+  .object({
+    schemaVersion: z.literal('published-preset-bundle/v2'),
+    presetId: presetIdSchema,
+    displayName: z.string().trim().min(1),
+    publishedVersion: publishedVersionSchema,
+    lifecycleStatus: z.literal('published'),
+    boothStatus: z.literal('booth-safe'),
+    canonicalRecipe: canonicalPresetRecipeSchema,
+    darktableAdapter: darktableAdapterReferenceSchema,
+    preview: presetPreviewAssetSchema,
+    sampleCut: presetPreviewAssetSchema.optional(),
+    sourceDraftVersion: z.number().int().positive().optional(),
+    publishedAt: z.string().trim().min(1).optional(),
+    publishedBy: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((bundle, context) => {
+    if (bundle.canonicalRecipe.presetId !== bundle.presetId) {
+      context.addIssue({
+        code: 'custom',
+        message: 'canonical recipe presetId는 bundle presetId와 같아야 해요.',
+        path: ['canonicalRecipe', 'presetId'],
+      })
+    }
+
+    if (bundle.canonicalRecipe.publishedVersion !== bundle.publishedVersion) {
+      context.addIssue({
+        code: 'custom',
+        message: 'canonical recipe publishedVersion은 bundle publishedVersion과 같아야 해요.',
+        path: ['canonicalRecipe', 'publishedVersion'],
+      })
+    }
+
+    if (bundle.canonicalRecipe.displayName !== bundle.displayName) {
+      context.addIssue({
+        code: 'custom',
+        message: 'canonical recipe displayName은 bundle displayName과 같아야 해요.',
+        path: ['canonicalRecipe', 'displayName'],
+      })
+    }
+
+    if (bundle.canonicalRecipe.boothStatus !== bundle.boothStatus) {
+      context.addIssue({
+        code: 'custom',
+        message: 'canonical recipe boothStatus는 bundle boothStatus와 같아야 해요.',
+        path: ['canonicalRecipe', 'boothStatus'],
+      })
+    }
+  })
+
+export const publishedPresetSummarySchema = z
+  .object({
+    presetId: presetIdSchema,
+    displayName: z.string().trim().min(1),
+    publishedVersion: publishedVersionSchema,
+    boothStatus: z.literal('booth-safe'),
+    preview: runtimePresetPreviewAssetSchema,
+  })
+  .strict()
+
+export const publishedPresetBundleSchema = z.discriminatedUnion('schemaVersion', [
+  publishedPresetBundleV1Schema,
+  publishedPresetBundleV2Schema,
+])
 
 export const presetDisplayNameSchema = z.string().trim().min(1)
 

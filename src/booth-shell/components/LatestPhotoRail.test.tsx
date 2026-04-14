@@ -86,4 +86,24 @@ describe('LatestPhotoRail', () => {
       )
     })
   })
+
+  it('marks the newest pending photo as a temporary unfiltered preview', () => {
+    render(
+      <LatestPhotoRail
+        previews={[buildPreview()]}
+        isPreviewWaiting
+        isExplicitPostEnd={false}
+        deletingCaptureId={null}
+        pendingDeleteCaptureId={null}
+        onDeleteCancel={() => {}}
+        onDeleteConfirm={() => {}}
+        onDeleteIntent={() => {}}
+      />,
+    )
+
+    expect(screen.getByText('룩 적용 중')).toBeInTheDocument()
+    expect(
+      screen.getByText(/지금 보이는 첫 사진은 임시 미리보기예요\./i),
+    ).toBeInTheDocument()
+  })
 })

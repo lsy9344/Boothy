@@ -56,7 +56,7 @@ export function LatestPhotoRail({
   }
 
   function buildRenderPendingHint() {
-    return '방금 찍은 사진을 현재 룩으로 마무리하고 있어요.'
+    return '지금 보이는 첫 사진은 임시 미리보기예요. 현재 룩을 적용한 최종 사진으로 곧 바뀌어요.'
   }
 
   function handleRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -115,6 +115,9 @@ export function LatestPhotoRail({
             >
               {preview.isLatest ? (
                 <span className="latest-photo-rail__badge">최신 사진</span>
+              ) : null}
+              {isRenderPending(preview) ? (
+                <span className="latest-photo-rail__badge">룩 적용 중</span>
               ) : null}
               <SessionPreviewImage
                 key={`${preview.captureId}:${preview.assetPath}:${preview.readyAtMs ?? 'pending'}`}

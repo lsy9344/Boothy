@@ -30,7 +30,9 @@ const DRAFT_PRESET_VALIDATION_SCHEMA_VERSION: &str = "draft-preset-validation/v1
 const DRAFT_PRESET_VALIDATION_RESULT_SCHEMA_VERSION: &str = "draft-preset-validation-result/v1";
 const DRAFT_PRESET_PUBLICATION_RESULT_SCHEMA_VERSION: &str = "draft-preset-publication-result/v1";
 const PRESET_PUBLICATION_AUDIT_SCHEMA_VERSION: &str = "preset-publication-audit/v1";
-const PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION: &str = "published-preset-bundle/v1";
+const PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION: &str = "published-preset-bundle/v2";
+const CANONICAL_PRESET_RECIPE_SCHEMA_VERSION: &str = "canonical-preset-recipe/v1";
+const DARKTABLE_PRESET_ADAPTER_SCHEMA_VERSION: &str = "darktable-preset-adapter/v1";
 const AUTHORING_WINDOW_LABEL: &str = "authoring-window";
 const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 
@@ -1119,20 +1121,36 @@ fn create_published_bundle_from_draft(
         "publishedVersion": input.published_version,
         "lifecycleStatus": "published",
         "boothStatus": "booth-safe",
-        "darktableVersion": draft.darktable_version,
+        "canonicalRecipe": {
+            "schemaVersion": CANONICAL_PRESET_RECIPE_SCHEMA_VERSION,
+            "presetId": draft.preset_id,
+            "publishedVersion": input.published_version,
+            "displayName": draft.display_name,
+            "boothStatus": "booth-safe",
+            "previewIntent": {
+                "profileId": draft.preview_profile.profile_id,
+                "displayName": draft.preview_profile.display_name,
+                "outputColorSpace": draft.preview_profile.output_color_space,
+            },
+            "finalIntent": {
+                "profileId": draft.final_profile.profile_id,
+                "displayName": draft.final_profile.display_name,
+                "outputColorSpace": draft.final_profile.output_color_space,
+            },
+            "noisePolicy": {
+                "policyId": draft.noise_policy.policy_id,
+                "displayName": draft.noise_policy.display_name,
+                "reductionMode": draft.noise_policy.reduction_mode,
+            },
+        },
+        "darktableAdapter": {
+            "schemaVersion": DARKTABLE_PRESET_ADAPTER_SCHEMA_VERSION,
+            "darktableVersion": draft.darktable_version,
+            "xmpTemplatePath": xmp_relative,
+        },
         "sourceDraftVersion": draft.draft_version,
         "publishedAt": published_at,
         "publishedBy": input.actor_label,
-        "previewProfile": {
-            "profileId": draft.preview_profile.profile_id,
-            "displayName": draft.preview_profile.display_name,
-            "outputColorSpace": draft.preview_profile.output_color_space,
-        },
-        "finalProfile": {
-            "profileId": draft.final_profile.profile_id,
-            "displayName": draft.final_profile.display_name,
-            "outputColorSpace": draft.final_profile.output_color_space,
-        },
         "preview": {
             "kind": "preview-tile",
             "assetPath": preview_relative,
@@ -1143,11 +1161,11 @@ fn create_published_bundle_from_draft(
             "assetPath": sample_cut_relative,
             "altText": draft.sample_cut.alt_text,
         },
-        "xmpTemplatePath": xmp_relative,
     });
     let mut bundle_value = bundle_value;
     if let Some(darktable_relative) = darktable_relative {
-        bundle_value["darktableProjectPath"] = serde_json::Value::String(darktable_relative);
+        bundle_value["darktableAdapter"]["darktableProjectPath"] =
+            serde_json::Value::String(darktable_relative);
     }
     let bundle_bytes = serde_json::to_vec_pretty(&bundle_value).map_err(|error| {
         HostErrorEnvelope::persistence(format!("published bundle을 직렬화하지 못했어요: {error}"))

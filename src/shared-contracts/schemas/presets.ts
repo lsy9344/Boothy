@@ -2,11 +2,14 @@ import { z } from 'zod'
 
 import {
   activePresetBindingSchema,
+  canonicalPresetRecipeSchema,
+  darktableAdapterReferenceSchema,
   loadPresetCatalogInputSchema,
   presetCatalogResultSchema,
   presetIdSchema,
   presetPreviewAssetSchema,
   publishedPresetBundleSchema,
+  publishedPresetNoisePolicySchema,
   publishedPresetRenderProfileSchema,
   presetSelectionInputSchema,
   publishedPresetSummarySchema,
@@ -16,11 +19,14 @@ import { sessionManifestSchema } from './session-manifest'
 
 export {
   activePresetBindingSchema,
+  canonicalPresetRecipeSchema,
+  darktableAdapterReferenceSchema,
   loadPresetCatalogInputSchema,
   presetCatalogResultSchema,
   presetIdSchema,
   presetPreviewAssetSchema,
   publishedPresetBundleSchema,
+  publishedPresetNoisePolicySchema,
   publishedPresetRenderProfileSchema,
   presetSelectionInputSchema,
   publishedPresetSummarySchema,

@@ -526,7 +526,16 @@ fn draft_validation_and_publish_allow_missing_darktable_project_artifacts() {
                 &fs::read(bundle_path.join("bundle.json")).expect("bundle should exist"),
             )
             .expect("bundle should deserialize");
-            assert!(bundle_value.get("darktableProjectPath").is_none());
+            assert_eq!(
+                bundle_value
+                    .get("schemaVersion")
+                    .and_then(serde_json::Value::as_str),
+                Some("published-preset-bundle/v2")
+            );
+            assert!(bundle_value
+                .get("darktableAdapter")
+                .and_then(|value| value.get("darktableProjectPath"))
+                .is_none());
         }
         PublishValidatedPresetResultDto::Rejected { .. } => {
             panic!("publish should not be rejected")
@@ -1264,6 +1273,20 @@ fn published_bundle_uses_string_published_by_metadata() {
         bundle.get("publishedBy"),
         Some(&serde_json::Value::String("Noah".into()))
     );
+    assert_eq!(
+        bundle
+            .get("darktableAdapter")
+            .and_then(|value| value.get("schemaVersion"))
+            .and_then(serde_json::Value::as_str),
+        Some("darktable-preset-adapter/v1")
+    );
+    assert_eq!(
+        bundle
+            .get("canonicalRecipe")
+            .and_then(|value| value.get("schemaVersion"))
+            .and_then(serde_json::Value::as_str),
+        Some("canonical-preset-recipe/v1")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1371,6 +1394,74 @@ fn default_catalog_bootstrap_upgrades_legacy_default_seed_bundles_for_runtime_re
     assert_eq!(runtime_bundle.preset_id, "preset_daylight");
     assert_eq!(runtime_bundle.darktable_version, "5.4.1");
     assert!(runtime_bundle.xmp_template_path.is_file());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn default_catalog_bootstrap_rewrites_runtime_compatible_legacy_seed_to_bundle_v2() {
+    let base_dir = unique_test_root("default-catalog-rewrite-runtime-compatible-v1");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let bundle_dir = catalog_root.join("preset_daylight").join("2026.03.27");
+    fs::create_dir_all(bundle_dir.join("xmp")).expect("legacy bundle xmp dir should exist");
+    fs::write(bundle_dir.join("preview.svg"), "<svg/>").expect("preview should exist");
+    fs::write(
+        bundle_dir.join("xmp").join("template.xmp"),
+        "<darktable></darktable>",
+    )
+    .expect("xmp should exist");
+    fs::write(
+        bundle_dir.join("bundle.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+          "schemaVersion": "published-preset-bundle/v1",
+          "presetId": "preset_daylight",
+          "displayName": "Daylight",
+          "publishedVersion": "2026.03.27",
+          "lifecycleStatus": "published",
+          "boothStatus": "booth-safe",
+          "darktableVersion": "5.4.1",
+          "xmpTemplatePath": "xmp/template.xmp",
+          "previewProfile": {
+            "profileId": "preview-jpeg",
+            "displayName": "Booth Preview JPEG",
+            "outputColorSpace": "sRGB"
+          },
+          "finalProfile": {
+            "profileId": "final-jpeg",
+            "displayName": "Booth Final JPEG",
+            "outputColorSpace": "sRGB"
+          },
+          "preview": {
+            "kind": "preview-tile",
+            "assetPath": "preview.svg",
+            "altText": "Daylight preview"
+          }
+        }))
+        .expect("legacy runtime-compatible bundle should serialize"),
+    )
+    .expect("legacy runtime-compatible bundle should be writable");
+
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("runtime-compatible legacy seed should still be rewritten to the v2 baseline");
+
+    let bundle_value: serde_json::Value = serde_json::from_slice(
+        &fs::read(bundle_dir.join("bundle.json")).expect("rewritten bundle should exist"),
+    )
+    .expect("rewritten bundle should deserialize");
+
+    assert_eq!(
+        bundle_value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_str),
+        Some("published-preset-bundle/v2")
+    );
+    assert_eq!(
+        bundle_value
+            .get("canonicalRecipe")
+            .and_then(|value| value.get("schemaVersion"))
+            .and_then(serde_json::Value::as_str),
+        Some("canonical-preset-recipe/v1")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }

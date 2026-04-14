@@ -64,6 +64,18 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
   },
   "activePresetId": "preset_soft-glow",
   "activePresetDisplayName": "Soft Glow",
+  "activePreviewRendererRoute": {
+    "route": "local-renderer-sidecar",
+    "routeStage": "canary",
+    "fallbackReasonCode": null
+  },
+  "activePreviewRendererWarmState": {
+    "presetId": "preset_soft-glow",
+    "publishedVersion": "2026.04.10",
+    "state": "warm-ready",
+    "observedAt": "2026-04-10T01:00:12Z",
+    "diagnosticsDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
+  },
   "timing": {
     "schemaVersion": "session-timing/v1",
     "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
@@ -95,6 +107,9 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
 - `activePreset`: canonical preset binding
 - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
 - `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
+- `activePreviewRendererRoute`: active session이 선택한 preview route snapshot. 이후 policy rollback이 생겨도 이미 선택된 세션 의미를 재해석하면 안 된다.
+- `activePreviewRendererWarmState`: active session 기준 warm-state evidence snapshot. route snapshot과 별개 additive evidence이며, `presetId +
+  publishedVersion + state + observedAt`를 최소 단위로 유지한다.
 - `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.
 - `captures[*]`는 `session-capture/v1`을 따른다.
 - `captures[*].sessionId`, `requestId`, `captureId`: capture correlation baseline
@@ -112,7 +127,9 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
   preview path 검증을 통과하기 전에는 `previewReady`나 `xmpPreviewReadyAtMs`를 올리면 안 된다.
 - dedicated renderer result가 `accepted + canonical output`까지 검증되면 host는 같은 canonical
   preview path를 truthful close owner로 채택할 수 있고, `capture_preview_transition_summary`
-  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason을 함께 남긴다.
+  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason, warm state를 함께 남긴다.
+- Story 1.19 evidence bundle은 manifest capture record만 단독으로 읽지 않는다. 같은 capture correlation의
+  `preview-promotion-evidence.jsonl`, `timing-events.log`, route policy snapshot, published bundle, catalog state를 함께 읽어야 한다.
 - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 현재 세션 root 아래 절대경로만 허용
 - `postEnd`는 아래 셋 중 하나 또는 `null`
   - `export-waiting`: `{ state, evaluatedAt }`
@@ -143,3 +160,4 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
 - React는 host DTO만 소비하고 durable truth를 직접 만들지 않는다.
 - fixture 및 테스트는 `tests/fixtures/contracts/session-manifest-v1.json`을 기준 예시로 사용한다.
 - post-end `completed`는 `finalReady` 근거 없이 먼저 올라가면 안 된다.
+- parity gate에서 허용되는 비교는 same-capture / same-session / same-preset-version 조합뿐이다.

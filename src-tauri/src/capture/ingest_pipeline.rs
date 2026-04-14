@@ -14,6 +14,7 @@ use crate::{
     },
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     render::{
+        dedicated_renderer::preview_promotion_snapshot_paths_in_dir,
         enqueue_resident_preview_render_in_dir, is_valid_render_preview_asset,
         log_render_failure_in_dir, log_render_ready_in_dir, log_render_start_in_dir,
         promote_preview_render_output, render_capture_asset_in_dir,
@@ -50,8 +51,11 @@ const SPECULATIVE_PREVIEW_DRAIN_WAIT_MS: u64 = 400;
 const SPECULATIVE_PREVIEW_DRAIN_POLL_MS: u64 = 80;
 // If a speculative close is still actively rendering after the initial wait,
 // prefer joining that in-flight work over starting a second preview render that
-// competes for the same preview worker/runtime.
-const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 2600;
+// competes for the same preview worker/runtime. Recent booth logs show the
+// slower same-capture raster close can still arrive just under 6s after the
+// first thumbnail becomes visible, so keep the join window wide enough to let
+// that correct close win before we fall back to a competing render.
+const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 5000;
 const SPECULATIVE_PREVIEW_JOIN_POLL_MS: u64 = 80;
 const PREVIEW_REFINEMENT_IDLE_WAIT_MS: u64 = 5000;
 const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
@@ -123,6 +127,20 @@ pub fn persist_capture_in_dir(
         // preview file already exists on disk, keep the fast-path alive.
         capture.preview.asset_path = Some(seed_result.asset_path);
         capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
+    }
+
+    if let Err(error) = write_capture_time_preview_promotion_snapshots_in_dir(
+        base_dir,
+        &capture.session_id,
+        &capture.capture_id,
+    ) {
+        log::warn!(
+            "capture-time preview snapshot failed session={} capture_id={} code={} message={}",
+            capture.session_id,
+            capture.capture_id,
+            error.code,
+            error.message
+        );
     }
 
     let fast_preview_update =
@@ -1099,6 +1117,86 @@ fn build_saved_capture_record(
             preview_budget_state: "pending".into(),
         },
     }
+}
+
+fn write_capture_time_preview_promotion_snapshots_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+) -> Result<(), HostErrorEnvelope> {
+    let (route_policy_snapshot_path, catalog_state_snapshot_path) =
+        preview_promotion_snapshot_paths_in_dir(base_dir, session_id, capture_id)?;
+    copy_snapshot_artifact(
+        &base_dir
+            .join("branch-config")
+            .join("preview-renderer-policy.json"),
+        &route_policy_snapshot_path,
+    )?;
+    write_capture_time_catalog_snapshot_in_dir(base_dir, session_id, &catalog_state_snapshot_path)?;
+
+    Ok(())
+}
+
+fn write_capture_time_catalog_snapshot_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    destination: &Path,
+) -> Result<(), HostErrorEnvelope> {
+    let manifest_path = SessionPaths::try_new(base_dir, session_id)?.manifest_path;
+    let manifest = read_session_manifest(&manifest_path)?;
+
+    if let (Some(catalog_revision), Some(catalog_snapshot)) = (
+        manifest.catalog_revision,
+        manifest.catalog_snapshot.as_ref(),
+    ) {
+        let parent = destination.parent().ok_or_else(|| {
+            HostErrorEnvelope::persistence("snapshot artifact 경로를 준비하지 못했어요.")
+        })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "snapshot artifact 경로를 만들지 못했어요: {error}"
+            ))
+        })?;
+        let bytes = serde_json::to_vec_pretty(&serde_json::json!({
+            "schemaVersion": "preset-catalog-state/v1",
+            "catalogRevision": catalog_revision,
+            "updatedAt": manifest.updated_at,
+            "livePresets": catalog_snapshot,
+        }))
+        .map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "capture 시점 catalog snapshot을 직렬화하지 못했어요: {error}"
+            ))
+        })?;
+        fs::write(destination, bytes).map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "snapshot artifact를 저장하지 못했어요: {error}"
+            ))
+        })?;
+        return Ok(());
+    }
+
+    copy_snapshot_artifact(
+        &base_dir.join("preset-catalog").join("catalog-state.json"),
+        destination,
+    )
+}
+
+fn copy_snapshot_artifact(source: &Path, destination: &Path) -> Result<(), HostErrorEnvelope> {
+    let parent = destination.parent().ok_or_else(|| {
+        HostErrorEnvelope::persistence("snapshot artifact 경로를 준비하지 못했어요.")
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("snapshot artifact 경로를 만들지 못했어요: {error}"))
+    })?;
+    let bytes = fs::read(source).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("snapshot source를 읽지 못했어요: {error}"))
+    })?;
+    fs::write(destination, bytes).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("snapshot artifact를 저장하지 못했어요: {error}"))
+    })?;
+
+    Ok(())
 }
 
 fn derive_capture_lifecycle_stage(manifest: &SessionManifest) -> String {

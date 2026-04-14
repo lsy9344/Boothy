@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs,
+    env, fs,
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
@@ -14,12 +14,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     contracts::dto::{
-        validate_branch_rollback_input, validate_branch_rollout_input, BranchActiveSessionDto,
+        validate_branch_rollback_input, validate_branch_rollout_input,
+        validate_preview_renderer_route_promotion_input,
+        validate_preview_renderer_route_rollback_input,
+        validate_preview_renderer_route_status_input, BranchActiveSessionDto,
         BranchCompatibilityVerdictDto, BranchLocalSettingsPreservationDto,
         BranchReleaseBaselineDto, BranchRollbackInputDto, BranchRolloutActionResultDto,
         BranchRolloutApprovalDto, BranchRolloutAuditEntryDto, BranchRolloutBranchResultDto,
         BranchRolloutBranchStateDto, BranchRolloutInputDto, BranchRolloutOverviewResultDto,
         BranchRolloutRejectionDto, CapabilitySnapshotDto, HostErrorEnvelope,
+        PreviewRendererRouteMutationResultDto, PreviewRendererRoutePolicyAuditEntryDto,
+        PreviewRendererRoutePromotionInputDto, PreviewRendererRouteRollbackInputDto,
+        PreviewRendererRouteStatusInputDto, PreviewRendererRouteStatusResultDto,
     },
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::sync_post_end_state_in_dir,
@@ -35,11 +41,21 @@ const BRANCH_ROLLOUT_AUDIT_ENTRY_SCHEMA_VERSION: &str = "branch-rollout-audit-en
 const BRANCH_ROLLOUT_HISTORY_STORE_SCHEMA_VERSION: &str = "branch-rollout-history-store/v1";
 const BRANCH_ROLLOUT_OVERVIEW_SCHEMA_VERSION: &str = "branch-rollout-overview/v1";
 const BRANCH_ROLLOUT_ACTION_RESULT_SCHEMA_VERSION: &str = "branch-rollout-action-result/v1";
+const PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION: &str = "preview-renderer-route-policy/v1";
+const PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_ENTRY_SCHEMA_VERSION: &str =
+    "preview-renderer-route-policy-audit-entry/v1";
+const PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_SCHEMA_VERSION: &str =
+    "preview-renderer-route-policy-history/v1";
+const PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_WRITE_FAILURE_ENV: &str =
+    "BOOTHY_TEST_PREVIEW_ROUTE_POLICY_HISTORY_WRITE_FAILURE";
 const BRANCH_ROLLOUT_LOCK_RETRY_DELAY_MS: u64 = 10;
 const BRANCH_ROLLOUT_LOCK_MAX_ATTEMPTS: u32 = 500;
 const BRANCH_ROLLOUT_LOCK_STALE_AFTER_MS: u64 = 30_000;
+const PREVIEW_RENDERER_ROUTE_DARKTABLE: &str = "darktable";
+const PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR: &str = "local-renderer-sidecar";
 
 static BRANCH_ROLLOUT_AUDIT_COUNTER: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +100,37 @@ struct BranchRolloutHistoryStore {
     schema_version: String,
     #[serde(default)]
     entries: Vec<BranchRolloutAuditEntryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewRendererRoutePolicyStore {
+    schema_version: String,
+    default_route: String,
+    #[serde(default)]
+    default_routes: Vec<PreviewRendererRoutePolicyRule>,
+    #[serde(default)]
+    canary_routes: Vec<PreviewRendererRoutePolicyRule>,
+    #[serde(default)]
+    forced_fallback_routes: Vec<PreviewRendererRoutePolicyRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewRendererRoutePolicyRule {
+    route: String,
+    preset_id: String,
+    preset_version: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewRendererRoutePolicyHistoryStore {
+    schema_version: String,
+    #[serde(default)]
+    entries: Vec<PreviewRendererRoutePolicyAuditEntryDto>,
 }
 
 struct BranchRolloutStoreLock {
@@ -170,6 +217,204 @@ pub fn apply_branch_rollback_in_dir(
     };
 
     apply_action(base_dir, "rollback", &input.branch_ids, None, approval)
+}
+
+pub fn promote_preview_renderer_route_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: PreviewRendererRoutePromotionInputDto,
+) -> Result<PreviewRendererRouteMutationResultDto, HostErrorEnvelope> {
+    ensure_settings_access(capability_snapshot)?;
+    validate_preview_renderer_route_promotion_input(&input)?;
+
+    let approval = BranchRolloutApprovalDto {
+        approved_at: current_timestamp(SystemTime::now())?,
+        actor_id: input.actor_id.clone(),
+        actor_label: input.actor_label.clone(),
+    };
+    let _lock = acquire_branch_rollout_store_lock(base_dir)?;
+    let mut policy = load_preview_renderer_route_policy(base_dir)?;
+    let mut history = load_preview_renderer_route_policy_history(base_dir)?;
+    let canary_success_count =
+        count_repeated_canary_success_path(base_dir, &input.preset_id, &input.published_version)?;
+    let audit_entry = build_preview_renderer_route_policy_audit_entry(
+        "promote",
+        &input.preset_id,
+        &input.published_version,
+        &input.target_route_stage,
+        &approval,
+        if input.target_route_stage == "default" && canary_success_count < 2 {
+            "rejected"
+        } else {
+            "applied"
+        },
+        canary_success_count,
+    )?;
+
+    if input.target_route_stage == "default" && canary_success_count < 2 {
+        history.entries.push(audit_entry.clone());
+        persist_preview_renderer_route_policy_history(base_dir, &history.entries)?;
+        append_preview_renderer_route_policy_audit_record(
+            base_dir,
+            "promote",
+            &audit_entry,
+            "repeated canary success-path evidence가 부족해 default 승격을 적용하지 않았어요.",
+            Some("preview-route-default-evidence-missing"),
+        );
+        return Err(HostErrorEnvelope::validation_message(
+            "반복된 canary success-path evidence를 먼저 확보해 주세요.",
+        ));
+    }
+
+    history.entries.push(audit_entry.clone());
+    upsert_preview_route_policy_for_promotion(&mut policy, &input);
+    persist_preview_renderer_route_artifacts(base_dir, &policy, &history.entries)?;
+    append_preview_renderer_route_policy_audit_record(
+        base_dir,
+        "promote",
+        &audit_entry,
+        if input.target_route_stage == "default" {
+            "반복된 canary success-path evidence를 확인하고 default route를 승격했어요."
+        } else {
+            "승인된 preset/version scope를 canary route로 승격했어요."
+        },
+        None,
+    );
+
+    Ok(PreviewRendererRouteMutationResultDto {
+        schema_version: PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_ENTRY_SCHEMA_VERSION.into(),
+        action: "promote".into(),
+        preset_id: input.preset_id,
+        published_version: input.published_version,
+        route_stage: input.target_route_stage,
+        approval,
+        audit_entry,
+        message: "preview route policy 승격을 기록했어요.".into(),
+    })
+}
+
+pub fn rollback_preview_renderer_route_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: PreviewRendererRouteRollbackInputDto,
+) -> Result<PreviewRendererRouteMutationResultDto, HostErrorEnvelope> {
+    ensure_settings_access(capability_snapshot)?;
+    validate_preview_renderer_route_rollback_input(&input)?;
+
+    let approval = BranchRolloutApprovalDto {
+        approved_at: current_timestamp(SystemTime::now())?,
+        actor_id: input.actor_id.clone(),
+        actor_label: input.actor_label.clone(),
+    };
+    let _lock = acquire_branch_rollout_store_lock(base_dir)?;
+    let mut policy = load_preview_renderer_route_policy(base_dir)?;
+    let mut history = load_preview_renderer_route_policy_history(base_dir)?;
+    let canary_success_count =
+        count_repeated_canary_success_path(base_dir, &input.preset_id, &input.published_version)?;
+    let audit_entry = build_preview_renderer_route_policy_audit_entry(
+        "rollback",
+        &input.preset_id,
+        &input.published_version,
+        "shadow",
+        &approval,
+        "applied",
+        canary_success_count,
+    )?;
+
+    history.entries.push(audit_entry.clone());
+    upsert_preview_route_policy_for_rollback(&mut policy, &input);
+    persist_preview_renderer_route_artifacts(base_dir, &policy, &history.entries)?;
+    append_preview_renderer_route_policy_audit_record(
+        base_dir,
+        "rollback",
+        &audit_entry,
+        "one-action rollback으로 promoted scope를 shadow fallback으로 되돌렸어요.",
+        Some("preview-route-rollback"),
+    );
+
+    Ok(PreviewRendererRouteMutationResultDto {
+        schema_version: PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_ENTRY_SCHEMA_VERSION.into(),
+        action: "rollback".into(),
+        preset_id: input.preset_id,
+        published_version: input.published_version,
+        route_stage: "shadow".into(),
+        approval,
+        audit_entry,
+        message: "preview route policy rollback을 기록했어요.".into(),
+    })
+}
+
+pub fn load_preview_renderer_route_status_in_dir(
+    base_dir: &Path,
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: PreviewRendererRouteStatusInputDto,
+) -> Result<PreviewRendererRouteStatusResultDto, HostErrorEnvelope> {
+    ensure_settings_access(capability_snapshot)?;
+    validate_preview_renderer_route_status_input(&input)?;
+
+    let policy = load_preview_renderer_route_policy(base_dir)?;
+
+    let (route_stage, resolved_route, reason, message) = if let Some(rule) = policy
+        .forced_fallback_routes
+        .iter()
+        .find(|rule| {
+            rule.preset_id == input.preset_id && rule.preset_version == input.published_version
+        }) {
+        (
+            "shadow".to_string(),
+            rule.route.clone(),
+            rule.reason
+                .clone()
+                .unwrap_or_else(|| "forced-fallback".into()),
+            "이 프리셋 버전은 shadow 상태예요.".to_string(),
+        )
+    } else if let Some(rule) = policy.default_routes.iter().find(|rule| {
+        rule.preset_id == input.preset_id && rule.preset_version == input.published_version
+    }) {
+        (
+            "default".to_string(),
+            rule.route.clone(),
+            rule.reason
+                .clone()
+                .unwrap_or_else(|| "host-approved-default".into()),
+            "이 프리셋 버전은 default 상태예요.".to_string(),
+        )
+    } else if let Some(rule) = policy.canary_routes.iter().find(|rule| {
+        rule.preset_id == input.preset_id && rule.preset_version == input.published_version
+    }) {
+        (
+            "canary".to_string(),
+            rule.route.clone(),
+            rule.reason
+                .clone()
+                .unwrap_or_else(|| "host-approved-canary".into()),
+            "이 프리셋 버전은 canary 상태예요.".to_string(),
+        )
+    } else if policy.default_route == PREVIEW_RENDERER_ROUTE_DARKTABLE {
+        (
+            "shadow".to_string(),
+            policy.default_route.clone(),
+            "default-route-shadow".into(),
+            "이 프리셋 버전은 아직 shadow 상태예요.".to_string(),
+        )
+    } else {
+        (
+            "default".to_string(),
+            policy.default_route.clone(),
+            "global-default-route".into(),
+            "이 프리셋 버전은 default 상태예요.".to_string(),
+        )
+    };
+
+    Ok(PreviewRendererRouteStatusResultDto {
+        schema_version: "preview-renderer-route-status-result/v1".into(),
+        preset_id: input.preset_id,
+        published_version: input.published_version,
+        route_stage,
+        resolved_route,
+        reason,
+        message,
+    })
 }
 
 pub(crate) fn ensure_settings_access(
@@ -1030,8 +1275,367 @@ fn persist_branch_rollout_history(
     write_json_bytes_atomically(&history_path, &bytes)
 }
 
+fn load_preview_renderer_route_policy(
+    base_dir: &Path,
+) -> Result<PreviewRendererRoutePolicyStore, HostErrorEnvelope> {
+    let policy_path = resolve_preview_renderer_route_policy_path(base_dir);
+
+    if !policy_path.exists() {
+        return Ok(PreviewRendererRoutePolicyStore {
+            schema_version: PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION.into(),
+            default_route: PREVIEW_RENDERER_ROUTE_DARKTABLE.into(),
+            default_routes: Vec::new(),
+            canary_routes: Vec::new(),
+            forced_fallback_routes: Vec::new(),
+        });
+    }
+
+    let bytes = fs::read_to_string(&policy_path).map_err(map_fs_error)?;
+    let mut parsed: PreviewRendererRoutePolicyStore =
+        serde_json::from_str(&bytes).map_err(|error| {
+            HostErrorEnvelope::persistence(format!("preview route policy를 읽지 못했어요: {error}"))
+        })?;
+    if parsed.schema_version != PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION {
+        parsed.schema_version = PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION.into();
+    }
+    if parsed.default_route.trim().is_empty() {
+        parsed.default_route = PREVIEW_RENDERER_ROUTE_DARKTABLE.into();
+    }
+
+    Ok(parsed)
+}
+
+fn load_preview_renderer_route_policy_history(
+    base_dir: &Path,
+) -> Result<PreviewRendererRoutePolicyHistoryStore, HostErrorEnvelope> {
+    let history_path = resolve_preview_renderer_route_policy_history_path(base_dir);
+    if !history_path.exists() {
+        return Ok(PreviewRendererRoutePolicyHistoryStore {
+            schema_version: PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_SCHEMA_VERSION.into(),
+            entries: Vec::new(),
+        });
+    }
+
+    let bytes = fs::read_to_string(&history_path).map_err(map_fs_error)?;
+    let parsed: PreviewRendererRoutePolicyHistoryStore =
+        serde_json::from_str(&bytes).map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "preview route policy history를 읽지 못했어요: {error}"
+            ))
+        })?;
+    Ok(parsed)
+}
+
+fn persist_preview_renderer_route_policy_history(
+    base_dir: &Path,
+    entries: &[PreviewRendererRoutePolicyAuditEntryDto],
+) -> Result<(), HostErrorEnvelope> {
+    let history_path = resolve_preview_renderer_route_policy_history_path(base_dir);
+    let history_dir = history_path.parent().ok_or_else(|| {
+        HostErrorEnvelope::persistence("preview route policy history 경로를 준비하지 못했어요.")
+    })?;
+    fs::create_dir_all(history_dir).map_err(map_fs_error)?;
+    let bytes = serde_json::to_vec_pretty(&PreviewRendererRoutePolicyHistoryStore {
+        schema_version: PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_SCHEMA_VERSION.into(),
+        entries: entries.to_vec(),
+    })
+    .map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview route policy history를 직렬화하지 못했어요: {error}"
+        ))
+    })?;
+
+    write_json_bytes_atomically(&history_path, &bytes)
+}
+
+fn persist_preview_renderer_route_artifacts(
+    base_dir: &Path,
+    policy: &PreviewRendererRoutePolicyStore,
+    history_entries: &[PreviewRendererRoutePolicyAuditEntryDto],
+) -> Result<(), HostErrorEnvelope> {
+    let policy_path = resolve_preview_renderer_route_policy_path(base_dir);
+    let history_path = resolve_preview_renderer_route_policy_history_path(base_dir);
+    let original_policy_bytes = read_optional_file_bytes(&policy_path)?;
+    let original_history_bytes = read_optional_file_bytes(&history_path)?;
+    let policy_bytes = serde_json::to_vec_pretty(policy).map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview route policy를 직렬화하지 못했어요: {error}"
+        ))
+    })?;
+    let history_bytes = serde_json::to_vec_pretty(&PreviewRendererRoutePolicyHistoryStore {
+        schema_version: PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_SCHEMA_VERSION.into(),
+        entries: history_entries.to_vec(),
+    })
+    .map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview route policy history를 직렬화하지 못했어요: {error}"
+        ))
+    })?;
+
+    write_json_bytes_atomically(&policy_path, &policy_bytes)?;
+    if let Err(error) = write_json_bytes_atomically(&history_path, &history_bytes) {
+        let policy_restore_error =
+            restore_optional_file_bytes_atomically(&policy_path, original_policy_bytes.as_deref())
+                .err();
+        let history_restore_error = restore_optional_file_bytes_atomically(
+            &history_path,
+            original_history_bytes.as_deref(),
+        )
+        .err();
+        if let Some(restore_error) = policy_restore_error.or(history_restore_error) {
+            return Err(HostErrorEnvelope::persistence(format!(
+                "{} 원복까지 실패했어요: {}",
+                error.message, restore_error.message
+            )));
+        }
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn upsert_preview_route_policy_for_promotion(
+    policy: &mut PreviewRendererRoutePolicyStore,
+    input: &PreviewRendererRoutePromotionInputDto,
+) {
+    remove_matching_preview_route_rule(
+        &mut policy.forced_fallback_routes,
+        &input.preset_id,
+        &input.published_version,
+    );
+
+    if input.target_route_stage == "default" {
+        upsert_preview_route_rule(
+            &mut policy.default_routes,
+            PreviewRendererRoutePolicyRule {
+                route: PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR.into(),
+                preset_id: input.preset_id.clone(),
+                preset_version: input.published_version.clone(),
+                reason: Some("host-approved-default".into()),
+            },
+        );
+        remove_matching_preview_route_rule(
+            &mut policy.canary_routes,
+            &input.preset_id,
+            &input.published_version,
+        );
+        return;
+    }
+
+    upsert_preview_route_rule(
+        &mut policy.canary_routes,
+        PreviewRendererRoutePolicyRule {
+            route: PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR.into(),
+            preset_id: input.preset_id.clone(),
+            preset_version: input.published_version.clone(),
+            reason: Some("host-approved-canary".into()),
+        },
+    );
+}
+
+fn upsert_preview_route_policy_for_rollback(
+    policy: &mut PreviewRendererRoutePolicyStore,
+    input: &PreviewRendererRouteRollbackInputDto,
+) {
+    remove_matching_preview_route_rule(
+        &mut policy.canary_routes,
+        &input.preset_id,
+        &input.published_version,
+    );
+    remove_matching_preview_route_rule(
+        &mut policy.default_routes,
+        &input.preset_id,
+        &input.published_version,
+    );
+    upsert_preview_route_rule(
+        &mut policy.forced_fallback_routes,
+        PreviewRendererRoutePolicyRule {
+            route: PREVIEW_RENDERER_ROUTE_DARKTABLE.into(),
+            preset_id: input.preset_id.clone(),
+            preset_version: input.published_version.clone(),
+            reason: Some("rollback".into()),
+        },
+    );
+}
+
+fn upsert_preview_route_rule(
+    rules: &mut Vec<PreviewRendererRoutePolicyRule>,
+    next_rule: PreviewRendererRoutePolicyRule,
+) {
+    if let Some(existing) = rules.iter_mut().find(|rule| {
+        rule.preset_id == next_rule.preset_id && rule.preset_version == next_rule.preset_version
+    }) {
+        *existing = next_rule;
+    } else {
+        rules.push(next_rule);
+    }
+}
+
+fn remove_matching_preview_route_rule(
+    rules: &mut Vec<PreviewRendererRoutePolicyRule>,
+    preset_id: &str,
+    published_version: &str,
+) {
+    rules.retain(|rule| !(rule.preset_id == preset_id && rule.preset_version == published_version));
+}
+
+fn count_repeated_canary_success_path(
+    base_dir: &Path,
+    preset_id: &str,
+    published_version: &str,
+) -> Result<u32, HostErrorEnvelope> {
+    let sessions_root = base_dir.join("sessions");
+    if !sessions_root.exists() {
+        return Ok(0);
+    }
+
+    let mut seen_runs = HashSet::new();
+    let mut success_count = 0_u32;
+    for entry in fs::read_dir(&sessions_root).map_err(map_fs_error)? {
+        let session_root = match entry {
+            Ok(entry) => entry.path(),
+            Err(_) => continue,
+        };
+        let evidence_path = session_root
+            .join("diagnostics")
+            .join("dedicated-renderer")
+            .join("preview-promotion-evidence.jsonl");
+        if !evidence_path.is_file() {
+            continue;
+        }
+
+        let contents = fs::read_to_string(&evidence_path).map_err(map_fs_error)?;
+        for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+            let parsed = match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let same_scope = parsed["presetId"].as_str() == Some(preset_id)
+                && parsed["publishedVersion"].as_str() == Some(published_version);
+            let success_path = parsed["laneOwner"].as_str() == Some("dedicated-renderer")
+                && parsed["routeStage"].as_str() == Some("canary")
+                && parsed["fallbackReasonCode"].is_null()
+                && matches!(
+                    parsed["warmState"].as_str(),
+                    Some("warm-ready") | Some("warm-hit")
+                )
+                && parsed["firstVisibleMs"].as_u64().is_some()
+                && parsed["replacementMs"].as_u64().is_some()
+                && parsed["originalVisibleToPresetAppliedVisibleMs"]
+                    .as_u64()
+                    .is_some()
+                && has_non_blank_string_field(&parsed, "sessionManifestPath")
+                && has_non_blank_string_field(&parsed, "timingEventsPath")
+                && has_non_blank_string_field(&parsed, "routePolicySnapshotPath")
+                && has_non_blank_string_field(&parsed, "catalogStatePath");
+            if same_scope && success_path {
+                let session_id = parsed["sessionId"].as_str().unwrap_or_default();
+                let request_id = parsed["requestId"].as_str().unwrap_or_default();
+                let capture_id = parsed["captureId"].as_str().unwrap_or_default();
+                let dedupe_key = format!("{session_id}::{request_id}::{capture_id}");
+                if !seen_runs.insert(dedupe_key) {
+                    continue;
+                }
+                success_count = success_count.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(success_count)
+}
+
+fn build_preview_renderer_route_policy_audit_entry(
+    action: &str,
+    preset_id: &str,
+    published_version: &str,
+    target_route_stage: &str,
+    approval: &BranchRolloutApprovalDto,
+    result: &str,
+    canary_success_count: u32,
+) -> Result<PreviewRendererRoutePolicyAuditEntryDto, HostErrorEnvelope> {
+    Ok(PreviewRendererRoutePolicyAuditEntryDto {
+        schema_version: PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_ENTRY_SCHEMA_VERSION.into(),
+        audit_id: build_preview_route_policy_audit_id(action, &approval.approved_at),
+        action: action.into(),
+        preset_id: preset_id.into(),
+        published_version: published_version.into(),
+        target_route_stage: target_route_stage.into(),
+        approval: approval.clone(),
+        result: result.into(),
+        canary_success_count,
+        noted_at: current_timestamp(SystemTime::now())?,
+    })
+}
+
+fn has_non_blank_string_field(record: &serde_json::Value, field_name: &str) -> bool {
+    record[field_name]
+        .as_str()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn append_preview_renderer_route_policy_audit_record(
+    base_dir: &Path,
+    action: &str,
+    audit_entry: &PreviewRendererRoutePolicyAuditEntryDto,
+    detail: &str,
+    reason_code: Option<&str>,
+) {
+    let event_type = match (action, audit_entry.result.as_str()) {
+        ("promote", "applied") => "preview-route-promotion-applied",
+        ("promote", _) => "preview-route-promotion-rejected",
+        ("rollback", "applied") => "preview-route-rollback-applied",
+        _ => "preview-route-rollback-rejected",
+    };
+    try_append_operator_audit_record(
+        base_dir,
+        OperatorAuditRecordInput {
+            occurred_at: audit_entry.noted_at.clone(),
+            session_id: None,
+            event_category: "release-governance",
+            event_type,
+            summary: format!(
+                "{} {} route policy를 평가했어요.",
+                audit_entry.preset_id, audit_entry.target_route_stage
+            ),
+            detail: detail.into(),
+            actor_id: Some(audit_entry.approval.actor_id.clone()),
+            source: "branch-config",
+            capture_id: None,
+            preset_id: Some(audit_entry.preset_id.clone()),
+            published_version: Some(audit_entry.published_version.clone()),
+            reason_code: reason_code.map(str::to_string),
+        },
+    );
+}
+
+fn build_preview_route_policy_audit_id(action: &str, approved_at: &str) -> String {
+    let safe_timestamp = approved_at
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>();
+    let counter = PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    format!(
+        "preview-route-{action}-{}-{counter:04}",
+        &safe_timestamp[..safe_timestamp.len().min(12)]
+    )
+}
+
 fn resolve_branch_rollout_store_path(base_dir: &Path) -> PathBuf {
     base_dir.join("branch-config").join("state.json")
+}
+
+fn resolve_preview_renderer_route_policy_path(base_dir: &Path) -> PathBuf {
+    base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy.json")
+}
+
+fn resolve_preview_renderer_route_policy_history_path(base_dir: &Path) -> PathBuf {
+    base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy-history.json")
 }
 
 fn resolve_branch_rollout_history_path(base_dir: &Path) -> PathBuf {
@@ -1040,6 +1644,29 @@ fn resolve_branch_rollout_history_path(base_dir: &Path) -> PathBuf {
 
 fn resolve_branch_rollout_lock_path(base_dir: &Path) -> PathBuf {
     base_dir.join("branch-config").join("governance.lock")
+}
+
+fn read_optional_file_bytes(path: &Path) -> Result<Option<Vec<u8>>, HostErrorEnvelope> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(map_fs_error(error)),
+    }
+}
+
+fn restore_optional_file_bytes_atomically(
+    path: &Path,
+    original_bytes: Option<&[u8]>,
+) -> Result<(), HostErrorEnvelope> {
+    match original_bytes {
+        Some(bytes) => write_json_bytes_atomically_inner(path, bytes, false),
+        None => {
+            if path.exists() {
+                fs::remove_file(path).map_err(map_fs_error)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn acquire_branch_rollout_store_lock(
@@ -1101,6 +1728,24 @@ fn is_stale_branch_rollout_lock(lock_path: &Path) -> Result<bool, HostErrorEnvel
 }
 
 fn write_json_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), HostErrorEnvelope> {
+    write_json_bytes_atomically_inner(path, bytes, true)
+}
+
+fn write_json_bytes_atomically_inner(
+    path: &Path,
+    bytes: &[u8],
+    inject_failures: bool,
+) -> Result<(), HostErrorEnvelope> {
+    if inject_failures
+        && path.file_name().and_then(|name| name.to_str())
+            == Some("preview-renderer-policy-history.json")
+        && env::var_os(PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_WRITE_FAILURE_ENV).is_some()
+    {
+        return Err(HostErrorEnvelope::persistence(
+            "preview route policy history를 저장하지 못했어요.",
+        ));
+    }
+
     let temp_path = path.with_extension("json.tmp");
     let backup_path = path.with_extension("json.bak");
 

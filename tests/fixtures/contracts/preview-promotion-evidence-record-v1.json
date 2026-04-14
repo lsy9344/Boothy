@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "preview-promotion-evidence-record/v1",
+  "observedAt": "2026-04-12T08:00:15+09:00",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "requestId": "request_20260410_001",
+  "captureId": "capture_20260410_001",
+  "presetId": "preset_soft-glow",
+  "publishedVersion": "2026.04.10",
+  "laneOwner": "dedicated-renderer",
+  "fallbackReasonCode": null,
+  "routeStage": "canary",
+  "warmState": "warm-ready",
+  "firstVisibleMs": 2810,
+  "replacementMs": 3615,
+  "originalVisibleToPresetAppliedVisibleMs": 805,
+  "sessionManifestPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/session.json",
+  "timingEventsPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/timing-events.log",
+  "routePolicySnapshotPath": "C:/Users/Example/Pictures/dabi_shoot/branch-config/preview-renderer-policy.json",
+  "publishedBundlePath": "C:/Users/Example/Pictures/dabi_shoot/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+  "catalogStatePath": "C:/Users/Example/Pictures/dabi_shoot/preset-catalog/catalog-state.json",
+  "previewAssetPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260410_001.jpg",
+  "warmStateDetailPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/diagnostics/dedicated-renderer/warm-state-preset_soft-glow-2026.04.10.json"
+}

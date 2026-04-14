@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-11 11:28:23 +09:00
+# last_updated: 2026-04-13 16:21:28 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -36,21 +36,31 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
 # - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
+# - approved correct-course change (2026-04-13): preview architecture closes in the order 1.18 prototype -> 1.19 gate -> 1.20 activation -> 1.13 guarded cutover
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-11 12:14:53 +09:00"
+last_updated: "2026-04-14 00:00:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
+preview_architecture_sequence:
+  - "1.18 prototype"
+  - "1.19 gate establishment"
+  - "1.20 activation"
+  - "1.13 guarded cutover / release close"
 
 development_status:
   epic-1: in-progress
-  1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: review
+  1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: in-progress
   1-14-공유-계약-동결과-검증-기준-확정: done
   1-15-canon-helper-profile과-publication-contract-확정: done
   1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
+  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
+  1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입: done
+  1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착: done
+  1-20-resident-preview-lane-activation과-route-policy-promotion: done
   1-1-set-up-initial-project-from-starter-template: done
   1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
@@ -62,7 +72,7 @@ development_status:
   1-9-fast-preview-handoff와-xmp-preview-교체: done
   1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
   1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입: done
-  1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환: review
+  1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환: done
   epic-1-retrospective: optional
 
   epic-2: in-progress
@@ -96,3 +106,4 @@ development_status:
   epic-6: done
   6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
   epic-6-retrospective: optional
+

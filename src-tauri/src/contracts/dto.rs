@@ -487,6 +487,52 @@ pub fn validate_branch_rollback_input(
     Ok(())
 }
 
+pub fn validate_preview_renderer_route_promotion_input(
+    input: &PreviewRendererRoutePromotionInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    validate_preset_selection_input(&input.preset_id, &input.published_version)?;
+
+    if !matches!(input.target_route_stage.as_str(), "canary" | "default") {
+        return Err(HostErrorEnvelope::validation_message(
+            "승격할 preview route stage를 다시 확인해 주세요.",
+        ));
+    }
+
+    if !is_valid_actor_id(&input.actor_id)
+        || !is_non_blank(&input.actor_label)
+        || !is_trimmed_length_within(&input.actor_label, ACTOR_LABEL_MAX_CHARS)
+    {
+        return Err(HostErrorEnvelope::validation_message(
+            "승격 승인자를 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_preview_renderer_route_rollback_input(
+    input: &PreviewRendererRouteRollbackInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    validate_preset_selection_input(&input.preset_id, &input.published_version)?;
+
+    if !is_valid_actor_id(&input.actor_id)
+        || !is_non_blank(&input.actor_label)
+        || !is_trimmed_length_within(&input.actor_label, ACTOR_LABEL_MAX_CHARS)
+    {
+        return Err(HostErrorEnvelope::validation_message(
+            "롤백 승인자를 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_preview_renderer_route_status_input(
+    input: &PreviewRendererRouteStatusInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    validate_preset_selection_input(&input.preset_id, &input.published_version)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartInputDto {
@@ -539,6 +585,31 @@ pub struct DraftNoisePolicyDto {
     pub policy_id: String,
     pub display_name: String,
     pub reduction_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonicalPresetRecipeDto {
+    pub schema_version: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub display_name: String,
+    pub booth_status: String,
+    pub preview_intent: DraftRenderProfileDto,
+    pub final_intent: DraftRenderProfileDto,
+    pub noise_policy: DraftNoisePolicyDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "camelCase")]
+pub struct DarktablePresetAdapterDto {
+    pub schema_version: String,
+    pub darktable_version: String,
+    pub xmp_template_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub darktable_project_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -939,6 +1010,16 @@ pub struct OperatorPreviewArchitectureSummaryDto {
     pub lane_owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_visible_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_visible_to_preset_applied_visible_ms: Option<u64>,
     pub hardware_capability: String,
 }
 
@@ -1152,6 +1233,72 @@ pub struct BranchRolloutActionResultDto {
     pub approval: BranchRolloutApprovalDto,
     pub outcomes: Vec<BranchRolloutBranchResultDto>,
     pub audit_entry: BranchRolloutAuditEntryDto,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRoutePromotionInputDto {
+    pub preset_id: String,
+    pub published_version: String,
+    pub target_route_stage: String,
+    pub actor_id: String,
+    pub actor_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteRollbackInputDto {
+    pub preset_id: String,
+    pub published_version: String,
+    pub actor_id: String,
+    pub actor_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteStatusInputDto {
+    pub preset_id: String,
+    pub published_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRoutePolicyAuditEntryDto {
+    pub schema_version: String,
+    pub audit_id: String,
+    pub action: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub target_route_stage: String,
+    pub approval: BranchRolloutApprovalDto,
+    pub result: String,
+    pub canary_success_count: u32,
+    pub noted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteMutationResultDto {
+    pub schema_version: String,
+    pub action: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub route_stage: String,
+    pub approval: BranchRolloutApprovalDto,
+    pub audit_entry: PreviewRendererRoutePolicyAuditEntryDto,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteStatusResultDto {
+    pub schema_version: String,
+    pub preset_id: String,
+    pub published_version: String,
+    pub route_stage: String,
+    pub resolved_route: String,
+    pub reason: String,
     pub message: String,
 }
 
@@ -1646,6 +1793,10 @@ pub struct DedicatedRendererWarmupResultDto {
     pub detail_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state_detail_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1661,6 +1812,8 @@ pub struct DedicatedRendererPreviewJobRequestDto {
     pub xmp_template_path: String,
     pub preview_profile: DedicatedRendererRenderProfileDto,
     pub source_asset_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_source_asset_path: Option<String>,
     pub canonical_preview_output_path: String,
     pub diagnostics_detail_path: String,
 }
@@ -1680,6 +1833,10 @@ pub struct DedicatedRendererPreviewJobResultDto {
     pub detail_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_state_detail_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
