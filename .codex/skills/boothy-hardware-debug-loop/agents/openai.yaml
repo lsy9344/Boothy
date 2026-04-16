@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boothy Hardware Debug Loop"
+  short_description: "Review hardware logs and guide retests"
+  default_prompt: "Use $boothy-hardware-debug-loop to review the latest app execution log and hardware validation result, fix the current issue, and tell me what to test next."

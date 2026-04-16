@@ -9,9 +9,12 @@ export const previewPromotionEvidenceRecordSchemaVersion =
   'preview-promotion-evidence-record/v1' as const
 export const previewPromotionEvidenceBundleSchemaVersion =
   'preview-promotion-evidence-bundle/v1' as const
+export const previewPromotionCanaryAssessmentSchemaVersion =
+  'preview-promotion-canary-assessment/v1' as const
 
 const optionalMetricSchema = z.number().int().nonnegative().nullable().optional()
 const optionalRuntimePathSchema = runtimePathSchema.nullable().optional()
+const canaryCheckStatusSchema = z.enum(['pass', 'fail'])
 const parityMeasurementSchema = z
   .object({
     status: z.enum(['not-run', 'invalid-input', 'measured']),
@@ -30,6 +33,34 @@ const bundleArtifactSchema = z
     destination: runtimePathSchema,
   })
   .catchall(z.unknown())
+const canaryHealthCheckSchema = z
+  .object({
+    status: canaryCheckStatusSchema,
+    reason: z.string().trim().min(1),
+  })
+  .strict()
+const canaryMetricCheckSchema = canaryHealthCheckSchema
+  .extend({
+    actualMs: z.number().int().nonnegative().nullable(),
+    thresholdMs: z.number().int().positive(),
+  })
+  .strict()
+const canaryFallbackCheckSchema = canaryHealthCheckSchema
+  .extend({
+    actualRatio: z.number().min(0).max(1),
+    thresholdRatio: z.number().min(0).max(1),
+  })
+  .strict()
+const canaryFidelityCheckSchema = canaryHealthCheckSchema
+  .extend({
+    parityResult: z.enum(['pass', 'conditional', 'not-run', 'fail']),
+  })
+  .strict()
+const canaryRollbackCheckSchema = canaryHealthCheckSchema
+  .extend({
+    evidenceCount: z.number().int().nonnegative(),
+  })
+  .strict()
 
 export const previewPromotionEvidenceRecordSchema = z
   .object({
@@ -44,7 +75,13 @@ export const previewPromotionEvidenceRecordSchema = z
     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
     routeStage: z.string().trim().min(1),
     warmState: previewRendererWarmStateSchema.nullable().optional(),
+    captureRequestedAtMs: z.number().int().nonnegative().optional(),
+    rawPersistedAtMs: z.number().int().nonnegative().optional(),
+    truthfulArtifactReadyAtMs: z.number().int().nonnegative().optional(),
+    visibleOwner: z.string().trim().min(1).optional(),
+    visibleOwnerTransitionAtMs: z.number().int().nonnegative().optional(),
     firstVisibleMs: optionalMetricSchema,
+    sameCaptureFullScreenVisibleMs: optionalMetricSchema,
     replacementMs: optionalMetricSchema,
     originalVisibleToPresetAppliedVisibleMs: optionalMetricSchema,
     sessionManifestPath: runtimePathSchema,
@@ -54,6 +91,7 @@ export const previewPromotionEvidenceRecordSchema = z
     catalogStatePath: runtimePathSchema,
     previewAssetPath: runtimePathSchema.nullable().optional(),
     warmStateDetailPath: runtimePathSchema.nullable().optional(),
+    improvementSummary: z.string().trim().min(1).optional(),
   })
   .strict()
 
@@ -70,7 +108,13 @@ export const previewPromotionEvidenceBundleSchema = z
     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
     routeStage: z.string().trim().min(1),
     warmState: previewRendererWarmStateSchema.nullable().optional(),
+    captureRequestedAtMs: z.number().int().nonnegative(),
+    rawPersistedAtMs: z.number().int().nonnegative(),
+    truthfulArtifactReadyAtMs: z.number().int().nonnegative(),
+    visibleOwner: z.string().trim().min(1),
+    visibleOwnerTransitionAtMs: z.number().int().nonnegative(),
     firstVisibleMs: optionalMetricSchema,
+    sameCaptureFullScreenVisibleMs: optionalMetricSchema,
     replacementMs: optionalMetricSchema,
     originalVisibleToPresetAppliedVisibleMs: optionalMetricSchema,
     fallbackRatio: z.number().min(0).max(1),
@@ -92,6 +136,35 @@ export const previewPromotionEvidenceBundleSchema = z
         threshold: z.number().nonnegative(),
         baseline: parityMeasurementSchema,
         fallback: parityMeasurementSchema,
+      })
+      .strict(),
+  })
+  .strict()
+
+export const previewPromotionCanaryAssessmentSchema = z
+  .object({
+    schemaVersion: z.literal(previewPromotionCanaryAssessmentSchemaVersion),
+    generatedAt: z.string().datetime({ offset: true }),
+    bundleManifestPath: runtimePathSchema,
+    sessionId: sessionIdSchema,
+    captureId: captureIdSchema,
+    requestId: captureRequestIdSchema,
+    presetId: presetIdSchema,
+    publishedVersion: publishedVersionSchema,
+    routeStage: z.string().trim().min(1),
+    laneOwner: z.string().trim().min(1),
+    gate: z.enum(['Go', 'No-Go']),
+    nextStageAllowed: z.boolean(),
+    summary: z.string().trim().min(1),
+    blockers: z.array(z.string().trim().min(1)).max(16),
+    checks: z
+      .object({
+        kpi: canaryMetricCheckSchema,
+        fallbackStability: canaryFallbackCheckSchema,
+        wrongCapture: canaryHealthCheckSchema,
+        fidelityDrift: canaryFidelityCheckSchema,
+        rollbackReadiness: canaryRollbackCheckSchema,
+        activeSessionSafety: canaryHealthCheckSchema,
       })
       .strict(),
   })

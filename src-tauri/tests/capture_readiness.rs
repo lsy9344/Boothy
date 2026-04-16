@@ -34,7 +34,10 @@ use boothy_lib::{
     preset::default_catalog::ensure_default_preset_catalog_in_dir,
     preset::preset_catalog::resolve_published_preset_catalog_dir,
     session::{
-        session_manifest::{current_timestamp, CompletedPostEnd, SessionManifest, SessionPostEnd},
+        session_manifest::{
+            current_timestamp, CompletedPostEnd, SessionManifest, SessionPostEnd,
+            CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS,
+        },
         session_paths::SessionPaths,
         session_repository::{
             select_active_preset_in_dir, set_manifest_write_retryable_failures_for_tests,
@@ -635,8 +638,8 @@ fn capture_flow_persists_raw_before_preview_waiting_and_only_exposes_preview_aft
     assert!(std::path::Path::new(&capture_result.capture.raw.asset_path).is_file());
     assert!(capture_result.capture.preview.asset_path.is_none());
     assert_eq!(capture_result.capture.render_status, "previewWaiting");
-    assert_eq!(capture_result.capture.timing.capture_budget_ms, 1_000);
-    assert_eq!(capture_result.capture.timing.preview_budget_ms, 5_000);
+    assert_eq!(capture_result.capture.timing.capture_budget_ms, CAPTURE_BUDGET_MS);
+    assert_eq!(capture_result.capture.timing.preview_budget_ms, PREVIEW_BUDGET_MS);
 
     let waiting = get_capture_readiness_in_dir(
         &base_dir,
@@ -1449,6 +1452,16 @@ fn fast_preview_updates_are_emitted_from_the_canonical_preview_path_before_captu
         result.capture.preview.asset_path.as_deref(),
         Some(canonical_preview_path.to_string_lossy().as_ref())
     );
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing events should be readable");
+    assert!(
+        !timing_events.contains("kind=legacy-canonical-scan"),
+        "early fast preview promotion should be reused instead of rescanning the canonical preview"
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1977,7 +1990,7 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
     write_test_jpeg(&speculative_output_path);
     fs::write(
         &speculative_detail_path,
-        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=120;detail=widthCap=384;heightCap=384;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=120;detail=widthCap=320;heightCap=320;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
     )
     .expect("speculative render detail should be writable");
 
@@ -2070,7 +2083,7 @@ fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fall
         write_test_jpeg(&delayed_output_path);
         fs::write(
             &delayed_detail_path,
-            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=1500;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=1500;detail=widthCap=192;heightCap=192;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
         )
         .expect("speculative detail should be writable");
         fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
@@ -2164,7 +2177,7 @@ fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_c
         write_test_jpeg(&delayed_output_path);
         fs::write(
             &delayed_detail_path,
-            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=4300;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=4300;detail=widthCap=192;heightCap=192;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
         )
         .expect("speculative detail should be writable");
         fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
@@ -2333,7 +2346,7 @@ fn complete_preview_render_keeps_waiting_long_enough_for_a_slower_same_capture_c
         write_test_jpeg(&delayed_output_path);
         fs::write(
             &delayed_detail_path,
-            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=5600;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=5600;detail=widthCap=192;heightCap=192;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
         )
         .expect("speculative detail should be writable");
         fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");

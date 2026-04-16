@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-13 16:21:28 +09:00
+# last_updated: 2026-04-16 17:21:45 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -22,7 +22,6 @@
 #   - in-progress: Developer actively working on implementation
 #   - review: Ready for code review (via Dev's code-review workflow)
 #   - done: Story completed
-#           (truth-critical stories also require `hardware_validation_ledger` to record `Go`)
 #
 # Retrospective Status:
 #   - optional: Can be completed but not required
@@ -34,36 +33,75 @@
 # - Stories can be worked in parallel if team capacity allows
 # - SM typically creates next story after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
-# - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
-# - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
-# - approved correct-course change (2026-04-13): preview architecture closes in the order 1.18 prototype -> 1.19 gate -> 1.20 activation -> 1.13 guarded cutover
+# - Preview architecture old track: 1.18, 1.19, 1.20 are legacy evidence only
+# - Preview architecture metric/evidence baseline: 1.21 -> 1.22
+# - Preview architecture prototype/evidence track: 1.23 -> 1.24 -> 1.25 -> 1.27
+# - Preview architecture actual implementation track: 1.28 -> 1.29 -> 1.30 -> 1.31
+# - Story 1.13 is blocked until Story 1.31 evidence is accepted as a canonical actual-lane Go candidate with rollback proof
+# - Story 1.26 does not open just because Story 1.13 is blocked; it opens only if the actual-lane forward path repeatedly misses the approved hardware KPI
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-14 00:00:00 +09:00"
+last_updated: "2026-04-16 17:21:45 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
-hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
-preview_architecture_sequence:
-  - "1.18 prototype"
-  - "1.19 gate establishment"
-  - "1.20 activation"
-  - "1.13 guarded cutover / release close"
+recommended_next_story: "1.28"
+recommended_next_action: "Start Story 1.28 actual primary lane close owner implementation, then progress through Stories 1.29, 1.30, and 1.31 before reconsidering Story 1.13. Keep Story 1.26 closed unless the actual-lane track still repeatedly misses the approved hardware KPI."
+recommended_next_preview_track_action: "Treat Stories 1.23 through 1.27 as completed prototype/evidence history, execute the actual-lane track through Story 1.31, and reopen Story 1.13 only if canonical actual-lane Go evidence with rollback proof is accepted."
+preview_architecture_tracks:
+  old_track:
+    - "1.18 retired dedicated close baseline evidence"
+    - "1.19 legacy parity and instrumentation ledger"
+    - "1.20 legacy route activation validation"
+  metric_evidence_baseline:
+    - "1.21 metric reset and acceptance alignment"
+    - "1.22 capture-to-full-screen evidence chain reset"
+  prototype_track:
+    - "1.23 local full-screen lane prototype"
+    - "1.24 local lane hardware canary validation"
+    - "1.25 local lane default decision and rollback gate"
+    - "1.27 local hot-path darktable isolation and KPI revalidation"
+  actual_implementation_track:
+    - "1.28 actual primary lane close owner implementation and prototype route separation"
+    - "1.29 actual primary lane evidence and vocabulary realignment"
+    - "1.30 actual primary lane hardware canary revalidation"
+    - "1.31 actual primary lane default decision and rollback gate"
+  final_close_owner: "1.13 guarded cutover and hardware validation gate after actual-lane Go acceptance"
+  reserve_track: "1.26 remote reserve POC only after repeated actual-lane KPI failure"
+  product_gate_state:
+    overall: "release-hold"
+    canonical_actual_lane_go_candidate: "not-yet-accepted"
+    story_1_13: "blocked-until-story-1.31"
+    story_1_26: "closed-until-repeated-actual-lane-kpi-failure"
+release_gates:
+  hardware_validation_gate:
+    - "1.30 actual-lane canary evidence must show KPI, fallback, wrong-capture, and fidelity-drift health"
+    - "1.13 remains the final ledger-backed release-close gate"
+  rollback_gate:
+    - "1.31 must prove actual-lane canary-to-default or rollback control through preview-renderer-policy.json"
+    - "1.31 must include one-action rollback evidence before 1.13 starts"
+documentation_readiness:
+  input_docs_updated: true
+  contract_freeze_complete: true
+  blocking_follow_up: []
+story_gate_notes:
+  1-23: "Completed prototype story. Its completion proves prototype viability only and must not be read as actual primary lane implementation complete."
+  1-24: "Completed prototype-track canary gate. This evidence supports the prototype track only and does not reopen Story 1.13."
+  1-25: "Completed prototype-track default/rollback gate. This governance proof does not by itself reopen Story 1.13."
+  1-27: "Completed prototype-track corrective follow-up. It remains historical supporting evidence and does not replace the actual-lane track."
+  1-28: "Backlog actual-lane implementation start. This is the next forward implementation step."
+  1-29: "Backlog actual-lane evidence and vocabulary lock. This story prevents prototype wording from being misread as final architecture completion."
+  1-30: "Backlog actual-lane canary gate. Its verdict is required before Story 1.31."
+  1-31: "Backlog actual-lane default/rollback gate. Story 1.13 stays blocked until this story creates an accepted canonical actual-lane Go candidate."
+  1-13: "Blocked until canonical actual-lane Go candidate and rollback evidence are accepted after Story 1.31."
+  1-26: "Do not open unless repeated approved-hardware KPI failure is confirmed after the actual-lane track."
 
 development_status:
   epic-1: in-progress
-  1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: in-progress
-  1-14-공유-계약-동결과-검증-기준-확정: done
-  1-15-canon-helper-profile과-publication-contract-확정: done
-  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
-  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
-  1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입: done
-  1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착: done
-  1-20-resident-preview-lane-activation과-route-policy-promotion: done
-  1-1-set-up-initial-project-from-starter-template: done
-  1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
-  1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
+  1-1-초기-프로젝트-부트스트랩과-tauri-표준-시작점-구성: done
+  1-2-이름과-뒤4자리-기반-세션-시작: done
+  1-3-승인된-프리셋-카탈로그와-활성-프리셋-선택: done
   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
   1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
   1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
@@ -73,37 +111,55 @@ development_status:
   1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
   1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입: done
   1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환: done
+  1-13-guarded-cutover와-hardware-validation-gate: backlog
+  1-14-공유-계약-동결과-검증-기준-확정: done
+  1-15-canon-helper-profile과-publication-contract-확정: done
+  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
+  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
+  1-18-retired-dedicated-close-후보-activation-baseline-evidence-보존: backlog
+  1-19-legacy-validated-track-parity와-instrumentation-ledger-정리: backlog
+  1-20-legacy-route-activation-validation-track-유지: backlog
+  1-21-metric-reset과-full-screen-2500ms-acceptance-정렬: done
+  1-22-capture-full-screen-visible-evidence-chain-trace-reset: done
+  1-23-local-full-screen-lane-prototype과-truthful-artifact-generation: done
+  1-24-local-lane-hardware-canary-validation: done
+  1-25-local-lane-default-decision과-rollback-gate: done
+  1-26-local-lane-실패-시에만-remote-reserve-poc-개시: backlog
+  1-27-local-hot-path-darktable-절연과-2500ms-kpi-재검증: done
+  1-28-actual-primary-lane-close-owner-구현과-prototype-route-분리: ready-for-dev
+  1-29-actual-primary-lane-evidence와-vocabulary-realignment: backlog
+  1-30-actual-primary-lane-hardware-canary-재검증: backlog
+  1-31-actual-primary-lane-default-decision과-rollback-gate: backlog
   epic-1-retrospective: optional
 
-  epic-2: in-progress
-  2-1-현재-세션-사진-레일과-세션-범위-검토: done
-  2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
-  2-3-이후-촬영용-활성-프리셋-변경: done
-  2-4-조정된-종료-시각-표시와-경고-종료-알림: done
-  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: backlog
+  epic-2: done
+  2-1-현재-세션-전용-사진-검토-화면: done
+  2-2-현재-세션-삭제-정책-기반-사진-삭제: done
+  2-3-세션-중-활성-프리셋-변경: done
+  2-4-조정된-종료-시각-상시-노출: done
+  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-종료-직후-명시적-사후-상태-진입: done
   3-2-export-waiting과-truthful-completion-안내: done
   3-3-handoff-ready와-phone-required-보호-안내: done
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: done
+  4-1-내부-프리셋-작성-작업공간: done
   4-2-부스-호환성-검증과-승인-준비-상태-전환: done
   4-3-승인과-불변-게시-아티팩트-생성: review
-  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: done
+  4-4-미래-세션-대상-롤백: done
   epic-4-retrospective: optional
 
   epic-5: in-progress
-  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: done
+  5-1-운영자용-현재-세션-문맥과-장애-진단: done
   5-2-정책-기반-복구-액션과-phone-required-라우팅: done
-  5-3-라이프사이클-개입-복구-감사-로그-기록: done
-  5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: review
+  5-3-라이프사이클과-개입-감사-로그: done
+  5-4-카메라-연결-상태-전용-진단-항목: review
   epic-5-retrospective: optional
 
   epic-6: done
-  6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
+  6-1-지점별-단계적-배포와-단일-액션-롤백: done
   epic-6-retrospective: optional
-

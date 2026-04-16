@@ -353,6 +353,7 @@ export function PresetLibraryScreen() {
   const loadRequestVersionRef = useRef(0)
   const [workspace, setWorkspace] = useState<AuthoringWorkspaceResult | null>(null)
   const [catalogState, setCatalogState] = useState<CatalogStateResult | null>(null)
+  const [catalogStateRefreshNotice, setCatalogStateRefreshNotice] = useState<string | null>(null)
   const [mode, setMode] = useState<EditorMode>('create')
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null)
   const [draftForm, setDraftForm] = useState<DraftPresetEditPayload>(EMPTY_DRAFT_FORM)
@@ -395,6 +396,7 @@ export function PresetLibraryScreen() {
         setHostAccessDenied(false)
         setWorkspace(workspaceResult)
         setCatalogState(catalogStateResult)
+        setCatalogStateRefreshNotice(null)
         setPublicationNotice(null)
 
         const firstDraft = workspaceResult.drafts[0] ?? null
@@ -485,42 +487,62 @@ export function PresetLibraryScreen() {
       refreshCatalogState?: boolean
     },
   ) {
-    try {
-      const [refreshedWorkspace, refreshedCatalogState] = await Promise.all([
-        presetAuthoringService.loadAuthoringWorkspace(),
-        options?.refreshCatalogState
-          ? presetAuthoringService.loadPresetCatalogState().catch((error) => {
-              if (isCapabilityDenied(error)) {
-                throw error
-              }
+    const [workspaceResult, catalogStateResult] = await Promise.all([
+      presetAuthoringService
+        .loadAuthoringWorkspace()
+        .then((value) => ({ status: 'fulfilled' as const, value }))
+        .catch((reason: unknown) => ({ status: 'rejected' as const, reason })),
+      options?.refreshCatalogState
+        ? presetAuthoringService
+            .loadPresetCatalogState()
+            .then((value) => ({ status: 'fulfilled' as const, value }))
+            .catch((reason: unknown) => ({ status: 'rejected' as const, reason }))
+        : Promise.resolve({ status: 'skipped' as const }),
+    ])
 
-              return null
-            })
-          : Promise.resolve(null),
-      ])
-      setHostAccessDenied(false)
-      setWorkspace((current) =>
-        mergeRefreshedWorkspace(current, refreshedWorkspace, optimisticDraft),
-      )
-      if (refreshedCatalogState) {
-        setCatalogState(refreshedCatalogState)
-      }
-    } catch (error) {
-      const denied = isCapabilityDenied(error)
+    const deniedError =
+      (workspaceResult.status === 'rejected' && isCapabilityDenied(workspaceResult.reason)
+        ? workspaceResult.reason
+        : null) ??
+      (catalogStateResult.status === 'rejected' && isCapabilityDenied(catalogStateResult.reason)
+        ? catalogStateResult.reason
+        : null)
 
-      if (denied) {
-        setHostAccessDenied(true)
-        setWorkspace(null)
-        setCatalogState(null)
-        setSelectedDraftId(null)
-        setScreenState({
-          tone: 'error',
-          message: normalizeHostMessage(error),
-        })
-      }
-
-      // Keep the optimistic state when the post-mutation refresh is temporarily unavailable.
+    if (deniedError) {
+      setHostAccessDenied(true)
+      setWorkspace(null)
+      setCatalogState(null)
+      setCatalogStateRefreshNotice(null)
+      setSelectedDraftId(null)
+      setScreenState({
+        tone: 'error',
+        message: normalizeHostMessage(deniedError),
+      })
+      return
     }
+
+    setHostAccessDenied(false)
+
+    if (workspaceResult.status === 'fulfilled') {
+      setWorkspace((current) =>
+        mergeRefreshedWorkspace(current, workspaceResult.value, optimisticDraft),
+      )
+    }
+
+    if (!options?.refreshCatalogState) {
+      return
+    }
+
+    if (catalogStateResult.status === 'fulfilled') {
+      setCatalogState(catalogStateResult.value)
+      setCatalogStateRefreshNotice(null)
+      return
+    }
+
+    setCatalogState(null)
+    setCatalogStateRefreshNotice(
+      'live catalog 상태를 다시 확인하지 못해 현재 버전 표시는 잠시 숨겼어요.',
+    )
   }
 
   function updateForm<K extends keyof DraftPresetEditPayload>(
@@ -888,6 +910,7 @@ export function PresetLibraryScreen() {
     }
 
     setPublicationNotice(null)
+    setCatalogStateRefreshNotice(null)
     setScreenState({
       tone: 'saving',
       message: 'validated draft를 future-session catalog에 게시하고 있어요.',
@@ -936,7 +959,7 @@ export function PresetLibraryScreen() {
       }
 
       await refreshWorkspaceSnapshot(result.draft, {
-        refreshCatalogState: result.status === 'published',
+        refreshCatalogState: true,
       })
     } catch (error) {
       const denied = isCapabilityDenied(error)
@@ -1432,7 +1455,9 @@ export function PresetLibraryScreen() {
                       publish는 validated draft만 진행할 수 있고, 성공해도 현재 booth session과 기존 capture binding은 그대로 유지돼요.
                     </p>
 
-                    {selectedCatalogSummary ? (
+                    {catalogStateRefreshNotice ? (
+                      <p className="authoring-card__support">{catalogStateRefreshNotice}</p>
+                    ) : selectedCatalogSummary ? (
                       <p className="authoring-validation__summary">
                         Future session live version은 <strong>{selectedCatalogSummary.livePublishedVersion}</strong>
                         이고, catalog revision은 <strong>{catalogState?.catalogRevision ?? 0}</strong>예요.

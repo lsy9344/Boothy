@@ -32,22 +32,24 @@ const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
 #[cfg(test)]
 const TEST_RENDER_QUEUE_LIMIT_ENV: &str = "BOOTHY_TEST_RENDER_QUEUE_LIMIT";
-// The truthful recent-session rail preview does not need the old 512px cap.
-// Keep the render-backed close accurate, but shrink the booth-safe preview
-// artifact so preset-applied replacement lands materially sooner.
-const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
-const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
-const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
-const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
+// Keep the render-backed close display-sized enough to stay faithful on hardware,
+// while still avoiding the old full-size RAW path.
+pub(crate) const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 1024;
+pub(crate) const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 1024;
+pub(crate) const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 768;
+pub(crate) const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 768;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0x60, 0x60, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x01, 0x2B, 0x09, 0x4D, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
-    0xAE, 0x42, 0x60, 0x82,
+    0x89, 0x00, 0x00, 0x00, 0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xAE, 0xCE, 0x1C, 0xE9, 0x00, 0x00,
+    0x00, 0x04, 0x67, 0x41, 0x4D, 0x41, 0x00, 0x00, 0xB1, 0x8F, 0x0B, 0xFC, 0x61, 0x05, 0x00, 0x00,
+    0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x0E, 0xC3, 0x00, 0x00, 0x0E, 0xC3, 0x01, 0xC7,
+    0x6F, 0xA8, 0x64, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x18, 0x57, 0x63, 0xF8, 0xFF,
+    0xFF, 0xFF, 0x7F, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0x05, 0x43, 0x45, 0xCA, 0x00, 0x00, 0x00, 0x00,
+    0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
 static RENDER_QUEUE_DEPTH: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
@@ -101,7 +103,7 @@ impl PreviewInvocationProfile {
     fn approved_booth_safe() -> Self {
         Self {
             apply_custom_presets: false,
-            disable_opencl: false,
+            disable_opencl: true,
             allow_fast_preview_raster: true,
         }
     }
@@ -1883,7 +1885,7 @@ mod tests {
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
                     capture_budget_ms: 1000,
-                    preview_budget_ms: 5000,
+                    preview_budget_ms: 2500,
                     preview_budget_state: "pending".into(),
                 },
             },
@@ -1912,7 +1914,7 @@ mod tests {
             pair[0] == "--apply-custom-presets"
                 && pair[1] == DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED
         }));
-        assert!(!invocation
+        assert!(invocation
             .arguments
             .contains(&"--disable-opencl".to_string()));
         assert_eq!(
@@ -1982,7 +1984,7 @@ mod tests {
                     fast_preview_visible_at_ms: Some(120),
                     xmp_preview_ready_at_ms: None,
                     capture_budget_ms: 1000,
-                    preview_budget_ms: 5000,
+                    preview_budget_ms: 2500,
                     preview_budget_state: "pending".into(),
                 },
             },
@@ -2048,7 +2050,7 @@ mod tests {
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
                     capture_budget_ms: 1000,
-                    preview_budget_ms: 5000,
+                    preview_budget_ms: 2500,
                     preview_budget_state: "pending".into(),
                 },
             },
@@ -2079,6 +2081,18 @@ mod tests {
         assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_PNG);
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn preview_renderer_warmup_source_embeds_complete_png_chunks() {
+        let bytes = PREVIEW_RENDER_WARMUP_INPUT_PNG;
+
+        assert!(bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]));
+        assert!(bytes.windows(4).any(|window| window == b"sRGB"));
+        assert!(bytes.windows(4).any(|window| window == b"gAMA"));
+        assert!(bytes.windows(4).any(|window| window == b"pHYs"));
+        assert!(bytes.windows(4).any(|window| window == b"IDAT"));
+        assert!(bytes.windows(4).any(|window| window == b"IEND"));
     }
 
     #[test]
@@ -2165,7 +2179,7 @@ mod tests {
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
                     capture_budget_ms: 1000,
-                    preview_budget_ms: 5000,
+                    preview_budget_ms: 2500,
                     preview_budget_state: "pending".into(),
                 },
             },
@@ -2251,7 +2265,7 @@ mod tests {
                     fast_preview_visible_at_ms: None,
                     xmp_preview_ready_at_ms: None,
                     capture_budget_ms: 1000,
-                    preview_budget_ms: 5000,
+                    preview_budget_ms: 2500,
                     preview_budget_state: "pending".into(),
                 },
             },

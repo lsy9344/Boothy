@@ -53,12 +53,12 @@ internal sealed class CanonHelperService : IDisposable
             _camera.PumpEvents();
             await _camera.EnsureConnectedAsync(cancellationToken);
             await CompleteCaptureIfFinishedAsync();
-            _camera.TryCompletePendingFastPreviewDownload();
-            _camera.TryBackfillPreviewAssets(_paths);
+            var pendingRequests =
+                _activeCaptureTask is null ? _protocol.ReadRequests(_processedRequestIds) : [];
 
-            if (_activeCaptureTask is null)
+            if (_activeCaptureTask is null && pendingRequests.Count > 0)
             {
-                foreach (var request in _protocol.ReadRequests(_processedRequestIds))
+                foreach (var request in pendingRequests)
                 {
                     if (_processedRequestIds.Contains(request.RequestId))
                     {
@@ -160,6 +160,18 @@ internal sealed class CanonHelperService : IDisposable
                     );
                     break;
                 }
+            }
+
+            if (ShouldRunPendingFastPreviewMaintenance(_activeCaptureTask is not null, pendingRequests.Count))
+            {
+                _camera.TryCompletePendingFastPreviewDownload();
+            }
+
+            var pendingRequestsBeforeBackfill =
+                _activeCaptureTask is null ? _protocol.ReadRequests(_processedRequestIds) : [];
+            if (ShouldRunPreviewBackfillMaintenance(_activeCaptureTask is not null, pendingRequestsBeforeBackfill.Count))
+            {
+                _camera.TryBackfillPreviewAssets(_paths);
             }
 
             if (ShouldWriteStatus(nextStatusAt))
@@ -268,5 +280,21 @@ internal sealed class CanonHelperService : IDisposable
     private static string UtcNow()
     {
         return DateTimeOffset.UtcNow.ToString("O");
+    }
+
+    internal static bool ShouldRunPendingFastPreviewMaintenance(
+        bool hasActiveCaptureTask,
+        int pendingRequestCount
+    )
+    {
+        return !hasActiveCaptureTask && pendingRequestCount <= 0;
+    }
+
+    internal static bool ShouldRunPreviewBackfillMaintenance(
+        bool hasActiveCaptureTask,
+        int pendingRequestCount
+    )
+    {
+        return !hasActiveCaptureTask && pendingRequestCount <= 0;
     }
 }

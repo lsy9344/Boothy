@@ -5,6 +5,9 @@ use tauri::Manager;
 
 use crate::{
     contracts::dto::CapabilitySnapshotDto,
+    render::dedicated_renderer::{
+        append_capture_visibility_evidence_update_in_dir, resolve_capture_visibility_owner_in_dir,
+    },
     session::session_repository::resolve_app_session_base_dir,
     timing::{append_session_timing_event_in_dir, SessionTimingEventInput},
 };
@@ -92,7 +95,9 @@ pub fn append_capture_client_timing_event_in_dir(
 
     // Mirror the key first-visible latency seam into the per-session log so
     // time-reduction analysis does not depend on the global app log alone.
-    let detail = input.message.as_deref();
+    let enriched_detail =
+        enrich_capture_client_timing_detail(base_dir, session_id, input.label.as_str(), input.message.as_deref());
+    let detail = enriched_detail.as_deref().or(input.message.as_deref());
     let _ = append_session_timing_event_in_dir(
         base_dir,
         SessionTimingEventInput {
@@ -103,6 +108,7 @@ pub fn append_capture_client_timing_event_in_dir(
             detail,
         },
     );
+    append_capture_visibility_evidence_if_needed(base_dir, session_id, input.label.as_str(), detail);
 }
 
 #[tauri::command]
@@ -160,4 +166,88 @@ fn extract_capture_client_detail_value<'a>(detail: Option<&'a str>, key: &str) -
                     .filter(|entry_value| !entry_value.is_empty() && *entry_value != "unknown")
             })
     })
+}
+
+fn append_capture_visibility_evidence_if_needed(
+    base_dir: &std::path::Path,
+    session_id: &str,
+    label: &str,
+    detail: Option<&str>,
+) {
+    if !matches!(
+        label,
+        "current-session-preview-visible" | "recent-session-visible"
+    ) {
+        return;
+    }
+
+    let Some(capture_id) = extract_capture_client_detail_value(detail, "captureId") else {
+        return;
+    };
+    let Some(request_id) = extract_capture_client_detail_value(detail, "requestId") else {
+        return;
+    };
+    let Some(ready_at_ms) = extract_capture_client_detail_value(detail, "readyAtMs")
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return;
+    };
+    let Some(ui_lag_ms) = extract_capture_client_detail_value(detail, "uiLagMs")
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return;
+    };
+
+    let visible_at_ms = ready_at_ms.saturating_add(ui_lag_ms);
+    let _ = append_capture_visibility_evidence_update_in_dir(
+        base_dir,
+        session_id,
+        capture_id,
+        request_id,
+        visible_at_ms,
+        extract_capture_client_detail_value(detail, "visibleOwner"),
+    );
+}
+
+fn enrich_capture_client_timing_detail(
+    base_dir: &std::path::Path,
+    session_id: &str,
+    label: &str,
+    detail: Option<&str>,
+) -> Option<String> {
+    let detail = detail?;
+    if !matches!(
+        label,
+        "current-session-preview-visible" | "recent-session-visible"
+    ) {
+        return Some(detail.to_string());
+    }
+
+    let capture_id = extract_capture_client_detail_value(Some(detail), "captureId")?;
+    let request_id = extract_capture_client_detail_value(Some(detail), "requestId")?;
+    let ready_at_ms = extract_capture_client_detail_value(Some(detail), "readyAtMs")
+        .and_then(|value| value.parse::<u64>().ok())?;
+    let ui_lag_ms = extract_capture_client_detail_value(Some(detail), "uiLagMs")
+        .and_then(|value| value.parse::<u64>().ok())?;
+    let visible_at_ms = ready_at_ms.saturating_add(ui_lag_ms);
+    let visible_owner = extract_capture_client_detail_value(Some(detail), "visibleOwner")
+        .map(str::to_string)
+        .or_else(|| {
+            resolve_capture_visibility_owner_in_dir(base_dir, session_id, capture_id, request_id)
+                .ok()
+                .flatten()
+        })?;
+
+    let mut parts = detail
+        .split(';')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if extract_capture_client_detail_value(Some(detail), "visibleOwner").is_none() {
+        parts.push(format!("visibleOwner={visible_owner}"));
+    }
+    if extract_capture_client_detail_value(Some(detail), "visibleOwnerTransitionAtMs").is_none() {
+        parts.push(format!("visibleOwnerTransitionAtMs={visible_at_ms}"));
+    }
+
+    Some(parts.join(";"))
 }

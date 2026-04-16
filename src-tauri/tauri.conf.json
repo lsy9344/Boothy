@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeDevCommand": "pnpm run prepare:dedicated-renderer && pnpm run build && pnpm run preview:desktop",
-    "beforeBuildCommand": "pnpm run prepare:dedicated-renderer && pnpm run build"
+    "beforeDevCommand": "pnpm run build && pnpm run preview:desktop",
+    "beforeBuildCommand": "pnpm run build"
   },
   "app": {
     "windows": [

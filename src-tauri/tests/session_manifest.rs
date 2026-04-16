@@ -612,7 +612,7 @@ fn legacy_v1_manifest_with_existing_captures_backfills_capture_preset_identity()
           "captureAcknowledgedAtMs": 100,
           "previewVisibleAtMs": 200,
           "captureBudgetMs": 1000,
-          "previewBudgetMs": 5000,
+          "previewBudgetMs": 2500,
           "previewBudgetState": "withinBudget"
         }
       }],
@@ -684,7 +684,7 @@ fn legacy_v1_manifest_with_existing_captures_backfills_capture_preview_route_sna
           "captureAcknowledgedAtMs": 100,
           "previewVisibleAtMs": 200,
           "captureBudgetMs": 1000,
-          "previewBudgetMs": 5000,
+          "previewBudgetMs": 2500,
           "previewBudgetState": "withinBudget"
         }
       }],

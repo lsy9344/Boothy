@@ -234,13 +234,19 @@ where
             detail: Some(&file_arrived_detail),
         },
     );
+    let round_trip_fast_preview = if early_fast_preview_update.is_some() {
+        None
+    } else {
+        round_trip.fast_preview
+    };
     let (manifest, capture, fast_preview_update) = persist_capture_in_dir(
         base_dir,
         &input,
         round_trip.capture_id,
         request_id.clone(),
         round_trip.raw_path,
-        round_trip.fast_preview,
+        round_trip_fast_preview,
+        early_fast_preview_update.as_ref(),
         round_trip.capture_accepted_at_ms,
         round_trip.persisted_at_ms,
     )

@@ -107,7 +107,7 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
 - `activePreset`: canonical preset binding
 - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
 - `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
-- `activePreviewRendererRoute`: active session이 선택한 preview route snapshot. 이후 policy rollback이 생겨도 이미 선택된 세션 의미를 재해석하면 안 된다.
+- `activePreviewRendererRoute`: active session이 선택한 capture-time route snapshot. Story 1.23 prototype owner는 이 snapshot 위에서만 local lane truth를 해석할 수 있으며, later policy change 또는 rollback이 생겨도 이미 선택된 세션 의미를 reinterpreted 하면 안 된다.
 - `activePreviewRendererWarmState`: active session 기준 warm-state evidence snapshot. route snapshot과 별개 additive evidence이며, `presetId +
   publishedVersion + state + observedAt`를 최소 단위로 유지한다.
 - `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.
@@ -127,7 +127,7 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
   preview path 검증을 통과하기 전에는 `previewReady`나 `xmpPreviewReadyAtMs`를 올리면 안 된다.
 - dedicated renderer result가 `accepted + canonical output`까지 검증되면 host는 같은 canonical
   preview path를 truthful close owner로 채택할 수 있고, `capture_preview_transition_summary`
-  진단 이벤트로 `firstVisibleMs`, `replacementMs`, lane owner, fallback reason, warm state를 함께 남긴다.
+  진단 이벤트로 `sameCaptureFullScreenVisibleMs`, `firstVisibleMs`, `replacementMs`, lane owner, fallback reason, warm state를 함께 남긴다.
 - Story 1.19 evidence bundle은 manifest capture record만 단독으로 읽지 않는다. 같은 capture correlation의
   `preview-promotion-evidence.jsonl`, `timing-events.log`, route policy snapshot, published bundle, catalog state를 함께 읽어야 한다.
 - `captures[*].preview.assetPath`, `captures[*].final.assetPath`: runtime manifest에서는 현재 세션 root 아래 절대경로만 허용

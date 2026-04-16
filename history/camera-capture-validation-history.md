@@ -961,3 +961,612 @@ Select-String -Path <camera-helper-events.jsonl 경로> -Pattern "<requestId>"
 
 1. 이후 다시 같은 패턴이 나오기 전까지는 `2026-04-01 18:40 +09:00` 항목의 원인/수정 조합을 현행 정상 해법으로 본다.
 2. 다음 회귀가 생기면 새 session evidence를 다시 분리해서, 같은 root cause의 재발인지 다른 경계의 새 실패인지부터 구분한다.
+
+### 2026-04-14 15:45 +09:00 하드웨어 재검증 후속: dedicated renderer 성공 경로에서 speculative close가 중복 경쟁하며 close 시간이 늘어났다
+
+사용자 최신 제보:
+
+- 앱 실행 후 하드웨어 검증을 다시 했지만, preview 교체가 여전히 느리다고 보고했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 앱 로그와 session evidence는 `session_000000000018a62558931dd920`를 기준으로 확인했다.
+- `Boothy.log`에는 마지막 캡처 `capture_20260414063000251_cffab78a95`에 대해
+  - `speculative_preview_render_started ... sourceAsset=fast-preview-raster`
+  - `capture_preview_transition_summary ... lane_owner=dedicated-renderer fallback_reason=none first_visible_ms=2819 replacement_ms=5533`
+  가 남아 있었다.
+- 같은 session의 `diagnostics/timing-events.log`에서도 모든 캡처가
+  - `fast-preview-visible`
+  - `preview-render-ready ... binary=dedicated-renderer`
+  순으로 닫혔고,
+  마지막 캡처는 `replacementMs=5533`, `originalVisibleToPresetAppliedVisibleMs=2714`였다.
+- 즉 helper fast preview는 이미 살아 있고 dedicated renderer도 실제로 accepted 되었지만,
+  close render 자체가 여전히 수초 단위로 남아 있었다.
+
+원인 판단:
+
+- 이번 느림은 helper 썸네일 handoff 누락이 아니라,
+  **dedicated renderer canary 성공 경로에서 host의 speculative close render가 같은 capture에 대해 동시에 돌며 렌더 경쟁을 만든 문제**로 보는 것이 가장 타당했다.
+- 현재 ingest 단계는 fast preview가 보이자마자 host resident speculative render를 시작한다.
+- 동시에 canary에서는 dedicated renderer sidecar도 same-capture truthful close를 소유한다.
+- 최신 로그에는 `speculative_preview_render_started`와 dedicated renderer accepted 결과가 같은 capture에 함께 남아 있어,
+  성공 경로에서 close render가 사실상 이중 실행되고 있음을 확인했다.
+
+이번 회차 수정:
+
+- active preset이 `local-renderer-sidecar` route에 있고,
+  route stage가 `canary/default`,
+  그리고 manifest의 active warm state가 같은 preset/version에 대해 `warm-ready` 또는 `warm-hit`인 경우에는
+  ingest 단계의 speculative close render를 시작하지 않도록 보정했다.
+- 즉 first-visible 원본/thumbnail은 그대로 즉시 보여주되,
+  dedicated renderer가 이미 준비된 happy path에서는 same-capture close render를 한 lane만 돌게 했다.
+- 세션 timing 로그에는 `speculative-preview-skipped` 이벤트가 남도록 해서,
+  다음 하드웨어 검증 시 이 전략이 실제로 적용됐는지 바로 추적할 수 있게 했다.
+- dedicated renderer의 개선 요약 버전은 `2026-04-14g`로 올렸고,
+  `skipSpeculativeCloseWhenDedicatedRouteWarm=true`를 매번 evidence에 남기도록 했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::ingest_pipeline::tests::skips_speculative_preview_when_dedicated_route_is_warm_and_active -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::ingest_pipeline::tests::keeps_speculative_preview_when_warm_state_is_for_another_preset -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib render::dedicated_renderer::tests::preview_optimization_summary_reports_active_strategy -- --exact --nocapture`
+- `pnpm vitest run src/shared-contracts/contracts.test.ts`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 연속 촬영 2~3장 이상 진행한다.
+2. 새 session의 `Boothy.log`와 `diagnostics/timing-events.log`에서
+   - `speculative-preview-skipped`
+   - `capture_preview_transition_summary`
+   - `capture_preview_optimization_summary`
+   를 확인한다.
+3. 목표는
+   - dedicated renderer accepted 유지
+   - `replacementMs` 하락
+   - 특히 이전 `5533ms` outlier가 재발하지 않는지
+   를 비교하는 것이다.
+
+### 2026-04-14 16:58 +09:00 하드웨어 후속: speculative close 중복은 제거됐지만 dedicated close 자체가 아직 느려 close 해상도와 fast preview 중복 승격을 추가로 줄였다
+
+사용자 최신 제보:
+
+- 앱을 다시 실행해 하드웨어 검증했지만 여전히 느리다고 보고했다.
+- 이번 회차부터는 어떤 개선을 넣었는지 로그 파일에도 계속 남겨 달라고 요청했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a629892187d3a8`였다.
+- `diagnostics/timing-events.log`에는 모든 capture에 대해
+  - `speculative-preview-skipped`
+  - `capture_preview_optimization_summary detail=strategyVersion=2026-04-14g;...;skipSpeculativeCloseWhenDedicatedRouteWarm=true`
+  가 남아 있었다.
+- 즉 직전 수정으로 speculative close 중복 경쟁은 실제 실행본에 반영됐고, 더 이상 병목의 주원인이 아니었다.
+- 하지만 같은 세션의 3건은 여전히
+  - `replacementMs=4411`
+  - `replacementMs=4455`
+  - `replacementMs=3494`
+  수준으로 남았고,
+  모두 `laneOwner=dedicated-renderer`, `fallbackReason=none`, `warmState=warm-hit`였다.
+
+원인 판단:
+
+- 이제 남은 병목은 helper handoff나 speculative 경쟁이 아니라,
+  **dedicated renderer가 same-capture close preview를 만드는 자체 비용**으로 좁혀졌다.
+- 현재 구조는 이미 fast preview raster를 소스로 쓰고 있고 happy path도 dedicated renderer 한 lane만 남겼다.
+- 따라서 같은 제품 계약을 유지한 상태에서 더 줄일 수 있는 다음 수단은
+  1. close preview 렌더 크기를 더 낮추는 것
+  2. early fast preview 승격을 두 번 반복하지 않게 정리하는 것
+  으로 판단했다.
+
+이번 회차 수정:
+
+- dedicated renderer와 host preview renderer의 display-sized close cap을 더 낮췄다.
+  - fast preview 기반 close: `192x192 -> 128x128`
+  - raw fallback close: `320x320 -> 256x256`
+- capture round-trip 중 `FastPreviewReady`로 이미 같은 preview를 early 승격한 경우에는
+  persist 단계에서 같은 자산을 다시 승격하지 않도록 정리했다.
+  - 목적은 first-visible 시점 흔들림과 중복 timing event를 줄이는 것이다.
+- 다음 실행부터 `capture_preview_optimization_summary`와 evidence에는
+  `strategyVersion=2026-04-14h`
+  `dedupeEarlyFastPreviewPromotion=true`
+  `fastPreviewCapPx=128x128`
+  `rawPreviewCapPx=256x256`
+  가 기록된다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib render::dedicated_renderer::tests::preview_optimization_summary_reports_active_strategy -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::ingest_pipeline::tests::skips_speculative_preview_when_dedicated_route_is_warm_and_active -- --exact --nocapture`
+- `pnpm vitest run src/shared-contracts/contracts.test.ts`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- `rustc --edition=2021 --test sidecar/dedicated-renderer/main.rs -o target\\dedicated_renderer_tests.exe` 후 `target\\dedicated_renderer_tests.exe`
+- 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 룩으로 2~3장 연속 촬영한다.
+2. 새 로그에서
+   - `capture_preview_optimization_summary`
+   - `capture_preview_transition_summary`
+   - 필요 시 `fast-preview-visible`
+   를 확인한다.
+3. 이번 비교 목표는
+   - `strategyVersion=2026-04-14h`가 실제로 남는지
+   - `replacementMs`가 기존 `3494~4455ms`보다 추가로 내려가는지
+   - fast preview 관련 중복 이벤트가 줄었는지
+   를 확인하는 것이다.
+
+### 2026-04-16 01:29 +09:00 로그 후속: preset 자체는 제출됐지만 preview 완료와 warm-state 동기화가 같은 session manifest를 교차 갱신하며 세션 truth가 사라질 수 있었다
+
+사용자 최신 제보:
+
+- 프리셋이 적용되지 않았고, 세 컷을 찍은 뒤 앱이 초기 화면으로 튕겼다고 보고했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 실패 세션은 `session_000000000018a6941e2dcd50e8`였다.
+- 같은 세션의 `diagnostics/camera-helper-events.jsonl`에는 3번 모두
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  가 순서대로 남아 있었다.
+- `diagnostics/camera-helper-status.json`의 최종 상태도
+  - `cameraState=ready`
+  - `helperState=healthy`
+  - `detailCode=camera-ready`
+  였다.
+- dedicated renderer diagnostics의 각 `*.preview-result.json`도 3건 모두 `status=accepted`였다.
+- 반면 세션 루트에는 **`session.json`이 아예 남아 있지 않았고**,
+  raw/originals와 canonical preview 파일들만 존재했다.
+- 같은 세션의 `diagnostics/timing-events.log`에는
+  두 capture의 `preview-render-ready`가 한 줄에 겹쳐 기록된 흔적이 있어,
+  동일 시점의 파일 append/write 경합도 함께 확인됐다.
+
+원인 판단:
+
+- 이번 실패는 helper capture나 preset publication 누락보다,
+  **preview 완료 경로와 dedicated renderer warm-state 동기화 경로가 같은 `session.json`을 동시에 교체(write-swap)하려 하며 세션 truth를 잃은 문제**로 보는 것이 가장 타당했다.
+- 실제 증거상 카메라 촬영과 dedicated renderer 제출은 모두 성공했기 때문에,
+  고객이 본 "프리셋이 적용되지 않음" 체감은 preset 계산 실패보다
+  **세션 manifest 소실로 booth가 현재 session/capture truth를 복구하지 못한 결과**에 가깝다.
+- 특히 second/third capture close가 비슷한 시점에 닫히는 동안,
+  `finish_preview_render_in_dir(...)`는 capture pipeline lock 아래에서 manifest를 갱신하지만
+  `sync_active_preview_warm_state_in_manifest(...)`는 별도 락 없이 같은 manifest를 다시 읽고 써서
+  atomic swap용 `session.json.tmp` / `session.json.bak`를 서로 덮을 수 있었다.
+
+이번 회차 수정:
+
+- session repository에 **manifest 경로별 write 직렬화 락**을 추가해,
+  같은 `session.json`에 대한 temp/backup swap이 동시에 실행되지 않게 했다.
+- dedicated renderer의 active warm-state manifest 동기화도
+  **capture pipeline lock 아래에서 읽기/쓰기** 하도록 맞춰,
+  preview close와 warm-state snapshot 갱신이 같은 capture 흐름에서 교차 덮어쓰지 않게 했다.
+- 이 회차의 목적은 preview 속도 조정이 아니라,
+  **세 컷 이후에도 현재 세션 truth가 사라지지 않고 유지되게 만드는 것**이다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib session::session_repository::tests::concurrent_manifest_writes_keep_the_manifest_present_and_readable -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_recovers_from_a_manifest_backup_left_during_an_atomic_swap_gap -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
+- 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는
+   - 촬영 후 booth가 초기 화면으로 튀지 않는지
+   - 각 컷이 최근 결과에 계속 남는지
+   - preset-applied preview가 늦더라도 세션 자체는 유지되는지
+   를 본다.
+3. 재발 시에는 같은 세션의 아래 파일을 한 세트로 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
+   - 가능하면 booth 화면 사진 또는 짧은 영상
+
+### 2026-04-16 01:30 +09:00 하드웨어 후속: 세션 소실은 막혔지만 첫 컷 preset close가 다시 느렸고, 두 번째 컷은 helper handoff budget을 다시 넘겨 timeout으로 떨어졌다
+
+사용자 최신 제보:
+
+- 프리셋 적용 후 두 번째 샷에서 멈췄고,
+- 프리셋 적용 시간도 오래 걸렸다고 보고했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a694ccc7295300`였다.
+- 이번에는 직전 수정 덕분에 `session.json`은 정상적으로 남아 있었고,
+  세션이 초기 화면으로 튀는 manifest 소실 회귀는 재발하지 않았다.
+- 다만 같은 세션의 `diagnostics/timing-events.log`에는 첫 번째 캡처
+  - `fast-preview-visible`
+  - `preview-render-ready`
+  - `capture_preview_transition_summary ... warmState=warm-hit ... firstVisibleMs=3034 ... replacementMs=7142`
+  가 남아 있어,
+  **preset-applied close가 warm-hit 조건에서도 다시 7초대까지 늘어난 것**을 확인했다.
+- 이어서 같은 세션의 두 번째 요청 `request_000000000000064f8241ded818`은
+  `camera-helper-events.jsonl`에 `capture-accepted`까지만 남았고,
+  `2026-04-15T16:32:42Z`에
+  - `recovery-status(detailCode=capture-download-timeout)`
+  - `helper-error(detailCode=capture-download-timeout)`
+  로 닫혔다.
+- 최종 `camera-helper-status.json`은 다시 `camera-ready`로 회복했지만,
+  세션에는 첫 번째 캡처만 남아 있었다.
+
+원인 판단:
+
+- 이번 회차의 직접 실패는 다시
+  **follow-up capture의 RAW handoff가 helper 기본 completion budget 안에 닫히지 못한 문제**로 보는 것이 맞았다.
+- 최신 로그상 두 번째 샷은 아예 request 소비 실패가 아니라 `capture-accepted`까지는 성공했으므로,
+  stale request나 세션 소실보다 **helper download completion 경계**가 다시 병목이다.
+- 동시에 첫 번째 샷의 `replacementMs=7142`는 현재 close preview 비용이 여전히 높다는 뜻이므로,
+  사용자가 "프리셋 적용이 느리다"라고 느낀 불만도 이번 증거와 일치한다.
+
+이번 회차 수정:
+
+- helper 기본 capture completion timeout을 `30초 -> 45초`로 늘렸다.
+- host capture round-trip timeout도 `35초 -> 50초`로 맞춰,
+  helper보다 host가 먼저 같은 follow-up capture를 실패로 잠그지 않게 했다.
+- dedicated renderer / host preview close cap을 한 단계 더 낮췄다.
+  - fast preview 기반 close: `128x128 -> 96x96`
+  - raw fallback close: `256x256 -> 224x224`
+- 다음 evidence summary에는
+  `strategyVersion=2026-04-16a`
+  `fastPreviewCapPx=96x96`
+  `rawPreviewCapPx=224x224`
+  가 남는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::sidecar_client::tests::capture_round_trip_timeout_uses_the_latest_default_budget_when_unset -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_capture_download_timeout_recovers -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- 위 Rust 검증은 모두 통과했다.
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`는
+  현재 워크스페이스에 Canon SDK source가 없어
+  `Canon SDK source not found`로 실행하지 못했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 2장, 가능하면 4~5장까지 연속 촬영한다.
+2. 이번에는
+   - 두 번째 샷이 다시 멈추지 않는지
+   - 첫 번째 샷 preset-applied close가 이전 `replacementMs=7142`보다 내려가는지
+   - 촬영 후 세션이 계속 유지되는지
+   를 함께 본다.
+3. 재발 시에는 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/camera-helper-events.jsonl`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
+
+### 2026-04-16 02:05 +09:00 하드웨어 후속: 최신 세션은 더 이상 멈추지 않았고, 남은 체감 지연 중 하나는 early fast preview를 persist 단계에서 다시 canonical scan 하며 중복 승격하던 경로였다
+
+사용자 최신 제보:
+
+- 로그를 확인해서 더 단축시켜 달라고 요청했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a69568f2f4db0c`였다.
+- 이 세션의 `session.json`은 정상적으로 남아 있었고, 세 컷 모두 session capture에 기록돼 있었다.
+- `diagnostics/timing-events.log`에는 세 컷 모두
+  - `fast-preview-visible`
+  - `preview-render-ready`
+  - `capture_preview_transition_summary ... warmState=warm-hit ... replacementMs=6540/6789/6551`
+  가 남아 있어, 이번 회차의 직접 실패는 아니라는 점이 먼저 확인됐다.
+- 같은 세션의 dedicated renderer request/result 파일 타임스탬프를 대조하면 request-to-result가 대략
+  - `3487ms`
+  - `3834ms`
+  - `3576ms`
+  로 닫혀 있었고, 현재 남은 문제는 preset close의 순수 latency로 좁혀졌다.
+- 동시에 같은 세션의 각 capture에는
+  - `fast-preview-promoted kind=windows-shell-thumbnail`
+  직후
+  - `fast-preview-promoted kind=legacy-canonical-scan`
+  이 다시 남아 있었다.
+- 즉 helper가 먼저 canonical preview까지 승격해 둔 capture에서도 persist 단계가 그 사실을 전달받지 못해,
+  이미 보인 same-capture preview를 다시 canonical scan 하며 한 번 더 승격하려 하고 있었다.
+
+원인 판단:
+
+- 이번 회차에서 바로 줄일 수 있는 병목은
+  **early fast preview promotion 결과를 persist 단계가 재사용하지 못해 같은 썸네일을 다시 canonical scan 하던 중복 경로**였다.
+- 이 경로는 dedicated renderer의 3초대 close 자체를 없애지는 못하지만,
+  첫 visible 이후 host가 같은 preview 자산을 한 번 더 확인/채택하는 불필요한 작업과 중복 timing noise를 만들고 있었다.
+- 반대로 darktable/XMP 자체를 크게 바꾸는 쪽은 현재 증거만으로는 preset truth 리스크가 있어 이번 회차에서는 건드리지 않았다.
+
+이번 회차 수정:
+
+- helper의 `fast-preview-ready`가 먼저 canonical preview 승격을 끝낸 경우,
+  persist 단계가 그 **이미 검증된 early preview 결과를 그대로 재사용**하도록 바꿨다.
+- 이제 같은 request/capture에서는 `legacy-canonical-scan`으로 다시 canonical preview를 찾지 않는다.
+- 목적은 첫 visible 직후의 중복 승격과 추가 디스크 스캔을 없애,
+  **현재 구조를 유지한 채 체감 지연을 조금 더 깎는 것**이다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness fast_preview_updates_are_emitted_from_the_canonical_preview_path_before_capture_save_closes -- --exact --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- 위 검증은 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는
+   - 첫 썸네일이 뜬 뒤 같은 컷이 한 번 더 흔들리거나 늦게 다시 붙는 느낌이 줄었는지
+   - 전체 preset 적용 대기가 이전보다 조금이라도 짧아졌는지
+   - 세션이 계속 유지되는지
+   를 함께 본다.
+3. 재발 또는 체감 차이가 작으면 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/*.preview-request.json`
+   - `diagnostics/dedicated-renderer/*.preview-result.json`
+
+### 2026-04-16 02:18 +09:00 하드웨어 후속: early preview 중복은 사라졌지만 dedicated renderer close는 여전히 darktable preview run 자체가 병목이었고, local bench 기준 `memory library + opencl off` 조합만 의미 있게 줄었다
+
+사용자 최신 제보:
+
+- 로그를 다시 확인해서 더 단축시켜 달라고 요청했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a6963a96799cb4`였다.
+- 이 세션은 5컷 연속 촬영이 모두 성공했고, `session.json`도 정상적으로 유지됐다.
+- 이번에는 직전 수정이 실제 반영되어 `diagnostics/timing-events.log`에서
+  **`legacy-canonical-scan`이 더 이상 남지 않았다.**
+- 그러나 같은 세션의 5건은 여전히
+  - `replacementMs=7165`
+  - `6634`
+  - `6477`
+  - `6897`
+  - `7327`
+  로 남아 있었고,
+  전부 `laneOwner=dedicated-renderer`, `fallbackReason=none`, `warmState=warm-hit`였다.
+- dedicated renderer request/result 파일 타임스탬프를 대조하면 request-to-result가 대략
+  - `4031ms`
+  - `3728ms`
+  - `3735ms`
+  - `3984ms`
+  - `4543ms`
+  로 닫혀 있었다.
+- 즉 이번 회차의 남은 병목은 helper나 host 중복 승격이 아니라,
+  **dedicated renderer가 darktable-cli로 preset close를 만드는 자체 시간**이었다.
+
+추가 원인 확인:
+
+- sidecar `warmup-v1` 구현을 다시 읽어 보니 현재 warm-up은 실제 렌더러/CLI를 데우지 않고,
+  warm-state marker 파일만 `warm-ready`로 남기는 구조였다.
+- 즉 로그의 `warm-hit`는 실제 darktable warm cache hit가 아니라
+  **"같은 preset/session용 marker가 있었다"**는 뜻에 가까웠다.
+- 실제 장비와 같은 입력 자산으로 local bench를 다시 돌린 결과,
+  기본 preview invocation 대비
+  **`--library :memory:` + `--disable-opencl` 조합만**
+  출력 차이 없이 유의미하게 시간을 줄였다.
+  - baseline: 약 `5.2s`
+  - optimized: 약 `4.4s`
+  - 출력 크기는 동일했고, 비교상 채널 평균 차이는 거의 없었다.
+
+이번 회차 수정:
+
+- dedicated renderer preview close invocation에
+  - `--core --library :memory:`
+  - `--disable-opencl`
+  을 추가했다.
+- 목적은 preview close가 매번 디스크 library 상태와 opencl 초기화 비용을 끌고 가지 않게 해,
+  **same-capture preset-applied close 자체 시간을 줄이는 것**이다.
+- 다음 evidence summary에는
+  `strategyVersion=2026-04-16b`
+  `previewCliLibrary=memory`
+  `previewCliDisableOpencl=true`
+  가 남는다.
+
+검증:
+
+- `rustc --edition=2021 --test sidecar/dedicated-renderer/main.rs -o target\\dedicated_renderer_sidecar_tests.exe`
+- `target\\dedicated_renderer_sidecar_tests.exe`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- 위 검증은 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는
+   - preset-applied close가 이전 `replacementMs=6477~7327`보다 내려가는지
+   - 연속 촬영 중 멈춤 없이 계속 유지되는지
+   - 첫 썸네일은 그대로 빠르게 뜨면서, preset-applied 교체가 이전보다 덜 늦게 붙는지
+   를 함께 본다.
+3. 재발 시에는 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
+   - `diagnostics/dedicated-renderer/*.preview-request.json`
+   - `diagnostics/dedicated-renderer/*.preview-result.json`
+
+### 2026-04-16 02:14 +09:00 하드웨어 후속: 최신 최적화는 반영됐지만 현행 96x64급 truthful preview가 너무 부드러워졌고, 이번 회차는 화질을 한 단계 복원하면서 renderer startup 최적화는 유지했다
+
+사용자 최신 제보:
+
+- 로그를 다시 확인해서 더 단축시켜 달라고 요청했다.
+- 단, 시간 단축을 위해 해상도를 더 낮추지는 말아 달라고 했고, 현재 결과는 너무 깨져서 사용자가 받아들이기 어렵다고 보고했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a696dfd1fb2a64`였다.
+- 이 세션은 5컷 연속 촬영이 모두 성공했고, 세션 유지와 follow-up capture 멈춤 회귀는 재발하지 않았다.
+- `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`에는 직전 전략이 실제 적용된
+  `strategyVersion=2026-04-16b`
+  가 남아 있었다.
+- 같은 세션의 `diagnostics/timing-events.log`에는 각 capture가
+  - `firstVisibleMs=3335 / 3058 / 2863 / 3095 / 2993`
+  - `replacementMs=6787 / 6401 / 6207 / 6395 / 6908`
+  로 남아 있어,
+  직전 회차의 renderer startup 최적화는 일부 효과가 있었지만 아직 충분하지 않았다.
+- 동시에 실제 session preview 파일은 현행 cap 영향으로 `96x64` 수준으로 생성되고 있었고,
+  사용자가 말한 "너무 깨진다"는 체감과 일치했다.
+
+원인 판단:
+
+- 최신 병목은 여전히 dedicated renderer close 자체에 남아 있지만,
+  이번 제보 기준으로는 **속도를 위해 preview 해상도를 과하게 낮춘 부작용도 이미 제품 문제로 드러난 상태**였다.
+- 따라서 다음 개선은 해상도를 더 낮추는 대신,
+  직전 회차에서 확보한
+  `--library :memory:`
+  `--disable-opencl`
+  이점을 유지한 채 preview 크기를 한 단계 복원하는 것이 맞다고 판단했다.
+
+이번 회차 수정:
+
+- dedicated renderer truthful preview cap을 한 단계 복원했다.
+  - fast preview 기반 close: `96x96 -> 128x128`
+  - raw fallback close: `224x224 -> 256x256`
+- host preview invocation도 booth-safe preview에서 `--disable-opencl`을 함께 사용하도록 맞춰,
+  화질 복원으로 늘 수 있는 fallback 경로 비용을 줄이도록 했다.
+- 다음 evidence summary에는
+  `strategyVersion=2026-04-16c`
+  `hostPreviewDisableOpencl=true`
+  `fastPreviewCapPx=128x128`
+  `rawPreviewCapPx=256x256`
+  가 남는다.
+
+검증:
+
+- `rustc --edition=2021 --test sidecar/dedicated-renderer/main.rs -o target\\dedicated_renderer_sidecar_tests.exe`
+- `target\\dedicated_renderer_sidecar_tests.exe`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test dedicated_renderer -- --nocapture`
+- `cargo build --manifest-path src-tauri/Cargo.toml`
+- 위 검증은 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는
+   - preview가 이전 96x64급보다 덜 깨져 보이는지
+   - preset-applied close가 여전히 연속 촬영을 막지 않고 유지되는지
+   - `strategyVersion=2026-04-16c`가 실제 세션 evidence에 남는지
+   를 함께 본다.
+3. 여전히 느리면 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
+   - `diagnostics/dedicated-renderer/*.preview-request.json`
+   - `diagnostics/dedicated-renderer/*.preview-result.json`
+
+### 2026-04-16 10:29 +09:00 하드웨어 후속: 이번엔 프리셋 렌더보다 capture helper가 새 요청을 늦게 먹은 쪽이 문제였고, best-effort preview backfill이 새 촬영 요청보다 앞서지 않게 순서를 조정했다
+
+사용자 최신 제보:
+
+- 로그를 확인해서 촬영이 안 된 문제를 고치고 기록해 달라고 요청했다.
+- 이어서 다음 단계와, 현재 preview 아키텍처를 계속 유지해야 하는지도 물었다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a6b1aa829b32d0`였다.
+- 이 세션 자체는 4컷 모두 결국 저장되었지만, 마지막 네 번째 요청 `request_000000000000064f89a6c96b50`가 체감상 "촬영이 안 된다"로 느껴질 정도로 크게 밀렸다.
+- 같은 세션의 `diagnostics/timing-events.log`에는
+  - `request-capture`가 `2026-04-16T01:21:27Z`
+  - 실제 `file-arrived`와 `fast-preview-visible`이 `2026-04-16T01:21:57Z`
+  - `capture_preview_ready elapsedMs=32305`
+  로 남아 있었다.
+- 반면 그 same capture의 `originalVisibleToPresetAppliedVisibleMs=3194`였기 때문에,
+  이번 회차의 큰 지연은 preset close 렌더가 아니라
+  **촬영 요청 이후 RAW handoff가 시작되기 전 구간**에 있었다.
+- `camera-helper-events.jsonl`도 네 번째 요청에서 `capture-accepted` 뒤 실제 `file-arrived`/`fast-preview-ready`가 훨씬 뒤에 닫힌 흐름을 보였다.
+- helper 런타임 코드를 다시 읽어 보니 메인 루프는 새 요청을 읽기 전에
+  - `TryCompletePendingFastPreviewDownload()`
+  - `TryBackfillPreviewAssets()`
+  를 먼저 돌리고 있었다.
+- 이 둘은 correctness 경계가 아니라 **best-effort preview 보완 작업**이며, 특히 `TryBackfillPreviewAssets()`는 missing preview를 만나면 raw preview 생성까지 동기적으로 수행한다.
+
+원인 판단:
+
+- 이번 회차의 가장 유력한 원인은
+  **camera helper가 새 촬영 요청보다 optional preview maintenance를 먼저 처리하면서, 실제 shutter request consumption이 늦어진 구조**였다.
+- 최신 세션처럼 preview 파일이 잠깐 비어 있거나 backfill 후보가 생기면 helper loop가 raw preview 보완 쪽으로 들어갈 수 있고,
+  그동안 새 `request-capture`는 request log에 써져 있어도 helper가 늦게 읽게 된다.
+- 즉 사용자가 본 "촬영이 안 된다" 체감은 이번 증거상
+  preset render failure보다 **helper request prioritization 문제**로 보는 것이 가장 타당했다.
+
+이번 회차 수정:
+
+- canon helper 메인 루프에서 **새 capture request 처리 우선순위를 best-effort preview maintenance보다 앞**으로 옮겼다.
+- 이제 pending request가 하나라도 있으면
+  - `TryCompletePendingFastPreviewDownload()`
+  - `TryBackfillPreviewAssets()`
+  같은 optional preview 보완 작업은 뒤로 미룬다.
+- 목적은 새 셔터 요청이 optional preview 보완에 가로막혀 수초~수십초 늦게 소비되는 경계를 없애는 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter CanonHelperServiceTests`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter JsonFileProtocolTests`
+- 두 검증 모두 현재 워크스페이스에 **Canon SDK source (`EDSDK.cs`)가 없어 빌드 단계에서 실행하지 못했다.**
+- 따라서 이번 회차는 코드 변경과 최신 하드웨어 증거 정합성까지는 확인했지만, helper 자동 검증은 SDK source 복구 후 다시 닫아야 한다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는 특히
+   - 버튼을 누른 뒤 다음 capture의 `fast-preview-visible`이 이번처럼 20~30초씩 밀리지 않는지
+   - 세션이 계속 유지되는지
+   - `request-capture -> file-arrived` 간격이 이전 마지막 컷보다 짧아졌는지
+   를 본다.
+3. 재발 시에는 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/camera-helper-events.jsonl`
+   - `diagnostics/camera-helper-status.json`
+
+### 2026-04-16 14:40 +09:00 하드웨어 후속: 이번에는 preview가 128x85 수준으로 너무 작게 나와 화질이 무너졌고, 해상도 캡을 올려 화질과 속도의 균형을 다시 맞췄다
+
+사용자 최신 제보:
+
+- 로그를 다시 확인해서 더 단축해 달라고 요청했다.
+- 필터 적용 후 결과 해상도가 너무 깨져서 원본과 비슷하게 보이도록 고쳐 달라고 요청했다.
+
+이번 회차에서 읽은 최신 증거:
+
+- 최신 세션은 `session_000000000018a6bfb7f2a5af2c`였다.
+- 이 세션의 dedicated renderer 결과는 `replacementMs=11762`와 `6443`으로 남았고, 첫 컷은 특히 느렸다.
+- 같은 세션의 실제 preview 파일은 `128x85`였다.
+- `preview-promotion-evidence.jsonl`에는 `sourceAssetPath=raw-original`과 `previewSourceAssetPath=<same session preview>`가 함께 남아 있어, 작은 preview가 다음 렌더의 재료로도 재사용될 수 있는 구조였다.
+- 로컬 `darktable-cli` 벤치에서는 `128`, `256`, `384`, `512`, `768`, `1024` 캡이 모두 비슷한 처리 시간을 보여, 화질 상향 여지가 확인됐다.
+
+이번 회차 수정:
+
+- dedicated renderer preview cap을 상향했다.
+  - fast preview 기반 close: `768x768`
+  - raw fallback close: `1024x1024`
+- preview 품질이 너무 낮게 남지 않도록, 결과가 화면에서 더 원본에 가깝게 보이도록 조정했다.
+- 다음 evidence summary에는
+  `strategyVersion=2026-04-16d`
+  `fastPreviewCapPx=768x768`
+  `rawPreviewCapPx=1024x1024`
+  가 남는다.
+
+검증:
+
+- `rustc --edition=2021 --test sidecar/dedicated-renderer/main.rs -o target\dedicated_renderer_sidecar_tests.exe`
+- `cargo build --manifest-path src-tauri/Cargo.toml --target-dir target-codex-verify`
+- `cargo test --manifest-path src-tauri/Cargo.toml --target-dir target-codex-verify --test dedicated_renderer -- --nocapture`
+- 위 검증은 모두 통과했다.
+
+다음 실기기 확인 기준:
+
+1. 앱을 다시 실행한 뒤 같은 preset으로 최소 3장, 가능하면 5장까지 연속 촬영한다.
+2. 이번에는
+   - preview가 이전 128x85 수준보다 충분히 선명해졌는지
+   - preset-applied close가 더 느려지지 않았는지
+   - `strategyVersion=2026-04-16d`가 실제 세션 evidence에 남는지
+   를 함께 본다.
+3. 여전히 느리거나 깨져 보이면 같은 세션의 아래 파일을 가져온다.
+   - `session.json`
+   - `diagnostics/timing-events.log`
+   - `diagnostics/dedicated-renderer/preview-promotion-evidence.jsonl`
+   - `diagnostics/dedicated-renderer/*.preview-request.json`
+   - `diagnostics/dedicated-renderer/*.preview-result.json`

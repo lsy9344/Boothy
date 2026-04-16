@@ -68,7 +68,7 @@
         "fastPreviewVisibleAtMs": 240,
         "xmpPreviewReadyAtMs": 640,
         "captureBudgetMs": 1000,
-        "previewBudgetMs": 5000,
+        "previewBudgetMs": 2500,
         "previewBudgetState": "withinBudget"
       }
     }

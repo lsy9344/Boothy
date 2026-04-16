@@ -15,6 +15,9 @@ use boothy_lib::{
             CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION, CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
         },
     },
+    commands::runtime_commands::{
+        append_capture_client_timing_event_in_dir, CaptureClientDebugLogInputDto,
+    },
     contracts::dto::{
         CaptureReadinessInputDto, CaptureRequestInputDto, PreviewRendererRouteRollbackInputDto,
         SessionStartInputDto,
@@ -367,6 +370,36 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
             .and_then(|value| value.as_str()),
         Some("dedicated-renderer")
     );
+    assert_eq!(
+        evidence_record
+            .get("captureRequestedAtMs")
+            .and_then(|value| value.as_u64()),
+        Some(capture.capture.timing.capture_acknowledged_at_ms)
+    );
+    assert_eq!(
+        evidence_record
+            .get("rawPersistedAtMs")
+            .and_then(|value| value.as_u64()),
+        Some(capture.capture.raw.persisted_at_ms)
+    );
+    assert_eq!(
+        evidence_record
+            .get("truthfulArtifactReadyAtMs")
+            .and_then(|value| value.as_u64()),
+        completed_capture.preview.ready_at_ms
+    );
+    assert_eq!(
+        evidence_record
+            .get("visibleOwner")
+            .and_then(|value| value.as_str()),
+        Some("dedicated-renderer")
+    );
+    assert_eq!(
+        evidence_record
+            .get("visibleOwnerTransitionAtMs")
+            .and_then(|value| value.as_u64()),
+        completed_capture.preview.ready_at_ms
+    );
     let expected_route_policy_snapshot_path = SessionPaths::new(&base_dir, &session.session_id)
         .diagnostics_dir
         .join("dedicated-renderer")
@@ -381,6 +414,14 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
             .get("routePolicySnapshotPath")
             .and_then(|value| value.as_str()),
         Some(expected_route_policy_snapshot_path.as_str())
+    );
+    assert_eq!(
+        evidence_record
+            .get("improvementSummary")
+            .and_then(|value| value.as_str()),
+        Some(
+            "strategyVersion=2026-04-16d;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=768x768;rawPreviewCapPx=1024x1024"
+        )
     );
     let expected_catalog_snapshot_path = SessionPaths::new(&base_dir, &session.session_id)
         .diagnostics_dir
@@ -449,6 +490,133 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
         manifest_snapshot["catalogSnapshot"]
     );
     assert_ne!(catalog_snapshot["marker"], serde_json::json!("late-state"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn recent_session_visible_appends_corrected_full_screen_evidence_record() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("recent-session-visible-evidence-update");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "defaultRoutes": [],
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let canonical_preview_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", capture.capture.capture_id));
+    let dedicated_renderer_bytes = [0xFF, 0xD8, 0xFF, 0xD9];
+    fs::write(&canonical_preview_path, dedicated_renderer_bytes)
+        .expect("accepted dedicated renderer output should exist");
+
+    let env_guard = ScopedEnvVarGuard::set("BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME", "accepted");
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("accepted dedicated renderer output should close the truthful preview");
+    drop(env_guard);
+
+    let ready_at_ms = completed_capture
+        .preview
+        .ready_at_ms
+        .expect("preview ready timestamp should exist");
+    append_capture_client_timing_event_in_dir(
+        &base_dir,
+        &CaptureClientDebugLogInputDto {
+            label: "recent-session-visible".into(),
+            session_id: Some(session.session_id.clone()),
+            runtime_mode: None,
+            customer_state: None,
+            reason_code: None,
+            can_capture: None,
+            message: Some(format!(
+                "captureId={};requestId={};previewKind=preset-applied-preview;surface=recent-session;uiLagMs=23;readyAtMs={ready_at_ms};latest=true",
+                completed_capture.capture_id,
+                completed_capture.request_id,
+            )),
+        },
+    );
+
+    let evidence_path = SessionPaths::new(&base_dir, &session.session_id)
+        .diagnostics_dir
+        .join("dedicated-renderer")
+        .join("preview-promotion-evidence.jsonl");
+    let evidence_lines =
+        fs::read_to_string(&evidence_path).expect("preview promotion evidence should exist");
+    let last_record: serde_json::Value = serde_json::from_str(
+        evidence_lines
+            .lines()
+            .last()
+            .expect("preview promotion evidence should include an updated record"),
+    )
+    .expect("updated preview promotion evidence should be valid json");
+    let expected_visible_at_ms = ready_at_ms + 23;
+    let expected_same_capture_full_screen_visible_ms = expected_visible_at_ms
+        .saturating_sub(capture.capture.timing.capture_acknowledged_at_ms);
+
+    assert_eq!(
+        last_record
+            .get("visibleOwnerTransitionAtMs")
+            .and_then(|value| value.as_u64()),
+        Some(expected_visible_at_ms)
+    );
+    assert_eq!(
+        last_record
+            .get("sameCaptureFullScreenVisibleMs")
+            .and_then(|value| value.as_u64()),
+        Some(expected_same_capture_full_screen_visible_ms)
+    );
+    assert_eq!(
+        last_record
+            .get("replacementMs")
+            .and_then(|value| value.as_u64()),
+        Some(expected_same_capture_full_screen_visible_ms)
+    );
+    assert_eq!(
+        last_record
+            .get("visibleOwner")
+            .and_then(|value| value.as_str()),
+        Some("dedicated-renderer")
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }

@@ -31,11 +31,12 @@ pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-reco
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
 
 const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
+const CAPTURE_ROUND_TRIP_FAST_PREVIEW_WAIT_BUDGET_MS: u64 = 500;
 // Real camera follow-up captures can take well past 15 seconds before the RAW
 // handoff closes. Keep the host budget longer than the helper budget so
 // helper-side failures surface first without the host prematurely locking the
 // session.
-const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 35_000;
+const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 50_000;
 const CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME: &str = ".camera-helper-capture-timeout-ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,6 +380,8 @@ where
         .saturating_add(timeout_ms);
     let mut accepted_at_ms: Option<u64> = None;
     let mut latest_event_count = starting_event_count;
+    let mut pending_arrival: Option<CompletedCaptureRoundTrip> = None;
+    let mut pending_fast_preview_deadline_ms: Option<u64> = None;
 
     loop {
         let events = read_capture_event_messages(base_dir, session_id)?;
@@ -412,6 +415,13 @@ where
                     }
 
                     on_fast_preview_ready(message);
+                    if let Some(pending_arrival) = pending_arrival.as_mut() {
+                        pending_arrival.fast_preview = Some(CompletedCaptureFastPreview {
+                            asset_path: message.fast_preview_path.clone(),
+                            kind: message.fast_preview_kind.clone(),
+                        });
+                        return Ok(pending_arrival.clone());
+                    }
                 }
                 CanonHelperEvent::FastThumbnailAttempted(message) => {
                     if message.request_id != request_id {
@@ -448,14 +458,23 @@ where
                     let fast_preview = extract_fast_preview_metadata(message);
                     let persisted_at_ms =
                         current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
-
-                    return Ok(CompletedCaptureRoundTrip {
+                    let round_trip = CompletedCaptureRoundTrip {
                         capture_id: message.capture_id.clone(),
                         raw_path,
                         fast_preview,
                         capture_accepted_at_ms: accepted_at_ms,
                         persisted_at_ms,
-                    });
+                    };
+
+                    if round_trip.fast_preview.is_some() {
+                        return Ok(round_trip);
+                    }
+
+                    pending_fast_preview_deadline_ms = Some(
+                        persisted_at_ms
+                            .saturating_add(CAPTURE_ROUND_TRIP_FAST_PREVIEW_WAIT_BUDGET_MS),
+                    );
+                    pending_arrival = Some(round_trip);
                 }
                 CanonHelperEvent::RecoveryStatus(message) => {
                     if message.session_id != session_id {
@@ -492,6 +511,13 @@ where
         latest_event_count = latest_events_len;
 
         let now_ms = current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
+
+        if pending_fast_preview_deadline_ms
+            .map(|deadline_ms| now_ms >= deadline_ms)
+            .unwrap_or(false)
+        {
+            return pending_arrival.ok_or(SidecarClientError::CaptureProtocolViolation);
+        }
 
         if now_ms >= timeout_deadline {
             return Err(SidecarClientError::CaptureTimedOut);
@@ -654,13 +680,19 @@ fn parse_capture_event(line: &str) -> Result<CanonHelperEvent, SidecarClientErro
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_capture_event, read_latest_status_message, SidecarClientError,
-        CAMERA_HELPER_STATUS_FILE_NAME,
+        append_json_line, capture_round_trip_timeout_ms, read_latest_status_message,
+        wait_for_capture_round_trip,
+        CanonHelperCaptureAcceptedMessage, CanonHelperFastPreviewReadyMessage,
+        CanonHelperFileArrivedMessage, SidecarClientError, CAMERA_HELPER_EVENTS_FILE_NAME,
+        CAMERA_HELPER_STATUS_FILE_NAME, CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+        CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION, CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION,
+        DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS, parse_capture_event,
     };
     use crate::session::session_paths::SessionPaths;
     use std::{
         fs,
         path::PathBuf,
+        thread,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -701,6 +733,126 @@ mod tests {
         assert!(matches!(error, SidecarClientError::InvalidStatus));
 
         let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn capture_round_trip_waits_briefly_for_late_fast_preview_ready_after_file_arrived() {
+        let base_dir = unique_test_root("late-fast-preview-after-file-arrived");
+        let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1m";
+        let request_id = "request_20260414_001";
+        let capture_id = "capture_20260414_001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let raw_path = paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.CR2"));
+        let preview_path = paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+        let events_path = paths.diagnostics_dir.join(CAMERA_HELPER_EVENTS_FILE_NAME);
+        fs::create_dir_all(&paths.captures_originals_dir).expect("raw dir should exist");
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+        fs::write(&raw_path, b"raw-bytes").expect("raw fixture should exist");
+
+        append_json_line(
+            &events_path,
+            &CanonHelperCaptureAcceptedMessage {
+                schema_version: CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION.into(),
+                message_type: "capture-accepted".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                detail_code: None,
+            },
+        )
+        .expect("accepted event should append");
+        append_json_line(
+            &events_path,
+            &CanonHelperFileArrivedMessage {
+                schema_version: CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION.into(),
+                message_type: "file-arrived".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                capture_id: capture_id.into(),
+                arrived_at: "2026-04-14T06:17:26Z".into(),
+                raw_path: raw_path.to_string_lossy().into_owned(),
+                fast_preview_path: None,
+                fast_preview_kind: Some("camera-thumbnail".into()),
+            },
+        )
+        .expect("file arrived event should append");
+
+        let writer_events_path = events_path.clone();
+        let writer_preview_path = preview_path.clone();
+        let writer = thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(75));
+            fs::write(&writer_preview_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+                .expect("preview fixture should exist");
+            append_json_line(
+                &writer_events_path,
+                &CanonHelperFastPreviewReadyMessage {
+                    schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                    message_type: "fast-preview-ready".into(),
+                    session_id: session_id.into(),
+                    request_id: request_id.into(),
+                    capture_id: capture_id.into(),
+                    observed_at: "2026-04-14T06:17:26.300Z".into(),
+                    fast_preview_path: writer_preview_path.to_string_lossy().into_owned(),
+                    fast_preview_kind: Some("windows-shell-thumbnail".into()),
+                },
+            )
+            .expect("fast preview event should append");
+        });
+
+        let mut surfaced_fast_preview = None;
+        let result = wait_for_capture_round_trip(
+            &base_dir,
+            session_id,
+            request_id,
+            "2026-04-14T06:17:25Z",
+            0,
+            |message| {
+                surfaced_fast_preview = Some(message.fast_preview_path.clone());
+            },
+        )
+        .expect("late fast preview should still attach to the round trip");
+
+        writer.join().expect("writer thread should finish");
+
+        assert_eq!(
+            surfaced_fast_preview.as_deref(),
+            Some(preview_path.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            result
+                .fast_preview
+                .as_ref()
+                .map(|preview| preview.asset_path.as_str()),
+            Some(preview_path.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            result
+                .fast_preview
+                .as_ref()
+                .and_then(|preview| preview.kind.as_deref()),
+            Some("windows-shell-thumbnail")
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn capture_round_trip_timeout_uses_the_latest_default_budget_when_unset() {
+        let base_dir = unique_test_root("default-capture-timeout");
+        let env_guard = std::env::var_os("BOOTHY_CAPTURE_TIMEOUT_MS");
+        std::env::remove_var("BOOTHY_CAPTURE_TIMEOUT_MS");
+
+        let timeout_ms = capture_round_trip_timeout_ms(&base_dir);
+
+        match env_guard {
+            Some(value) => std::env::set_var("BOOTHY_CAPTURE_TIMEOUT_MS", value),
+            None => std::env::remove_var("BOOTHY_CAPTURE_TIMEOUT_MS"),
+        }
+
+        assert_eq!(timeout_ms, DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS);
     }
 }
 

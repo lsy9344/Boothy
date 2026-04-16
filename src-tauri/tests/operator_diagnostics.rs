@@ -265,6 +265,121 @@ fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover()
 }
 
 #[test]
+fn operator_diagnostics_prefers_recent_session_visible_for_full_screen_metric() {
+    let base_dir = unique_test_root("preview-architecture-full-screen-visible");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1ac";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let mut capture = preview_waiting_capture(session_id);
+    let preview_asset_path = SessionPaths::new(&base_dir, session_id)
+        .renders_previews_dir
+        .join(format!("{}.jpg", capture.capture_id));
+    capture.preview.asset_path = Some(preview_asset_path.to_string_lossy().replace('\\', "/"));
+    capture.preview.ready_at_ms = Some(900);
+    capture.render_status = "previewReady".into();
+    capture.timing.fast_preview_visible_at_ms = Some(250);
+    capture.timing.preview_visible_at_ms = Some(900);
+    capture.timing.xmp_preview_ready_at_ms = Some(900);
+    capture.preview_renderer_route = Some(
+        boothy_lib::session::session_manifest::PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+        },
+    );
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "preview-ready".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        active_preview_renderer_route: capture.preview_renderer_route.clone(),
+        active_preview_renderer_warm_state: Some(
+            boothy_lib::session::session_manifest::PreviewRendererWarmStateSnapshot {
+                preset_id: "preset_soft-glow".into(),
+                published_version: "2026.03.26".into(),
+                state: "warm-ready".into(),
+                observed_at: "2026-03-26T00:10:00Z".into(),
+                diagnostics_detail_path: None,
+            },
+        ),
+        captures: vec![capture.clone()],
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_ready_helper_status(&base_dir, session_id);
+    fs::create_dir_all(
+        preview_asset_path
+            .parent()
+            .expect("preview asset should have a parent directory"),
+    )
+    .expect("preview directory should exist");
+    fs::write(&preview_asset_path, "preview").expect("preview asset should exist");
+
+    let paths = SessionPaths::new(&base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics directory should exist");
+    fs::write(
+        paths.diagnostics_dir.join("timing-events.log"),
+        concat!(
+            "2026-03-26T00:10:01Z\t",
+            "session=session_01hs6n1r8b8zc5v4ey2x7b9g1ac\t",
+            "capture=capture_01hs6n1r8b8zc5v4ey2x7b9g1m\t",
+            "request=request_01hs6n1r8b8zc5v4ey2x7b9g1m\t",
+            "event=capture_preview_transition_summary\t",
+            "detail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;firstVisibleMs=150;replacementMs=800;originalVisibleToPresetAppliedVisibleMs=650\n"
+        ),
+    )
+    .expect("summary log should write");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(paths.diagnostics_dir.join("timing-events.log"))
+        .and_then(|mut file| {
+            use std::io::Write;
+
+            writeln!(
+                file,
+                concat!(
+                    "2026-03-26T00:10:02Z\t",
+                    "session=session_01hs6n1r8b8zc5v4ey2x7b9g1ac\t",
+                    "capture=capture_01hs6n1r8b8zc5v4ey2x7b9g1m\t",
+                    "request=request_01hs6n1r8b8zc5v4ey2x7b9g1m\t",
+                    "event=recent-session-visible\t",
+                    "detail=captureId={};requestId={};previewKind=preset-applied-preview;surface=recent-session;uiLagMs=1510;readyAtMs=900;latest=true"
+                ),
+                capture.capture_id,
+                capture.request_id,
+            )
+        })
+        .expect("recent-session-visible line should append");
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("preview architecture summary should load");
+
+    assert_eq!(
+        summary
+            .preview_architecture
+            .same_capture_full_screen_visible_ms,
+        Some(2310)
+    );
+    assert_eq!(
+        summary.preview_architecture.visible_owner_transition_at_ms,
+        Some(2410)
+    );
+    assert_eq!(
+        summary.preview_architecture.visible_owner.as_deref(),
+        Some("dedicated-renderer")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn operator_diagnostics_ignores_partial_preview_transition_lines() {
     let base_dir = unique_test_root("preview-architecture-partial-line");
     let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);

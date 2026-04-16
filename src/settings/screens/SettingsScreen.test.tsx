@@ -230,6 +230,15 @@ function createPreviewRouteResult(overrides: Record<string, unknown> = {}) {
       canarySuccessCount: 1,
       notedAt: '2026-04-14T01:45:02.000Z',
     },
+    decisionSummary: {
+      laneOwner: 'dedicated-renderer',
+      decisionStage: null,
+      fallbackReason: null,
+      canaryGate: 'Go',
+      kpiStatus: 'pass',
+      rollbackProofPresent: true,
+      blockers: [],
+    },
     message: 'preview route canary 승격을 적용했어요.',
     ...overrides,
   }
@@ -243,6 +252,15 @@ function createPreviewRouteStatusResult(overrides: Record<string, unknown> = {})
     routeStage: 'canary',
     resolvedRoute: 'local-renderer-sidecar',
     reason: 'operator-canary',
+    decisionSummary: {
+      laneOwner: 'dedicated-renderer',
+      decisionStage: null,
+      fallbackReason: null,
+      canaryGate: 'Go',
+      kpiStatus: 'pass',
+      rollbackProofPresent: true,
+      blockers: [],
+    },
     message: '이 프리셋 버전은 canary 상태예요.',
     ...overrides,
   }
@@ -365,6 +383,10 @@ describe('SettingsScreen', () => {
     expect(
       await screen.findByText(/preview route canary 승격을 적용했어요\./i),
     ).toBeInTheDocument()
+    expect(screen.getAllByText(/lane owner: dedicated-renderer/i)).toHaveLength(2)
+    expect(screen.getAllByText(/canary verdict: Go/i)).toHaveLength(2)
+    expect(screen.getAllByText(/rollback proof: confirmed/i)).toHaveLength(2)
+    expect(screen.queryByText(/fallback reason:/i)).not.toBeInTheDocument()
   })
 
   it('shows the current preview route stage for the entered preset version', async () => {
@@ -397,5 +419,63 @@ describe('SettingsScreen', () => {
     expect(await screen.findByText(/현재 상태: canary/i)).toBeInTheDocument()
     expect(screen.getByText(/적용 경로: local-renderer-sidecar/i)).toBeInTheDocument()
     expect(screen.getByText(/이 프리셋 버전은 canary 상태예요\./i)).toBeInTheDocument()
+    expect(screen.getByText(/lane owner: dedicated-renderer/i)).toBeInTheDocument()
+    expect(screen.getByText(/kpi status: pass/i)).toBeInTheDocument()
+    expect(screen.queryByText(/fallback reason:/i)).not.toBeInTheDocument()
+  })
+
+  it('shows rollback as an operator decision stage while keeping the internal shadow route', async () => {
+    const rollbackPreviewRendererRoute = vi.fn().mockResolvedValue(
+      createPreviewRouteResult({
+        action: 'rollback',
+        routeStage: 'shadow',
+        decisionSummary: {
+          laneOwner: 'inline-truthful-fallback',
+          decisionStage: 'rollback',
+          fallbackReason: null,
+          canaryGate: 'Go',
+          kpiStatus: 'pass',
+          rollbackProofPresent: true,
+          blockers: [],
+        },
+        message: 'preview route rollback을 적용했어요.',
+      }),
+    )
+
+    renderScreen({
+      loadOverview: vi.fn().mockResolvedValue(createOverview()),
+      applyRollout: vi.fn(),
+      applyRollback: vi.fn(),
+      loadPreviewRendererRouteStatus: vi.fn().mockResolvedValue(
+        createPreviewRouteStatusResult(),
+      ),
+      promotePreviewRendererRoute: vi.fn(),
+      rollbackPreviewRendererRoute,
+    })
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: /Preview Route Governance/i })
+    await user.type(screen.getByLabelText(/프리셋 ID/i), 'preset_new-draft-2')
+    await user.type(screen.getByLabelText(/게시 버전/i), '2026.04.10')
+    await user.type(screen.getByLabelText(/Preview route 승인자 ID/i), 'release-kim')
+    await user.type(
+      screen.getByLabelText(/Preview route 승인자 이름/i),
+      'Kim Release',
+    )
+    await user.click(screen.getByRole('button', { name: /shadow로 rollback/i }))
+
+    await waitFor(() => {
+      expect(rollbackPreviewRendererRoute).toHaveBeenCalledWith({
+        presetId: 'preset_new-draft-2',
+        publishedVersion: '2026.04.10',
+        actorId: 'release-kim',
+        actorLabel: 'Kim Release',
+      })
+    })
+
+    expect(await screen.findByText(/preview route rollback을 적용했어요\./i)).toBeInTheDocument()
+    expect(screen.getAllByText(/decision stage: rollback/i)).toHaveLength(2)
+    expect(screen.getByText(/현재 상태: shadow/i)).toBeInTheDocument()
   })
 })

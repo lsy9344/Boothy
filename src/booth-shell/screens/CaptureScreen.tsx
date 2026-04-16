@@ -490,9 +490,12 @@ export function CaptureScreen() {
         canCapture={inFlightCaptureCopy.canCapture}
         isBusy={isRequestingCapture || isDeletingCapture}
         isExplicitPostEnd={
-          inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
+          inFlightCaptureCopy.isEndedBridge ||
+          inFlightCaptureCopy.isExportWaiting ||
+          inFlightCaptureCopy.isPostEndFinalized
         }
         isChangePresetDisabled={
+          inFlightCaptureCopy.isEndedBridge ||
           inFlightCaptureCopy.isExportWaiting ||
           inFlightCaptureCopy.isPostEndFinalized ||
           sessionDraft.sessionId === null ||
@@ -513,7 +516,9 @@ export function CaptureScreen() {
         previews={currentSessionPreviews}
         isPreviewWaiting={inFlightCaptureCopy.isPreviewWaiting}
         isExplicitPostEnd={
-          inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
+          inFlightCaptureCopy.isEndedBridge ||
+          inFlightCaptureCopy.isExportWaiting ||
+          inFlightCaptureCopy.isPostEndFinalized
         }
         deletingCaptureId={isDeletingCapture ? activePendingDeleteCaptureId : null}
         pendingDeleteCaptureId={activePendingDeleteCaptureId}

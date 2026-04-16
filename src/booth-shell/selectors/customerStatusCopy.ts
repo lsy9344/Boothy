@@ -12,6 +12,7 @@ export type CustomerStatusCopy = {
   canCapture: boolean
   isPreviewWaiting: boolean
   isExportWaiting: boolean
+  isEndedBridge: boolean
   isPostEndFinalized: boolean
   postEnd: CaptureReadinessSnapshot['postEnd']
   helperText: string | null
@@ -31,6 +32,7 @@ export function selectCustomerStatusCopy(
   readiness: CaptureReadinessSnapshot,
   manifestPostEnd: SessionPostEndRecord | null = null,
 ): CustomerStatusCopy {
+  const postEnd = resolvePostEndGuidance(readiness, manifestPostEnd)
   const isWarning =
     readiness.reasonCode === 'warning' ||
     (readiness.timing?.phase === 'warning' &&
@@ -38,18 +40,28 @@ export function selectCustomerStatusCopy(
       readiness.primaryAction === 'capture')
   const isPreviewWaiting = readiness.reasonCode === 'preview-waiting'
   const isExportWaiting = readiness.reasonCode === 'export-waiting'
+  const isEndedBridge = readiness.reasonCode === 'ended' && postEnd === null
   const isPostEndFinalized =
     readiness.reasonCode === 'completed' || readiness.reasonCode === 'phone-required'
-  const postEnd = resolvePostEndGuidance(readiness, manifestPostEnd)
 
   return {
-    stateLabel: isWarning ? '곧 종료돼요' : readiness.customerState,
-    headline: isWarning ? '종료가 얼마 남지 않았어요.' : readiness.customerMessage,
+    stateLabel: isWarning
+      ? '곧 종료돼요'
+      : isEndedBridge
+        ? '촬영이 끝났어요'
+        : readiness.customerState,
+    headline: isWarning
+      ? '종료가 얼마 남지 않았어요.'
+      : isEndedBridge
+        ? '촬영이 끝났고 다음 단계를 준비 중이에요.'
+        : readiness.customerMessage,
     detail: isWarning
       ? readiness.canCapture
         ? '남은 시간 안에는 계속 촬영할 수 있어요.'
         : '지금 상태를 마무리한 뒤 다음 안내를 확인해 주세요.'
-      : readiness.supportMessage,
+      : isEndedBridge
+        ? '안전한 다음 안내를 보여드릴 때까지 잠시만 기다려 주세요.'
+        : readiness.supportMessage,
     actionLabel:
       postEnd?.state === 'completed'
         ? primaryActionLabels.finish
@@ -59,6 +71,7 @@ export function selectCustomerStatusCopy(
     canCapture: readiness.canCapture,
     isPreviewWaiting,
     isExportWaiting,
+    isEndedBridge,
     isPostEndFinalized,
     postEnd,
     helperText: isPreviewWaiting

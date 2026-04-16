@@ -23,6 +23,7 @@ use crate::{
         BranchRolloutApprovalDto, BranchRolloutAuditEntryDto, BranchRolloutBranchResultDto,
         BranchRolloutBranchStateDto, BranchRolloutInputDto, BranchRolloutOverviewResultDto,
         BranchRolloutRejectionDto, CapabilitySnapshotDto, HostErrorEnvelope,
+        PreviewRendererRouteDecisionSummaryDto,
         PreviewRendererRouteMutationResultDto, PreviewRendererRoutePolicyAuditEntryDto,
         PreviewRendererRoutePromotionInputDto, PreviewRendererRouteRollbackInputDto,
         PreviewRendererRouteStatusInputDto, PreviewRendererRouteStatusResultDto,
@@ -30,7 +31,8 @@ use crate::{
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::sync_post_end_state_in_dir,
     session::{
-        session_manifest::current_timestamp, session_paths::SessionPaths,
+        session_manifest::current_timestamp,
+        session_paths::SessionPaths,
         session_repository::read_session_manifest,
     },
     timing::sync_session_timing_in_dir,
@@ -48,6 +50,12 @@ const PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_SCHEMA_VERSION: &str =
     "preview-renderer-route-policy-history/v1";
 const PREVIEW_RENDERER_ROUTE_POLICY_HISTORY_WRITE_FAILURE_ENV: &str =
     "BOOTHY_TEST_PREVIEW_ROUTE_POLICY_HISTORY_WRITE_FAILURE";
+const PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION: &str =
+    "preview-promotion-evidence-record/v1";
+const PREVIEW_PROMOTION_CANARY_ASSESSMENT_SCHEMA_VERSION: &str =
+    "preview-promotion-canary-assessment/v1";
+const PREVIEW_PROMOTION_CANARY_ASSESSMENT_FILENAME: &str =
+    "preview-promotion-canary-assessment.json";
 const BRANCH_ROLLOUT_LOCK_RETRY_DELAY_MS: u64 = 10;
 const BRANCH_ROLLOUT_LOCK_MAX_ATTEMPTS: u32 = 500;
 const BRANCH_ROLLOUT_LOCK_STALE_AFTER_MS: u64 = 30_000;
@@ -131,6 +139,100 @@ struct PreviewRendererRoutePolicyHistoryStore {
     schema_version: String,
     #[serde(default)]
     entries: Vec<PreviewRendererRoutePolicyAuditEntryDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionEvidenceRecordSummary {
+    schema_version: String,
+    observed_at: String,
+    session_id: String,
+    request_id: String,
+    capture_id: String,
+    #[serde(default)]
+    preset_id: Option<String>,
+    published_version: String,
+    lane_owner: String,
+    #[serde(default)]
+    fallback_reason_code: Option<String>,
+    route_stage: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionCanaryAssessmentRecord {
+    schema_version: String,
+    generated_at: String,
+    bundle_manifest_path: String,
+    session_id: String,
+    capture_id: String,
+    request_id: String,
+    preset_id: String,
+    published_version: String,
+    route_stage: String,
+    lane_owner: String,
+    gate: PreviewPromotionCanaryGate,
+    next_stage_allowed: bool,
+    summary: String,
+    #[serde(default)]
+    blockers: Vec<String>,
+    checks: PreviewPromotionCanaryAssessmentChecks,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionCanaryAssessmentChecks {
+    kpi: PreviewPromotionCanaryCheckStatus,
+    fallback_stability: PreviewPromotionCanaryCheckStatus,
+    wrong_capture: PreviewPromotionCanaryCheckStatus,
+    fidelity_drift: PreviewPromotionCanaryCheckStatus,
+    rollback_readiness: PreviewPromotionCanaryRollbackCheck,
+    active_session_safety: PreviewPromotionCanaryCheckStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+enum PreviewPromotionCanaryGate {
+    Go,
+    #[serde(rename = "No-Go")]
+    NoGo,
+}
+
+impl PreviewPromotionCanaryGate {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Go => "Go",
+            Self::NoGo => "No-Go",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum PreviewPromotionCheckOutcome {
+    Pass,
+    Fail,
+}
+
+impl PreviewPromotionCheckOutcome {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionCanaryCheckStatus {
+    status: PreviewPromotionCheckOutcome,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPromotionCanaryRollbackCheck {
+    status: PreviewPromotionCheckOutcome,
+    evidence_count: u32,
 }
 
 struct BranchRolloutStoreLock {
@@ -235,35 +337,35 @@ pub fn promote_preview_renderer_route_in_dir(
     let _lock = acquire_branch_rollout_store_lock(base_dir)?;
     let mut policy = load_preview_renderer_route_policy(base_dir)?;
     let mut history = load_preview_renderer_route_policy_history(base_dir)?;
-    let canary_success_count =
-        count_repeated_canary_success_path(base_dir, &input.preset_id, &input.published_version)?;
+    let decision_gate =
+        evaluate_preview_route_default_gate(base_dir, &input.preset_id, &input.published_version)?;
     let audit_entry = build_preview_renderer_route_policy_audit_entry(
         "promote",
         &input.preset_id,
         &input.published_version,
         &input.target_route_stage,
         &approval,
-        if input.target_route_stage == "default" && canary_success_count < 2 {
+        if input.target_route_stage == "default" && decision_gate.rejection.is_some() {
             "rejected"
         } else {
             "applied"
         },
-        canary_success_count,
+        decision_gate.canary_success_count,
     )?;
 
-    if input.target_route_stage == "default" && canary_success_count < 2 {
-        history.entries.push(audit_entry.clone());
-        persist_preview_renderer_route_policy_history(base_dir, &history.entries)?;
-        append_preview_renderer_route_policy_audit_record(
-            base_dir,
-            "promote",
-            &audit_entry,
-            "repeated canary success-path evidence가 부족해 default 승격을 적용하지 않았어요.",
-            Some("preview-route-default-evidence-missing"),
-        );
-        return Err(HostErrorEnvelope::validation_message(
-            "반복된 canary success-path evidence를 먼저 확보해 주세요.",
-        ));
+    if input.target_route_stage == "default" {
+        if let Some(rejection) = decision_gate.rejection.as_ref() {
+            history.entries.push(audit_entry.clone());
+            persist_preview_renderer_route_policy_history(base_dir, &history.entries)?;
+            append_preview_renderer_route_policy_audit_record(
+                base_dir,
+                "promote",
+                &audit_entry,
+                &rejection.audit_detail,
+                Some(&rejection.reason_code),
+            );
+            return Err(HostErrorEnvelope::validation_message(&rejection.message));
+        }
     }
 
     history.entries.push(audit_entry.clone());
@@ -286,9 +388,15 @@ pub fn promote_preview_renderer_route_in_dir(
         action: "promote".into(),
         preset_id: input.preset_id,
         published_version: input.published_version,
-        route_stage: input.target_route_stage,
+        route_stage: input.target_route_stage.clone(),
         approval,
         audit_entry,
+        decision_summary: build_preview_renderer_route_decision_summary(
+            &input.target_route_stage,
+            PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR,
+            None,
+            &decision_gate,
+        )?,
         message: "preview route policy 승격을 기록했어요.".into(),
     })
 }
@@ -309,8 +417,8 @@ pub fn rollback_preview_renderer_route_in_dir(
     let _lock = acquire_branch_rollout_store_lock(base_dir)?;
     let mut policy = load_preview_renderer_route_policy(base_dir)?;
     let mut history = load_preview_renderer_route_policy_history(base_dir)?;
-    let canary_success_count =
-        count_repeated_canary_success_path(base_dir, &input.preset_id, &input.published_version)?;
+    let decision_gate =
+        evaluate_preview_route_default_gate(base_dir, &input.preset_id, &input.published_version)?;
     let audit_entry = build_preview_renderer_route_policy_audit_entry(
         "rollback",
         &input.preset_id,
@@ -318,7 +426,7 @@ pub fn rollback_preview_renderer_route_in_dir(
         "shadow",
         &approval,
         "applied",
-        canary_success_count,
+        decision_gate.canary_success_count,
     )?;
 
     history.entries.push(audit_entry.clone());
@@ -340,6 +448,12 @@ pub fn rollback_preview_renderer_route_in_dir(
         route_stage: "shadow".into(),
         approval,
         audit_entry,
+        decision_summary: build_preview_renderer_route_decision_summary(
+            "shadow",
+            PREVIEW_RENDERER_ROUTE_DARKTABLE,
+            Some("rollback"),
+            &decision_gate,
+        )?,
         message: "preview route policy rollback을 기록했어요.".into(),
     })
 }
@@ -354,10 +468,8 @@ pub fn load_preview_renderer_route_status_in_dir(
 
     let policy = load_preview_renderer_route_policy(base_dir)?;
 
-    let (route_stage, resolved_route, reason, message) = if let Some(rule) = policy
-        .forced_fallback_routes
-        .iter()
-        .find(|rule| {
+    let (route_stage, resolved_route, reason, message) = if let Some(rule) =
+        policy.forced_fallback_routes.iter().find(|rule| {
             rule.preset_id == input.preset_id && rule.preset_version == input.published_version
         }) {
         (
@@ -405,12 +517,20 @@ pub fn load_preview_renderer_route_status_in_dir(
             "이 프리셋 버전은 default 상태예요.".to_string(),
         )
     };
+    let decision_gate =
+        evaluate_preview_route_default_gate(base_dir, &input.preset_id, &input.published_version)?;
 
     Ok(PreviewRendererRouteStatusResultDto {
         schema_version: "preview-renderer-route-status-result/v1".into(),
         preset_id: input.preset_id,
         published_version: input.published_version,
-        route_stage,
+        route_stage: route_stage.clone(),
+        decision_summary: build_preview_renderer_route_decision_summary(
+            &route_stage,
+            &resolved_route,
+            Some(reason.as_str()),
+            &decision_gate,
+        )?,
         resolved_route,
         reason,
         message,
@@ -1479,6 +1599,260 @@ fn remove_matching_preview_route_rule(
     rules.retain(|rule| !(rule.preset_id == preset_id && rule.preset_version == published_version));
 }
 
+#[derive(Debug, Clone)]
+struct PreviewRouteDefaultGateRejection {
+    message: String,
+    audit_detail: String,
+    reason_code: String,
+}
+
+#[derive(Debug, Clone)]
+struct PreviewRouteDefaultGate {
+    canary_success_count: u32,
+    latest_evidence: Option<PreviewPromotionEvidenceRecordSummary>,
+    latest_assessment: Option<PreviewPromotionCanaryAssessmentRecord>,
+    rejection: Option<PreviewRouteDefaultGateRejection>,
+}
+
+fn evaluate_preview_route_default_gate(
+    base_dir: &Path,
+    preset_id: &str,
+    published_version: &str,
+) -> Result<PreviewRouteDefaultGate, HostErrorEnvelope> {
+    let canary_success_count =
+        count_repeated_canary_success_path(base_dir, preset_id, published_version)?;
+    let latest_assessment =
+        load_latest_preview_promotion_canary_assessment(base_dir, preset_id, published_version)?;
+    let latest_evidence = latest_assessment
+        .as_ref()
+        .map(|assessment| {
+            load_preview_promotion_evidence_for_capture(
+                base_dir,
+                preset_id,
+                published_version,
+                &assessment.session_id,
+                &assessment.request_id,
+                &assessment.capture_id,
+            )
+        })
+        .transpose()?
+        .flatten();
+
+    let rejection = if canary_success_count < 2 {
+        Some(PreviewRouteDefaultGateRejection {
+            message: "반복된 canary success-path evidence를 먼저 확보해 주세요.".into(),
+            audit_detail: "repeated canary success-path evidence가 부족해 default 승격을 적용하지 않았어요.".into(),
+            reason_code: "preview-route-default-evidence-missing".into(),
+        })
+    } else if latest_assessment.is_none() {
+        Some(PreviewRouteDefaultGateRejection {
+            message: "Story 1.24 typed canary Go verdict와 rollback readiness evidence를 먼저 확인해 주세요.".into(),
+            audit_detail:
+                "Story 1.24 typed canary verdict를 찾지 못해 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-canary-assessment-missing".into(),
+        })
+    } else if latest_evidence.is_none() {
+        Some(PreviewRouteDefaultGateRejection {
+            message:
+                "typed canary verdict가 selected-capture evidence chain과 연결되지 않아 default 승격을 진행할 수 없어요."
+                    .into(),
+            audit_detail:
+                "typed canary verdict가 selected-capture evidence chain과 연결되지 않아 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-evidence-chain-mismatch".into(),
+        })
+    } else {
+        build_preview_route_default_gate_rejection(
+            latest_assessment
+                .as_ref()
+                .expect("assessment presence already checked"),
+        )
+    };
+
+    Ok(PreviewRouteDefaultGate {
+        canary_success_count,
+        latest_evidence,
+        latest_assessment,
+        rejection,
+    })
+}
+
+fn build_preview_route_default_gate_rejection(
+    assessment: &PreviewPromotionCanaryAssessmentRecord,
+) -> Option<PreviewRouteDefaultGateRejection> {
+    if assessment.route_stage != "canary" {
+        return Some(PreviewRouteDefaultGateRejection {
+            message: "canary scope로 기록된 typed assessment만 default gate 입력으로 사용할 수 있어요."
+                .into(),
+            audit_detail:
+                "typed canary assessment가 canary scope를 유지하지 않아 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-canary-scope-missing".into(),
+        });
+    }
+
+    if !matches!(assessment.gate, PreviewPromotionCanaryGate::Go) || !assessment.next_stage_allowed
+    {
+        let detail = if assessment.summary.trim().is_empty() {
+            "latest typed canary verdict가 No-Go라 default 승격을 적용하지 않았어요.".into()
+        } else {
+            format!(
+                "latest typed canary verdict가 {}라 default 승격을 적용하지 않았어요.",
+                assessment.summary
+            )
+        };
+        let message = if assessment.summary.trim().is_empty() {
+            "최신 typed canary verdict가 No-Go라 default 승격을 진행할 수 없어요.".into()
+        } else {
+            format!(
+                "최신 typed canary verdict가 No-Go예요: {}",
+                assessment.summary
+            )
+        };
+        return Some(PreviewRouteDefaultGateRejection {
+            message,
+            audit_detail: detail,
+            reason_code: "preview-route-default-canary-no-go".into(),
+        });
+    }
+
+    if assessment.checks.kpi.status != PreviewPromotionCheckOutcome::Pass {
+        return Some(PreviewRouteDefaultGateRejection {
+            message: "typed canary KPI가 아직 pass가 아니어서 default 승격을 진행할 수 없어요."
+                .into(),
+            audit_detail: "typed canary KPI가 pass가 아니라 default 승격을 적용하지 않았어요."
+                .into(),
+            reason_code: "preview-route-default-kpi-not-ready".into(),
+        });
+    }
+
+    if assessment.checks.fallback_stability.status != PreviewPromotionCheckOutcome::Pass {
+        return Some(PreviewRouteDefaultGateRejection {
+            message:
+                "fallback stability가 아직 pass가 아니어서 default 승격을 진행할 수 없어요."
+                    .into(),
+            audit_detail:
+                "fallback stability가 pass가 아니라 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-fallback-unstable".into(),
+        });
+    }
+
+    if assessment.checks.wrong_capture.status != PreviewPromotionCheckOutcome::Pass {
+        return Some(PreviewRouteDefaultGateRejection {
+            message:
+                "selected capture chain이 유지되지 않아 default 승격을 진행할 수 없어요."
+                    .into(),
+            audit_detail:
+                "selected capture chain이 유지되지 않아 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-wrong-capture".into(),
+        });
+    }
+
+    if assessment.checks.fidelity_drift.status != PreviewPromotionCheckOutcome::Pass {
+        return Some(PreviewRouteDefaultGateRejection {
+            message:
+                "fidelity drift가 아직 pass가 아니어서 default 승격을 진행할 수 없어요."
+                    .into(),
+            audit_detail:
+                "fidelity drift가 pass가 아니라 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-fidelity-drift".into(),
+        });
+    }
+
+    if assessment.checks.rollback_readiness.status != PreviewPromotionCheckOutcome::Pass
+        || assessment.checks.rollback_readiness.evidence_count == 0
+    {
+        return Some(PreviewRouteDefaultGateRejection {
+            message: "rollback proof readiness가 확인되지 않아 default 승격을 진행할 수 없어요."
+                .into(),
+            audit_detail:
+                "rollback readiness가 확인되지 않아 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-rollback-not-ready".into(),
+        });
+    }
+
+    if assessment.checks.active_session_safety.status != PreviewPromotionCheckOutcome::Pass {
+        return Some(PreviewRouteDefaultGateRejection {
+            message: "active-session safety가 확인되지 않아 default 승격을 진행할 수 없어요."
+                .into(),
+            audit_detail:
+                "active-session safety가 확인되지 않아 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-active-session-unsafe".into(),
+        });
+    }
+
+    if !assessment.blockers.is_empty() {
+        return Some(PreviewRouteDefaultGateRejection {
+            message: format!(
+                "typed canary blockers가 남아 있어 default 승격을 진행할 수 없어요: {}",
+                assessment.blockers.join(", ")
+            ),
+            audit_detail: format!(
+                "typed canary blockers가 남아 있어 default 승격을 적용하지 않았어요: {}",
+                assessment.blockers.join(", ")
+            ),
+            reason_code: "preview-route-default-canary-blocked".into(),
+        });
+    }
+
+    None
+}
+
+fn build_preview_renderer_route_decision_summary(
+    route_stage: &str,
+    resolved_route: &str,
+    decision_reason: Option<&str>,
+    decision_gate: &PreviewRouteDefaultGate,
+) -> Result<PreviewRendererRouteDecisionSummaryDto, HostErrorEnvelope> {
+    let latest_evidence = decision_gate.latest_evidence.clone();
+    let lane_owner = decision_gate
+        .latest_assessment
+        .as_ref()
+        .map(|assessment| assessment.lane_owner.clone())
+        .or_else(|| latest_evidence.as_ref().map(|record| record.lane_owner.clone()))
+        .unwrap_or_else(|| infer_preview_route_lane_owner(resolved_route).into());
+    let fallback_reason = latest_evidence
+        .as_ref()
+        .and_then(|record| record.fallback_reason_code.clone());
+    let canary_gate = decision_gate
+        .latest_assessment
+        .as_ref()
+        .map(|assessment| assessment.gate.as_str().to_string());
+    let kpi_status = decision_gate
+        .latest_assessment
+        .as_ref()
+        .map(|assessment| assessment.checks.kpi.status.as_str().to_string());
+    let rollback_proof_present = decision_gate
+        .latest_assessment
+        .as_ref()
+        .map(|assessment| {
+            assessment.checks.rollback_readiness.status == PreviewPromotionCheckOutcome::Pass
+                && assessment.checks.rollback_readiness.evidence_count > 0
+        })
+        .unwrap_or(false);
+    let blockers = decision_gate
+        .latest_assessment
+        .as_ref()
+        .map(|assessment| assessment.blockers.clone())
+        .unwrap_or_default();
+
+    Ok(PreviewRendererRouteDecisionSummaryDto {
+        lane_owner,
+        decision_stage: infer_preview_route_decision_stage(route_stage, decision_reason),
+        fallback_reason,
+        canary_gate,
+        kpi_status,
+        rollback_proof_present,
+        blockers,
+    })
+}
+
 fn count_repeated_canary_success_path(
     base_dir: &Path,
     preset_id: &str,
@@ -1505,7 +1879,7 @@ fn count_repeated_canary_success_path(
         }
 
         let contents = fs::read_to_string(&evidence_path).map_err(map_fs_error)?;
-        for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+        for line in contents.lines().rev().filter(|line| !line.trim().is_empty()) {
             let parsed = match serde_json::from_str::<serde_json::Value>(line) {
                 Ok(value) => value,
                 Err(_) => continue,
@@ -1520,7 +1894,8 @@ fn count_repeated_canary_success_path(
                     Some("warm-ready") | Some("warm-hit")
                 )
                 && parsed["firstVisibleMs"].as_u64().is_some()
-                && parsed["replacementMs"].as_u64().is_some()
+                && (parsed["sameCaptureFullScreenVisibleMs"].as_u64().is_some()
+                    || parsed["replacementMs"].as_u64().is_some())
                 && parsed["originalVisibleToPresetAppliedVisibleMs"]
                     .as_u64()
                     .is_some()
@@ -1542,6 +1917,170 @@ fn count_repeated_canary_success_path(
     }
 
     Ok(success_count)
+}
+
+fn load_preview_promotion_evidence_for_capture(
+    base_dir: &Path,
+    preset_id: &str,
+    published_version: &str,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+) -> Result<Option<PreviewPromotionEvidenceRecordSummary>, HostErrorEnvelope> {
+    if session_id.trim().is_empty() || request_id.trim().is_empty() || capture_id.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let sessions_root = base_dir.join("sessions");
+    if !sessions_root.exists() {
+        return Ok(None);
+    }
+
+    let mut matched_record: Option<PreviewPromotionEvidenceRecordSummary> = None;
+    for entry in fs::read_dir(&sessions_root).map_err(map_fs_error)? {
+        let session_root = match entry {
+            Ok(entry) => entry.path(),
+            Err(_) => continue,
+        };
+        let evidence_path = session_root
+            .join("diagnostics")
+            .join("dedicated-renderer")
+            .join("preview-promotion-evidence.jsonl");
+        if !evidence_path.is_file() {
+            continue;
+        }
+
+        let contents = fs::read_to_string(&evidence_path).map_err(map_fs_error)?;
+        for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+            let record = match serde_json::from_str::<PreviewPromotionEvidenceRecordSummary>(line) {
+                Ok(record) => record,
+                Err(_) => continue,
+            };
+            if record.schema_version != PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION
+                || record.preset_id.as_deref() != Some(preset_id)
+                || record.published_version != published_version
+                || record.route_stage != "canary"
+                || record.session_id != session_id
+                || record.request_id != request_id
+                || record.capture_id != capture_id
+            {
+                continue;
+            }
+
+            let should_replace = matched_record
+                .as_ref()
+                .map(|current| record.observed_at > current.observed_at)
+                .unwrap_or(true);
+            if should_replace {
+                matched_record = Some(record);
+            }
+        }
+    }
+
+    Ok(matched_record)
+}
+
+fn load_latest_preview_promotion_canary_assessment(
+    base_dir: &Path,
+    preset_id: &str,
+    published_version: &str,
+) -> Result<Option<PreviewPromotionCanaryAssessmentRecord>, HostErrorEnvelope> {
+    let sessions_root = base_dir.join("sessions");
+    if !sessions_root.exists() {
+        return Ok(None);
+    }
+
+    let mut assessment_paths = Vec::new();
+    collect_named_files(
+        &sessions_root,
+        PREVIEW_PROMOTION_CANARY_ASSESSMENT_FILENAME,
+        &mut assessment_paths,
+    )?;
+
+    let mut latest_assessment: Option<PreviewPromotionCanaryAssessmentRecord> = None;
+    for assessment_path in assessment_paths {
+        let assessment_bytes = fs::read_to_string(&assessment_path).map_err(map_fs_error)?;
+        let assessment = match serde_json::from_str::<PreviewPromotionCanaryAssessmentRecord>(
+            &assessment_bytes,
+        ) {
+            Ok(assessment) => assessment,
+            Err(_) => continue,
+        };
+        if assessment.schema_version != PREVIEW_PROMOTION_CANARY_ASSESSMENT_SCHEMA_VERSION
+            || assessment.preset_id != preset_id
+            || assessment.published_version != published_version
+            || assessment.bundle_manifest_path.trim().is_empty()
+            || assessment.session_id.trim().is_empty()
+            || assessment.request_id.trim().is_empty()
+            || assessment.capture_id.trim().is_empty()
+        {
+            continue;
+        }
+
+        let should_replace = latest_assessment
+            .as_ref()
+            .map(|current| assessment.generated_at > current.generated_at)
+            .unwrap_or(true);
+        if should_replace {
+            latest_assessment = Some(assessment);
+        }
+    }
+
+    Ok(latest_assessment)
+}
+
+fn collect_named_files(
+    root: &Path,
+    file_name: &str,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), HostErrorEnvelope> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(root).map_err(map_fs_error)? {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(_) => continue,
+        };
+
+        if path.is_dir() {
+            collect_named_files(&path, file_name, files)?;
+            continue;
+        }
+
+        if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value == file_name)
+            .unwrap_or(false)
+        {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn infer_preview_route_lane_owner(resolved_route: &str) -> &'static str {
+    if resolved_route == PREVIEW_RENDERER_ROUTE_DARKTABLE {
+        "inline-truthful-fallback"
+    } else {
+        "dedicated-renderer"
+    }
+}
+
+fn infer_preview_route_decision_stage(
+    route_stage: &str,
+    decision_reason: Option<&str>,
+) -> Option<String> {
+    if route_stage == "default" {
+        Some("default".into())
+    } else if route_stage == "shadow" && decision_reason == Some("rollback") {
+        Some("rollback".into())
+    } else {
+        None
+    }
 }
 
 fn build_preview_renderer_route_policy_audit_entry(

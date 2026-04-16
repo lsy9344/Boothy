@@ -1,6 +1,6 @@
 # Story 1.19: ETW/WPR/WPA/PIX + parity diff 기반 승격 게이트 정착
 
-Status: done
+Status: backlog
 
 Promotion Gate Note: Story 1.18이 resident GPU-first 후보와 seam evidence를 이미 남겼다. 이번 스토리는 새 렌더러를 또 발명하는 단계가 아니라, 그 증거를 어떤 도구와 기준으로 수집하고 해석해 승격 여부를 판정할지 고정하는 단계다. canonical release close owner는 계속 Story 1.13이며, 이번 스토리만으로 hardware `Go`를 주장하면 안 된다.
 

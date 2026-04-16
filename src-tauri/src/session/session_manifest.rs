@@ -190,7 +190,7 @@ pub struct LegacyPhoneRequiredPostEnd {
 
 pub const SESSION_CAPTURE_SCHEMA_VERSION: &str = "session-capture/v1";
 pub const CAPTURE_BUDGET_MS: u64 = 1_000;
-pub const PREVIEW_BUDGET_MS: u64 = 5_000;
+pub const PREVIEW_BUDGET_MS: u64 = 2_500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import type { CaptureRuntimeService } from '../../capture-adapter/services/capture-runtime'
 import { PresetAuthoringProvider } from '../../preset-authoring/providers/preset-authoring-provider'
@@ -32,21 +32,17 @@ export function AppProviders({
   activePresetService,
   captureRuntimeService,
 }: AppProvidersProps) {
-  const capabilityServiceRef = useRef<CapabilityService | null>(null)
-  const presetAuthoringServiceRef = useRef<PresetAuthoringService | null>(null)
+  const [fallbackCapabilityService] = useState<CapabilityService>(() =>
+    createCapabilityService(),
+  )
+  const [fallbackPresetAuthoringService] = useState<PresetAuthoringService>(() =>
+    createPresetAuthoringService(),
+  )
 
-  if (capabilityServiceRef.current === null) {
-    capabilityServiceRef.current = capabilityService ?? createCapabilityService()
-  }
-
-  if (presetAuthoringServiceRef.current === null) {
-    presetAuthoringServiceRef.current =
-      presetAuthoringService ?? createPresetAuthoringService()
-  }
-
-  const resolvedCapabilityService = capabilityService ?? capabilityServiceRef.current
+  const resolvedCapabilityService =
+    capabilityService ?? fallbackCapabilityService
   const resolvedPresetAuthoringService =
-    presetAuthoringService ?? presetAuthoringServiceRef.current
+    presetAuthoringService ?? fallbackPresetAuthoringService
 
   return (
     <CapabilityProvider capabilityService={resolvedCapabilityService}>

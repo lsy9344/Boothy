@@ -339,6 +339,15 @@ fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
         "request_20260412_002",
         "capture_20260412_002",
     );
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        go_canary_assessment(
+            "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "request_20260412_002",
+            "capture_20260412_002",
+        ),
+    );
 
     let promote_canary = promote_preview_renderer_route_in_dir(
         &base_dir,
@@ -367,6 +376,10 @@ fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
     )
     .expect("default promotion should succeed after repeated canary evidence");
     assert_eq!(promote_default.route_stage, "default");
+    assert_eq!(
+        promote_default.decision_summary.decision_stage.as_deref(),
+        Some("default")
+    );
     let promoted_policy: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(
             base_dir
@@ -398,6 +411,11 @@ fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
     )
     .expect("rollback should remain a one-action host-owned path");
     assert_eq!(rollback.route_stage, "shadow");
+    assert_eq!(
+        rollback.decision_summary.decision_stage.as_deref(),
+        Some("rollback")
+    );
+    assert_eq!(rollback.decision_summary.fallback_reason, None);
 
     let policy: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(
@@ -523,6 +541,241 @@ fn preview_route_default_promotion_rejects_duplicate_evidence_for_the_same_captu
 }
 
 #[test]
+fn preview_route_default_promotion_rejects_without_typed_go_canary_assessment() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-missing-canary-assessment");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should fail closed without a typed canary Go verdict");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(
+        error
+            .message
+            .contains("typed canary")
+            || error.message.contains("Story 1.24")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_when_latest_canary_assessment_is_no_go() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-no-go-canary-assessment");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-canary-assessment/v1",
+            "generatedAt": "2026-04-12T08:10:00.000Z",
+            "bundleManifestPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/preview-promotion-evidence-bundle.json",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "captureId": "capture_20260412_002",
+            "requestId": "request_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "routeStage": "canary",
+            "laneOwner": "dedicated-renderer",
+            "gate": "No-Go",
+            "nextStageAllowed": false,
+            "summary": "rollback proof missing keeps the canary at No-Go.",
+            "blockers": ["rollback-proof-missing"],
+            "checks": {
+                "kpi": {
+                    "status": "pass",
+                    "reason": "same-capture KPI satisfied",
+                    "actualMs": 2410,
+                    "thresholdMs": 2500
+                },
+                "fallbackStability": {
+                    "status": "pass",
+                    "reason": "fallback ratio is within the approved bound",
+                    "actualRatio": 0.1,
+                    "thresholdRatio": 0.2
+                },
+                "wrongCapture": {
+                    "status": "pass",
+                    "reason": "same selected capture chain preserved"
+                },
+                "fidelityDrift": {
+                    "status": "pass",
+                    "reason": "parity stayed inside the approved bound",
+                    "parityResult": "pass"
+                },
+                "rollbackReadiness": {
+                    "status": "fail",
+                    "reason": "rollback proof missing",
+                    "evidenceCount": 0
+                },
+                "activeSessionSafety": {
+                    "status": "pass",
+                    "reason": "capture-time route snapshot preserved"
+                }
+            }
+        }),
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should fail closed when the latest typed canary verdict is No-Go");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("No-Go") || error.message.contains("rollback"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_when_fallback_stability_fails_even_with_go_gate() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-fallback-stability-fails");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    let mut assessment = go_canary_assessment(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    assessment["checks"]["fallbackStability"]["status"] = serde_json::json!("fail");
+    assessment["checks"]["fallbackStability"]["reason"] =
+        serde_json::json!("fallback ratio exceeded the approved threshold");
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        assessment,
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should reject fallback-heavy typed canary evidence");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("fallback") || error.message.contains("안정성"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_when_latest_assessment_is_not_for_the_selected_capture_chain() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-mismatched-canary-assessment");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1z",
+        go_canary_assessment(
+            "session_01hs6n1r8b8zc5v4ey2x7b9g1z",
+            "request_20260412_099",
+            "capture_20260412_099",
+        ),
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("default promotion should reject typed canary verdicts that are detached from the selected capture chain");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("selected capture") || error.message.contains("evidence chain"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn preview_route_status_reports_canary_for_a_promoted_preset_version() {
     let _env_lock = lock_branch_rollout_test_env();
     let base_dir = unique_test_root("preview-route-policy-status");
@@ -557,6 +810,8 @@ fn preview_route_status_reports_canary_for_a_promoted_preset_version() {
     assert_eq!(status.route_stage, "canary");
     assert_eq!(status.resolved_route, "local-renderer-sidecar");
     assert_eq!(status.message, "이 프리셋 버전은 canary 상태예요.");
+    assert_eq!(status.decision_summary.decision_stage, None);
+    assert_eq!(status.decision_summary.fallback_reason, None);
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -677,6 +932,191 @@ fn preview_route_default_promotion_rejects_records_missing_snapshot_evidence() {
     .expect_err("default promotion should reject incomplete success-path evidence");
 
     assert_eq!(error.code, "validation-error");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_does_not_add_a_budget_gate_in_story_1_21() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-over-budget-evidence");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:00:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "requestId": "request_20260412_001",
+            "captureId": "capture_20260412_001",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 1810,
+            "replacementMs": 2495,
+            "originalVisibleToPresetAppliedVisibleMs": 685,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:01:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "requestId": "request_20260412_002",
+            "captureId": "capture_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 1890,
+            "replacementMs": 3610,
+            "originalVisibleToPresetAppliedVisibleMs": 1720,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture-over-budget.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        go_canary_assessment(
+            "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "request_20260412_002",
+            "capture_20260412_002",
+        ),
+    );
+
+    let promoted = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("story 1.21 should not change default-promotion gating behavior");
+    assert_eq!(promoted.route_stage, "default");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_accepts_canonical_full_screen_metric_without_legacy_alias() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-canonical-full-screen-evidence");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:00:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "requestId": "request_20260412_001",
+            "captureId": "capture_20260412_001",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 1605,
+            "sameCaptureFullScreenVisibleMs": 2410,
+            "originalVisibleToPresetAppliedVisibleMs": 805,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:02:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "requestId": "request_20260412_002",
+            "captureId": "capture_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-hit",
+            "firstVisibleMs": 1580,
+            "sameCaptureFullScreenVisibleMs": 2395,
+            "originalVisibleToPresetAppliedVisibleMs": 815,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture-2.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        go_canary_assessment(
+            "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "request_20260412_002",
+            "capture_20260412_002",
+        ),
+    );
+
+    let promoted = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect("canonical metric evidence should satisfy repeated canary success path");
+    assert_eq!(promoted.route_stage, "default");
+    assert_eq!(promoted.decision_summary.lane_owner, "dedicated-renderer");
+    assert_eq!(promoted.decision_summary.canary_gate.as_deref(), Some("Go"));
+    assert_eq!(promoted.decision_summary.kpi_status.as_deref(), Some("pass"));
+    assert!(promoted.decision_summary.rollback_proof_present);
+    assert!(promoted.decision_summary.blockers.is_empty());
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -918,8 +1358,8 @@ fn seed_preview_promotion_evidence(
             "fallbackReasonCode": null,
             "routeStage": "canary",
             "warmState": "warm-ready",
-            "firstVisibleMs": 2810,
-            "replacementMs": 3615,
+            "firstVisibleMs": 1605,
+            "replacementMs": 2410,
             "originalVisibleToPresetAppliedVisibleMs": 805,
             "sessionManifestPath": "C:/boothy/sessions/session/session.json",
             "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
@@ -953,6 +1393,75 @@ fn seed_preview_promotion_evidence_line(
         format!("{existing}{line}\n")
     };
     fs::write(evidence_path, next).expect("evidence should write");
+}
+
+fn seed_preview_promotion_canary_assessment(
+    base_dir: &Path,
+    session_id: &str,
+    assessment: serde_json::Value,
+) {
+    let diagnostics_dir = base_dir
+        .join("sessions")
+        .join(session_id)
+        .join("diagnostics")
+        .join("dedicated-renderer");
+    fs::create_dir_all(&diagnostics_dir).expect("diagnostics directory should exist");
+    fs::write(
+        diagnostics_dir.join("preview-promotion-canary-assessment.json"),
+        serde_json::to_vec_pretty(&assessment).expect("assessment should serialize"),
+    )
+    .expect("assessment should write");
+}
+
+fn go_canary_assessment(session_id: &str, request_id: &str, capture_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": "preview-promotion-canary-assessment/v1",
+        "generatedAt": "2026-04-12T08:10:00.000Z",
+        "bundleManifestPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/preview-promotion-evidence-bundle.json",
+        "sessionId": session_id,
+        "captureId": capture_id,
+        "requestId": request_id,
+        "presetId": "preset_soft-glow",
+        "publishedVersion": "2026.04.10",
+        "routeStage": "canary",
+        "laneOwner": "dedicated-renderer",
+        "gate": "Go",
+        "nextStageAllowed": true,
+        "summary": "same-capture KPI, rollback proof, and active-session safety passed.",
+        "blockers": [],
+        "checks": {
+            "kpi": {
+                "status": "pass",
+                "reason": "same-capture KPI satisfied",
+                "actualMs": 2410,
+                "thresholdMs": 2500
+            },
+            "fallbackStability": {
+                "status": "pass",
+                "reason": "fallback ratio is within the approved bound",
+                "actualRatio": 0.1,
+                "thresholdRatio": 0.2
+            },
+            "wrongCapture": {
+                "status": "pass",
+                "reason": "same selected capture chain preserved"
+            },
+            "fidelityDrift": {
+                "status": "pass",
+                "reason": "parity stayed inside the approved bound",
+                "parityResult": "pass"
+            },
+            "rollbackReadiness": {
+                "status": "pass",
+                "reason": "rollback proof bundle preserved",
+                "evidenceCount": 1
+            },
+            "activeSessionSafety": {
+                "status": "pass",
+                "reason": "capture-time route snapshot preserved"
+            }
+        }
+    })
 }
 
 struct ScopedEnvVarGuard {

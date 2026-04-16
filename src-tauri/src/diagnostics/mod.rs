@@ -41,6 +41,8 @@ struct DiagnosticsContext {
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
+    visible_owner: Option<String>,
+    visible_owner_transition_at_ms: Option<u64>,
     warm_state: Option<String>,
     warm_state_observed_at: Option<String>,
     first_visible_ms: Option<u64>,
@@ -55,6 +57,8 @@ struct PreviewTransitionSummaryContext {
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
+    visible_owner: Option<String>,
+    visible_owner_transition_at_ms: Option<u64>,
     warm_state: Option<String>,
     first_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
@@ -65,8 +69,14 @@ struct PreviewTransitionSummaryContext {
 }
 
 #[derive(Debug, Default)]
+struct CaptureClientVisibleContext {
+    visible_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Default)]
 struct PreviewTimingMetrics {
     first_visible_ms: Option<u64>,
+    same_capture_full_screen_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
     original_visible_to_preset_applied_visible_ms: Option<u64>,
 }
@@ -96,12 +106,13 @@ pub fn load_operator_session_summary_in_dir(
     let manifest = project_post_end_state_in_dir(base_dir, manifest, SystemTime::now())?;
     let diagnostics = read_diagnostics_context(base_dir, &manifest.session_id);
     let readiness = normalize_capture_readiness(base_dir, &manifest);
-    let live_capture_truth = readiness.live_capture_truth.clone();
-    let reason_code = readiness.reason_code.clone();
-    let render_status = readiness
+    let latest_capture = readiness
         .latest_capture
         .as_ref()
-        .map(|capture| capture.render_status.as_str());
+        .or_else(|| manifest.captures.last());
+    let live_capture_truth = readiness.live_capture_truth.clone();
+    let reason_code = readiness.reason_code.clone();
+    let render_status = latest_capture.map(|capture| capture.render_status.as_str());
     let capture_boundary = build_capture_boundary(&manifest, readiness.reason_code.as_str());
     let preview_render_boundary = build_preview_render_boundary(render_status);
     let completion_boundary = build_completion_boundary(
@@ -127,10 +138,8 @@ pub fn load_operator_session_summary_in_dir(
         &diagnostics,
     );
     let preview_architecture = build_preview_architecture_summary(
-        readiness.latest_capture.as_ref(),
-        readiness
-            .latest_capture
-            .as_ref()
+        latest_capture,
+        latest_capture
             .and_then(|capture| capture.preview_renderer_route.as_ref())
             .or(manifest.active_preview_renderer_route.as_ref()),
         manifest.active_preview_renderer_warm_state.as_ref(),
@@ -553,7 +562,18 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
         }
     }
 
-    for line in lines {
+    for line in &lines {
+        let Some(visible_context) = parse_capture_client_visible_context(line) else {
+            continue;
+        };
+
+        if visible_context.visible_at_ms.is_some() {
+            context.visible_owner_transition_at_ms = visible_context.visible_at_ms;
+            break;
+        }
+    }
+
+    for line in &lines {
         let Some(summary) = parse_preview_transition_summary_context(line) else {
             continue;
         };
@@ -562,6 +582,10 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
             context.lane_owner = summary.lane_owner;
             context.fallback_reason_code = summary.fallback_reason_code;
             context.route_stage = summary.route_stage;
+            context.visible_owner = summary.visible_owner;
+            context.visible_owner_transition_at_ms = context
+                .visible_owner_transition_at_ms
+                .or(summary.visible_owner_transition_at_ms);
             context.warm_state = summary.warm_state;
             context.warm_state_observed_at = summary.observed_at;
             context.first_visible_ms = summary.first_visible_ms;
@@ -625,9 +649,26 @@ fn build_preview_architecture_summary(
             .fallback_reason_code
             .clone()
             .or_else(|| route_snapshot.and_then(|snapshot| snapshot.fallback_reason_code.clone())),
+        capture_id: latest_capture.map(|capture| capture.capture_id.clone()),
+        request_id: latest_capture.map(|capture| capture.request_id.clone()),
+        visible_owner: diagnostics
+            .visible_owner
+            .clone()
+            .or_else(|| diagnostics.lane_owner.clone()),
+        visible_owner_transition_at_ms: diagnostics
+            .visible_owner_transition_at_ms
+            .or_else(|| {
+                latest_capture.and_then(|capture| {
+                    capture
+                        .timing
+                        .preview_visible_at_ms
+                        .or(capture.timing.xmp_preview_ready_at_ms)
+                })
+            }),
         warm_state,
         warm_state_observed_at,
         first_visible_ms: timing_metrics.first_visible_ms,
+        same_capture_full_screen_visible_ms: timing_metrics.same_capture_full_screen_visible_ms,
         replacement_ms: timing_metrics.replacement_ms,
         original_visible_to_preset_applied_visible_ms: timing_metrics
             .original_visible_to_preset_applied_visible_ms,
@@ -642,13 +683,23 @@ fn build_preview_timing_metrics(
     let capture_metrics = latest_capture
         .map(build_preview_timing_metrics_from_capture)
         .unwrap_or_default();
+    let diagnostics_same_capture_full_screen_visible_ms = latest_capture.and_then(|capture| {
+        diagnostics
+            .visible_owner_transition_at_ms
+            .map(|visible_at_ms| {
+                visible_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms)
+            })
+    });
 
     PreviewTimingMetrics {
         first_visible_ms: capture_metrics
             .first_visible_ms
             .or(diagnostics.first_visible_ms),
-        replacement_ms: capture_metrics
-            .replacement_ms
+        same_capture_full_screen_visible_ms: diagnostics_same_capture_full_screen_visible_ms
+            .or(capture_metrics.same_capture_full_screen_visible_ms)
+            .or(diagnostics.replacement_ms),
+        replacement_ms: diagnostics_same_capture_full_screen_visible_ms
+            .or(capture_metrics.replacement_ms)
             .or(diagnostics.replacement_ms),
         original_visible_to_preset_applied_visible_ms: capture_metrics
             .original_visible_to_preset_applied_visible_ms
@@ -675,6 +726,7 @@ fn build_preview_timing_metrics_from_capture(
 
     PreviewTimingMetrics {
         first_visible_ms,
+        same_capture_full_screen_visible_ms: replacement_ms,
         replacement_ms,
         original_visible_to_preset_applied_visible_ms: match (first_visible_ms, replacement_ms) {
             (Some(first_visible_ms), Some(replacement_ms)) => {
@@ -760,6 +812,12 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
                 summary.saw_route_stage = true;
                 summary.route_stage = normalize_diagnostics_value(value);
             }
+            "visibleOwner" => {
+                summary.visible_owner = normalize_diagnostics_value(value);
+            }
+            "visibleOwnerTransitionAtMs" => {
+                summary.visible_owner_transition_at_ms = parse_preview_metric(value);
+            }
             "warmState" => {
                 summary.warm_state = normalize_diagnostics_value(value);
             }
@@ -777,6 +835,35 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
     }
 
     Some(summary)
+}
+
+fn parse_capture_client_visible_context(line: &str) -> Option<CaptureClientVisibleContext> {
+    if !line.contains("\tevent=recent-session-visible")
+        && !line.contains("\tevent=current-session-preview-visible")
+    {
+        return None;
+    }
+
+    let detail = line
+        .split('\t')
+        .find_map(|fragment| fragment.strip_prefix("detail="))?;
+    let ready_at_ms = detail
+        .split(';')
+        .filter_map(|fragment| fragment.split_once('='))
+        .find_map(|(key, value)| (key == "readyAtMs").then(|| value.parse::<u64>().ok()))
+        .flatten();
+    let ui_lag_ms = detail
+        .split(';')
+        .filter_map(|fragment| fragment.split_once('='))
+        .find_map(|(key, value)| (key == "uiLagMs").then(|| value.parse::<u64>().ok()))
+        .flatten();
+
+    Some(CaptureClientVisibleContext {
+        visible_at_ms: match (ready_at_ms, ui_lag_ms) {
+            (Some(ready_at_ms), Some(ui_lag_ms)) => Some(ready_at_ms.saturating_add(ui_lag_ms)),
+            _ => None,
+        },
+    })
 }
 
 fn build_capture_boundary(

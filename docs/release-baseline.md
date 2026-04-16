@@ -77,7 +77,7 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 
 - `src-tauri/tauri.conf.json` keeps `bundle.createUpdaterArtifacts: false`
 - `src-tauri/tauri.conf.json` uses the product bundle identifier `com.boothy.desktop`
-- Tauri `beforeBuildCommand`/`beforeDevCommand` still prepare the shadow `dedicated renderer` binary before app packaging
+- Tauri build/dev paths keep shadow `dedicated renderer` preparation inside `src-tauri/build.rs` to avoid duplicate prebuild lock races
 - No updater auto-install path is enabled in this story
 - Release promotion remains outside the active booth session path
 - Branch rollout governance applies build and preset-stack baselines only at safe transition points and never force-updates an active customer session
@@ -86,7 +86,15 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 
 - `automated proof` and `hardware proof` are separate release gates.
 - The canonical hardware close record lives in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
-- Story 1.20 is the preview architecture activation owner; Story 1.13 remains the final guarded cutover / release-close owner.
+- Stories 1.18, 1.19, and 1.20 are legacy preview evidence only.
+- Stories 1.21 and 1.22 are the metric/evidence baseline.
+- Stories 1.23 through 1.27 are completed prototype/evidence/gate history and must not be read as actual primary lane implementation complete.
+- Stories 1.28 through 1.31 are the active actual-lane forward path, and Story 1.13 remains the final guarded cutover / release-close owner after that track is accepted.
+- Primary preview promotion acceptance is `same-capture preset-applied full-screen visible <= 2500ms`.
+- Preview confirmation also follows the same `2500ms` threshold, and first-visible, tiny-preview, or recent-strip updates cannot declare release success on their own.
+- `sameCaptureFullScreenVisibleMs` is the new-track release field. Legacy `replacementMs` remains comparison-only or backward-compatible alias data.
+- Release notes, dashboards, bundles, and ledger copy must preserve the boundary between `legacy comparison only` and the `new-track release field`.
+- Story 1.22 is the selected-capture evidence reset owner: the canonical bundle must preserve one `sessionId/requestId/captureId`, selected-capture timing events only, `visibleOwner` / `visibleOwnerTransitionAtMs`, and capture-time route/catalog snapshots.
 - Story 1.13 is the canonical preview architecture close owner for guarded cutover, rollback evidence, and `preview-renderer-policy.json` proof.
 - Automated build/test success can prove implementation readiness, but booth `Ready` / `Completed` truth is not release-claimable until the ledger records `Go`.
 - Any `No-Go`, missing evidence package, or unresolved blocker in the ledger keeps the branch on `release hold`.
@@ -94,9 +102,11 @@ The draft workflow lives at `.github/workflows/release-windows.yml`.
 - CI proof artifacts remain evidence only; `Promotion state` stays non-release until the hardware ledger clears the gated stories for close.
 - Preview architecture promotion evidence must include the host-owned `branch-config/preview-renderer-policy.json` state together with the booth session package so shadow, canary, default, and rollback boundaries stay auditable.
 - The canonical booth package must preserve capture-time route-policy and catalog snapshots inside the session diagnostics bundle before evidence is assembled.
+- Story 1.23 local lane prototype, Story 1.24 canary proof, Story 1.25 default/rollback proof, and Story 1.27 corrective follow-up stay outside Story 1.22. Evidence reset cannot silently absorb those ownership boundaries.
+- Story 1.28 actual-lane implementation, Story 1.29 evidence/vocabulary realignment, Story 1.30 actual-lane canary, and Story 1.31 actual-lane default/rollback proof define the release-relevant forward path before Story 1.13 can reopen.
 - Sprint review and release sign-off must read `Automated Pass`, `Hardware Pass`, `Go / No-Go`, blocker, owner, and evidence path together.
 - Preview promotion sign-off also reads latency, parity, fallback ratio, route policy state, and rollback evidence together; speed alone cannot produce `Go`.
-- Repeated `canary` success-path evidence and one-action rollback proof are prerequisites before any `default` route claim is considered.
+- Repeated `canary` success-path evidence and one-action rollback proof are prerequisites before any `default` route claim is considered; Story 1.25 owns the prototype-track gate, while Story 1.31 owns the actual-lane default-promotion and rollback gate that matters for release reopening.
 
 ## Current State
 
@@ -104,4 +114,4 @@ Signing-ready blocker: final certificate issuance and trusted-signing provider r
 
 The repo also includes a host-owned `branch-config` rollout boundary so selected branch sets can stage rollout or rollback without mutating booth session truth.
 
-On April 11, 2026, Story 1.13 remains on `release hold`: the observed `branch-config/preview-renderer-policy.json` still keeps `defaultRoute` on `darktable`, with only a manual canary for `preset_test-look@2026.03.31`, so the canonical ledger remains `No-Go` until a fresh booth package proves promoted dedicated-renderer close behavior and one-action rollback evidence.
+On April 16, 2026, preview architecture remains on `release hold`: Stories 1.21 through 1.27 are documented as completed baseline/prototype history, but the canonical ledger remains `No-Go` because the actual-lane forward path in Stories 1.28 through 1.31 has not yet produced an accepted canonical actual-lane package with `sameCaptureFullScreenVisibleMs <= 2500ms`, selected-capture evidence continuity, repeated approved-hardware success-path behavior, and one-action rollback.

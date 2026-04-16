@@ -2,15 +2,18 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
-const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
-const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
-const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
-const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
+const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 1024;
+const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 1024;
+const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 768;
+const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 768;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
+const DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY: &str = ":memory:";
+const FAST_PREVIEW_SOURCE_WAIT_POLL_MS: u64 = 25;
+const FAST_PREVIEW_SOURCE_WAIT_BUDGET_MS: u64 = 500;
 
 fn main() {
     if let Err(error) = run() {
@@ -386,7 +389,9 @@ fn resolve_preview_render_source<'a>(
     preview_source_asset_path: Option<&'a Path>,
 ) -> PreviewRenderSource<'a> {
     if let Some(preview_source_asset_path) = preview_source_asset_path {
-        if preview_source_asset_path.is_file() {
+        if preview_source_asset_path.is_file()
+            || wait_for_fast_preview_source_asset(preview_source_asset_path)
+        {
             return PreviewRenderSource {
                 source_asset_path: preview_source_asset_path,
                 kind: PreviewRenderSourceKind::FastPreviewRaster,
@@ -398,6 +403,22 @@ fn resolve_preview_render_source<'a>(
         source_asset_path,
         kind: PreviewRenderSourceKind::RawOriginal,
     }
+}
+
+fn wait_for_fast_preview_source_asset(preview_source_asset_path: &Path) -> bool {
+    if preview_source_asset_path.is_file() {
+        return true;
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(FAST_PREVIEW_SOURCE_WAIT_BUDGET_MS);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(FAST_PREVIEW_SOURCE_WAIT_POLL_MS));
+        if preview_source_asset_path.is_file() {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn render_preview_output(
@@ -416,9 +437,9 @@ fn render_preview_output(
     let resolution = resolve_darktable_cli_binary();
     let (width_cap, height_cap) = preview_render_dimensions(render_source_kind);
     let status = Command::new(&resolution.binary)
-        .arg(source_asset_path)
-        .arg(xmp_template_path)
-        .arg(&staged_output_path)
+        .arg(path_to_runtime_string(source_asset_path))
+        .arg(path_to_runtime_string(xmp_template_path))
+        .arg(path_to_runtime_string(&staged_output_path))
         .arg("--hq")
         .arg("false")
         .arg("--apply-custom-presets")
@@ -427,6 +448,10 @@ fn render_preview_output(
         .arg(width_cap.to_string())
         .arg("--height")
         .arg(height_cap.to_string())
+        .arg("--core")
+        .arg("--library")
+        .arg(DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY)
+        .arg("--disable-opencl")
         .status()
         .map_err(|error| {
             format!(
@@ -473,12 +498,8 @@ fn staged_render_output_path(output_path: &Path) -> PathBuf {
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("preview");
-    let extension = output_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("jpg");
 
-    parent.join(format!("{stem}.sidecar-staging.{extension}"))
+    parent.join(format!("{stem}.preview-rendering.jpg"))
 }
 
 struct DarktableBinaryResolution {
@@ -1089,7 +1110,11 @@ mod tests {
         assert!(invocation_args.contains(&path_to_runtime_string(&fast_preview_asset_path)));
         assert!(invocation_args.contains("--width"));
         assert!(invocation_args.contains("--height"));
-        assert!(invocation_args.contains("256"));
+        assert!(invocation_args.contains(&FAST_PREVIEW_RENDER_MAX_WIDTH_PX.to_string()));
+        assert!(invocation_args.contains("--core"));
+        assert!(invocation_args.contains("--library"));
+        assert!(invocation_args.contains(DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY));
+        assert!(invocation_args.contains("--disable-opencl"));
 
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -1178,8 +1203,100 @@ mod tests {
             fs::read_to_string(&invocation_log_path).expect("invocation log should exist");
 
         assert!(!darktable_output_arg.contains(&path_to_runtime_string(&canonical_preview_output_path)));
+        assert!(darktable_output_arg.contains(".preview-rendering.jpg"));
         assert_ne!(output_bytes, b"original-preview");
         assert_eq!(output_bytes, b"rendered-preview\r\n");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn preview_waits_briefly_for_fast_preview_candidate_before_falling_back_to_raw() {
+        let temp_dir = unique_temp_dir("late-fast-preview");
+        let diagnostics_dir = temp_dir.join("diagnostics").join("dedicated-renderer");
+        let request_path = diagnostics_dir.join("capture.preview-request.json");
+        let result_path = diagnostics_dir.join("capture.preview-result.json");
+        let source_asset_path = temp_dir.join("captures").join("capture_01.cr3");
+        let late_fast_preview_asset_path = temp_dir.join("renders").join("capture_01.jpg");
+        let xmp_template_path = temp_dir.join("preset").join("xmp").join("template.xmp");
+        let canonical_preview_output_path = temp_dir.join("renders").join("capture_01-close.jpg");
+        let fake_darktable_path = temp_dir.join("fake-darktable.cmd");
+        let invocation_log_path = temp_dir.join("darktable-args.txt");
+        let warm_state_path = diagnostics_dir.join("warm-state-preset_soft-glow-2026.04.10.json");
+        let request_json = format!(
+            concat!(
+                "{{\n",
+                "  \"sessionId\": \"session_01hs6n1r8b8zc5v4ey2x7b9g1m\",\n",
+                "  \"requestId\": \"request_01\",\n",
+                "  \"captureId\": \"capture_01\",\n",
+                "  \"presetId\": \"preset_soft-glow\",\n",
+                "  \"publishedVersion\": \"2026.04.10\",\n",
+                "  \"sourceAssetPath\": \"{}\",\n",
+                "  \"previewSourceAssetPath\": \"{}\",\n",
+                "  \"xmpTemplatePath\": \"{}\",\n",
+                "  \"canonicalPreviewOutputPath\": \"{}\",\n",
+                "  \"diagnosticsDetailPath\": \"{}\"\n",
+                "}}\n"
+            ),
+            path_to_runtime_string(&source_asset_path),
+            path_to_runtime_string(&late_fast_preview_asset_path),
+            path_to_runtime_string(&xmp_template_path),
+            path_to_runtime_string(&canonical_preview_output_path),
+            path_to_runtime_string(&request_path)
+        );
+
+        fs::create_dir_all(source_asset_path.parent().expect("source dir should exist"))
+            .expect("source dir should be created");
+        fs::create_dir_all(
+            late_fast_preview_asset_path
+                .parent()
+                .expect("fast preview dir should exist"),
+        )
+        .expect("fast preview dir should be created");
+        fs::create_dir_all(xmp_template_path.parent().expect("xmp dir should exist"))
+            .expect("xmp dir should be created");
+        fs::write(&source_asset_path, b"raw").expect("source asset should exist");
+        fs::write(&xmp_template_path, b"xmp").expect("xmp template should exist");
+        fs::write(
+            &fake_darktable_path,
+            format!(
+                "@echo off\r\nset \"LOG={}\"\r\necho %1>\"%LOG%\"\r\nfor %%I in (\"%~3\") do if not exist \"%%~dpI\" mkdir \"%%~dpI\" >nul 2>&1\r\necho rendered-preview>\"%~3\"\r\nexit /b 0\r\n",
+                path_to_runtime_string(&invocation_log_path)
+            ),
+        )
+        .expect("fake darktable should be written");
+        write_warm_state_file(
+            &warm_state_path,
+            "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "preset_soft-glow",
+            "2026.04.10",
+            "warm-ready",
+        )
+        .expect("warm state should exist");
+
+        let late_path = late_fast_preview_asset_path.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(75));
+            fs::write(&late_path, b"jpeg").expect("late fast preview should be created");
+        });
+
+        let _env_guard = darktable_env_lock()
+            .lock()
+            .expect("darktable env test lock should be available");
+        let previous = env::var_os("BOOTHY_DARKTABLE_CLI_BIN");
+        env::set_var("BOOTHY_DARKTABLE_CLI_BIN", &fake_darktable_path);
+        let preview_result = handle_preview(&request_json, &result_path);
+        match previous {
+            Some(value) => env::set_var("BOOTHY_DARKTABLE_CLI_BIN", value),
+            None => env::remove_var("BOOTHY_DARKTABLE_CLI_BIN"),
+        }
+        writer.join().expect("late preview writer should finish");
+
+        preview_result.expect("preview should accept a warmed render");
+
+        let invocation_source =
+            fs::read_to_string(&invocation_log_path).expect("invocation log should exist");
+        assert!(invocation_source.contains(&path_to_runtime_string(&late_fast_preview_asset_path)));
 
         let _ = fs::remove_dir_all(temp_dir);
     }

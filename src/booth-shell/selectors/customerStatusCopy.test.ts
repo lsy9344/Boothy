@@ -78,6 +78,38 @@ describe('customerStatusCopy', () => {
     expect(copy.canCapture).toBe(true)
   })
 
+  it('uses a neutral post-end bridge copy before explicit post-end truth is confirmed', () => {
+    const copy = selectCustomerStatusCopy(
+      createReadiness({
+        customerState: 'Session Ended',
+        canCapture: false,
+        primaryAction: 'wait',
+        customerMessage: '촬영 시간이 끝났어요.',
+        supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
+        reasonCode: 'ended',
+        timing: {
+          schemaVersion: 'session-timing/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          adjustedEndAt: '2026-03-20T00:15:00.000Z',
+          warningAt: '2026-03-20T00:10:00.000Z',
+          phase: 'ended',
+          captureAllowed: false,
+          approvedExtensionMinutes: 0,
+          approvedExtensionAuditRef: null,
+          warningTriggeredAt: '2026-03-20T00:10:01.000Z',
+          endedTriggeredAt: '2026-03-20T00:15:00.000Z',
+        },
+      }),
+    )
+
+    expect(copy.stateLabel).toBe('촬영이 끝났어요')
+    expect(copy.headline).toBe('촬영이 끝났고 다음 단계를 준비 중이에요.')
+    expect(copy.detail).toBe('안전한 다음 안내를 보여드릴 때까지 잠시만 기다려 주세요.')
+    expect(copy.actionLabel).toBe('잠시 기다리기')
+    expect(copy.isExportWaiting).toBe(false)
+    expect(copy.isPostEndFinalized).toBe(false)
+  })
+
   it('keeps handoff-ready completion on a generic confirmation action in story 3.2', () => {
     const copy = selectCustomerStatusCopy(
       createReadiness({

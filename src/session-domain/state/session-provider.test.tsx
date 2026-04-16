@@ -111,7 +111,7 @@ function createCaptureRecord(
       captureAcknowledgedAtMs: 100,
       previewVisibleAtMs: null,
       captureBudgetMs: 1000,
-      previewBudgetMs: 5000,
+      previewBudgetMs: 2500,
       previewBudgetState: 'pending',
     },
     ...overrides,
@@ -5730,6 +5730,207 @@ describe('SessionProvider', () => {
       state: 'completed',
       completionVariant: 'local-deliverable-ready',
     })
+  })
+
+  it('keeps the lifecycle at ended until host explicit post-end truth is confirmed', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(
+              createReadinessSnapshot({
+                sessionId,
+                surfaceState: 'captureReady',
+                customerState: 'Ready',
+                canCapture: true,
+                primaryAction: 'capture',
+                customerMessage: '지금 촬영할 수 있어요.',
+                supportMessage: '버튼을 누르면 바로 시작돼요.',
+                reasonCode: 'ready',
+              }),
+            ),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockImplementation(async ({ onReadiness }) => {
+              emitReadiness = onReadiness
+              return () => undefined
+            }),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ready')
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    act(() => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'blocked',
+          customerState: 'Session Ended',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '촬영 시간이 끝났어요.',
+          supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
+          reasonCode: 'ended',
+          postEnd: null,
+          timing: createTimingSnapshot({
+            sessionId,
+            phase: 'ended',
+            captureAllowed: false,
+            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
+            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
+          }),
+        }),
+      )
+    })
+
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ended')
+    expect(latestState!.sessionDraft.captureReadiness?.postEnd).toBeNull()
+    expect(latestState!.sessionDraft.manifest?.postEnd).toBeNull()
+    expect(latestState!.sessionDraft.manifest?.lifecycle.stage).toBe('ended')
+  })
+
+  it('does not let a late same-session ready update reopen capture after ended bridge state', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(
+              createReadinessSnapshot({
+                sessionId,
+                reasonCode: 'ended',
+                customerState: 'Session Ended',
+                canCapture: false,
+                primaryAction: 'wait',
+                customerMessage: '촬영 시간이 끝났어요.',
+                supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
+                timing: createTimingSnapshot({
+                  sessionId,
+                  phase: 'ended',
+                  captureAllowed: false,
+                  warningTriggeredAt: '2026-03-20T00:10:01.000Z',
+                  endedTriggeredAt: '2026-03-20T00:15:00.000Z',
+                }),
+              }),
+            ),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockImplementation(async ({ onReadiness }) => {
+              emitReadiness = onReadiness
+              return () => undefined
+            }),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ended')
+      expect(latestState!.sessionDraft.captureReadiness?.canCapture).toBe(false)
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    act(() => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'captureReady',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '버튼을 누르면 바로 시작돼요.',
+          reasonCode: 'ready',
+          postEnd: null,
+        }),
+      )
+    })
+
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ended')
+    expect(latestState!.sessionDraft.captureReadiness?.canCapture).toBe(false)
+    expect(latestState!.sessionDraft.manifest?.lifecycle.stage).toBe('ended')
   })
 
   it('accepts a host correction from completed to phone-required for the same session', async () => {

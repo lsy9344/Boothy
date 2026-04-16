@@ -13,7 +13,10 @@ use tauri::{async_runtime, AppHandle};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 use crate::{
-    capture::ingest_pipeline::{complete_preview_render_in_dir, finish_preview_render_in_dir},
+    capture::{
+        ingest_pipeline::{complete_preview_render_in_dir, finish_preview_render_in_dir},
+        CAPTURE_PIPELINE_LOCK,
+    },
     contracts::dto::{
         DedicatedRendererPreviewJobRequestDto, DedicatedRendererPreviewJobResultDto,
         DedicatedRendererRenderProfileDto, DedicatedRendererWarmupRequestDto,
@@ -57,6 +60,8 @@ const DEDICATED_RENDERER_TEST_START_FAILURE_ENV: &str =
 const PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE_ENV: &str =
     "BOOTHY_TEST_PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE";
 const PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION: &str = "preview-renderer-route-policy/v1";
+const PREVIEW_PROMOTION_IMPROVEMENT_SUMMARY: &str =
+    "strategyVersion=2026-04-16d;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=768x768;rawPreviewCapPx=1024x1024";
 const DEDICATED_RENDERER_PROCESS_TIMEOUT: Duration = Duration::from_secs(50);
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -96,7 +101,7 @@ struct ResolvedPreviewRendererRoute {
     fallback_reason_code: Option<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewPromotionEvidenceRecord {
     schema_version: String,
@@ -110,7 +115,13 @@ struct PreviewPromotionEvidenceRecord {
     fallback_reason_code: Option<String>,
     route_stage: String,
     warm_state: Option<String>,
+    capture_requested_at_ms: u64,
+    raw_persisted_at_ms: u64,
+    truthful_artifact_ready_at_ms: u64,
+    visible_owner: String,
+    visible_owner_transition_at_ms: u64,
     first_visible_ms: Option<u64>,
+    same_capture_full_screen_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
     original_visible_to_preset_applied_visible_ms: Option<u64>,
     session_manifest_path: String,
@@ -120,6 +131,126 @@ struct PreviewPromotionEvidenceRecord {
     catalog_state_path: String,
     preview_asset_path: Option<String>,
     warm_state_detail_path: Option<String>,
+    improvement_summary: String,
+}
+
+fn preview_promotion_evidence_path_in_dir(base_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    Some(
+        SessionPaths::try_new(base_dir, session_id)
+            .ok()?
+            .diagnostics_dir
+            .join("dedicated-renderer")
+            .join("preview-promotion-evidence.jsonl"),
+    )
+}
+
+fn find_preview_promotion_evidence_record_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+) -> Result<Option<PreviewPromotionEvidenceRecord>, HostErrorEnvelope> {
+    let Some(evidence_path) = preview_promotion_evidence_path_in_dir(base_dir, session_id) else {
+        return Ok(None);
+    };
+    if !evidence_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&evidence_path).map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 읽지 못했어요: {error}"
+        ))
+    })?;
+
+    Ok(contents
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<PreviewPromotionEvidenceRecord>(line).ok())
+        .find(|record| {
+            record.session_id == session_id
+                && record.capture_id == capture_id
+                && record.request_id == request_id
+        }))
+}
+
+pub(crate) fn resolve_capture_visibility_owner_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+) -> Result<Option<String>, HostErrorEnvelope> {
+    Ok(find_preview_promotion_evidence_record_in_dir(
+        base_dir, session_id, capture_id, request_id,
+    )?
+    .map(|record| {
+        if record.visible_owner.trim().is_empty() {
+            record.lane_owner
+        } else {
+            record.visible_owner
+        }
+    }))
+}
+
+pub(crate) fn append_capture_visibility_evidence_update_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+    visible_at_ms: u64,
+    visible_owner: Option<&str>,
+) -> Result<(), HostErrorEnvelope> {
+    let Some(mut record) =
+        find_preview_promotion_evidence_record_in_dir(base_dir, session_id, capture_id, request_id)?
+    else {
+        let Some(evidence_path) = preview_promotion_evidence_path_in_dir(base_dir, session_id) else {
+            return Ok(());
+        };
+        if !evidence_path.is_file() {
+            return Ok(());
+        }
+        return Ok(());
+    };
+    let Some(evidence_path) = preview_promotion_evidence_path_in_dir(base_dir, session_id) else {
+        return Ok(());
+    };
+
+    let same_capture_full_screen_visible_ms =
+        visible_at_ms.saturating_sub(record.capture_requested_at_ms);
+    record.observed_at = current_timestamp(SystemTime::now())?;
+    record.visible_owner = visible_owner
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(record.lane_owner.as_str())
+        .to_string();
+    record.visible_owner_transition_at_ms = visible_at_ms;
+    record.same_capture_full_screen_visible_ms = Some(same_capture_full_screen_visible_ms);
+    record.replacement_ms = Some(same_capture_full_screen_visible_ms);
+    record.original_visible_to_preset_applied_visible_ms = record
+        .first_visible_ms
+        .map(|first_visible_ms| same_capture_full_screen_visible_ms.saturating_sub(first_visible_ms));
+
+    let serialized = serde_json::to_string(&record).map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 직렬화하지 못했어요: {error}"
+        ))
+    })?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&evidence_path)
+        .map_err(|error| {
+            HostErrorEnvelope::persistence(format!(
+                "preview promotion evidence를 남기지 못했어요: {error}"
+            ))
+        })?;
+    writeln!(file, "{serialized}").map_err(|error| {
+        HostErrorEnvelope::persistence(format!(
+            "preview promotion evidence를 남기지 못했어요: {error}"
+        ))
+    })?;
+
+    Ok(())
 }
 
 enum PreviewRendererRoutePolicyLoadResult {
@@ -849,22 +980,31 @@ fn append_preview_transition_summary_in_dir(
     let first_visible_ms = capture
         .timing
         .fast_preview_visible_at_ms
+        .or(capture.timing.preview_visible_at_ms)
         .map(|visible_at_ms| {
             visible_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms)
         });
     let replacement_ms = match (
-        capture.timing.fast_preview_visible_at_ms,
-        capture.timing.xmp_preview_ready_at_ms,
+        capture.timing.capture_acknowledged_at_ms,
+        capture
+            .timing
+            .preview_visible_at_ms
+            .or(capture.timing.xmp_preview_ready_at_ms),
     ) {
-        (Some(first_visible_at_ms), Some(truthful_close_at_ms)) => {
-            Some(truthful_close_at_ms.saturating_sub(first_visible_at_ms))
+        (capture_acknowledged_at_ms, Some(full_screen_visible_at_ms)) => {
+            Some(full_screen_visible_at_ms.saturating_sub(capture_acknowledged_at_ms))
         }
         _ => None,
     };
+    let visible_owner_transition_at_ms = capture
+        .timing
+        .preview_visible_at_ms
+        .or(capture.timing.xmp_preview_ready_at_ms);
     let detail = build_preview_transition_summary_detail(
         lane_owner,
         fallback_reason,
         route_stage,
+        visible_owner_transition_at_ms,
         first_visible_ms,
         replacement_ms,
         warm_state,
@@ -898,6 +1038,7 @@ fn append_preview_transition_summary_in_dir(
         route_stage,
         warm_state,
         warm_state_detail_path,
+        visible_owner_transition_at_ms,
         first_visible_ms,
         replacement_ms,
     ) {
@@ -932,6 +1073,7 @@ fn build_preview_transition_summary_detail(
     lane_owner: &str,
     fallback_reason: Option<&str>,
     route_stage: &str,
+    visible_owner_transition_at_ms: Option<u64>,
     first_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
     warm_state: Option<&str>,
@@ -943,8 +1085,9 @@ fn build_preview_transition_summary_detail(
         _ => None,
     };
     format!(
-        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
+        "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};visibleOwner={lane_owner};visibleOwnerTransitionAtMs={};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
         fallback_reason.unwrap_or("none"),
+        format_optional_metric(visible_owner_transition_at_ms),
         warm_state.unwrap_or("none"),
         format_optional_metric(first_visible_ms),
         format_optional_metric(replacement_ms),
@@ -960,6 +1103,7 @@ fn append_preview_promotion_evidence_record_in_dir(
     route_stage: &str,
     warm_state: Option<&str>,
     warm_state_detail_path: Option<&str>,
+    visible_owner_transition_at_ms: Option<u64>,
     first_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
 ) -> Result<(), HostErrorEnvelope> {
@@ -1015,7 +1159,25 @@ fn append_preview_promotion_evidence_record_in_dir(
         fallback_reason_code: fallback_reason.map(str::to_string),
         route_stage: route_stage.into(),
         warm_state: warm_state.map(str::to_string),
+        capture_requested_at_ms: capture.timing.capture_acknowledged_at_ms,
+        raw_persisted_at_ms: capture.raw.persisted_at_ms,
+        truthful_artifact_ready_at_ms: capture
+            .preview
+            .ready_at_ms
+            .or(capture.timing.xmp_preview_ready_at_ms)
+            .ok_or_else(|| {
+                HostErrorEnvelope::persistence(
+                    "truthful artifact ready 시점을 찾지 못했어요.".to_string(),
+                )
+            })?,
+        visible_owner: lane_owner.into(),
+        visible_owner_transition_at_ms: visible_owner_transition_at_ms.ok_or_else(|| {
+            HostErrorEnvelope::persistence(
+                "visible owner transition 시점을 찾지 못했어요.".to_string(),
+            )
+        })?,
         first_visible_ms,
+        same_capture_full_screen_visible_ms: replacement_ms,
         replacement_ms,
         original_visible_to_preset_applied_visible_ms,
         session_manifest_path: path_to_runtime_string(&paths.manifest_path),
@@ -1027,6 +1189,7 @@ fn append_preview_promotion_evidence_record_in_dir(
         catalog_state_path: path_to_runtime_string(&catalog_state_snapshot_path),
         preview_asset_path: capture.preview.asset_path.clone(),
         warm_state_detail_path: warm_state_detail_path.map(str::to_string),
+        improvement_summary: PREVIEW_PROMOTION_IMPROVEMENT_SUMMARY.into(),
     };
     let serialized = serde_json::to_string(&record).map_err(|error| {
         HostErrorEnvelope::persistence(format!(
@@ -1077,6 +1240,9 @@ fn sync_active_preview_warm_state_in_manifest(
         return Ok(());
     };
     let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("세션 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
     let mut manifest = read_session_manifest(&paths.manifest_path)?;
     let active_preset_matches = manifest
         .active_preset
@@ -1190,10 +1356,7 @@ fn try_start_dedicated_renderer(
     }
 
     if let Some(app_handle) = app_handle {
-        let shell_result = match app_handle
-            .shell()
-            .sidecar(DEDICATED_RENDERER_EXTERNAL_BIN)
-        {
+        let shell_result = match app_handle.shell().sidecar(DEDICATED_RENDERER_EXTERNAL_BIN) {
             Ok(command) => wait_for_shell_command_with_timeout(
                 command
                     .arg("--protocol")
@@ -1908,16 +2071,25 @@ mod tests {
         build_preview_result, build_preview_transition_summary_detail, build_warmup_result,
         fallback_reason_for_missing_preview_result, preview_output_is_fresh_for_request,
         reconcile_sidecar_start_result, resolve_preview_renderer_route_in_dir,
+        resolve_preview_source_asset_path,
         sidecar_binary_name_for_target, validate_preview_job_result, validate_warmup_result,
         wait_for_child_exit_with_timeout, PreviewRendererRouteKind,
-        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION,
-        DEDICATED_RENDERER_RESULT_SCHEMA_VERSION, DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
+        DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
+        DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION,
         PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
     };
     use crate::contracts::dto::{
         DedicatedRendererPreviewJobRequestDto, DedicatedRendererRenderProfileDto,
         DedicatedRendererWarmupRequestDto,
+    };
+    use crate::session::{
+        session_manifest::{
+            CaptureTimingMetrics, FinalCaptureAsset, PreviewCaptureAsset, RawCaptureAsset,
+            SessionCaptureRecord, CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS,
+            SESSION_CAPTURE_SCHEMA_VERSION,
+        },
+        session_paths::SessionPaths,
     };
 
     fn preview_request() -> DedicatedRendererPreviewJobRequestDto {
@@ -2430,11 +2602,13 @@ mod tests {
             "inline-truthful-fallback",
             Some("shadow-submission-only"),
             "shadow",
+            Some(6425),
             Some(2810),
             Some(3615),
             Some("warm-ready"),
         );
 
+        assert!(detail.contains("visibleOwnerTransitionAtMs=6425"));
         assert!(detail.contains("firstVisibleMs=2810"));
         assert!(detail.contains("replacementMs=3615"));
         assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=805"));
@@ -2501,12 +2675,61 @@ mod tests {
     #[test]
     fn preview_request_can_include_fast_preview_source_asset() {
         let mut request = preview_request();
-        request.preview_source_asset_path =
-            Some("C:/boothy/sessions/session/renders/previews/capture_20260410_001-fast.jpg".into());
+        request.preview_source_asset_path = Some(
+            "C:/boothy/sessions/session/renders/previews/capture_20260410_001-fast.jpg".into(),
+        );
 
         let serialized = serde_json::to_string(&request).expect("request should serialize");
 
         assert!(serialized.contains("previewSourceAssetPath"));
         assert!(serialized.contains("capture_20260410_001-fast.jpg"));
+    }
+
+    #[test]
+    fn preview_source_asset_path_requires_an_existing_canonical_preview_file() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-preview-source-guard-{}",
+            std::process::id()
+        ));
+        let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1m";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture = SessionCaptureRecord {
+            schema_version: SESSION_CAPTURE_SCHEMA_VERSION.into(),
+            session_id: session_id.into(),
+            booth_alias: "Booth A".into(),
+            active_preset_id: Some("preset_soft-glow".into()),
+            active_preset_version: "2026.04.10".into(),
+            active_preset_display_name: Some("Soft Glow".into()),
+            preview_renderer_route: None,
+            capture_id: "capture_20260410_001".into(),
+            request_id: "request_20260410_001".into(),
+            raw: RawCaptureAsset {
+                asset_path: "C:/boothy/sessions/session/captures/originals/capture_20260410_001.cr3"
+                    .into(),
+                persisted_at_ms: 100,
+            },
+            preview: PreviewCaptureAsset {
+                asset_path: None,
+                enqueued_at_ms: Some(120),
+                ready_at_ms: None,
+            },
+            final_asset: FinalCaptureAsset {
+                asset_path: None,
+                ready_at_ms: None,
+            },
+            render_status: "previewPending".into(),
+            post_end_state: "activeSession".into(),
+            timing: CaptureTimingMetrics {
+                capture_acknowledged_at_ms: 100,
+                preview_visible_at_ms: None,
+                fast_preview_visible_at_ms: None,
+                xmp_preview_ready_at_ms: None,
+                capture_budget_ms: CAPTURE_BUDGET_MS,
+                preview_budget_ms: PREVIEW_BUDGET_MS,
+                preview_budget_state: "pending".into(),
+            },
+        };
+
+        assert_eq!(resolve_preview_source_asset_path(&paths, &capture), None);
     }
 }

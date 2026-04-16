@@ -10,4 +10,22 @@ describe('src-tauri build script', () => {
       'cargo:rerun-if-changed=../sidecar/dedicated-renderer/main.rs',
     )
   })
+
+  it('avoids prebuilding the dedicated renderer in tauri command hooks', () => {
+    const tauriConfig = JSON.parse(
+      readFileSync(resolve('src-tauri/tauri.conf.json'), 'utf8'),
+    ) as {
+      build?: {
+        beforeBuildCommand?: string
+        beforeDevCommand?: string
+      }
+    }
+
+    expect(tauriConfig.build?.beforeBuildCommand).not.toContain(
+      'prepare:dedicated-renderer',
+    )
+    expect(tauriConfig.build?.beforeDevCommand).not.toContain(
+      'prepare:dedicated-renderer',
+    )
+  })
 })

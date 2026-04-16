@@ -1,0 +1,2162 @@
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index 9a52599..37dd711 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-03-20 09:44:49 +09:00
+-# last_updated: 2026-04-13 16:21:28 +09:00
++# last_updated: 2026-04-15 15:58:00 +09:00
+ # project: Boothy
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -22,7 +22,6 @@
+ #   - in-progress: Developer actively working on implementation
+ #   - review: Ready for code review (via Dev's code-review workflow)
+ #   - done: Story completed
+-#           (truth-critical stories also require `hardware_validation_ledger` to record `Go`)
+ #
+ # Retrospective Status:
+ #   - optional: Can be completed but not required
+@@ -34,36 +33,48 @@
+ # - Stories can be worked in parallel if team capacity allows
+ # - SM typically creates next story after previous one is 'done' to incorporate learnings
+ # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+-# - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
+-# - approved correct-course change (2026-04-10): hardware validation is tracked as a cross-cutting release truth gate, not as a standalone story item
+-# - approved correct-course change (2026-04-13): preview architecture closes in the order 1.18 prototype -> 1.19 gate -> 1.20 activation -> 1.13 guarded cutover
++# - Preview architecture old track: 1.18, 1.19, 1.20 are legacy evidence only
++# - Preview architecture new track: 1.21 -> 1.22 -> 1.23 -> 1.24 -> 1.25
++# - Story 1.13 is blocked until Story 1.25 produces a local-lane Go candidate with rollback proof
++# - Story 1.26 opens only if the local forward path repeatedly misses the approved hardware KPI
+ 
+ generated: "2026-03-20 09:44:49 +09:00"
+-last_updated: "2026-04-14 00:00:00 +09:00"
++last_updated: "2026-04-15 16:31:30 +09:00"
+ project: "Boothy"
+ project_key: "NOKEY"
+ tracking_system: "file-system"
+ story_location: "{project-root}/_bmad-output/implementation-artifacts"
+-hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
+-preview_architecture_sequence:
+-  - "1.18 prototype"
+-  - "1.19 gate establishment"
+-  - "1.20 activation"
+-  - "1.13 guarded cutover / release close"
++recommended_next_story: "1.25-local-lane-default-decision과-rollback-gate"
++preview_architecture_tracks:
++  old_track:
++    - "1.18 retired dedicated close baseline evidence"
++    - "1.19 legacy parity and instrumentation ledger"
++    - "1.20 legacy route activation validation"
++  new_track:
++    - "1.21 metric reset and acceptance alignment"
++    - "1.22 capture-to-full-screen evidence chain reset"
++    - "1.23 local full-screen lane prototype"
++    - "1.24 local lane hardware canary validation"
++    - "1.25 local lane default decision and rollback gate"
++  final_close_owner: "1.13 guarded cutover and hardware validation gate"
++  reserve_track: "1.26 remote reserve POC only after repeated local-lane KPI failure"
++release_gates:
++  hardware_validation_gate:
++    - "1.24 canary evidence must show KPI, fallback, wrong-capture, and fidelity-drift health"
++    - "1.13 remains the final ledger-backed release-close gate"
++  rollback_gate:
++    - "1.25 must prove canary-to-default or rollback control through preview-renderer-policy.json"
++    - "1.25 must include one-action rollback evidence before 1.13 starts"
++documentation_readiness:
++  input_docs_updated: true
++  contract_freeze_complete: true
++  blocking_follow_up: []
+ 
+ development_status:
+   epic-1: in-progress
+-  1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: in-progress
+-  1-14-공유-계약-동결과-검증-기준-확정: done
+-  1-15-canon-helper-profile과-publication-contract-확정: done
+-  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
+-  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
+-  1-18-resident-gpu-first-display-lane-prototype과-warm-state-service-도입: done
+-  1-19-etw-wpr-wpa-pix-plus-parity-diff-기반-승격-게이트-정착: done
+-  1-20-resident-preview-lane-activation과-route-policy-promotion: done
+-  1-1-set-up-initial-project-from-starter-template: done
+-  1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성: done
+-  1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
++  1-1-초기-프로젝트-부트스트랩과-tauri-표준-시작점-구성: done
++  1-2-이름과-뒤4자리-기반-세션-시작: done
++  1-3-승인된-프리셋-카탈로그와-활성-프리셋-선택: done
+   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
+   1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
+   1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
+@@ -73,14 +84,28 @@ development_status:
+   1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
+   1-11-local-dedicated-renderer-sidecar-baseline과-capture-bound-preview-job-protocol-도입: done
+   1-12-dual-close-topology-정착과-same-slot-truthful-replacement-전환: done
++  1-13-guarded-cutover와-hardware-validation-gate: backlog
++  1-14-공유-계약-동결과-검증-기준-확정: done
++  1-15-canon-helper-profile과-publication-contract-확정: done
++  1-16-windows-desktop-build-release-baseline과-ci-proof-설정: done
++  1-17-canonical-preset-recipe와-xmp-adapter-기준-동결: done
++  1-18-retired-dedicated-close-후보-activation-baseline-evidence-보존: backlog
++  1-19-legacy-validated-track-parity와-instrumentation-ledger-정리: backlog
++  1-20-legacy-route-activation-validation-track-유지: backlog
++  1-21-metric-reset과-full-screen-2500ms-acceptance-정렬: done
++  1-22-capture-full-screen-visible-evidence-chain-trace-reset: done
++  1-23-local-full-screen-lane-prototype과-truthful-artifact-generation: done
++  1-24-local-lane-hardware-canary-validation: review
++  1-25-local-lane-default-decision과-rollback-gate: backlog
++  1-26-local-lane-실패-시에만-remote-reserve-poc-개시: backlog
+   epic-1-retrospective: optional
+ 
+   epic-2: in-progress
+-  2-1-현재-세션-사진-레일과-세션-범위-검토: done
+-  2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제: done
+-  2-3-이후-촬영용-활성-프리셋-변경: done
+-  2-4-조정된-종료-시각-표시와-경고-종료-알림: done
+-  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: backlog
++  2-1-현재-세션-전용-사진-검토-화면: done
++  2-2-현재-세션-삭제-정책-기반-사진-삭제: done
++  2-3-세션-중-활성-프리셋-변경: done
++  2-4-조정된-종료-시각-상시-노출: backlog
++  2-5-5분-경고와-종료-시각-알림-촬영-가능-여부-갱신: ready-for-dev
+   epic-2-retrospective: optional
+ 
+   epic-3: in-progress
+@@ -90,20 +115,19 @@ development_status:
+   epic-3-retrospective: optional
+ 
+   epic-4: in-progress
+-  4-1-드래프트-프리셋-작성과-내부-저작-작업공간: done
++  4-1-내부-프리셋-작성-작업공간: done
+   4-2-부스-호환성-검증과-승인-준비-상태-전환: done
+   4-3-승인과-불변-게시-아티팩트-생성: review
+-  4-4-미래-세션-대상-롤백과-카탈로그-버전-관리: done
++  4-4-미래-세션-대상-롤백: done
+   epic-4-retrospective: optional
+ 
+   epic-5: in-progress
+-  5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: done
++  5-1-운영자용-현재-세션-문맥과-장애-진단: done
+   5-2-정책-기반-복구-액션과-phone-required-라우팅: done
+-  5-3-라이프사이클-개입-복구-감사-로그-기록: done
+-  5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: review
++  5-3-라이프사이클과-개입-감사-로그: done
++  5-4-카메라-연결-상태-전용-진단-항목: review
+   epic-5-retrospective: optional
+ 
+   epic-6: done
+-  6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스: done
++  6-1-지점별-단계적-배포와-단일-액션-롤백: done
+   epic-6-retrospective: optional
+-
+diff --git a/docs/runbooks/preview-promotion-evidence-package.md b/docs/runbooks/preview-promotion-evidence-package.md
+index e6196a7..0d8d696 100644
+--- a/docs/runbooks/preview-promotion-evidence-package.md
++++ b/docs/runbooks/preview-promotion-evidence-package.md
+@@ -18,9 +18,19 @@ This runbook freezes the evidence package Boothy uses before arguing for preview
+ ## Rules
+ 
+ - Promotion evidence is valid only when the compared artifacts are same-capture, same-session, and same-preset-version.
++- Primary release acceptance is `same-capture preset-applied full-screen visible <= 2500ms`.
++- Preview confirmation also follows the same `2500ms` threshold and cannot close release sign-off by itself.
+ - `preview-promotion-evidence.jsonl` is the canonical machine-readable summary for lane owner, fallback reason, route stage, warm state, and preview timing deltas.
++- The operator-safe bundle must preserve the selected capture chain only: `request-capture -> file-arrived -> capture_preview_ready -> recent-session-visible -> capture_preview_transition_summary` for one `sessionId/requestId/captureId`.
++- `sameCaptureFullScreenVisibleMs` is the new-track release field; legacy `replacementMs` remains comparison-only or backward-compatible alias data.
++- `firstVisibleMs`, tiny preview success, and recent-strip visibility are supporting diagnostics only and cannot replace the new-track release field.
+ - The machine-readable record must point to capture-time policy/catalog snapshots so later policy changes do not reinterpret an already recorded booth run.
++- `visibleOwner` and `visibleOwnerTransitionAtMs` are required evidence. If the selected capture chain drops them, bundle assembly fails closed instead of inferring a close owner.
++- Whole-session timing logs are not operator-safe evidence. The assembled bundle must copy only the selected capture timing chain so wrong-capture and cross-session attribution stay auditable.
+ - The assembled evidence bundle also computes `fallbackRatio` from the matching session/preset/version evidence family for the same promoted route stage.
++- Legacy Stories 1.18, 1.19, and 1.20 remain legacy comparison only, while Stories 1.21 through 1.25 own the active forward path.
++- Story 1.22 owns the trace/evidence reset only. Story 1.23 owns the local lane prototype, Story 1.24 owns hardware canary proof, Story 1.25 owns default/rollback proof, and Story 1.13 remains the final guarded release-close owner.
++- Evidence, dashboard wording, and ledger copy must keep the boundary between `legacy comparison only` and `new-track release field` explicit.
+ - `default` promotion is valid only after repeated `canary` success-path evidence is present for the same approved preset/version scope.
+ - Automated pass alone is never `Go`.
+ - Any fallback-heavy run, parity drift above threshold, missing route policy snapshot, or missing rollback evidence remains `No-Go`.
+@@ -30,6 +40,7 @@ This runbook freezes the evidence package Boothy uses before arguing for preview
+ - Start trace planning: `scripts/hardware/Start-PreviewPromotionTrace.ps1`
+ - Stop trace/export planning: `scripts/hardware/Stop-PreviewPromotionTrace.ps1`
+ - Assemble booth evidence bundle: `scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1`
++- Evaluate canary gate from the assembled bundle: `scripts/hardware/Test-PreviewPromotionCanary.ps1`
+ 
+ ## Recommended Flow
+ 
+@@ -38,7 +49,8 @@ This runbook freezes the evidence package Boothy uses before arguing for preview
+ 3. Stop trace collection and export the approved analysis views.
+ 4. Assemble the evidence bundle with the session id, capture id, preset id, and published version.
+ 5. Compare the resident lane output against the darktable baseline oracle and optional fallback oracle.
+-6. Record the final `Go / No-Go` decision in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
++6. Run `Test-PreviewPromotionCanary.ps1` against the assembled bundle and review the typed checks for KPI, fallback stability, wrong-capture, fidelity drift, rollback readiness, and active-session safety together.
++7. Record the final `Go / No-Go` decision in `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`.
+ 
+ ## Parity Gate
+ 
+@@ -47,3 +59,4 @@ This runbook freezes the evidence package Boothy uses before arguing for preview
+ - A fallback-only pass is `conditional` evidence and does not close promotion by itself.
+ - Missing oracle input is `not-run`.
+ - Any measured fail is `No-Go` until rerun evidence is captured.
++- `Test-PreviewPromotionCanary.ps1` keeps the canary at `No-Go` when KPI miss, fallback-heavy behavior, wrong-capture drift, fidelity drift, missing rollback proof, or non-canary active-session safety risk remains.
+diff --git a/src/shared-contracts/contracts.test.ts b/src/shared-contracts/contracts.test.ts
+index 0c44d97..28e1a96 100644
+--- a/src/shared-contracts/contracts.test.ts
++++ b/src/shared-contracts/contracts.test.ts
+@@ -27,6 +27,7 @@ import {
+   operatorRecoveryBlockedCategorySchema,
+   operatorRecoverySummarySchema,
+   operatorSessionSummarySchema,
++  previewPromotionCanaryAssessmentSchema,
+   previewPromotionEvidenceBundleSchema,
+   previewPromotionEvidenceRecordSchema,
+   publicationAuditRecordSchema,
+@@ -261,8 +262,13 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
+       routeStage: 'canary',
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
++      captureId: 'capture_20260410_001',
++      requestId: 'request_20260410_001',
++      visibleOwner: 'inline-truthful-fallback',
++      visibleOwnerTransitionAtMs: 2410,
+       firstVisibleMs: 2810,
+-      replacementMs: 3615,
++      sameCaptureFullScreenVisibleMs: 2410,
++      replacementMs: 2410,
+       originalVisibleToPresetAppliedVisibleMs: 805,
+       hardwareCapability: 'dedicated-renderer-available',
+       warmState: 'warm-ready',
+@@ -334,8 +340,13 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {})
+       routeStage: 'canary',
+       laneOwner: 'inline-truthful-fallback',
+       fallbackReasonCode: 'route-policy-shadow',
++      captureId: 'capture_20260410_001',
++      requestId: 'request_20260410_001',
++      visibleOwner: 'inline-truthful-fallback',
++      visibleOwnerTransitionAtMs: 2410,
+       firstVisibleMs: 2810,
+-      replacementMs: 3615,
++      sameCaptureFullScreenVisibleMs: 2410,
++      replacementMs: 2410,
+       originalVisibleToPresetAppliedVisibleMs: 805,
+       hardwareCapability: 'dedicated-renderer-available',
+       warmState: 'warm-ready',
+@@ -554,12 +565,100 @@ describe('shared contracts baseline', () => {
+ 
+     expect(parsed.routeStage).toBe('canary')
+     expect(parsed.laneOwner).toBe('dedicated-renderer')
++    expect(parsed.captureRequestedAtMs).toBe(100)
++    expect(parsed.rawPersistedAtMs).toBe(100)
++    expect(parsed.truthfulArtifactReadyAtMs).toBe(900)
++    expect(parsed.visibleOwner).toBe('dedicated-renderer')
++    expect(parsed.visibleOwnerTransitionAtMs).toBe(2410)
++    expect(parsed.sameCaptureFullScreenVisibleMs).toBe(2410)
++    expect(parsed.replacementMs).toBe(2410)
+     expect(parsed.originalVisibleToPresetAppliedVisibleMs).toBe(805)
++    expect(parsed.improvementSummary).toContain('promotionGateTargetMs=2500')
++    expect(parsed.improvementSummary).toContain('fastPreviewCapPx=128x128')
++    expect(parsed.improvementSummary).toContain(
++      'waitForLateHelperFastPreviewReady=true',
++    )
++    expect(parsed.improvementSummary).toContain(
++      'dedupeEarlyFastPreviewPromotion=true',
++    )
++    expect(parsed.improvementSummary).toContain(
++      'skipRedundantShadowWarmupAfterDedicatedWarmup=true',
++    )
++    expect(parsed.improvementSummary).toContain(
++      'skipSpeculativeCloseWhenDedicatedRouteWarm=true',
++    )
+     expect(parsed.routePolicySnapshotPath).toContain(
+       'branch-config/preview-renderer-policy.json',
+     )
+   })
+ 
++  it('keeps legacy replacementMs parseable without inferring the canonical full-screen KPI', () => {
++    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
++    delete fixture.sameCaptureFullScreenVisibleMs
++
++    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
++
++    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
++    expect(parsed.replacementMs).toBe(2410)
++  })
++
++  it('keeps legacy preview-promotion evidence records parseable without improvementSummary metadata', () => {
++    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
++    delete fixture.sameCaptureFullScreenVisibleMs
++    delete fixture.improvementSummary
++
++    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
++
++    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
++    expect(parsed.replacementMs).toBe(2410)
++    expect(parsed.improvementSummary).toBeUndefined()
++  })
++
++  it('keeps legacy preview-promotion evidence records parseable without new selected-capture proof fields', () => {
++    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
++    delete fixture.captureRequestedAtMs
++    delete fixture.rawPersistedAtMs
++    delete fixture.truthfulArtifactReadyAtMs
++    delete fixture.visibleOwner
++    delete fixture.visibleOwnerTransitionAtMs
++    delete fixture.sameCaptureFullScreenVisibleMs
++    delete fixture.improvementSummary
++
++    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
++
++    expect(parsed.captureRequestedAtMs).toBeUndefined()
++    expect(parsed.rawPersistedAtMs).toBeUndefined()
++    expect(parsed.truthfulArtifactReadyAtMs).toBeUndefined()
++    expect(parsed.visibleOwner).toBeUndefined()
++    expect(parsed.visibleOwnerTransitionAtMs).toBeUndefined()
++    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
++  })
++
++  it('allows canonical and legacy full-screen metrics to differ for side-by-side comparison', () => {
++    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
++
++    const parsedRecord = previewPromotionEvidenceRecordSchema.parse({
++      ...fixture,
++      sameCaptureFullScreenVisibleMs: 2400,
++      replacementMs: 2600,
++    })
++
++    expect(parsedRecord.sameCaptureFullScreenVisibleMs).toBe(2400)
++    expect(parsedRecord.replacementMs).toBe(2600)
++
++    const parsedSummary = operatorSessionSummarySchema.parse({
++        ...createOperatorSessionSummary(),
++        previewArchitecture: {
++          ...createOperatorSessionSummary().previewArchitecture,
++          sameCaptureFullScreenVisibleMs: 2400,
++          replacementMs: 2600,
++        },
++      })
++
++    expect(parsedSummary.previewArchitecture.sameCaptureFullScreenVisibleMs).toBe(2400)
++    expect(parsedSummary.previewArchitecture.replacementMs).toBe(2600)
++  })
++
+   it('rejects preview-promotion evidence records that drop route policy or correlation paths', () => {
+     const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+ 
+@@ -591,8 +690,13 @@ describe('shared contracts baseline', () => {
+       fallbackReasonCode: null,
+       routeStage: 'canary',
+       warmState: 'warm-ready',
++      captureRequestedAtMs: 100,
++      rawPersistedAtMs: 100,
++      truthfulArtifactReadyAtMs: 900,
++      visibleOwner: 'dedicated-renderer',
++      visibleOwnerTransitionAtMs: 2410,
+       firstVisibleMs: 2810,
+-      replacementMs: 3615,
++      replacementMs: 2410,
+       originalVisibleToPresetAppliedVisibleMs: 805,
+       fallbackRatio: 0,
+       outputRoot: 'C:/evidence/session/capture',
+@@ -643,6 +747,62 @@ describe('shared contracts baseline', () => {
+     )
+   })
+ 
++  it('parses preview-promotion canary assessments with explicit Go / No-Go checks and blockers', () => {
++    const parsed = previewPromotionCanaryAssessmentSchema.parse({
++      schemaVersion: 'preview-promotion-canary-assessment/v1',
++      generatedAt: '2026-04-15T07:45:00.000Z',
++      bundleManifestPath: 'C:/evidence/session/capture/preview-promotion-evidence-bundle.json',
++      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
++      captureId: 'capture_20260410_001',
++      requestId: 'request_20260410_001',
++      presetId: 'preset_soft-glow',
++      publishedVersion: '2026.04.10',
++      routeStage: 'canary',
++      laneOwner: 'dedicated-renderer',
++      gate: 'No-Go',
++      nextStageAllowed: false,
++      summary: 'rollback proof missing keeps the canary at No-Go.',
++      blockers: ['rollback-proof-missing'],
++      checks: {
++        kpi: {
++          status: 'pass',
++          actualMs: 2410,
++          thresholdMs: 2500,
++          reason: 'within-threshold',
++        },
++        fallbackStability: {
++          status: 'pass',
++          actualRatio: 0,
++          thresholdRatio: 0,
++          reason: 'no-fallback-observed',
++        },
++        wrongCapture: {
++          status: 'pass',
++          reason: 'selected-capture timing chain preserved',
++        },
++        fidelityDrift: {
++          status: 'pass',
++          parityResult: 'pass',
++          reason: 'baseline-within-threshold',
++        },
++        rollbackReadiness: {
++          status: 'fail',
++          evidenceCount: 0,
++          reason: 'rollback-proof-missing',
++        },
++        activeSessionSafety: {
++          status: 'pass',
++          reason: 'capture-time route snapshot and canary scope preserved',
++        },
++      },
++    })
++
++    expect(parsed.gate).toBe('No-Go')
++    expect(parsed.nextStageAllowed).toBe(false)
++    expect(parsed.checks.rollbackReadiness.status).toBe('fail')
++    expect(parsed.blockers).toContain('rollback-proof-missing')
++  })
++
+   it('rejects preview-promotion evidence bundles that omit required visual or rollback proof', () => {
+     expect(() =>
+       previewPromotionEvidenceBundleSchema.parse({
+@@ -657,8 +817,13 @@ describe('shared contracts baseline', () => {
+         fallbackReasonCode: null,
+         routeStage: 'canary',
+         warmState: 'warm-ready',
++        captureRequestedAtMs: 100,
++        rawPersistedAtMs: 100,
++        truthfulArtifactReadyAtMs: 900,
++        visibleOwner: 'dedicated-renderer',
++        visibleOwnerTransitionAtMs: 2410,
+         firstVisibleMs: 2810,
+-        replacementMs: 3615,
++        replacementMs: 2410,
+         originalVisibleToPresetAppliedVisibleMs: 805,
+         fallbackRatio: 0,
+         outputRoot: 'C:/evidence/session/capture',
+@@ -711,8 +876,13 @@ describe('shared contracts baseline', () => {
+         fallbackReasonCode: null,
+         routeStage: 'canary',
+         warmState: 'warm-ready',
++        captureRequestedAtMs: 100,
++        rawPersistedAtMs: 100,
++        truthfulArtifactReadyAtMs: 900,
++        visibleOwner: 'dedicated-renderer',
++        visibleOwnerTransitionAtMs: 2410,
+         firstVisibleMs: 2810,
+-        replacementMs: 3615,
++        replacementMs: 2410,
+         originalVisibleToPresetAppliedVisibleMs: 805,
+         fallbackRatio: 0,
+         outputRoot: 'C:/evidence/session/capture',
+@@ -1030,7 +1200,8 @@ describe('shared contracts baseline', () => {
+         laneOwner: 'inline-truthful-fallback',
+         fallbackReasonCode: 'route-policy-shadow',
+         firstVisibleMs: 2810,
+-        replacementMs: 3615,
++        sameCaptureFullScreenVisibleMs: 2410,
++        replacementMs: 2410,
+         originalVisibleToPresetAppliedVisibleMs: 805,
+         hardwareCapability: 'dedicated-renderer-available',
+         warmState: 'warm-ready',
+@@ -1074,7 +1245,8 @@ describe('shared contracts baseline', () => {
+       previewArchitecture: {
+         routeStage: 'canary',
+         laneOwner: 'inline-truthful-fallback',
+-        replacementMs: 3615,
++        sameCaptureFullScreenVisibleMs: 2410,
++        replacementMs: 2410,
+         warmState: 'warm-ready',
+       },
+     })
+@@ -1145,7 +1317,8 @@ describe('shared contracts baseline', () => {
+             laneOwner: 'inline-truthful-fallback',
+             fallbackReasonCode: 'route-policy-shadow',
+             firstVisibleMs: 2810,
+-            replacementMs: 3615,
++            sameCaptureFullScreenVisibleMs: 2410,
++            replacementMs: 2410,
+             originalVisibleToPresetAppliedVisibleMs: 805,
+             hardwareCapability: 'dedicated-renderer-available',
+             warmState: 'warming',
+@@ -1929,7 +2102,7 @@ describe('shared contracts baseline', () => {
+         captureAcknowledgedAtMs: 100,
+         previewVisibleAtMs: null,
+         captureBudgetMs: 1000,
+-        previewBudgetMs: 5000,
++        previewBudgetMs: 2500,
+         previewBudgetState: 'pending',
+       },
+     })
+@@ -2016,7 +2189,7 @@ describe('shared contracts baseline', () => {
+         fastPreviewVisibleAtMs: 180,
+         xmpPreviewReadyAtMs: null,
+         captureBudgetMs: 1000,
+-        previewBudgetMs: 5000,
++        previewBudgetMs: 2500,
+         previewBudgetState: 'pending',
+       },
+     })
+@@ -2119,7 +2292,7 @@ describe('shared contracts baseline', () => {
+         captureAcknowledgedAtMs: 100,
+         previewVisibleAtMs: null,
+         captureBudgetMs: 1000,
+-        previewBudgetMs: 5000,
++        previewBudgetMs: 2500,
+         previewBudgetState: 'pending',
+       },
+     })
+@@ -2157,7 +2330,7 @@ describe('shared contracts baseline', () => {
+         captureAcknowledgedAtMs: 100,
+         previewVisibleAtMs: 500,
+         captureBudgetMs: 1000,
+-        previewBudgetMs: 5000,
++        previewBudgetMs: 2500,
+         previewBudgetState: 'withinBudget',
+       },
+     })
+diff --git a/src/shared-contracts/schemas/hardware-validation.ts b/src/shared-contracts/schemas/hardware-validation.ts
+index 6672775..b542593 100644
+--- a/src/shared-contracts/schemas/hardware-validation.ts
++++ b/src/shared-contracts/schemas/hardware-validation.ts
+@@ -9,9 +9,12 @@ export const previewPromotionEvidenceRecordSchemaVersion =
+   'preview-promotion-evidence-record/v1' as const
+ export const previewPromotionEvidenceBundleSchemaVersion =
+   'preview-promotion-evidence-bundle/v1' as const
++export const previewPromotionCanaryAssessmentSchemaVersion =
++  'preview-promotion-canary-assessment/v1' as const
+ 
+ const optionalMetricSchema = z.number().int().nonnegative().nullable().optional()
+ const optionalRuntimePathSchema = runtimePathSchema.nullable().optional()
++const canaryCheckStatusSchema = z.enum(['pass', 'fail'])
+ const parityMeasurementSchema = z
+   .object({
+     status: z.enum(['not-run', 'invalid-input', 'measured']),
+@@ -30,6 +33,34 @@ const bundleArtifactSchema = z
+     destination: runtimePathSchema,
+   })
+   .catchall(z.unknown())
++const canaryHealthCheckSchema = z
++  .object({
++    status: canaryCheckStatusSchema,
++    reason: z.string().trim().min(1),
++  })
++  .strict()
++const canaryMetricCheckSchema = canaryHealthCheckSchema
++  .extend({
++    actualMs: z.number().int().nonnegative().nullable(),
++    thresholdMs: z.number().int().positive(),
++  })
++  .strict()
++const canaryFallbackCheckSchema = canaryHealthCheckSchema
++  .extend({
++    actualRatio: z.number().min(0).max(1),
++    thresholdRatio: z.number().min(0).max(1),
++  })
++  .strict()
++const canaryFidelityCheckSchema = canaryHealthCheckSchema
++  .extend({
++    parityResult: z.enum(['pass', 'conditional', 'not-run', 'fail']),
++  })
++  .strict()
++const canaryRollbackCheckSchema = canaryHealthCheckSchema
++  .extend({
++    evidenceCount: z.number().int().nonnegative(),
++  })
++  .strict()
+ 
+ export const previewPromotionEvidenceRecordSchema = z
+   .object({
+@@ -44,7 +75,13 @@ export const previewPromotionEvidenceRecordSchema = z
+     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+     routeStage: z.string().trim().min(1),
+     warmState: previewRendererWarmStateSchema.nullable().optional(),
++    captureRequestedAtMs: z.number().int().nonnegative().optional(),
++    rawPersistedAtMs: z.number().int().nonnegative().optional(),
++    truthfulArtifactReadyAtMs: z.number().int().nonnegative().optional(),
++    visibleOwner: z.string().trim().min(1).optional(),
++    visibleOwnerTransitionAtMs: z.number().int().nonnegative().optional(),
+     firstVisibleMs: optionalMetricSchema,
++    sameCaptureFullScreenVisibleMs: optionalMetricSchema,
+     replacementMs: optionalMetricSchema,
+     originalVisibleToPresetAppliedVisibleMs: optionalMetricSchema,
+     sessionManifestPath: runtimePathSchema,
+@@ -54,6 +91,7 @@ export const previewPromotionEvidenceRecordSchema = z
+     catalogStatePath: runtimePathSchema,
+     previewAssetPath: runtimePathSchema.nullable().optional(),
+     warmStateDetailPath: runtimePathSchema.nullable().optional(),
++    improvementSummary: z.string().trim().min(1).optional(),
+   })
+   .strict()
+ 
+@@ -70,7 +108,13 @@ export const previewPromotionEvidenceBundleSchema = z
+     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+     routeStage: z.string().trim().min(1),
+     warmState: previewRendererWarmStateSchema.nullable().optional(),
++    captureRequestedAtMs: z.number().int().nonnegative(),
++    rawPersistedAtMs: z.number().int().nonnegative(),
++    truthfulArtifactReadyAtMs: z.number().int().nonnegative(),
++    visibleOwner: z.string().trim().min(1),
++    visibleOwnerTransitionAtMs: z.number().int().nonnegative(),
+     firstVisibleMs: optionalMetricSchema,
++    sameCaptureFullScreenVisibleMs: optionalMetricSchema,
+     replacementMs: optionalMetricSchema,
+     originalVisibleToPresetAppliedVisibleMs: optionalMetricSchema,
+     fallbackRatio: z.number().min(0).max(1),
+@@ -96,3 +140,32 @@ export const previewPromotionEvidenceBundleSchema = z
+       .strict(),
+   })
+   .strict()
++
++export const previewPromotionCanaryAssessmentSchema = z
++  .object({
++    schemaVersion: z.literal(previewPromotionCanaryAssessmentSchemaVersion),
++    generatedAt: z.string().datetime({ offset: true }),
++    bundleManifestPath: runtimePathSchema,
++    sessionId: sessionIdSchema,
++    captureId: captureIdSchema,
++    requestId: captureRequestIdSchema,
++    presetId: presetIdSchema,
++    publishedVersion: publishedVersionSchema,
++    routeStage: z.string().trim().min(1),
++    laneOwner: z.string().trim().min(1),
++    gate: z.enum(['Go', 'No-Go']),
++    nextStageAllowed: z.boolean(),
++    summary: z.string().trim().min(1),
++    blockers: z.array(z.string().trim().min(1)).max(16),
++    checks: z
++      .object({
++        kpi: canaryMetricCheckSchema,
++        fallbackStability: canaryFallbackCheckSchema,
++        wrongCapture: canaryHealthCheckSchema,
++        fidelityDrift: canaryFidelityCheckSchema,
++        rollbackReadiness: canaryRollbackCheckSchema,
++        activeSessionSafety: canaryHealthCheckSchema,
++      })
++      .strict(),
++  })
++  .strict()
+diff --git a/tests/hardware-evidence-scripts.test.ts b/tests/hardware-evidence-scripts.test.ts
+index 5cfb216..e54eee2 100644
+--- a/tests/hardware-evidence-scripts.test.ts
++++ b/tests/hardware-evidence-scripts.test.ts
+@@ -5,6 +5,10 @@ import { spawnSync } from 'node:child_process'
+ import { afterEach, describe, expect, it } from 'vitest'
+ 
+ const createdRoots: string[] = []
++const validPngBuffer = Buffer.from(
++  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQImWNgYGD4DwABBAEAgr2l3gAAAABJRU5ErkJggg==',
++  'base64',
++)
+ 
+ function createFixtureRepo() {
+   const repoRoot = mkdtempSync(path.join(tmpdir(), 'boothy-hardware-scripts-'))
+@@ -20,6 +24,7 @@ function createFixtureRepo() {
+   mkdirSync(path.join(sessionRoot, 'diagnostics', 'dedicated-renderer'), {
+     recursive: true,
+   })
++  mkdirSync(path.join(sessionRoot, 'diagnostics'), { recursive: true })
+   mkdirSync(path.join(sessionRoot, 'renders', 'previews'), { recursive: true })
+   mkdirSync(path.join(repoRoot, 'branch-config'), { recursive: true })
+   mkdirSync(
+@@ -33,6 +38,19 @@ function createFixtureRepo() {
+     { recursive: true },
+   )
+ 
++  const capturedRoutePolicySnapshotPath = path.join(
++    sessionRoot,
++    'diagnostics',
++    'dedicated-renderer',
++    `captured-preview-renderer-policy-${captureId}.json`,
++  )
++  const capturedCatalogSnapshotPath = path.join(
++    sessionRoot,
++    'diagnostics',
++    'dedicated-renderer',
++    `captured-catalog-state-${captureId}.json`,
++  )
++
+   writeFileSync(
+     path.join(sessionRoot, 'session.json'),
+     JSON.stringify(
+@@ -91,7 +109,7 @@ function createFixtureRepo() {
+               fastPreviewVisibleAtMs: 2810,
+               xmpPreviewReadyAtMs: 6425,
+               captureBudgetMs: 1000,
+-              previewBudgetMs: 5000,
++              previewBudgetMs: 2500,
+               previewBudgetState: 'overBudget',
+             },
+           },
+@@ -105,13 +123,40 @@ function createFixtureRepo() {
+   writeFileSync(
+     path.join(sessionRoot, 'diagnostics', 'timing-events.log'),
+     [
++      '2026-04-12T08:00:00+09:00\tsession=' +
++        sessionId +
++        '\tcapture=none' +
++        '\trequest=' +
++        requestId +
++        '\tevent=request-capture\tdetail=routeStage=canary',
++      '2026-04-12T08:00:01+09:00\tsession=' +
++        sessionId +
++        '\tcapture=' +
++        captureId +
++        '\trequest=' +
++        requestId +
++        '\tevent=file-arrived\tdetail=rawPersistedAtMs=100',
++      '2026-04-12T08:00:12+09:00\tsession=' +
++        sessionId +
++        '\tcapture=' +
++        captureId +
++        '\trequest=' +
++        requestId +
++        '\tevent=capture_preview_ready\tdetail=truthfulArtifactReadyAtMs=900',
++      '2026-04-12T08:00:15+09:00\tsession=' +
++        sessionId +
++        '\tcapture=' +
++        captureId +
++        '\trequest=' +
++        requestId +
++        '\tevent=recent-session-visible\tdetail=visibleOwner=dedicated-renderer;visibleOwnerTransitionAtMs=2410',
+       '2026-04-12T08:00:15+09:00\tsession=' +
+         sessionId +
+         '\tcapture=' +
+         captureId +
+         '\trequest=' +
+         requestId +
+-        '\tevent=capture_preview_transition_summary\tdetail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;warmState=warm-ready;firstVisibleMs=2810;replacementMs=3615;originalVisibleToPresetAppliedVisibleMs=805',
++        '\tevent=capture_preview_transition_summary\tdetail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;warmState=warm-ready;firstVisibleMs=1605;replacementMs=2410;originalVisibleToPresetAppliedVisibleMs=805',
+     ].join('\n'),
+   )
+   writeFileSync(
+@@ -133,16 +178,20 @@ function createFixtureRepo() {
+       fallbackReasonCode: null,
+       routeStage: 'canary',
+       warmState: 'warm-ready',
+-      firstVisibleMs: 2810,
+-      replacementMs: 3615,
++      captureRequestedAtMs: 100,
++      rawPersistedAtMs: 100,
++      truthfulArtifactReadyAtMs: 900,
++      visibleOwner: 'dedicated-renderer',
++      visibleOwnerTransitionAtMs: 2410,
++      firstVisibleMs: 1605,
++      sameCaptureFullScreenVisibleMs: 2410,
++      replacementMs: 2410,
+       originalVisibleToPresetAppliedVisibleMs: 805,
+       sessionManifestPath: path.join(sessionRoot, 'session.json').replace(/\\/g, '/'),
+       timingEventsPath: path
+         .join(sessionRoot, 'diagnostics', 'timing-events.log')
+         .replace(/\\/g, '/'),
+-      routePolicySnapshotPath: path
+-        .join(repoRoot, 'branch-config', 'preview-renderer-policy.json')
+-        .replace(/\\/g, '/'),
++      routePolicySnapshotPath: capturedRoutePolicySnapshotPath.replace(/\\/g, '/'),
+       publishedBundlePath: path
+         .join(
+           repoRoot,
+@@ -153,9 +202,7 @@ function createFixtureRepo() {
+           'bundle.json',
+         )
+         .replace(/\\/g, '/'),
+-      catalogStatePath: path
+-        .join(repoRoot, 'preset-catalog', 'catalog-state.json')
+-        .replace(/\\/g, '/'),
++      catalogStatePath: capturedCatalogSnapshotPath.replace(/\\/g, '/'),
+       previewAssetPath: path
+         .join(sessionRoot, 'renders', 'previews', `${captureId}.jpg`)
+         .replace(/\\/g, '/'),
+@@ -173,6 +220,14 @@ function createFixtureRepo() {
+     path.join(repoRoot, 'branch-config', 'preview-renderer-policy.json'),
+     JSON.stringify({ schemaVersion: 'preview-renderer-route-policy/v1' }, null, 2),
+   )
++  writeFileSync(
++    capturedRoutePolicySnapshotPath,
++    JSON.stringify(
++      { schemaVersion: 'preview-renderer-route-policy/v1', capturedAt: 'capture-time' },
++      null,
++      2,
++    ),
++  )
+   writeFileSync(
+     path.join(
+       repoRoot,
+@@ -188,6 +243,14 @@ function createFixtureRepo() {
+     path.join(repoRoot, 'preset-catalog', 'catalog-state.json'),
+     JSON.stringify({ schemaVersion: 'preset-catalog-state/v1' }, null, 2),
+   )
++  writeFileSync(
++    capturedCatalogSnapshotPath,
++    JSON.stringify(
++      { schemaVersion: 'preset-catalog-state/v1', capturedAt: true },
++      null,
++      2,
++    ),
++  )
+   writeFileSync(
+     path.join(sessionRoot, 'renders', 'previews', `${captureId}.jpg`),
+     Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+@@ -249,6 +312,46 @@ function runPowershell(scriptPath: string, args: string[]) {
+   return JSON.parse(result.stdout)
+ }
+ 
++function readJsonFile(filePath: string) {
++  return JSON.parse(readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '')) as Record<
++    string,
++    unknown
++  >
++}
++
++function writeValidTestRaster(filePath: string) {
++  writeFileSync(filePath, validPngBuffer)
++}
++
++function buildCanaryBundle(
++  fixture: ReturnType<typeof createFixtureRepo>,
++  extraArgs: string[] = [],
++) {
++  const outputRoot = path.join(fixture.repoRoot, 'artifacts', 'canary-bundle')
++  return runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++    '-RepoRoot',
++    fixture.repoRoot,
++    '-SessionId',
++    fixture.sessionId,
++    '-CaptureId',
++    fixture.captureId,
++    '-PresetId',
++    fixture.presetId,
++    '-PublishedVersion',
++    fixture.publishedVersion,
++    '-BoothVisualEvidencePaths',
++    fixture.boothVisualPath,
++    '-OperatorVisualEvidencePaths',
++    fixture.operatorVisualPath,
++    '-RollbackEvidencePaths',
++    fixture.rollbackEvidencePath,
++    '-OutputRoot',
++    outputRoot,
++    ...extraArgs,
++    '-EmitJson',
++  ])
++}
++
+ afterEach(() => {
+   for (const root of createdRoots.splice(0)) {
+     rmSync(root, { recursive: true, force: true })
+@@ -319,10 +422,17 @@ describe('hardware evidence scripts', () => {
+     expect(result.schemaVersion).toBe('preview-promotion-evidence-bundle/v1')
+     expect(result.laneOwner).toBe('dedicated-renderer')
+     expect(result.routeStage).toBe('canary')
++    expect(result.visibleOwner).toBe('dedicated-renderer')
++    expect(result.visibleOwnerTransitionAtMs).toBe(2410)
++    expect(result.captureRequestedAtMs).toBe(100)
++    expect(result.rawPersistedAtMs).toBe(100)
++    expect(result.truthfulArtifactReadyAtMs).toBe(900)
++    expect(result.sameCaptureFullScreenVisibleMs).toBe(2410)
++    expect(result.replacementMs).toBe(2410)
+     expect(result.fallbackRatio).toBe(0)
+     expect(result.artifacts.sessionManifest.source).toContain('session.json')
+     expect(result.artifacts.routePolicySnapshot.source).toContain(
+-      'preview-renderer-policy.json',
++      `captured-preview-renderer-policy-${fixture.captureId}.json`,
+     )
+     expect(result.parity.result).toBe('not-run')
+     expect(result.missingArtifacts).toEqual([])
+@@ -399,6 +509,53 @@ describe('hardware evidence scripts', () => {
+     40000,
+   )
+ 
++  it(
++    'does not synthesize same-capture full-screen timing from legacy replacement timing',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      delete record.sameCaptureFullScreenVisibleMs
++      record.replacementMs = 2410
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
++
++      const result = runPowershell(
++        path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'),
++        [
++          '-RepoRoot',
++          fixture.repoRoot,
++          '-SessionId',
++          fixture.sessionId,
++          '-CaptureId',
++          fixture.captureId,
++          '-PresetId',
++          fixture.presetId,
++          '-PublishedVersion',
++          fixture.publishedVersion,
++          '-BoothVisualEvidencePaths',
++          fixture.boothVisualPath,
++          '-OperatorVisualEvidencePaths',
++          fixture.operatorVisualPath,
++          '-RollbackEvidencePaths',
++          fixture.rollbackEvidencePath,
++          '-DryRun',
++          '-EmitJson',
++        ],
++      )
++
++      expect(result.sameCaptureFullScreenVisibleMs).toBeNull()
++      expect(result.replacementMs).toBe(2410)
++    },
++    40000,
++  )
++
+   it(
+     'fails closed when the canonical preview-promotion evidence record is missing',
+     () => {
+@@ -497,7 +654,7 @@ describe('hardware evidence scripts', () => {
+   )
+ 
+   it(
+-    'keeps only the selected promotion evidence record in the assembled bundle output',
++    'fails closed when selected capture correlation drifts to a foreign request id',
+     () => {
+       const fixture = createFixtureRepo()
+       const evidenceLogPath = path.join(
+@@ -508,106 +665,81 @@ describe('hardware evidence scripts', () => {
+         'dedicated-renderer',
+         'preview-promotion-evidence.jsonl',
+       )
+-      writeFileSync(
+-        evidenceLogPath,
+-        [
+-          JSON.stringify({
+-            schemaVersion: 'preview-promotion-evidence-record/v1',
+-            observedAt: '2026-04-12T08:00:10+09:00',
+-            sessionId: fixture.sessionId,
+-            requestId: 'request_earlier',
+-            captureId: 'capture_other',
+-            presetId: fixture.presetId,
+-            publishedVersion: fixture.publishedVersion,
+-            laneOwner: 'dedicated-renderer',
+-            fallbackReasonCode: null,
+-            routeStage: 'canary',
+-            warmState: 'warm-ready',
+-            firstVisibleMs: 1000,
+-            replacementMs: 1200,
+-            originalVisibleToPresetAppliedVisibleMs: 200,
+-            sessionManifestPath: path.join(
+-              fixture.repoRoot,
+-              'sessions',
+-              fixture.sessionId,
+-              'session.json',
+-            ).replace(/\\/g, '/'),
+-            timingEventsPath: path.join(
+-              fixture.repoRoot,
+-              'sessions',
+-              fixture.sessionId,
+-              'diagnostics',
+-              'timing-events.log',
+-            ).replace(/\\/g, '/'),
+-            routePolicySnapshotPath: path.join(
+-              fixture.repoRoot,
+-              'branch-config',
+-              'preview-renderer-policy.json',
+-            ).replace(/\\/g, '/'),
+-            publishedBundlePath: path.join(
+-              fixture.repoRoot,
+-              'preset-catalog',
+-              'published',
+-              fixture.presetId,
+-              fixture.publishedVersion,
+-              'bundle.json',
+-            ).replace(/\\/g, '/'),
+-            catalogStatePath: path.join(
+-              fixture.repoRoot,
+-              'preset-catalog',
+-              'catalog-state.json',
+-            ).replace(/\\/g, '/'),
+-            previewAssetPath: path.join(
+-              fixture.repoRoot,
+-              'sessions',
+-              fixture.sessionId,
+-              'renders',
+-              'previews',
+-              `${fixture.captureId}.jpg`,
+-            ).replace(/\\/g, '/'),
+-            warmStateDetailPath: null,
+-          }),
+-          readFileSync(evidenceLogPath, 'utf8'),
+-        ].join('\n'),
+-      )
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      record.requestId = 'request_other'
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+ 
+-      const outputRoot = path.join(fixture.repoRoot, 'artifacts', 'bundle-output')
+-      runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
+-        '-RepoRoot',
++      expect(() =>
++        runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++          '-RepoRoot',
++          fixture.repoRoot,
++          '-SessionId',
++          fixture.sessionId,
++          '-CaptureId',
++          fixture.captureId,
++          '-PresetId',
++          fixture.presetId,
++          '-PublishedVersion',
++          fixture.publishedVersion,
++          '-BoothVisualEvidencePaths',
++          fixture.boothVisualPath,
++          '-OperatorVisualEvidencePaths',
++          fixture.operatorVisualPath,
++          '-RollbackEvidencePaths',
++          fixture.rollbackEvidencePath,
++          '-DryRun',
++          '-EmitJson',
++        ]),
++      ).toThrow(/wrong-capture|request id|capture correlation/i)
++    },
++    40000,
++  )
++
++  it(
++    'fails closed when visible owner transition evidence is missing',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
+         fixture.repoRoot,
+-        '-SessionId',
++        'sessions',
+         fixture.sessionId,
+-        '-CaptureId',
+-        fixture.captureId,
+-        '-PresetId',
+-        fixture.presetId,
+-        '-PublishedVersion',
+-        fixture.publishedVersion,
+-        '-BoothVisualEvidencePaths',
+-        fixture.boothVisualPath,
+-        '-OperatorVisualEvidencePaths',
+-        fixture.operatorVisualPath,
+-        '-RollbackEvidencePaths',
+-        fixture.rollbackEvidencePath,
+-        '-OutputRoot',
+-        outputRoot,
+-        '-EmitJson',
+-      ])
+-
+-      const copiedEvidenceLines = readFileSync(
+-        path.join(outputRoot, 'preview-promotion-evidence.jsonl'),
+-        'utf8',
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
+       )
+-        .trim()
+-        .split(/\r?\n/)
+-      expect(copiedEvidenceLines).toHaveLength(1)
+-      expect(JSON.parse(copiedEvidenceLines[0]).captureId).toBe(fixture.captureId)
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      delete record.visibleOwner
++      delete record.visibleOwnerTransitionAtMs
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
++
++      expect(() =>
++        runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++          '-RepoRoot',
++          fixture.repoRoot,
++          '-SessionId',
++          fixture.sessionId,
++          '-CaptureId',
++          fixture.captureId,
++          '-PresetId',
++          fixture.presetId,
++          '-PublishedVersion',
++          fixture.publishedVersion,
++          '-BoothVisualEvidencePaths',
++          fixture.boothVisualPath,
++          '-OperatorVisualEvidencePaths',
++          fixture.operatorVisualPath,
++          '-RollbackEvidencePaths',
++          fixture.rollbackEvidencePath,
++          '-DryRun',
++          '-EmitJson',
++        ]),
++      ).toThrow(/visible owner|transition/i)
+     },
+     40000,
+   )
+ 
+   it(
+-    'reports fallback ratio from the matching promotion evidence family while bundling only the selected capture',
++    'fails closed when bundle assembly tries to reuse live route policy or catalog state',
+     () => {
+       const fixture = createFixtureRepo()
+       const evidenceLogPath = path.join(
+@@ -618,21 +750,314 @@ describe('hardware evidence scripts', () => {
+         'dedicated-renderer',
+         'preview-promotion-evidence.jsonl',
+       )
+-      writeFileSync(
+-        evidenceLogPath,
+-        [
+-          JSON.stringify({
+-            schemaVersion: 'preview-promotion-evidence-record/v1',
+-            observedAt: '2026-04-12T08:00:10+09:00',
+-            sessionId: fixture.sessionId,
+-            requestId: 'request_fallback',
+-            captureId: 'capture_fallback',
+-            presetId: fixture.presetId,
+-            publishedVersion: fixture.publishedVersion,
+-            laneOwner: 'inline-truthful-fallback',
+-            fallbackReasonCode: 'shadow-submission-only',
+-            routeStage: 'canary',
+-            warmState: 'warm-ready',
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      record.routePolicySnapshotPath = path
++        .join(fixture.repoRoot, 'branch-config', 'preview-renderer-policy.json')
++        .replace(/\\/g, '/')
++      record.catalogStatePath = path
++        .join(fixture.repoRoot, 'preset-catalog', 'catalog-state.json')
++        .replace(/\\/g, '/')
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
++
++      expect(() =>
++        runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++          '-RepoRoot',
++          fixture.repoRoot,
++          '-SessionId',
++          fixture.sessionId,
++          '-CaptureId',
++          fixture.captureId,
++          '-PresetId',
++          fixture.presetId,
++          '-PublishedVersion',
++          fixture.publishedVersion,
++          '-BoothVisualEvidencePaths',
++          fixture.boothVisualPath,
++          '-OperatorVisualEvidencePaths',
++          fixture.operatorVisualPath,
++          '-RollbackEvidencePaths',
++          fixture.rollbackEvidencePath,
++          '-DryRun',
++          '-EmitJson',
++        ]),
++      ).toThrow(/stale-preview|capture-time snapshot|live policy|live catalog/i)
++    },
++    40000,
++  )
++
++  it(
++    'fails closed when bundle assembly points at a stale same-session snapshot for another capture',
++    () => {
++      const fixture = createFixtureRepo()
++      const staleRoutePolicySnapshotPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'captured-preview-renderer-policy-capture_other.json',
++      )
++      const staleCatalogSnapshotPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'captured-catalog-state-capture_other.json',
++      )
++      writeFileSync(
++        staleRoutePolicySnapshotPath,
++        JSON.stringify({ schemaVersion: 'preview-renderer-route-policy/v1', capturedAt: 'capture-time' }, null, 2),
++      )
++      writeFileSync(
++        staleCatalogSnapshotPath,
++        JSON.stringify({ schemaVersion: 'preset-catalog-state/v1', capturedAt: true }, null, 2),
++      )
++
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      record.routePolicySnapshotPath = staleRoutePolicySnapshotPath.replace(/\\/g, '/')
++      record.catalogStatePath = staleCatalogSnapshotPath.replace(/\\/g, '/')
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
++
++      expect(() =>
++        runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++          '-RepoRoot',
++          fixture.repoRoot,
++          '-SessionId',
++          fixture.sessionId,
++          '-CaptureId',
++          fixture.captureId,
++          '-PresetId',
++          fixture.presetId,
++          '-PublishedVersion',
++          fixture.publishedVersion,
++          '-BoothVisualEvidencePaths',
++          fixture.boothVisualPath,
++          '-OperatorVisualEvidencePaths',
++          fixture.operatorVisualPath,
++          '-RollbackEvidencePaths',
++          fixture.rollbackEvidencePath,
++          '-DryRun',
++          '-EmitJson',
++        ]),
++      ).toThrow(/stale-preview|capture-time snapshot|capture_other|selected capture/i)
++    },
++    40000,
++  )
++
++  it(
++    'keeps only the selected promotion evidence record in the assembled bundle output',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      writeFileSync(
++        evidenceLogPath,
++        [
++          JSON.stringify({
++            schemaVersion: 'preview-promotion-evidence-record/v1',
++            observedAt: '2026-04-12T08:00:10+09:00',
++            sessionId: fixture.sessionId,
++            requestId: 'request_earlier',
++            captureId: 'capture_other',
++            presetId: fixture.presetId,
++            publishedVersion: fixture.publishedVersion,
++            laneOwner: 'dedicated-renderer',
++            fallbackReasonCode: null,
++            routeStage: 'canary',
++            warmState: 'warm-ready',
++            firstVisibleMs: 1000,
++            replacementMs: 1200,
++            originalVisibleToPresetAppliedVisibleMs: 200,
++            sessionManifestPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'session.json',
++            ).replace(/\\/g, '/'),
++            timingEventsPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'diagnostics',
++              'timing-events.log',
++            ).replace(/\\/g, '/'),
++            routePolicySnapshotPath: path.join(
++              fixture.repoRoot,
++              'branch-config',
++              'preview-renderer-policy.json',
++            ).replace(/\\/g, '/'),
++            publishedBundlePath: path.join(
++              fixture.repoRoot,
++              'preset-catalog',
++              'published',
++              fixture.presetId,
++              fixture.publishedVersion,
++              'bundle.json',
++            ).replace(/\\/g, '/'),
++            catalogStatePath: path.join(
++              fixture.repoRoot,
++              'preset-catalog',
++              'catalog-state.json',
++            ).replace(/\\/g, '/'),
++            previewAssetPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'renders',
++              'previews',
++              `${fixture.captureId}.jpg`,
++            ).replace(/\\/g, '/'),
++            warmStateDetailPath: null,
++          }),
++          readFileSync(evidenceLogPath, 'utf8'),
++        ].join('\n'),
++      )
++
++      const outputRoot = path.join(fixture.repoRoot, 'artifacts', 'bundle-output')
++      runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++        '-RepoRoot',
++        fixture.repoRoot,
++        '-SessionId',
++        fixture.sessionId,
++        '-CaptureId',
++        fixture.captureId,
++        '-PresetId',
++        fixture.presetId,
++        '-PublishedVersion',
++        fixture.publishedVersion,
++        '-BoothVisualEvidencePaths',
++        fixture.boothVisualPath,
++        '-OperatorVisualEvidencePaths',
++        fixture.operatorVisualPath,
++        '-RollbackEvidencePaths',
++        fixture.rollbackEvidencePath,
++        '-OutputRoot',
++        outputRoot,
++        '-EmitJson',
++      ])
++
++      const copiedEvidenceLines = readFileSync(
++        path.join(outputRoot, 'preview-promotion-evidence.jsonl'),
++        'utf8',
++      )
++        .trim()
++        .split(/\r?\n/)
++      expect(copiedEvidenceLines).toHaveLength(1)
++      expect(JSON.parse(copiedEvidenceLines[0]).captureId).toBe(fixture.captureId)
++    },
++    40000,
++  )
++
++  it(
++    'keeps only the selected capture timing chain in the assembled bundle output',
++    () => {
++      const fixture = createFixtureRepo()
++      const timingEventsPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'timing-events.log',
++      )
++      writeFileSync(
++        timingEventsPath,
++        [
++          readFileSync(timingEventsPath, 'utf8'),
++          '2026-04-12T08:00:22+09:00\tsession=' +
++            fixture.sessionId +
++            '\tcapture=capture_other\trequest=request_other\tevent=recent-session-visible\tdetail=visibleOwner=foreign-lane;visibleOwnerTransitionAtMs=1800',
++          '2026-04-12T08:00:23+09:00\tsession=session_other\tcapture=' +
++            fixture.captureId +
++            '\trequest=' +
++            'request_cross_session' +
++            '\tevent=capture_preview_transition_summary\tdetail=laneOwner=foreign;fallbackReason=none;routeStage=shadow;warmState=warm-ready;firstVisibleMs=1200;replacementMs=1800;originalVisibleToPresetAppliedVisibleMs=600',
++        ].join('\n'),
++      )
++
++      const outputRoot = path.join(fixture.repoRoot, 'artifacts', 'bundle-output-filtered-timing')
++      runPowershell(path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'), [
++        '-RepoRoot',
++        fixture.repoRoot,
++        '-SessionId',
++        fixture.sessionId,
++        '-CaptureId',
++        fixture.captureId,
++        '-PresetId',
++        fixture.presetId,
++        '-PublishedVersion',
++        fixture.publishedVersion,
++        '-BoothVisualEvidencePaths',
++        fixture.boothVisualPath,
++        '-OperatorVisualEvidencePaths',
++        fixture.operatorVisualPath,
++        '-RollbackEvidencePaths',
++        fixture.rollbackEvidencePath,
++        '-OutputRoot',
++        outputRoot,
++        '-EmitJson',
++      ])
++
++      const copiedTimingLines = readFileSync(path.join(outputRoot, 'timing-events.log'), 'utf8')
++        .trim()
++        .split(/\r?\n/)
++      expect(copiedTimingLines.length).toBeGreaterThan(0)
++      expect(
++        copiedTimingLines.every(
++          (line) =>
++            line.includes(`session=${fixture.sessionId}`) &&
++            line.includes('request=request_20260410_001') &&
++            (
++              line.includes('event=request-capture') ||
++              line.includes(`capture=${fixture.captureId}`)
++            ),
++        ),
++      ).toBe(true)
++    },
++    40000,
++  )
++
++  it(
++    'reports fallback ratio from the matching promotion evidence family while bundling only the selected capture',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      writeFileSync(
++        evidenceLogPath,
++        [
++          JSON.stringify({
++            schemaVersion: 'preview-promotion-evidence-record/v1',
++            observedAt: '2026-04-12T08:00:10+09:00',
++            sessionId: fixture.sessionId,
++            requestId: 'request_fallback',
++            captureId: 'capture_fallback',
++            presetId: fixture.presetId,
++            publishedVersion: fixture.publishedVersion,
++            laneOwner: 'inline-truthful-fallback',
++            fallbackReasonCode: 'shadow-submission-only',
++            routeStage: 'canary',
++            warmState: 'warm-ready',
+             firstVisibleMs: 1100,
+             replacementMs: null,
+             originalVisibleToPresetAppliedVisibleMs: null,
+@@ -790,14 +1215,14 @@ describe('hardware evidence scripts', () => {
+         'sessions',
+         fixture.sessionId,
+         'diagnostics',
+-        'captured-preview-renderer-policy.json',
++        `captured-preview-renderer-policy-${fixture.captureId}.json`,
+       )
+       const catalogSnapshotPath = path.join(
+         fixture.repoRoot,
+         'sessions',
+         fixture.sessionId,
+         'diagnostics',
+-        'captured-catalog-state.json',
++        `captured-catalog-state-${fixture.captureId}.json`,
+       )
+       writeFileSync(
+         routePolicySnapshotPath,
+@@ -861,4 +1286,436 @@ describe('hardware evidence scripts', () => {
+     },
+     40000,
+   )
++
++  it(
++    'assesses a valid canary bundle as Go when KPI, parity, rollback proof, and safety checks all pass',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.schemaVersion).toBe('preview-promotion-canary-assessment/v1')
++      expect(assessment.gate).toBe('Go')
++      expect(assessment.nextStageAllowed).toBe(true)
++      expect(assessment.checks.kpi.status).toBe('pass')
++      expect(assessment.checks.fallbackStability.status).toBe('pass')
++      expect(assessment.checks.wrongCapture.status).toBe('pass')
++      expect(assessment.checks.fidelityDrift.status).toBe('pass')
++      expect(assessment.checks.rollbackReadiness.status).toBe('pass')
++      expect(assessment.checks.activeSessionSafety.status).toBe('pass')
++      expect(assessment.blockers).toEqual([])
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at Go when bundle-local rollback evidence remains after the source artifact is removed',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++
++      rmSync(fixture.rollbackEvidencePath, { force: true })
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('Go')
++      expect(assessment.checks.rollbackReadiness.status).toBe('pass')
++      expect(assessment.blockers).toEqual([])
++    },
++    40000,
++  )
++
++  it(
++    'treats fallbackReasonCode=none as non-fallback evidence for canary stability',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const bundleRecord = readJsonFile(bundle.bundleManifestPath)
++      bundleRecord.fallbackReasonCode = 'none'
++      writeFileSync(bundle.bundleManifestPath, JSON.stringify(bundleRecord, null, 2))
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('Go')
++      expect(assessment.checks.fallbackStability.status).toBe('pass')
++      expect(assessment.blockers).toEqual([])
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when the primary full-screen KPI misses 2500ms',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
++      record.sameCaptureFullScreenVisibleMs = 2801
++      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
++
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.nextStageAllowed).toBe(false)
++      expect(assessment.checks.kpi.status).toBe('fail')
++      expect(assessment.blockers).toContain('kpi-miss')
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when fallback-heavy evidence remains in the same canary family',
++    () => {
++      const fixture = createFixtureRepo()
++      const evidenceLogPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'diagnostics',
++        'dedicated-renderer',
++        'preview-promotion-evidence.jsonl',
++      )
++      writeFileSync(
++        evidenceLogPath,
++        [
++          JSON.stringify({
++            schemaVersion: 'preview-promotion-evidence-record/v1',
++            observedAt: '2026-04-12T08:00:10+09:00',
++            sessionId: fixture.sessionId,
++            requestId: 'request_fallback',
++            captureId: 'capture_fallback',
++            presetId: fixture.presetId,
++            publishedVersion: fixture.publishedVersion,
++            laneOwner: 'inline-truthful-fallback',
++            fallbackReasonCode: 'shadow-submission-only',
++            routeStage: 'canary',
++            warmState: 'warm-ready',
++            firstVisibleMs: 1100,
++            replacementMs: null,
++            originalVisibleToPresetAppliedVisibleMs: null,
++            sessionManifestPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'session.json',
++            ).replace(/\\/g, '/'),
++            timingEventsPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'diagnostics',
++              'timing-events.log',
++            ).replace(/\\/g, '/'),
++            routePolicySnapshotPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'diagnostics',
++              'dedicated-renderer',
++              `captured-preview-renderer-policy-${fixture.captureId}.json`,
++            ).replace(/\\/g, '/'),
++            publishedBundlePath: path.join(
++              fixture.repoRoot,
++              'preset-catalog',
++              'published',
++              fixture.presetId,
++              fixture.publishedVersion,
++              'bundle.json',
++            ).replace(/\\/g, '/'),
++            catalogStatePath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'diagnostics',
++              'dedicated-renderer',
++              `captured-catalog-state-${fixture.captureId}.json`,
++            ).replace(/\\/g, '/'),
++            previewAssetPath: path.join(
++              fixture.repoRoot,
++              'sessions',
++              fixture.sessionId,
++              'renders',
++              'previews',
++              `${fixture.captureId}.jpg`,
++            ).replace(/\\/g, '/'),
++            warmStateDetailPath: null,
++          }),
++          readFileSync(evidenceLogPath, 'utf8'),
++        ].join('\n'),
++      )
++
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.checks.fallbackStability.status).toBe('fail')
++      expect(assessment.blockers).toContain('fallback-instability')
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when the selected-capture timing chain no longer matches the bundle request id',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      writeFileSync(
++        path.join(path.dirname(bundle.bundleManifestPath), 'timing-events.log'),
++        '2026-04-12T08:00:00+09:00\tsession=' +
++          fixture.sessionId +
++          '\tcapture=none\trequest=request_other\tevent=request-capture\tdetail=routeStage=canary\n',
++      )
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.checks.wrongCapture.status).toBe('fail')
++      expect(assessment.blockers).toContain('wrong-capture')
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when parity indicates fidelity drift',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      writeValidTestRaster(previewPath)
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const bundleRecord = readJsonFile(bundle.bundleManifestPath)
++      ;(bundleRecord.parity as Record<string, unknown>).result = 'fail'
++      ;(bundleRecord.parity as Record<string, unknown>).reason = 'threshold-exceeded'
++      writeFileSync(bundle.bundleManifestPath, JSON.stringify(bundleRecord, null, 2))
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.checks.fidelityDrift.status).toBe('fail')
++      expect(assessment.blockers).toContain('fidelity-drift')
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when rollback proof is missing from the bundle manifest',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const bundleRecord = readJsonFile(bundle.bundleManifestPath)
++      bundleRecord.rollbackEvidence = []
++      writeFileSync(bundle.bundleManifestPath, JSON.stringify(bundleRecord, null, 2))
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.nextStageAllowed).toBe(false)
++      expect(assessment.checks.rollbackReadiness.status).toBe('fail')
++      expect(assessment.blockers).toContain('rollback-proof-missing')
++    },
++    40000,
++  )
++
++  it(
++    'keeps the canary verdict at No-Go when the bundle no longer represents a canary-scoped session',
++    () => {
++      const fixture = createFixtureRepo()
++      const previewPath = path.join(
++        fixture.repoRoot,
++        'sessions',
++        fixture.sessionId,
++        'renders',
++        'previews',
++        `${fixture.captureId}.jpg`,
++      )
++      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
++      writeValidTestRaster(previewPath)
++      writeValidTestRaster(baselineImagePath)
++
++      const bundle = buildCanaryBundle(fixture, [
++        '-BaselineImagePath',
++        baselineImagePath,
++        '-BaselineMetadataPath',
++        fixture.oracleMetadataPath,
++      ])
++      const bundleRecord = readJsonFile(bundle.bundleManifestPath)
++      bundleRecord.routeStage = 'default'
++      writeFileSync(bundle.bundleManifestPath, JSON.stringify(bundleRecord, null, 2))
++
++      const assessment = runPowershell(
++        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
++        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
++      )
++
++      expect(assessment.gate).toBe('No-Go')
++      expect(assessment.checks.activeSessionSafety.status).toBe('fail')
++      expect(assessment.blockers).toContain('active-session-safety')
++    },
++    40000,
++  )
+ })
+
+
+diff --git a/scripts/hardware/Test-PreviewPromotionCanary.ps1 b/scripts/hardware/Test-PreviewPromotionCanary.ps1
+new file mode 100644
+index 0000000..bd9270a
+--- /dev/null
++++ b/scripts/hardware/Test-PreviewPromotionCanary.ps1
+@@ -0,0 +1,271 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$BundlePath,
++    [string]$OutputPath,
++    [int]$PrimaryThresholdMs = 2500,
++    [double]$MaxFallbackRatio = 0,
++    [switch]$EmitJson
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Read-JsonFile {
++    param([string]$Path)
++
++    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
++}
++
++function Get-ObjectPropertyValue {
++    param(
++        $Object,
++        [string]$PropertyName
++    )
++
++    if (
++        $null -eq $Object -or
++        -not $Object.PSObject.Properties[$PropertyName]
++    ) {
++        return $null
++    }
++
++    return $Object.$PropertyName
++}
++
++function New-CheckResult {
++    param(
++        [string]$Status,
++        [string]$Reason,
++        [hashtable]$Additional = @{}
++    )
++
++    $result = [ordered]@{
++        status = $Status
++        reason = $Reason
++    }
++
++    foreach ($key in $Additional.Keys) {
++        $result[$key] = $Additional[$key]
++    }
++
++    return $result
++}
++
++function Test-HasFallbackReason {
++    param($FallbackReasonCode)
++
++    if ($null -eq $FallbackReasonCode) {
++        return $false
++    }
++
++    $reason = [string]$FallbackReasonCode
++    if ([string]::IsNullOrWhiteSpace($reason)) {
++        return $false
++    }
++
++    return $reason -ne 'none'
++}
++
++function Test-SelectedCaptureTimingChain {
++    param(
++        [string]$Path,
++        [string]$SessionId,
++        [string]$CaptureId,
++        [string]$RequestId
++    )
++
++    if (-not (Test-Path -LiteralPath $Path)) {
++        return New-CheckResult -Status 'fail' -Reason 'selected timing chain is missing from the bundle output.'
++    }
++
++    $lines = Get-Content -LiteralPath $Path | Where-Object { $_.Trim() }
++    $selectedLines = @(
++        $lines | Where-Object {
++            $_ -like "*session=$SessionId*" -and
++            $_ -like "*request=$RequestId*" -and
++            (
++                $_ -like '*event=request-capture*' -or
++                $_ -like "*capture=$CaptureId*"
++            )
++        }
++    )
++
++    if ($selectedLines.Count -eq 0) {
++        return New-CheckResult -Status 'fail' -Reason 'selected capture correlation is missing from the timing chain.'
++    }
++
++    foreach ($requiredEvent in @(
++        'event=request-capture',
++        'event=file-arrived',
++        'event=capture_preview_ready',
++        'event=recent-session-visible',
++        'event=capture_preview_transition_summary'
++    )) {
++        if (-not @($selectedLines | Where-Object { $_ -like "*$requiredEvent*" }).Count) {
++            return New-CheckResult -Status 'fail' -Reason ("selected capture timing chain is incomplete: missing {0}." -f $requiredEvent)
++        }
++    }
++
++    return New-CheckResult -Status 'pass' -Reason 'selected-capture timing chain preserved'
++}
++
++$resolvedBundlePath = (Resolve-Path -LiteralPath $BundlePath).Path
++$bundle = Read-JsonFile -Path $resolvedBundlePath
++$bundleRoot = Split-Path -Path $resolvedBundlePath -Parent
++
++$sessionId = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'sessionId')
++$captureId = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'captureId')
++$requestId = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'requestId')
++$presetId = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'presetId')
++$publishedVersion = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'publishedVersion')
++$routeStage = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'routeStage')
++$laneOwner = [string](Get-ObjectPropertyValue -Object $bundle -PropertyName 'laneOwner')
++$fallbackReasonCode = Get-ObjectPropertyValue -Object $bundle -PropertyName 'fallbackReasonCode'
++$sameCaptureFullScreenVisibleMs = Get-ObjectPropertyValue -Object $bundle -PropertyName 'sameCaptureFullScreenVisibleMs'
++$fallbackRatio = Get-ObjectPropertyValue -Object $bundle -PropertyName 'fallbackRatio'
++$visibleOwner = Get-ObjectPropertyValue -Object $bundle -PropertyName 'visibleOwner'
++$visibleOwnerTransitionAtMs = Get-ObjectPropertyValue -Object $bundle -PropertyName 'visibleOwnerTransitionAtMs'
++$parity = Get-ObjectPropertyValue -Object $bundle -PropertyName 'parity'
++$rollbackEvidence = @()
++if ($bundle.PSObject.Properties['rollbackEvidence']) {
++    $rollbackEvidence = @($bundle.rollbackEvidence)
++}
++$artifacts = Get-ObjectPropertyValue -Object $bundle -PropertyName 'artifacts'
++$timingEventsPath = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $artifacts -PropertyName 'timingEvents') -PropertyName 'destination'
++$routePolicyPath = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $artifacts -PropertyName 'routePolicySnapshot') -PropertyName 'destination'
++$catalogStatePath = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $artifacts -PropertyName 'catalogState') -PropertyName 'destination'
++
++$checks = [ordered]@{}
++$blockers = New-Object System.Collections.Generic.List[string]
++
++$checks.kpi = if (
++    $null -ne $sameCaptureFullScreenVisibleMs -and
++    [int]$sameCaptureFullScreenVisibleMs -le $PrimaryThresholdMs
++) {
++    New-CheckResult -Status 'pass' -Reason 'within-threshold' -Additional @{
++        actualMs = [int]$sameCaptureFullScreenVisibleMs
++        thresholdMs = $PrimaryThresholdMs
++    }
++} else {
++    $reason = if ($null -eq $sameCaptureFullScreenVisibleMs) {
++        'sameCaptureFullScreenVisibleMs is missing from the canary bundle.'
++    } else {
++        'sameCaptureFullScreenVisibleMs exceeded the canary threshold.'
++    }
++    $blockers.Add('kpi-miss') | Out-Null
++    New-CheckResult -Status 'fail' -Reason $reason -Additional @{
++        actualMs = if ($null -eq $sameCaptureFullScreenVisibleMs) { $null } else { [int]$sameCaptureFullScreenVisibleMs }
++        thresholdMs = $PrimaryThresholdMs
++    }
++}
++
++$fallbackRatioValue = if ($null -eq $fallbackRatio) { 1.0 } else { [double]$fallbackRatio }
++$selectedCaptureFallback = $laneOwner -ne 'dedicated-renderer' -or (
++    Test-HasFallbackReason -FallbackReasonCode $fallbackReasonCode
++)
++$checks.fallbackStability = if (
++    -not $selectedCaptureFallback -and
++    $fallbackRatioValue -le $MaxFallbackRatio
++) {
++    New-CheckResult -Status 'pass' -Reason 'no-fallback-observed' -Additional @{
++        actualRatio = $fallbackRatioValue
++        thresholdRatio = $MaxFallbackRatio
++    }
++} else {
++    $blockers.Add('fallback-instability') | Out-Null
++    New-CheckResult -Status 'fail' -Reason 'fallback-heavy or fallback-owned evidence remains in the canary family.' -Additional @{
++        actualRatio = $fallbackRatioValue
++        thresholdRatio = $MaxFallbackRatio
++    }
++}
++
++$checks.wrongCapture = Test-SelectedCaptureTimingChain `
++    -Path ([string]$timingEventsPath) `
++    -SessionId $sessionId `
++    -CaptureId $captureId `
++    -RequestId $requestId
++if ($checks.wrongCapture.status -ne 'pass') {
++    $blockers.Add('wrong-capture') | Out-Null
++}
++
++$parityResult = [string](Get-ObjectPropertyValue -Object $parity -PropertyName 'result')
++$checks.fidelityDrift = if ($parityResult -eq 'pass') {
++    New-CheckResult -Status 'pass' -Reason 'baseline-within-threshold' -Additional @{
++        parityResult = $parityResult
++    }
++} else {
++    $blockers.Add('fidelity-drift') | Out-Null
++    New-CheckResult -Status 'fail' -Reason 'parity indicates fidelity drift or insufficient oracle proof.' -Additional @{
++        parityResult = if ([string]::IsNullOrWhiteSpace($parityResult)) { 'not-run' } else { $parityResult }
++    }
++}
++
++$rollbackEvidenceCount = @($rollbackEvidence | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count
++$checks.rollbackReadiness = if ($rollbackEvidenceCount -gt 0) {
++    New-CheckResult -Status 'pass' -Reason 'rollback proof is present for the canary package.' -Additional @{
++        evidenceCount = $rollbackEvidenceCount
++    }
++} else {
++    $blockers.Add('rollback-proof-missing') | Out-Null
++    New-CheckResult -Status 'fail' -Reason 'one-action rollback proof is missing from the canary bundle.' -Additional @{
++        evidenceCount = 0
++    }
++}
++
++$checks.activeSessionSafety = if (
++    $routeStage -eq 'canary' -and
++    -not [string]::IsNullOrWhiteSpace([string]$visibleOwner) -and
++    $null -ne $visibleOwnerTransitionAtMs -and
++    -not [string]::IsNullOrWhiteSpace([string]$routePolicyPath) -and
++    -not [string]::IsNullOrWhiteSpace([string]$catalogStatePath) -and
++    (Test-Path -LiteralPath $routePolicyPath) -and
++    (Test-Path -LiteralPath $catalogStatePath) -and
++    ([string](Resolve-Path -LiteralPath $routePolicyPath)).StartsWith($bundleRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
++    ([string](Resolve-Path -LiteralPath $catalogStatePath)).StartsWith($bundleRoot, [System.StringComparison]::OrdinalIgnoreCase)
++) {
++    New-CheckResult -Status 'pass' -Reason 'capture-time route snapshot and canary scope preserved'
++} else {
++    $blockers.Add('active-session-safety') | Out-Null
++    New-CheckResult -Status 'fail' -Reason 'canary scope or capture-time safety snapshot is missing.'
++}
++
++$uniqueBlockers = @($blockers | Select-Object -Unique)
++$gate = if ($uniqueBlockers.Count -eq 0) { 'Go' } else { 'No-Go' }
++$nextStageAllowed = $gate -eq 'Go'
++$summary = if ($gate -eq 'Go') {
++    'approved canary bundle cleared KPI, fallback, wrong-capture, fidelity, rollback, and safety checks.'
++} else {
++    'canary bundle remains No-Go until the recorded blockers are resolved.'
++}
++
++$assessment = [ordered]@{
++    schemaVersion = 'preview-promotion-canary-assessment/v1'
++    generatedAt = (Get-Date).ToString('o')
++    bundleManifestPath = $resolvedBundlePath
++    sessionId = $sessionId
++    captureId = $captureId
++    requestId = $requestId
++    presetId = $presetId
++    publishedVersion = $publishedVersion
++    routeStage = $routeStage
++    laneOwner = $laneOwner
++    gate = $gate
++    nextStageAllowed = $nextStageAllowed
++    summary = $summary
++    blockers = $uniqueBlockers
++    checks = $checks
++}
++
++if (-not $OutputPath) {
++    $OutputPath = Join-Path $bundleRoot 'preview-promotion-canary-assessment.json'
++}
++
++$assessment | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding utf8
++
++if ($EmitJson) {
++    $assessment | ConvertTo-Json -Depth 10
++    return
++}
++
++Write-Host ('Preview promotion canary assessment ready: {0}' -f $OutputPath)
+

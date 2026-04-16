@@ -1,6 +1,6 @@
 # Story 1.20: resident preview lane activation과 route policy promotion
 
-Status: done
+Status: backlog
 
 Activation Ownership Note: Story 1.18이 resident GPU-first 후보와 warm-state evidence를 만들었고, Story 1.19가 promotion evidence gate를 고정했다. 이번 스토리는 그 기반을 실제 booth 운영 경계로 승격하는 activation owner다. canonical release close owner는 계속 Story 1.13이며, 이번 스토리만으로 hardware `Go`를 주장하면 안 된다.
 

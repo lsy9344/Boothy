@@ -32,7 +32,7 @@ describe('LatestPhotoRail', () => {
     vi.clearAllMocks()
   })
 
-  it('logs recent-session-visible again when the latest slot is replaced with a truthful preview', async () => {
+  it('logs current-capture-visible again when the spotlight replaces a pending preview with a truthful preview', async () => {
     const { rerender } = render(
       <LatestPhotoRail
         previews={[buildPreview()]}
@@ -53,7 +53,7 @@ describe('LatestPhotoRail', () => {
     await waitFor(() => {
       expect(logCaptureClientState).toHaveBeenCalledWith(
         expect.objectContaining({
-          label: 'recent-session-pending-visible',
+          label: 'current-capture-pending-visible',
           sessionId: 'session_01',
         }),
       )
@@ -79,9 +79,9 @@ describe('LatestPhotoRail', () => {
     await waitFor(() => {
       expect(logCaptureClientState).toHaveBeenCalledWith(
         expect.objectContaining({
-          label: 'recent-session-visible',
+          label: 'current-capture-visible',
           sessionId: 'session_01',
-          message: expect.stringContaining('previewKind=preset-applied-preview'),
+          message: expect.stringContaining('surface=current-capture'),
         }),
       )
     })
@@ -105,5 +105,47 @@ describe('LatestPhotoRail', () => {
     expect(
       screen.getByText(/지금 보이는 첫 사진은 임시 미리보기예요\./i),
     ).toBeInTheDocument()
+  })
+
+  it('promotes the latest capture into a spotlight and keeps older captures in a separate history rail', () => {
+    render(
+      <LatestPhotoRail
+        previews={[
+          buildPreview(),
+          buildPreview({
+            captureId: 'capture_02',
+            requestId: 'request_02',
+            assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture_02.jpg',
+            readyAtMs: 540,
+            isLatest: false,
+          }),
+        ]}
+        isPreviewWaiting={false}
+        isExplicitPostEnd={false}
+        deletingCaptureId={null}
+        pendingDeleteCaptureId={null}
+        onDeleteCancel={() => {}}
+        onDeleteConfirm={() => {}}
+        onDeleteIntent={() => {}}
+      />,
+    )
+
+    expect(
+      screen.getByRole('heading', { level: 2, name: /방금 찍은 사진/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: /현재 세션 최신 사진,\s*1번째,\s*현재 룩 룩/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('list', { name: /현재 세션 사진 히스토리/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: /현재 세션 사진,\s*2번째,\s*현재 룩 룩/i }),
+    ).toHaveAttribute(
+      'src',
+      expect.stringContaining(
+        'C:/boothy/sessions/session_01/renders/previews/capture_02.jpg',
+      ),
+    )
   })
 })

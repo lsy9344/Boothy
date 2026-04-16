@@ -40,7 +40,7 @@ const storyFiles = [
   },
   {
     file: '_bmad-output/implementation-artifacts/1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate.md',
-    status: 'in-progress',
+    status: 'backlog',
     gate: 'No-Go',
     gateHeading: '### Validation Gate Reference',
     automationMarker: 'automated regression/build proof',
@@ -62,27 +62,30 @@ const storyFiles = [
 ] as const
 
 const canonicalSprintStoryKeys = [
-  '1-2-이름뒤4자리-기반-세션-시작과-내구적-세션-생성',
-  '1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택',
+  '1-2-이름과-뒤4자리-기반-세션-시작',
+  '1-3-승인된-프리셋-카탈로그와-활성-프리셋-선택',
   '1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백',
   '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단',
-  '2-1-현재-세션-사진-레일과-세션-범위-검토',
-  '2-2-현재-세션-삭제-정책에-따른-안전한-사진-삭제',
-  '2-3-이후-촬영용-활성-프리셋-변경',
-  '2-4-조정된-종료-시각-표시와-경고-종료-알림',
+  '1-21-metric-reset과-full-screen-2500ms-acceptance-정렬',
+  '1-22-capture-full-screen-visible-evidence-chain-trace-reset',
+  '1-23-local-full-screen-lane-prototype과-truthful-artifact-generation',
+  '2-1-현재-세션-전용-사진-검토-화면',
+  '2-2-현재-세션-삭제-정책-기반-사진-삭제',
+  '2-3-세션-중-활성-프리셋-변경',
+  '2-4-조정된-종료-시각-상시-노출',
   '3-2-export-waiting과-truthful-completion-안내',
-  '4-1-드래프트-프리셋-작성과-내부-저작-작업공간',
+  '4-1-내부-프리셋-작성-작업공간',
   '4-2-부스-호환성-검증과-승인-준비-상태-전환',
-  '4-4-미래-세션-대상-롤백과-카탈로그-버전-관리',
-  '5-1-운영자용-현재-세션-문맥과-장애-진단-가시화',
-  '5-3-라이프사이클-개입-복구-감사-로그-기록',
-  '5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화',
-  '6-1-지점별-단계적-배포와-단일-액션-롤백-거버넌스',
+  '4-4-미래-세션-대상-롤백',
+  '5-1-운영자용-현재-세션-문맥과-장애-진단',
+  '5-3-라이프사이클과-개입-감사-로그',
+  '5-4-카메라-연결-상태-전용-진단-항목',
+  '6-1-지점별-단계적-배포와-단일-액션-롤백',
 ] as const
 
 const canonicalEpicHeadings = [
   '### Story 1.5: 현재 세션 촬영 저장과 truthful preview waiting 피드백',
-  '### Story 1.6: 실카메라/helper readiness truth 연결과 false-ready 차단',
+  '### Story 1.6: 실카메라 helper readiness truth 연결과 false-ready 차단',
   '### Story 3.2: Export Waiting과 truthful completion 안내',
   '### Story 4.2: 부스 호환성 검증과 승인 준비 상태 전환',
 ] as const
@@ -130,7 +133,10 @@ describe('hardware validation governance baseline', () => {
     expect(ledger).toContain('camera model')
     expect(ledger).toContain('darktable pin')
     expect(ledger).toContain('helper identifier')
-    expect(ledger).toContain('latency')
+    expect(ledger).toContain('sameCaptureFullScreenVisibleMs')
+    expect(ledger).toContain('Story 1.22 resets the selected-capture evidence chain')
+    expect(ledger).toContain('visibleOwnerTransitionAtMs')
+    expect(ledger).toContain('replacementMs')
     expect(ledger).toContain('parity')
     expect(ledger).toContain('fallback ratio')
     expect(ledger).toContain('route policy state')
@@ -142,7 +148,13 @@ describe('hardware validation governance baseline', () => {
 
   it('keeps the runbook and release baseline aligned to the canonical gate policy', () => {
     const runbook = readRepoFile('docs', 'runbooks', 'booth-hardware-validation-checklist.md')
+    const evidencePackage = readRepoFile(
+      'docs',
+      'runbooks',
+      'preview-promotion-evidence-package.md',
+    )
     const releaseBaseline = readRepoFile('docs', 'release-baseline.md')
+    const rootReleaseBaseline = readRepoFile('release-baseline.md')
 
     expect(runbook).toContain('canonical release-gated stories')
     expect(runbook).toContain('Story 1.4')
@@ -159,6 +171,17 @@ describe('hardware validation governance baseline', () => {
     expect(runbook).toContain('Start-PreviewPromotionTrace.ps1')
     expect(runbook).toContain('New-PreviewPromotionEvidenceBundle.ps1')
 
+    expect(evidencePackage).toContain(
+      'same-capture preset-applied full-screen visible <= 2500ms',
+    )
+    expect(evidencePackage).toContain('same `2500ms` threshold')
+    expect(evidencePackage).toContain('legacy comparison only')
+    expect(evidencePackage).toContain('new-track release field')
+    expect(evidencePackage).toContain('selected capture chain only')
+    expect(evidencePackage).toContain('visibleOwner')
+    expect(evidencePackage).toContain('visibleOwnerTransitionAtMs')
+    expect(evidencePackage).toContain('Story 1.22 owns the trace/evidence reset only')
+
     expect(releaseBaseline).toContain('automated proof')
     expect(releaseBaseline).toContain('hardware proof')
     expect(releaseBaseline).toContain('hardware-validation-ledger.md')
@@ -168,6 +191,62 @@ describe('hardware validation governance baseline', () => {
     expect(releaseBaseline).toContain('Story 1.13')
     expect(releaseBaseline).toContain('preview-renderer-policy.json')
     expect(releaseBaseline).toContain('latency, parity, fallback ratio, route policy state, and rollback evidence')
+    expect(releaseBaseline).toContain(
+      'same-capture preset-applied full-screen visible <= 2500ms',
+    )
+    expect(releaseBaseline).toContain('same `2500ms` threshold')
+    expect(releaseBaseline).toContain('legacy comparison only')
+    expect(releaseBaseline).toContain('selected-capture evidence reset owner')
+    expect(releaseBaseline).toContain('selected-capture timing events only')
+
+    expect(rootReleaseBaseline).toContain(
+      'same-capture preset-applied full-screen visible <= 2500ms',
+    )
+    expect(rootReleaseBaseline).toContain('same `2500ms` threshold')
+    expect(rootReleaseBaseline).toContain('legacy comparison only')
+    expect(rootReleaseBaseline).toContain('selected-capture evidence reset owner')
+  })
+
+  it('keeps the local-lane prototype ownership boundary explicit across contract docs', () => {
+    const localDedicatedRendererContract = readRepoFile(
+      'docs',
+      'contracts',
+      'local-dedicated-renderer.md',
+    )
+    const renderWorkerContract = readRepoFile('docs', 'contracts', 'render-worker.md')
+    const sessionManifestContract = readRepoFile('docs', 'contracts', 'session-manifest.md')
+    const releaseBaseline = readRepoFile('docs', 'release-baseline.md')
+
+    expect(localDedicatedRendererContract).toContain('Story 1.23')
+    expect(localDedicatedRendererContract).toContain('prototype owner')
+    expect(localDedicatedRendererContract).toContain('Story 1.24')
+    expect(localDedicatedRendererContract).toContain('Story 1.25')
+    expect(localDedicatedRendererContract).toContain('Story 1.13')
+    expect(localDedicatedRendererContract).toContain('darktable-compatible')
+    expect(localDedicatedRendererContract).toContain('parity/fallback/final reference')
+    expect(localDedicatedRendererContract).toContain('truthfulArtifactReadyAtMs')
+    expect(localDedicatedRendererContract).toContain('sameCaptureFullScreenVisibleMs')
+    expect(localDedicatedRendererContract).toContain('visibleOwner')
+    expect(localDedicatedRendererContract).toContain('visibleOwnerTransitionAtMs')
+    expect(localDedicatedRendererContract).toContain('captured-preview-renderer-policy')
+    expect(localDedicatedRendererContract).toContain('captured-catalog-state')
+
+    expect(renderWorkerContract).toContain('Story 1.23')
+    expect(renderWorkerContract).toContain('display-sized preset-applied truthful artifact')
+    expect(renderWorkerContract).toContain('darktable-compatible path remains the parity/fallback/final reference')
+    expect(renderWorkerContract).toContain('Story 1.24 canary')
+    expect(renderWorkerContract).toContain('Story 1.25 default/rollback')
+    expect(renderWorkerContract).toContain('Story 1.13 final release close')
+
+    expect(sessionManifestContract).toContain('capture-time route snapshot')
+    expect(sessionManifestContract).toContain('later policy change')
+    expect(sessionManifestContract).toContain('reinterpreted')
+    expect(sessionManifestContract).toContain('Story 1.23 prototype owner')
+
+    expect(releaseBaseline).toContain('Story 1.23 local lane prototype')
+    expect(releaseBaseline).toContain('Story 1.24 canary proof')
+    expect(releaseBaseline).toContain('Story 1.25 default/rollback proof')
+    expect(releaseBaseline).toContain('Story 1.13 remains the final guarded cutover / release-close owner')
   })
 
   it('keeps sprint status aligned with the ledger-recorded close state', () => {
@@ -177,24 +256,19 @@ describe('hardware validation governance baseline', () => {
       'sprint-status.yaml',
     )
 
-    expect(sprintStatus).toContain('hardware_validation_ledger:')
-    expect(sprintStatus).toContain(
-      '1-13-guarded-cutover와-original-visible-to-preset-applied-visible-hardware-validation-gate: in-progress',
-    )
+    expect(sprintStatus).toContain('1-13-guarded-cutover와-hardware-validation-gate: backlog')
     expect(sprintStatus).toContain('1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done')
     expect(sprintStatus).toContain('1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done')
     expect(sprintStatus).toContain(
       '1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done',
     )
-    expect(sprintStatus).toContain(
-      '1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done',
-    )
+    expect(sprintStatus).toContain('1-21-metric-reset과-full-screen-2500ms-acceptance-정렬: done')
     expect(sprintStatus).toContain('3-2-export-waiting과-truthful-completion-안내: done')
     expect(sprintStatus).toContain('4-2-부스-호환성-검증과-승인-준비-상태-전환: done')
     expect(sprintStatus).toContain('4-3-승인과-불변-게시-아티팩트-생성: review')
-    expect(sprintStatus).toContain(
-      'truth-critical stories stay in `review` or another pre-close state',
-    )
+    expect(sprintStatus).toContain('1-18-retired-dedicated-close-후보-activation-baseline-evidence-보존: backlog')
+    expect(sprintStatus).toContain('1-19-legacy-validated-track-parity와-instrumentation-ledger-정리: backlog')
+    expect(sprintStatus).toContain('1-20-legacy-route-activation-validation-track-유지: backlog')
   })
 
   it('keeps existing story ids stable across sprint tracking and planning artifacts', () => {

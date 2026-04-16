@@ -14,7 +14,10 @@ use crate::{
     },
     contracts::dto::{CaptureRequestInputDto, HostErrorEnvelope},
     render::{
-        dedicated_renderer::preview_promotion_snapshot_paths_in_dir,
+        dedicated_renderer::{
+            preview_promotion_snapshot_paths_in_dir,
+            resolve_preview_renderer_route_snapshot_in_dir,
+        },
         enqueue_resident_preview_render_in_dir, is_valid_render_preview_asset,
         log_render_failure_in_dir, log_render_ready_in_dir, log_render_start_in_dir,
         promote_preview_render_output, render_capture_asset_in_dir,
@@ -23,8 +26,10 @@ use crate::{
     session::{
         session_manifest::{
             current_timestamp, ActivePresetBinding, CaptureTimingMetrics, FinalCaptureAsset,
-            PreviewCaptureAsset, RawCaptureAsset, SessionCaptureRecord, SessionManifest,
-            CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS, SESSION_CAPTURE_SCHEMA_VERSION,
+            PreviewCaptureAsset, PreviewRendererRouteSnapshot,
+            PreviewRendererWarmStateSnapshot, RawCaptureAsset, SessionCaptureRecord,
+            SessionManifest, CAPTURE_BUDGET_MS, PREVIEW_BUDGET_MS,
+            SESSION_CAPTURE_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
         session_repository::{read_session_manifest, write_session_manifest},
@@ -77,6 +82,7 @@ pub fn persist_capture_in_dir(
     request_id: String,
     raw_asset_path: String,
     fast_preview: Option<CompletedCaptureFastPreview>,
+    pre_promoted_fast_preview: Option<&FastPreviewReadyUpdate>,
     acknowledged_at_ms: u64,
     persisted_at_ms: u64,
 ) -> Result<
@@ -120,6 +126,9 @@ pub fn persist_capture_in_dir(
     if let Some(ref promoted_fast_preview) = promoted_fast_preview {
         capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
         capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
+    } else if let Some(pre_promoted_fast_preview) = pre_promoted_fast_preview {
+        capture.preview.asset_path = Some(pre_promoted_fast_preview.asset_path.clone());
+        capture.timing.fast_preview_visible_at_ms = Some(pre_promoted_fast_preview.visible_at_ms);
     } else if let Some(seed_result) =
         seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
     {
@@ -163,15 +172,46 @@ pub fn persist_capture_in_dir(
     write_session_manifest(&paths.manifest_path, &manifest)?;
 
     if let Some(first_visible_asset_path) = capture.preview.asset_path.as_deref() {
-        start_speculative_preview_render_in_dir(
+        let route_snapshot = resolve_preview_renderer_route_snapshot_in_dir(
             base_dir,
-            &manifest.session_id,
-            &capture.request_id,
-            &capture.capture_id,
             &active_preset.preset_id,
             &active_preset.published_version,
-            first_visible_asset_path,
         );
+        if should_skip_speculative_preview_render_for_route(
+            &route_snapshot,
+            manifest.active_preview_renderer_warm_state.as_ref(),
+            &active_preset,
+        ) {
+            let warm_state = manifest
+                .active_preview_renderer_warm_state
+                .as_ref()
+                .map(|snapshot| snapshot.state.as_str())
+                .unwrap_or("none");
+            let detail = format!(
+                "reason=dedicated-renderer-warm-route;route={};routeStage={};warmState={}",
+                route_snapshot.route, route_snapshot.route_stage, warm_state
+            );
+            let _ = append_session_timing_event_in_dir(
+                base_dir,
+                SessionTimingEventInput {
+                    session_id: &manifest.session_id,
+                    event: "speculative-preview-skipped",
+                    capture_id: Some(&capture.capture_id),
+                    request_id: Some(&capture.request_id),
+                    detail: Some(&detail),
+                },
+            );
+        } else {
+            start_speculative_preview_render_in_dir(
+                base_dir,
+                &manifest.session_id,
+                &capture.request_id,
+                &capture.capture_id,
+                &active_preset.preset_id,
+                &active_preset.published_version,
+                first_visible_asset_path,
+            );
+        }
     }
 
     Ok((manifest, capture, fast_preview_update))
@@ -1681,6 +1721,27 @@ fn system_time_to_ms(value: SystemTime) -> Option<u64> {
         .map(|duration| duration.as_millis() as u64)
 }
 
+fn should_skip_speculative_preview_render_for_route(
+    route_snapshot: &PreviewRendererRouteSnapshot,
+    warm_state_snapshot: Option<&PreviewRendererWarmStateSnapshot>,
+    active_preset: &ActivePresetBinding,
+) -> bool {
+    if route_snapshot.route != "local-renderer-sidecar"
+        || !matches!(route_snapshot.route_stage.as_str(), "canary" | "default")
+        || route_snapshot.fallback_reason_code.is_some()
+    {
+        return false;
+    }
+
+    let Some(warm_state_snapshot) = warm_state_snapshot else {
+        return false;
+    };
+
+    warm_state_snapshot.preset_id == active_preset.preset_id
+        && warm_state_snapshot.published_version == active_preset.published_version
+        && matches!(warm_state_snapshot.state.as_str(), "warm-ready" | "warm-hit")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1820,5 +1881,57 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn skips_speculative_preview_when_dedicated_route_is_warm_and_active() {
+        let route_snapshot = PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+        };
+        let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
+            preset_id: "preset_test-look".into(),
+            published_version: "2026.03.31".into(),
+            state: "warm-hit".into(),
+            observed_at: "2026-04-14T06:30:00Z".into(),
+            diagnostics_detail_path: None,
+        };
+        let active_preset = ActivePresetBinding {
+            preset_id: "preset_test-look".into(),
+            published_version: "2026.03.31".into(),
+        };
+
+        assert!(should_skip_speculative_preview_render_for_route(
+            &route_snapshot,
+            Some(&warm_state_snapshot),
+            &active_preset,
+        ));
+    }
+
+    #[test]
+    fn keeps_speculative_preview_when_warm_state_is_for_another_preset() {
+        let route_snapshot = PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+        };
+        let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
+            preset_id: "preset_other".into(),
+            published_version: "2026.03.31".into(),
+            state: "warm-hit".into(),
+            observed_at: "2026-04-14T06:30:00Z".into(),
+            diagnostics_detail_path: None,
+        };
+        let active_preset = ActivePresetBinding {
+            preset_id: "preset_test-look".into(),
+            published_version: "2026.03.31".into(),
+        };
+
+        assert!(!should_skip_speculative_preview_render_for_route(
+            &route_snapshot,
+            Some(&warm_state_snapshot),
+            &active_preset,
+        ));
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { HostErrorEnvelope } from '../../shared-contracts'
 import type {
+  PreviewRendererRouteDecisionSummary,
   PreviewRendererRouteMutationResult,
   PreviewRendererRoutePromotionStage,
   PreviewRendererRouteStatusResult,
@@ -14,6 +15,30 @@ type PreviewRouteGovernancePanelProps = {
 
 function formatStageLabel(stage: PreviewRendererRoutePromotionStage) {
   return stage === 'canary' ? 'canary' : 'default'
+}
+
+function formatRollbackProofLabel(rollbackProofPresent: boolean) {
+  return rollbackProofPresent ? 'confirmed' : 'pending'
+}
+
+function formatDecisionSummary(summary: PreviewRendererRouteDecisionSummary) {
+  return (
+    <>
+      <p>lane owner: {summary.laneOwner}</p>
+      {summary.decisionStage === null ? null : (
+        <p>decision stage: {summary.decisionStage}</p>
+      )}
+      <p>canary verdict: {summary.canaryGate ?? 'not-yet-assessed'}</p>
+      <p>kpi status: {summary.kpiStatus ?? 'not-yet-assessed'}</p>
+      <p>rollback proof: {formatRollbackProofLabel(summary.rollbackProofPresent)}</p>
+      {summary.fallbackReason === null ? null : (
+        <p>fallback reason: {summary.fallbackReason}</p>
+      )}
+      {summary.blockers.length === 0 ? null : (
+        <p>remaining blockers: {summary.blockers.join(', ')}</p>
+      )}
+    </>
+  )
 }
 
 export function PreviewRouteGovernancePanel({
@@ -107,6 +132,7 @@ export function PreviewRouteGovernancePanel({
           nextResult.routeStage === 'default'
             ? 'host-approved-default'
             : 'host-approved-canary',
+        decisionSummary: nextResult.decisionSummary,
         message: `이 프리셋 버전은 ${nextResult.routeStage} 상태예요.`,
       })
     } catch (nextError) {
@@ -140,6 +166,7 @@ export function PreviewRouteGovernancePanel({
         routeStage: nextResult.routeStage,
         resolvedRoute: 'darktable',
         reason: 'rollback',
+        decisionSummary: nextResult.decisionSummary,
         message: '이 프리셋 버전은 shadow 상태예요.',
       })
     } catch (nextError) {
@@ -184,6 +211,7 @@ export function PreviewRouteGovernancePanel({
             <p>현재 상태: {status.routeStage}</p>
             <p>적용 경로: {status.resolvedRoute}</p>
             <p>{status.message}</p>
+            {formatDecisionSummary(status.decisionSummary)}
           </>
         )}
       </article>
@@ -278,6 +306,7 @@ export function PreviewRouteGovernancePanel({
           <p>
             적용 단계: {result.routeStage} / 증거 누적: {result.auditEntry.canarySuccessCount}
           </p>
+          {formatDecisionSummary(result.decisionSummary)}
         </article>
       )}
     </section>

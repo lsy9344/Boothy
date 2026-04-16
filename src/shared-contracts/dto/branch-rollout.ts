@@ -21,6 +21,7 @@ import {
   branchRolloutRejectionSchema,
   branchSafeTransitionSchema,
   previewRendererRouteMutationActionSchema,
+  previewRendererRouteDecisionSummarySchema,
   previewRendererRouteMutationResultSchema,
   previewRendererRouteMutationResultStateSchema,
   previewRendererRoutePolicyAuditEntrySchema,
@@ -96,6 +97,9 @@ export type PreviewRendererRouteStatusInput = z.infer<
 >
 export type PreviewRendererRoutePolicyAuditEntry = z.infer<
   typeof previewRendererRoutePolicyAuditEntrySchema
+>
+export type PreviewRendererRouteDecisionSummary = z.infer<
+  typeof previewRendererRouteDecisionSummarySchema
 >
 export type PreviewRendererRouteMutationResult = z.infer<
   typeof previewRendererRouteMutationResultSchema

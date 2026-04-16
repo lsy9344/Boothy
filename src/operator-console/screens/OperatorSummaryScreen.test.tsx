@@ -63,6 +63,7 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
       firstVisibleMs: 2903,
+      sameCaptureFullScreenVisibleMs: 6927,
       replacementMs: 6927,
       originalVisibleToPresetAppliedVisibleMs: 4024,
       hardwareCapability: 'dedicated-renderer-available',
@@ -314,7 +315,8 @@ describe('OperatorSummaryScreen', () => {
           laneOwner: 'dedicated-renderer',
           fallbackReasonCode: 'none',
           firstVisibleMs: 1280,
-          replacementMs: 1840,
+          sameCaptureFullScreenVisibleMs: 1840,
+          replacementMs: 9999,
           originalVisibleToPresetAppliedVisibleMs: 560,
           hardwareCapability: 'dedicated-renderer-available',
           warmState: 'warm-ready',
@@ -340,10 +342,50 @@ describe('OperatorSummaryScreen', () => {
     expect(screen.getByText(/canary/i)).toBeInTheDocument()
     expect(screen.getByText(/dedicated-renderer-available/i)).toBeInTheDocument()
     expect(screen.getByText(/warm-ready/i)).toBeInTheDocument()
+    expect(screen.getByText(/^Same-Capture Full Screen$/i)).toBeInTheDocument()
     expect(screen.getByText(/1\.3초 \(1280ms\)/i)).toBeInTheDocument()
     expect(screen.getByText(/1\.8초 \(1840ms\)/i)).toBeInTheDocument()
     expect(screen.getByText(/0\.6초 \(560ms\)/i)).toBeInTheDocument()
-    expect(screen.getByText(/목표 2\.0초 이하 · 현재 1\.8초/i)).toBeInTheDocument()
+    expect(screen.getByText(/목표 2\.5초 이하 · 현재 1\.8초/i)).toBeInTheDocument()
+    expect(screen.queryByText(/9\.9초 \(9999ms\)/i)).not.toBeInTheDocument()
+  })
+
+  it('does not treat slot replacement timing as the same-capture full-screen KPI', async () => {
+    const loadOperatorRecoverySummary = vi.fn().mockResolvedValue(
+      createOperatorRecoverySummary({
+        previewArchitecture: {
+          route: 'local-renderer-sidecar',
+          routeStage: 'canary',
+          laneOwner: 'dedicated-renderer',
+          fallbackReasonCode: 'none',
+          firstVisibleMs: 1280,
+          sameCaptureFullScreenVisibleMs: null,
+          replacementMs: 9999,
+          originalVisibleToPresetAppliedVisibleMs: 560,
+          hardwareCapability: 'dedicated-renderer-available',
+          warmState: 'warm-ready',
+          warmStateObservedAt: '2026-04-12T08:00:00.000Z',
+        },
+      }),
+    )
+    const loadOperatorAuditHistory = vi
+      .fn()
+      .mockResolvedValue(createOperatorAuditHistory())
+    const runOperatorRecoveryAction = vi
+      .fn()
+      .mockResolvedValue(createOperatorRecoveryActionResult())
+
+    renderOperatorScreen({
+      loadOperatorRecoverySummary,
+      loadOperatorAuditHistory,
+      runOperatorRecoveryAction,
+    })
+
+    expect(await screen.findByText(/Preview Architecture/i)).toBeInTheDocument()
+    expect(screen.getByText(/^Same-Capture Full Screen$/i)).toBeInTheDocument()
+    expect(screen.getByText(/^Slot Replacement$/i)).toBeInTheDocument()
+    expect(screen.getByText(/목표 2\.5초 이하 · 아직 계측 없음/i)).toBeInTheDocument()
+    expect(screen.queryByText(/9\.9초 \(9999ms\)/i)).not.toBeInTheDocument()
   })
 
   it('renders a safe empty state when no active session exists', async () => {

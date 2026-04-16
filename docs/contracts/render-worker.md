@@ -21,12 +21,14 @@
 
 ## Preview 규칙
 
-- first-visible preview 경로는 별도 lane으로 존재할 수 있지만, truthful close owner는 host-owned renderer다.
+- first-visible preview 경로는 별도 customer-safe lane으로 존재할 수 있지만, primary truthful close owner는 host-owned local lane이다.
 - `previewReady`는 canonical recipe intent와 darktable adapter를 사용해 같은 capture의 preset-applied preview file을 실제로 만든 뒤에만 기록한다.
 - first-visible image가 먼저 보여도 booth는 `Preview Waiting`을 유지해야 한다.
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
+- Story 1.23은 host-owned local lane이 `display-sized preset-applied truthful artifact`를 만드는 prototype owner다. 이 단계의 성공은 prototype proof까지만 의미하며, Story 1.24 canary, Story 1.25 default/rollback, Story 1.13 final release close를 대신하지 않는다.
 - resident prototype evidence는 `capture_preview_transition_summary` 계열 진단에서 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`,
-  `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 Story 1.19 seam으로 이어져야 한다.
+  `sameCaptureFullScreenVisibleMs`, `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 same-capture close chain을 재구성할 수 있어야 한다.
+- darktable-compatible path remains the parity/fallback/final reference and must survive even when the local prototype lane owns the customer-visible truthful artifact.
 
 ## Final 규칙
 
@@ -41,3 +43,4 @@
   `catalog-state.json`을 같이 읽을 수 있어야 한다.
 - parity diff gate는 darktable baseline/fallback oracle against 비교만 허용하며, same-capture / same-session / same-preset-version 전제가 깨진 비교는
   `Go` 근거가 될 수 없다.
+- Story 1.24 canary와 Story 1.25 default/rollback은 captured truth를 읽어 후속 결정을 내리는 단계이며, Story 1.13 final release close는 그 이후에만 열린다.

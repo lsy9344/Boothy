@@ -75,7 +75,7 @@ function formatFieldValue(value: string | null | undefined) {
     : value
 }
 
-const PRESET_APPLIED_GOAL_MS = 2_000
+const SAME_CAPTURE_FULL_SCREEN_GOAL_MS = 2_500
 
 function formatMetricMs(value: number | null | undefined) {
   if (value === null || value === undefined) {
@@ -85,14 +85,23 @@ function formatMetricMs(value: number | null | undefined) {
   return `${(value / 1_000).toFixed(1)}초 (${value}ms)`
 }
 
-function formatGoalSpeed(replacementMs: number | null | undefined) {
-  const goalSeconds = (PRESET_APPLIED_GOAL_MS / 1_000).toFixed(1)
+function formatGoalSpeed(sameCaptureFullScreenVisibleMs: number | null | undefined) {
+  const goalSeconds = (SAME_CAPTURE_FULL_SCREEN_GOAL_MS / 1_000).toFixed(1)
 
-  if (replacementMs === null || replacementMs === undefined) {
+  if (
+    sameCaptureFullScreenVisibleMs === null ||
+    sameCaptureFullScreenVisibleMs === undefined
+  ) {
     return `목표 ${goalSeconds}초 이하 · 아직 계측 없음`
   }
 
-  return `목표 ${goalSeconds}초 이하 · 현재 ${(replacementMs / 1_000).toFixed(1)}초`
+  return `목표 ${goalSeconds}초 이하 · 현재 ${(sameCaptureFullScreenVisibleMs / 1_000).toFixed(1)}초`
+}
+
+function resolveSameCaptureFullScreenVisibleMs(summary: {
+  sameCaptureFullScreenVisibleMs?: number | null
+}) {
+  return summary.sameCaptureFullScreenVisibleMs
 }
 
 function formatLifecycleStage(value: string | null | undefined) {
@@ -169,6 +178,8 @@ function formatCameraConnectionStateLabel(state: OperatorCameraConnectionState) 
 
 function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary }) {
   const architecture = summary.previewArchitecture
+  const sameCaptureFullScreenVisibleMs =
+    resolveSameCaptureFullScreenVisibleMs(architecture)
 
   return (
     <article className="surface-card operator-console__section">
@@ -200,8 +211,8 @@ function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary
           <dd>{formatMetricMs(architecture.firstVisibleMs)}</dd>
         </div>
         <div className="operator-console__fact">
-          <dt>Preset Applied</dt>
-          <dd>{formatMetricMs(architecture.replacementMs)}</dd>
+          <dt>Same-Capture Full Screen</dt>
+          <dd>{formatMetricMs(sameCaptureFullScreenVisibleMs)}</dd>
         </div>
         <div className="operator-console__fact">
           <dt>Slot Replacement</dt>
@@ -213,7 +224,7 @@ function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary
         </div>
         <div className="operator-console__fact">
           <dt>Goal Speed</dt>
-          <dd>{formatGoalSpeed(architecture.replacementMs)}</dd>
+          <dd>{formatGoalSpeed(sameCaptureFullScreenVisibleMs)}</dd>
         </div>
         <div className="operator-console__fact">
           <dt>Warm State</dt>

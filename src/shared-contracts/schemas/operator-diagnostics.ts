@@ -49,22 +49,32 @@ export const operatorRecentFailureSummarySchema = z.object({
 })
 
 export const operatorPreviewArchitectureSummarySchema = z.object({
-  route: z.string().trim().min(1).nullable().optional(),
-  routeStage: z.string().trim().min(1).nullable().optional(),
-  laneOwner: z.string().trim().min(1).nullable().optional(),
-  fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
-  warmState: previewRendererWarmStateSchema.nullable().optional(),
-  warmStateObservedAt: z.string().datetime({ offset: true }).nullable().optional(),
-  firstVisibleMs: z.number().int().nonnegative().nullable().optional(),
-  replacementMs: z.number().int().nonnegative().nullable().optional(),
-  originalVisibleToPresetAppliedVisibleMs: z
-    .number()
-    .int()
-    .nonnegative()
-    .nullable()
-    .optional(),
-  hardwareCapability: z.string().trim().min(1),
-})
+    route: z.string().trim().min(1).nullable().optional(),
+    routeStage: z.string().trim().min(1).nullable().optional(),
+    laneOwner: z.string().trim().min(1).nullable().optional(),
+    fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+    captureId: z.string().trim().min(1).nullable().optional(),
+    requestId: z.string().trim().min(1).nullable().optional(),
+    visibleOwner: z.string().trim().min(1).nullable().optional(),
+    visibleOwnerTransitionAtMs: z.number().int().nonnegative().nullable().optional(),
+    warmState: previewRendererWarmStateSchema.nullable().optional(),
+    warmStateObservedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    firstVisibleMs: z.number().int().nonnegative().nullable().optional(),
+    sameCaptureFullScreenVisibleMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .optional(),
+    replacementMs: z.number().int().nonnegative().nullable().optional(),
+    originalVisibleToPresetAppliedVisibleMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .optional(),
+    hardwareCapability: z.string().trim().min(1),
+  })
 
 export const operatorSessionSummarySchema = z.object({
   schemaVersion: z.literal('operator-session-summary/v1'),

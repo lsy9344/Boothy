@@ -488,6 +488,19 @@ pub fn publish_validated_preset_in_dir(
 
     if let Err(error) = fs::rename(&temp_bundle_dir, &final_bundle_dir) {
         let _ = fs::remove_dir_all(&temp_bundle_dir);
+        if final_bundle_dir.exists() {
+            return reject_publication(
+                base_dir,
+                &draft_path,
+                existing_draft,
+                &input,
+                "duplicate-version",
+                "같은 published version이 이미 존재해서 immutable 게시 규칙을 지킬 수 없어요.",
+                "새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.",
+                noted_at,
+            );
+        }
+
         return Err(map_fs_error(error));
     }
 
@@ -513,14 +526,33 @@ pub fn publish_validated_preset_in_dir(
         "게시가 완료되었고 이 버전은 미래 세션 catalog에서만 선택할 수 있어요.",
         &noted_at,
     );
-    let mut publication_history = previous_publication_history.clone();
-    publication_history.push(approved_record);
+    let approved_draft = match persist_approved_publication_checkpoint(
+        base_dir,
+        &draft_path,
+        &existing_draft,
+        &previous_publication_history,
+        approved_record,
+        &noted_at,
+    ) {
+        Ok(draft) => draft,
+        Err(error) => {
+            return Err(rollback_publication_side_effects(
+                base_dir,
+                &draft_path,
+                &existing_draft,
+                &previous_publication_history,
+                Some(&final_bundle_dir),
+                error,
+            ));
+        }
+    };
+    let mut publication_history = approved_draft.publication_history.clone();
     publication_history.push(published_record.clone());
     let updated_draft = DraftPresetSummaryDto {
         lifecycle_state: "published".into(),
         publication_history: publication_history.clone(),
         updated_at: noted_at.clone(),
-        ..existing_draft.clone()
+        ..approved_draft
     };
     let preview_alt_text = updated_draft.preview.alt_text.clone();
 
@@ -785,15 +817,16 @@ pub fn preview_publish_validated_preset_in_dir(
 fn reject_publication(
     base_dir: &Path,
     draft_path: &Path,
-    mut draft: DraftPresetSummaryDto,
+    draft: DraftPresetSummaryDto,
     input: &PublishValidatedPresetInputDto,
     reason_code: &str,
     message: &str,
     guidance: &str,
     noted_at: String,
 ) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
+    let (mut draft, previous_publication_history) =
+        load_current_rejection_baseline(base_dir, draft_path, &draft);
     let previous_draft = draft.clone();
-    let previous_publication_history = load_publication_history(base_dir, &draft.preset_id);
     let rejection = build_publication_rejection_result(
         draft.clone(),
         input,
@@ -857,6 +890,30 @@ fn reject_publication(
         guidance: guidance.into(),
         audit_record,
     })
+}
+
+fn load_current_rejection_baseline(
+    base_dir: &Path,
+    draft_path: &Path,
+    fallback: &DraftPresetSummaryDto,
+) -> (DraftPresetSummaryDto, Vec<PresetPublicationAuditRecordDto>) {
+    match load_required_draft_summary(
+        base_dir,
+        draft_path,
+        "현재 draft 상태를 다시 확인해 주세요.",
+        "현재 draft 상태를 다시 확인해 주세요.",
+    ) {
+        Ok(current_draft) => {
+            let publication_history = current_draft.publication_history.clone();
+            (current_draft, publication_history)
+        }
+        Err(_) => {
+            let publication_history = load_publication_history(base_dir, &fallback.preset_id);
+            let mut fallback_draft = fallback.clone();
+            fallback_draft.publication_history = publication_history.clone();
+            (fallback_draft, publication_history)
+        }
+    }
 }
 
 fn build_publication_rejection_result(
@@ -995,6 +1052,30 @@ fn persist_publication_history(
         HostErrorEnvelope::persistence(format!("게시 감사 이력을 직렬화하지 못했어요: {error}"))
     })?;
     write_json_bytes_atomically(&audit_path, &bytes)
+}
+
+fn persist_approved_publication_checkpoint(
+    base_dir: &Path,
+    draft_path: &Path,
+    previous_draft: &DraftPresetSummaryDto,
+    previous_publication_history: &[PresetPublicationAuditRecordDto],
+    approved_record: PresetPublicationAuditRecordDto,
+    noted_at: &str,
+) -> Result<DraftPresetSummaryDto, HostErrorEnvelope> {
+    let mut publication_history = previous_publication_history.to_vec();
+    publication_history.push(approved_record);
+
+    let approved_draft = DraftPresetSummaryDto {
+        lifecycle_state: "approved".into(),
+        publication_history: publication_history.clone(),
+        updated_at: noted_at.into(),
+        ..previous_draft.clone()
+    };
+
+    persist_publication_history(base_dir, &previous_draft.preset_id, &publication_history)?;
+    write_draft_summary(draft_path, &approved_draft)?;
+
+    Ok(approved_draft)
 }
 
 fn rollback_publication_side_effects(
@@ -2106,7 +2187,75 @@ fn map_fs_error(error: std::io::Error) -> HostErrorEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::{workspace_entry_access_failure, workspace_symlink_failure};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::contracts::dto::{
+        DraftNoisePolicyDto, DraftPresetPreviewReferenceDto, DraftRenderProfileDto,
+        DraftValidationSnapshotDto, PublishValidatedPresetInputDto,
+    };
+
+    use super::{
+        build_publication_audit_record, persist_approved_publication_checkpoint,
+        workspace_entry_access_failure, workspace_symlink_failure, DraftPresetSummaryDto,
+    };
+
+    fn unique_test_root(test_name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("boothy-authoring-pipeline-{test_name}-{stamp}"))
+    }
+
+    fn sample_draft_summary() -> DraftPresetSummaryDto {
+        DraftPresetSummaryDto {
+            schema_version: "draft-preset-artifact/v1".into(),
+            preset_id: "preset_soft-glow-draft".into(),
+            display_name: "Soft Glow Draft".into(),
+            draft_version: 2,
+            lifecycle_state: "validated".into(),
+            darktable_version: "5.4.1".into(),
+            darktable_project_path: Some("darktable/soft-glow.dtpreset".into()),
+            xmp_template_path: "xmp/soft-glow.xmp".into(),
+            preview_profile: DraftRenderProfileDto {
+                profile_id: "preview-standard".into(),
+                display_name: "Preview Standard".into(),
+                output_color_space: "sRGB".into(),
+            },
+            final_profile: DraftRenderProfileDto {
+                profile_id: "final-standard".into(),
+                display_name: "Final Standard".into(),
+                output_color_space: "sRGB".into(),
+            },
+            noise_policy: DraftNoisePolicyDto {
+                policy_id: "balanced-noise".into(),
+                display_name: "Balanced Noise".into(),
+                reduction_mode: "balanced".into(),
+            },
+            preview: DraftPresetPreviewReferenceDto {
+                asset_path: "previews/soft-glow.jpg".into(),
+                alt_text: "Soft Glow draft portrait".into(),
+            },
+            sample_cut: DraftPresetPreviewReferenceDto {
+                asset_path: "samples/soft-glow-cut.jpg".into(),
+                alt_text: "Soft Glow sample cut".into(),
+            },
+            description: Some("부드러운 피부톤 baseline".into()),
+            notes: Some("승인 전 내부 검토용".into()),
+            validation: DraftValidationSnapshotDto {
+                status: "passed".into(),
+                latest_report: None,
+                history: Vec::new(),
+            },
+            publication_history: Vec::new(),
+            updated_at: "2026-03-26T00:10:00Z".into(),
+        }
+    }
 
     #[test]
     fn workspace_entry_access_failure_requires_manual_recovery() {
@@ -2130,5 +2279,62 @@ mod tests {
         );
         assert!(artifact.guidance.contains("수동 점검"));
         assert!(artifact.guidance.contains("실제 draft 폴더"));
+    }
+
+    #[test]
+    fn approved_publication_checkpoint_is_persisted_before_final_publish_state() {
+        let base_dir = unique_test_root("approved-checkpoint");
+        let draft_path = base_dir
+            .join("preset-authoring")
+            .join("drafts")
+            .join("preset_soft-glow-draft")
+            .join("draft.json");
+        let draft = sample_draft_summary();
+        let input = PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: 2,
+            validation_checked_at: "2026-03-26T00:10:00Z".into(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: Some("현재 세션 유지".into()),
+        };
+        let approved_record = build_publication_audit_record(
+            &draft,
+            &input,
+            "approved",
+            input.review_note.as_deref(),
+            None,
+            "승인 검토가 완료되었고 immutable 게시 아티팩트를 확정하고 있어요.",
+            "2026-03-26T00:20:00Z",
+        );
+
+        let approved_draft = persist_approved_publication_checkpoint(
+            &base_dir,
+            &draft_path,
+            &draft,
+            &[],
+            approved_record,
+            "2026-03-26T00:20:00Z",
+        )
+        .expect("approved checkpoint should persist");
+
+        assert_eq!(approved_draft.lifecycle_state, "approved");
+
+        let persisted_bytes =
+            fs::read_to_string(&draft_path).expect("draft checkpoint should exist");
+        assert!(persisted_bytes.contains("\"lifecycleState\": \"approved\""));
+
+        let audit_path = base_dir
+            .join("preset-authoring")
+            .join("publication-audit")
+            .join("preset_soft-glow-draft.json");
+        let audit_bytes = fs::read_to_string(audit_path).expect("audit checkpoint should exist");
+        assert!(audit_bytes.contains("\"action\": \"approved\""));
+        assert!(!audit_bytes.contains("\"action\": \"published\""));
+
+        let _ = fs::remove_dir_all(base_dir);
     }
 }

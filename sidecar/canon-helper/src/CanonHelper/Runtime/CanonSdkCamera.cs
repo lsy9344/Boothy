@@ -24,7 +24,7 @@ internal sealed class CanonSdkCamera : IDisposable
     // before the transfer boundary closes. Keep enough headroom to avoid treating
     // slow but valid RAW handoffs as fatal helper failures.
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
-        30000
+        45000
     );
 
     private readonly object _sync = new();

@@ -109,6 +109,19 @@ function mergePreservedPostEndReadiness(
     return current
   }
 
+  const currentReachedExactEnd =
+    current.reasonCode === 'ended' ||
+    current.timing?.phase === 'ended' ||
+    isHostOwnedPostEndReason(current.reasonCode)
+  const nextKeepsExactEndBoundary =
+    next.reasonCode === 'ended' || isHostOwnedPostEndReason(next.reasonCode)
+  const nextHasApprovedExtension =
+    next.canCapture && next.timing?.approvedExtensionAuditRef !== null
+
+  if (currentReachedExactEnd && !nextKeepsExactEndBoundary && !nextHasApprovedExtension) {
+    return current
+  }
+
   if (
     isHostOwnedPostEndReason(current.reasonCode) &&
     current.reasonCode === next.reasonCode &&
@@ -596,7 +609,7 @@ function deriveLifecycleStage(
       case 'completed':
         return currentStage
       default:
-        return 'export-waiting'
+        return 'ended'
     }
   }
 

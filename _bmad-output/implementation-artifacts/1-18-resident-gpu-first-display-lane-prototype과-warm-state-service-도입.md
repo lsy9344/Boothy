@@ -1,6 +1,6 @@
 # Story 1.18: resident GPU-first display lane prototype과 warm-state service 도입
 
-Status: done
+Status: backlog
 
 Architecture Pivot Note: Story 1.17이 `canonical preset recipe + darktable adapter` 기준선을 이미 고정했다. 이번 스토리는 그 기준선을 소비하는 `resident GPU-first` 후보를 현 저장소의 `shadow / canary / default` 라우팅, dedicated renderer contract, booth-safe copy 원칙 위에서 검증 가능한 prototype으로 올리는 범위다.
 

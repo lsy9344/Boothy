@@ -940,6 +940,118 @@ describe('PresetLibraryScreen', () => {
     ).toBeInTheDocument()
   })
 
+  it('reloads live catalog state after a publication rejection', async () => {
+    const user = userEvent.setup()
+    const passedReport = createValidationReport({
+      lifecycleState: 'validated',
+      status: 'passed',
+      findings: [],
+      checkedAt: '2026-03-26T00:10:00.000Z',
+    })
+    const validatedDraft = createAuthoringDraft({
+      lifecycleState: 'validated',
+      validation: {
+        status: 'passed',
+        latestReport: passedReport,
+        history: [passedReport],
+      },
+    })
+    const rejectedDraft = createAuthoringDraft({
+      lifecycleState: 'validated',
+      validation: {
+        status: 'passed',
+        latestReport: passedReport,
+        history: [passedReport],
+      },
+      publicationHistory: [
+        createPublicationAuditRecord({
+          action: 'rejected',
+          reasonCode: 'duplicate-version',
+          guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
+          publishedVersion: '2026.03.26',
+        }),
+      ],
+    })
+    const loadPresetCatalogState = vi
+      .fn<PresetAuthoringGateway['loadPresetCatalogState']>()
+      .mockResolvedValueOnce({
+        schemaVersion: 'preset-catalog-state-result/v1',
+        catalogRevision: 1,
+        presets: [createCatalogStateSummary()],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'preset-catalog-state-result/v1',
+        catalogRevision: 2,
+        presets: [
+          createCatalogStateSummary({
+            livePublishedVersion: '2026.03.26',
+            publishedPresets: [
+              {
+                presetId: 'preset_soft-glow-draft',
+                displayName: 'Soft Glow Draft',
+                publishedVersion: '2026.03.26',
+                boothStatus: 'booth-safe',
+                preview: {
+                  kind: 'preview-tile',
+                  assetPath: '/catalog/preset_soft-glow-draft/2026.03.26/preview.jpg',
+                  altText: 'Soft Glow Draft preview',
+                },
+              },
+            ],
+          }),
+        ],
+      })
+    const publishValidatedPreset = vi
+      .fn<PresetAuthoringGateway['publishValidatedPreset']>()
+      .mockResolvedValue({
+        schemaVersion: 'draft-preset-publication-result/v1',
+        status: 'rejected',
+        draft: rejectedDraft,
+        reasonCode: 'duplicate-version',
+        message: '같은 published version이 이미 존재해요.',
+        guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
+        auditRecord: createPublicationAuditRecord({
+          action: 'rejected',
+          reasonCode: 'duplicate-version',
+          guidance: '새 publishedVersion을 사용하거나 기존 게시 버전을 유지해 주세요.',
+          publishedVersion: '2026.03.26',
+        }),
+      })
+
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [validatedDraft],
+        invalidDrafts: [],
+      }),
+      publishValidatedPreset,
+      loadPresetCatalogState,
+    })
+
+    await screen.findByRole('heading', { name: /Draft Preset Workspace/i })
+    await user.clear(screen.getByLabelText(/Published version/i))
+    await user.type(screen.getByLabelText(/Published version/i), '2026.03.26')
+    await user.clear(screen.getByLabelText(/Approver ID/i))
+    await user.type(screen.getByLabelText(/Approver ID/i), 'manager-kim')
+    await user.clear(screen.getByLabelText(/Approver name/i))
+    await user.type(screen.getByLabelText(/Approver name/i), 'Kim Manager')
+    await user.click(screen.getByRole('button', { name: /Publish to future sessions/i }))
+
+    expect(
+      (await screen.findAllByText(/같은 published version이 이미 존재해요\./i)).length,
+    ).toBeGreaterThan(0)
+
+    await waitFor(() => {
+      expect(loadPresetCatalogState).toHaveBeenCalledTimes(2)
+    })
+
+    expect(
+      await screen.findByText(/Future session live version · 2026\.03\.26/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/catalog revision은/i)).toHaveTextContent('2')
+  })
+
   it('renders a published notice with success styling after a successful publish', async () => {
     const user = userEvent.setup()
     const passedReport = createValidationReport({
@@ -1029,6 +1141,108 @@ describe('PresetLibraryScreen', () => {
     )
 
     expect(successMessage.closest('div')).toHaveClass('authoring-validation__item--success')
+  })
+
+  it('hides stale live catalog data when publish succeeds but the follow-up catalog refresh fails', async () => {
+    const user = userEvent.setup()
+    const passedReport = createValidationReport({
+      lifecycleState: 'validated',
+      status: 'passed',
+      findings: [],
+      checkedAt: '2026-03-26T00:10:00.000Z',
+    })
+    const validatedDraft = createAuthoringDraft({
+      lifecycleState: 'validated',
+      validation: {
+        status: 'passed',
+        latestReport: passedReport,
+        history: [passedReport],
+      },
+    })
+    const publishedDraft = createAuthoringDraft({
+      lifecycleState: 'published',
+      validation: {
+        status: 'passed',
+        latestReport: passedReport,
+        history: [passedReport],
+      },
+      publicationHistory: [
+        createPublicationAuditRecord({
+          action: 'approved',
+          reviewNote: '현재 세션 유지',
+        }),
+        createPublicationAuditRecord({
+          action: 'published',
+          reviewNote: null,
+        }),
+      ],
+    })
+    const loadPresetCatalogState = vi
+      .fn<PresetAuthoringGateway['loadPresetCatalogState']>()
+      .mockResolvedValueOnce({
+        schemaVersion: 'preset-catalog-state-result/v1',
+        catalogRevision: 1,
+        presets: [createCatalogStateSummary()],
+      })
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+    const publishValidatedPreset = vi
+      .fn<PresetAuthoringGateway['publishValidatedPreset']>()
+      .mockResolvedValue({
+        schemaVersion: 'draft-preset-publication-result/v1',
+        status: 'published',
+        draft: publishedDraft,
+        publishedPreset: {
+          presetId: 'preset_soft-glow-draft',
+          displayName: 'Soft Glow Draft',
+          publishedVersion: '2026.03.26',
+          boothStatus: 'booth-safe',
+          preview: {
+            kind: 'preview-tile',
+            assetPath: '/catalog/preset_soft-glow-draft/2026.03.26/preview.jpg',
+            altText: 'Soft Glow Draft preview',
+          },
+        },
+        bundlePath: '/catalog/preset_soft-glow-draft/2026.03.26',
+        auditRecord: createPublicationAuditRecord({
+          action: 'published',
+          publishedVersion: '2026.03.26',
+        }),
+      })
+
+    renderAuthoringScreen({
+      loadAuthoringWorkspace: vi.fn().mockResolvedValue({
+        schemaVersion: 'preset-authoring-workspace/v1',
+        supportedLifecycleStates: ['draft', 'validated', 'approved', 'published'],
+        drafts: [validatedDraft],
+        invalidDrafts: [],
+      }),
+      publishValidatedPreset,
+      loadPresetCatalogState,
+    })
+
+    await screen.findByRole('heading', { name: /Draft Preset Workspace/i })
+    await user.clear(screen.getByLabelText(/Published version/i))
+    await user.type(screen.getByLabelText(/Published version/i), '2026.03.26')
+    await user.clear(screen.getByLabelText(/Approver ID/i))
+    await user.type(screen.getByLabelText(/Approver ID/i), 'manager-kim')
+    await user.clear(screen.getByLabelText(/Approver name/i))
+    await user.type(screen.getByLabelText(/Approver name/i), 'Kim Manager')
+    await user.click(screen.getByRole('button', { name: /Publish to future sessions/i }))
+
+    expect(
+      (await screen.findAllByText(/future-session publish까지 완료됐어요\./i)).length,
+    ).toBeGreaterThan(0)
+
+    await waitFor(() => {
+      expect(loadPresetCatalogState).toHaveBeenCalledTimes(2)
+    })
+
+    expect(
+      screen.queryByText(/Future session live version · 2026\.03\.20/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/live catalog 상태를 다시 확인하지 못해 현재 버전 표시는 잠시 숨겼어요\./i),
+    ).toBeInTheDocument()
   })
 
   it('hides stale publication rejection guidance after a newer validation pass', async () => {

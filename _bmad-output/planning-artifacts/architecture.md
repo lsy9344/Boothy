@@ -12,18 +12,20 @@ inputDocuments:
   - '_bmad-output/planning-artifacts/prd.md'
   - '_bmad-output/planning-artifacts/ux-design-specification.md'
   - '_bmad-output/planning-artifacts/research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md'
+  - '_bmad-output/planning-artifacts/research/technical-boothy-preview-architecture-alternatives-research-20260414.md'
   - '_bmad-output/planning-artifacts/prd-validation-report-20260320-015539.md'
   - 'docs/release-baseline.md'
+  - 'docs/contracts/local-dedicated-renderer.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
   - 'reference/darktable/README.md'
 workflowType: 'architecture'
 documentType: 'architecture-decision-document'
 project_name: 'Boothy'
 user_name: 'Noah Lee'
-date: '2026-04-10'
+date: '2026-04-15'
 lastStep: 8
-status: 'complete-updated-for-preview-architecture-decision'
-completedAt: '2026-04-10'
+status: 'complete-updated-for-full-screen-lane-primary-decision'
+completedAt: '2026-04-15'
 ---
 
 # Architecture Decision Document
@@ -35,12 +37,14 @@ This document defines the implementation-shaping technical decisions for Boothy 
 - [Product requirements document](./prd.md)
 - [UX design specification](./ux-design-specification.md)
 - [Preset-applied preview architecture research](./research/technical-boothy-preset-applied-preview-architecture-research-2026-04-09.md)
+- [Preview architecture alternatives research](./research/technical-boothy-preview-architecture-alternatives-research-20260414.md)
+- [Local dedicated renderer contract](../../docs/contracts/local-dedicated-renderer.md)
 - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
 - [Darktable reference](../../reference/darktable/README.md)
 
 ## System Overview
 
-Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration, resident GPU rendering, and darktable baseline/fallback execution remain isolated boundaries so booth UI never interprets raw helper or render-engine output directly.
+Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, evidence, and completion truth. The React frontend renders task-specific surfaces from that normalized state. The primary customer-visible close path is a host-owned `local native/GPU resident full-screen lane` that produces a `display-sized preset-applied truthful artifact`. Camera integration, the full-screen lane, and the darktable-compatible baseline/fallback/parity path remain isolated boundaries so booth UI never interprets raw helper or render-engine output directly, and `previewReady` stays reserved for the truthful artifact rather than any earlier first-visible frame.
 
 ```mermaid
 flowchart LR
@@ -56,8 +60,8 @@ flowchart LR
     Host --> AuditDB["SQLite Audit Store<br/>lifecycle + interventions + rollout"]
     Host --> Config["Local Branch Config"]
     Host --> CameraSidecar["Camera Sidecar / Helper"]
-    Host --> GpuRenderService["Resident GPU Render Service"]
-    Host --> BaselineWorker["darktable Baseline / Fallback / Parity Worker"]
+    Host --> GpuRenderService["Local Native/GPU Resident<br/>Full-Screen Lane"]
+    Host --> BaselineWorker["darktable-Compatible<br/>Fallback / Parity / Final Worker"]
     AuthorUI --> PresetArtifacts["Published Preset Artifacts"]
     Host --> PresetArtifacts
     GpuRenderService --> PresetArtifacts
@@ -194,16 +198,20 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - Boothy remains one packaged Tauri application, but it is split into three capability-gated surfaces: `booth customer shell`, `operator console`, and `internal preset-authoring`.
 - The durable source of truth for active booth work is a session-scoped filesystem root, not route state, UI memory, or SQLite.
 - The customer-facing booth alias is distinct from the durable `sessionId`; the alias is used for booth guidance and approved handoff while the filesystem and contracts rely on the opaque session identifier.
+- The primary customer-visible close architecture is a host-owned `local native/GPU resident full-screen lane` that produces a `display-sized preset-applied truthful artifact` for the active capture.
 - darktable-backed preset authoring and apply are the authoritative preset truth path; detailed module control stays only inside internal preset-authoring, not as a customer-facing editing workspace.
+- darktable-compatible execution remains the parity oracle, fallback path, and final/export truth reference; it does not reclaim the latency-critical hot path by default.
 - The Rust host is the single normalization point for camera/helper truth, timing truth, and post-end workflow truth before those states are translated to UI.
 - Camera integration is isolated behind a bundled helper/sidecar boundary with versioned messages and filesystem handoff; camera SDK truth does not leak into React.
 - The first approved camera implementation profile is a Windows-only Canon EDSDK helper exe; generic multi-vendor abstraction is deferred until hardware evidence justifies it.
+- Existing `local dedicated renderer` activation is retained as route/evidence baseline proof, not as the final primary close architecture.
 - Session timing rules, warning alerts, exact-end behavior, and post-end state transitions are host-owned workflow rules.
 - Release behavior must preserve staged rollout, rollback, and zero forced update during active customer sessions.
 
 **Important Decisions (Shape Architecture):**
 - SQLite stores lifecycle, timing, intervention, publication, and rollout audit data, but it does not own photo or session artifact truth.
 - Presets are stored as versioned approved bundles and published into a bounded booth catalog; active sessions reference preset versions explicitly.
+- The system pattern remains `modular monolith + dedicated sidecar + anti-corruption adapter + branch-by-abstraction rollout` rather than a distributed service-first topology.
 - Tauri Store or equivalent local config keeps only minimal branch-local settings and runtime profile flags.
 - One packaged app exposes booth flow by default and unlocks operator controls, and where enabled authoring controls, only after successful admin-password authentication plus capability checks.
 - Boundary validation uses `Zod 4` in TypeScript and revalidation in Rust before file mutation, helper control, or preset publication.
@@ -215,6 +223,32 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - Stronger authoring authentication such as SSO or hardware-backed identity
 - Remote log export and centralized observability
 - Promotion from sidecar stdio to named pipes or a longer-lived local service if hardware evidence requires it
+- `remote renderer / edge appliance` as a reserve path only if the local primary lane repeatedly fails the approved hardware KPI after prototype, parity, and canary validation
+
+### Preview Architecture Realignment
+
+The architecture is explicitly realigned around the product acceptance metric `same-capture preset-applied full-screen visible <= 2500ms`. Small previews, raw first-visible frames, recent-strip updates, and same-slot replacement mechanics by themselves do not close this KPI.
+
+**Why the existing local dedicated renderer activation stays, but no longer leads:**
+- It proved that a host-owned sidecar lane can preserve same-capture correlation, route policy, booth-safe fallback, and capture-bound promotion evidence.
+- It proved that `preview-promotion-evidence.jsonl`, warm-state vocabulary, and promotion semantics can be operated as release evidence.
+- It did not prove repeated closure of the actual customer KPI on approved booth hardware, because activation of the lane is not the same thing as repeated `preset-applied full-screen visible <= 2500ms`.
+- It therefore remains activation baseline evidence for route and promotion semantics, but it is not treated as the final primary close architecture.
+
+**Why the new primary direction is different:**
+- The hot path must optimize for a `display-sized preset-applied truthful artifact`, not merely for earlier visibility of a non-truthful or partial frame.
+- The artifact must stay same-capture, same-session, and same-preset-version correlated under host-owned promotion rules.
+- darktable-compatible execution remains the fidelity oracle and fallback reference, which lets the product shorten the booth hot path without abandoning preset truth.
+
+**Why distributed-first alternatives are not the baseline:**
+- `full microservices` are not the baseline because the acceptance problem is single-booth local full-screen close latency with strict capture correlation, not team-scaled cloud decomposition.
+- `broker-first hot path` is not the baseline because the hot path values low latency, deterministic fallback, and simple capture correlation over queue-mediated flexibility.
+- `gateway-first hot path` is not the baseline because additional network hops and gateway failure surfaces do not solve the booth-side close problem.
+
+**When the reserve remote option opens:**
+- `remote renderer / edge appliance` opens only if the host-owned local native/GPU resident full-screen lane repeatedly fails the approved KPI on approved booth hardware.
+- The failure decision must be based on `same-capture preset-applied full-screen visible <= 2500ms`, not on thumbnail, first-visible, or recent-strip success.
+- The reserve path is considered only after local prototype, parity validation, canary rollout, and warm-state tuning have been exhausted while capture correctness, fidelity, fallback stability, and evidence completeness remain enforced.
 
 ### Darktable Capability Scope
 
@@ -242,12 +276,12 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
 - **Preset recipe truth:** Preset publication is anchored on a canonical preset recipe that both the resident GPU lane and the darktable compatibility path can consume. XMP and other darktable-compatible assets remain adapter artifacts, not the only expression of preset truth.
 - **Preset data model:** Presets are published as immutable versioned artifacts with canonical recipe metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The approved next structure is `resident GPU-first primary lane + different close topology`, where the host owns one resident GPU service for preset-applied close and may still promote an approved same-capture first-visible image into the canonical preview path earlier. darktable remains the baseline, fallback, and parity oracle rather than the default preview truth owner.
-- **Preview adoption stage:** Preview architecture adoption follows `prototype -> activation -> guarded cutover -> release close`.
+- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane`, a `display-sized truthful artifact lane`, and a `truth/parity reference lane`. The approved next structure is `local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact + darktable-compatible truth/parity reference`, where the hot path is optimized for same-capture full-screen visible latency and darktable-compatible execution remains the fidelity oracle, fallback, and final/export reference.
+- **Preview adoption stage:** Preview architecture adoption follows `metric/evidence baseline -> prototype/evidence track -> actual implementation/revalidation track -> guarded cutover -> release close`.
 - **Route rollout artifact rule:** `preview-renderer-policy.json` is both a route policy artifact and a rollout artifact, and its promoted `canary/default` state is part of release evidence rather than an implementation detail.
 - **Warm-state rule:** `warm-ready`, `warm-hit`, `cold`, and `warm-state-lost` are not diagnostics-only vocabulary; they are activation-readiness evidence that must be visible in operator-safe proof before guarded cutover can close.
-- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later preset-applied truthful close produced from the capture-bound published preset artifact by the host-owned dedicated renderer lane.
-- **Alternative-path rule:** `edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge`, `lighter truthful renderer`, and `darktable-only preview ownership` are not the default booth architecture.
+- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later preset-applied full-screen truthful artifact produced from the capture-bound published preset artifact by the host-owned local native/GPU resident lane. darktable-compatible execution validates parity, fallback, and final/export truth without reclaiming the latency-critical hot path by default.
+- **Alternative-path rule:** `remote renderer / edge appliance` remains a reserve option if local hardware headroom proves insufficient. `watch-folder bridge`, `lighter truthful renderer`, and `darktable-only preview ownership` are not the default booth architecture.
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
 - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
 - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
@@ -277,7 +311,7 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
 - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
-- **Preset/render core rule:** The host-owned local dedicated renderer lane executes approved darktable-backed preset artifacts through `darktable-cli` or the same approved darktable truth path; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. If an early same-capture image was already promoted, the later preset-applied truthful output still replaces it at the same canonical path and only then advances `previewReady`.
+- **Preset/render core rule:** The host-owned local native/GPU resident full-screen lane consumes the canonical preset recipe to generate a display-sized preset-applied truthful artifact for the booth hot path. The darktable-compatible path remains a separate reference for parity validation, fallback, and final/export truth. Booth routes receive only booth-safe outputs and typed status, never module-level editing APIs, and same-slot replacement still closes only when the truthful artifact is ready.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
 - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
 - **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
@@ -341,7 +375,7 @@ flowchart TB
 
 ### Deployment Responsibilities
 
-- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and the host-owned local dedicated renderer lane.
+- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and the host-owned local native/GPU resident full-screen lane plus its truth/parity reference path.
 - Authoring-enabled machines create and publish new preset artifacts without mutating booth sessions already in progress.
 - The preset artifact catalog is the only approved bridge between internal authoring and future booth sessions.
 - Rollout and rollback act on approved app builds plus approved preset stacks, and they must preserve active-session compatibility.
@@ -836,10 +870,13 @@ The architecture is now ready to support regenerated implementation stories agai
 
 ## Initial Implementation Priorities
 
-1. Preserve Story 1.18 prototype and Story 1.19 promotion-gate outputs as the pre-activation baseline.
-2. Add an activation story that promotes approved preset scope from `shadow` to `canary/default` through host-owned `preview-renderer-policy.json` and proves resident success-path evidence on real booth sessions.
-3. Run Story 1.13 only after activation proof exists, so guarded cutover and hardware `Go / No-Go` remain release-close work rather than implementation catch-up work.
-4. Continue publication, timing/completion, and release-governance tracks without weakening the approved preview/final truth model.
+1. Freeze the product sign-off KPI at `same-capture preset-applied full-screen visible <= 2500ms` and reset traces/evidence to that outcome.
+2. Treat Stories 1.18, 1.19, and 1.20 as activation baseline evidence for the retired dedicated close candidate rather than the final forward path.
+3. Treat Stories 1.21 and 1.22 as the metric/evidence baseline for the corrected preview architecture.
+4. Treat Stories 1.23 through 1.27 as prototype/evidence/gate history for the local lane rather than final actual primary lane implementation.
+5. Execute Stories 1.28 through 1.31 as the actual primary lane implementation, evidence/vocabulary realignment, actual-lane canary, and actual-lane default/rollback track.
+6. Run Story 1.13 only after the actual primary lane track produces accepted canonical rollback-backed `Go` evidence.
+7. Open `remote renderer / edge appliance` only as a reserve experiment if the actual primary lane repeatedly fails the same KPI on approved booth hardware after that track is exercised.
 
 ## Architecture Validation Results
 

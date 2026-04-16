@@ -41,6 +41,135 @@ function Read-JsonFile {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Get-SelectedCaptureTimingEvents {
+    param(
+        [string]$Path,
+        [string]$TargetSessionId,
+        [string]$TargetCaptureId,
+        [string]$TargetRequestId
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw ('Timing events not found for selected capture chain: {0}' -f $Path)
+    }
+
+    $lines = Get-Content -LiteralPath $Path | Where-Object { $_.Trim() }
+    $selectedLines = @(
+        $lines | Where-Object {
+            $_ -like "*session=$TargetSessionId*" -and
+            $_ -like "*request=$TargetRequestId*" -and
+            (
+                $_ -like '*event=request-capture*' -or
+                $_ -like '*event=capture-accepted*' -or
+                $_ -like "*capture=$TargetCaptureId*"
+            )
+        }
+    )
+
+    if ($selectedLines.Count -eq 0) {
+        throw (
+            'wrong-capture attribution risk: no timing events matched the selected capture correlation {0}/{1}/{2}' -f
+            $TargetSessionId,
+            $TargetCaptureId,
+            $TargetRequestId
+        )
+    }
+
+    foreach ($requiredEvent in @(
+        'event=request-capture',
+        'event=capture-accepted',
+        'event=file-arrived',
+        'event=capture_preview_ready',
+        'event=recent-session-visible',
+        'event=capture_preview_transition_summary'
+    )) {
+        if (-not @($selectedLines | Where-Object { $_ -like "*$requiredEvent*" }).Count) {
+            throw (
+                'selected capture chain is incomplete: missing {0} for {1}/{2}/{3}' -f
+                $requiredEvent,
+                $TargetSessionId,
+                $TargetCaptureId,
+                $TargetRequestId
+            )
+        }
+    }
+
+    $hasFastPreviewSeam = @(
+        $selectedLines | Where-Object {
+            $_ -like '*event=fast-preview-ready*' -or
+            $_ -like '*event=current-session-preview-pending-visible*' -or
+            $_ -like '*event=recent-session-pending-visible*' -or
+            $_ -like '*event=fast-thumbnail-attempted*' -or
+            $_ -like '*event=fast-thumbnail-failed*'
+        }
+    ).Count -gt 0
+    if (-not $hasFastPreviewSeam) {
+        throw (
+            'selected capture chain is incomplete: missing fast-preview seam for {0}/{1}/{2}' -f
+            $TargetSessionId,
+            $TargetCaptureId,
+            $TargetRequestId
+        )
+    }
+
+    return $selectedLines
+}
+
+function Assert-CaptureTimeSnapshotPath {
+    param(
+        [string]$SnapshotPath,
+        [string]$SessionRoot,
+        [string]$Label,
+        [string]$CaptureId
+    )
+
+    if (-not $SnapshotPath) {
+        throw ('stale-preview attribution risk: capture-time {0} snapshot path is missing.' -f $Label)
+    }
+
+    if (-not (Test-Path -LiteralPath $SnapshotPath)) {
+        throw ('stale-preview attribution risk: capture-time {0} snapshot not found: {1}' -f $Label, $SnapshotPath)
+    }
+
+    $resolvedSnapshotPath = (Resolve-Path -LiteralPath $SnapshotPath).Path
+    $diagnosticsRoot = (Resolve-Path -LiteralPath (Join-Path $SessionRoot 'diagnostics')).Path
+    if (-not $resolvedSnapshotPath.StartsWith($diagnosticsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw (
+            'stale-preview attribution risk: capture-time {0} snapshot must stay under session diagnostics, not {1}' -f
+            $Label,
+            $resolvedSnapshotPath
+        )
+    }
+
+    if ($CaptureId) {
+        $snapshotFileName = [System.IO.Path]::GetFileName($resolvedSnapshotPath)
+        if ($snapshotFileName -notmatch [regex]::Escape($CaptureId)) {
+            throw (
+                'stale-preview attribution risk: capture-time {0} snapshot must match the selected capture {1}, not {2}' -f
+                $Label,
+                $CaptureId,
+                $snapshotFileName
+            )
+        }
+    }
+}
+
+function Get-OptionalRecordValue {
+    param(
+        $Record,
+        [string]$PropertyName
+    )
+
+    if (
+        $null -eq $Record -or
+        -not $Record.PSObject.Properties[$PropertyName]
+    ) {
+        return $null
+    }
+
+    return $Record.$PropertyName
+}
+
 function Find-EvidenceRecord {
     param(
         [string]$Path,
@@ -334,6 +463,7 @@ $sessionRoot = Join-Path $resolvedRepoRoot ('sessions\{0}' -f $SessionId)
 $sessionManifestPath = Join-Path $sessionRoot 'session.json'
 $timingEventsPath = Join-Path $sessionRoot 'diagnostics\timing-events.log'
 $evidenceLogPath = Join-Path $sessionRoot 'diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl'
+$operatorAuditLogPath = Join-Path $resolvedRepoRoot 'diagnostics\operator-audit-log.json'
 $generatedAt = (Get-Date).ToString('o')
 
 if (-not (Test-Path -LiteralPath $sessionManifestPath)) {
@@ -363,6 +493,42 @@ if ($null -eq $evidenceRecord) {
     )
 }
 
+if ($capture.requestId -ne $evidenceRecord.requestId) {
+    throw (
+        'wrong-capture attribution risk: selected capture request id does not match evidence record. expected={0} actual={1}' -f
+        $capture.requestId,
+        $evidenceRecord.requestId
+    )
+}
+
+if ($capture.sessionId -ne $SessionId) {
+    throw (
+        'cross-session leak risk: selected capture belongs to a different session. expected={0} actual={1}' -f
+        $SessionId,
+        $capture.sessionId
+    )
+}
+
+if (-not $evidenceRecord.PSObject.Properties['visibleOwner'] -or -not $evidenceRecord.visibleOwner) {
+    throw 'visible owner transition evidence is missing: visibleOwner must be recorded for the selected capture chain.'
+}
+
+if (
+    -not $evidenceRecord.PSObject.Properties['visibleOwnerTransitionAtMs'] -or
+    $null -eq $evidenceRecord.visibleOwnerTransitionAtMs
+) {
+    throw 'visible owner transition evidence is missing: visibleOwnerTransitionAtMs must be recorded for the selected capture chain.'
+}
+
+foreach ($fieldName in @('captureRequestedAtMs', 'rawPersistedAtMs', 'truthfulArtifactReadyAtMs')) {
+    if (
+        -not $evidenceRecord.PSObject.Properties[$fieldName] -or
+        $null -eq $evidenceRecord.$fieldName
+    ) {
+        throw ('selected capture chain is incomplete: {0} is required for canonical evidence.' -f $fieldName)
+    }
+}
+
 if (@($BoothVisualEvidencePaths).Count -eq 0) {
     throw 'At least one booth visual evidence path is required for the canonical evidence bundle.'
 }
@@ -382,6 +548,8 @@ $publishedBundlePath = if ($evidenceRecord.publishedBundlePath) {
     Join-Path $resolvedRepoRoot ('preset-catalog\published\{0}\{1}\bundle.json' -f $PresetId, $PublishedVersion)
 }
 $catalogStatePath = $evidenceRecord.catalogStatePath
+Assert-CaptureTimeSnapshotPath -SnapshotPath $routePolicySnapshotPath -SessionRoot $sessionRoot -Label 'route policy' -CaptureId $CaptureId
+Assert-CaptureTimeSnapshotPath -SnapshotPath $catalogStatePath -SessionRoot $sessionRoot -Label 'catalog state' -CaptureId $CaptureId
 
 $evidenceFamily = Find-EvidenceFamily `
     -Path $evidenceLogPath `
@@ -390,6 +558,11 @@ $evidenceFamily = Find-EvidenceFamily `
     -TargetPublishedVersion $PublishedVersion `
     -TargetRouteStage $evidenceRecord.routeStage
 $fallbackRatio = Get-FallbackRatio -EvidenceRecords $evidenceFamily
+$selectedTimingEvents = Get-SelectedCaptureTimingEvents `
+    -Path $timingEventsPath `
+    -TargetSessionId $SessionId `
+    -TargetCaptureId $CaptureId `
+    -TargetRequestId $evidenceRecord.requestId
 
 $candidatePreviewPath = if ($evidenceRecord -and $evidenceRecord.previewAssetPath) {
     $evidenceRecord.previewAssetPath
@@ -420,6 +593,7 @@ $artifacts = [ordered]@{
     timingEvents = @{
         source = $timingEventsPath
         destination = Join-Path $OutputRoot 'timing-events.log'
+        content = (($selectedTimingEvents -join [Environment]::NewLine) + [Environment]::NewLine)
         required = $true
     }
     routePolicySnapshot = @{
@@ -436,6 +610,11 @@ $artifacts = [ordered]@{
         source = $catalogStatePath
         destination = Join-Path $OutputRoot 'catalog-state.json'
         required = $true
+    }
+    operatorAuditLog = @{
+        source = $operatorAuditLogPath
+        destination = Join-Path $OutputRoot 'operator-audit-log.json'
+        required = $false
     }
     previewPromotionEvidence = @{
         source = $evidenceLogPath
@@ -520,6 +699,8 @@ $parityReason = switch ($parityResult) {
     'not-run' { 'oracle-not-provided' }
     default { 'threshold-or-input-failure' }
 }
+$sameCaptureFullScreenVisibleMs = Get-OptionalRecordValue -Record $evidenceRecord -PropertyName 'sameCaptureFullScreenVisibleMs'
+$replacementMs = Get-OptionalRecordValue -Record $evidenceRecord -PropertyName 'replacementMs'
 
 $bundle = [ordered]@{
     schemaVersion = 'preview-promotion-evidence-bundle/v1'
@@ -533,8 +714,14 @@ $bundle = [ordered]@{
     fallbackReasonCode = if ($evidenceRecord) { $evidenceRecord.fallbackReasonCode } else { $null }
     routeStage = if ($evidenceRecord) { $evidenceRecord.routeStage } else { 'shadow' }
     warmState = if ($evidenceRecord) { $evidenceRecord.warmState } else { $null }
+    captureRequestedAtMs = if ($evidenceRecord) { $evidenceRecord.captureRequestedAtMs } else { $null }
+    rawPersistedAtMs = if ($evidenceRecord) { $evidenceRecord.rawPersistedAtMs } else { $null }
+    truthfulArtifactReadyAtMs = if ($evidenceRecord) { $evidenceRecord.truthfulArtifactReadyAtMs } else { $null }
+    visibleOwner = if ($evidenceRecord) { $evidenceRecord.visibleOwner } else { $null }
+    visibleOwnerTransitionAtMs = if ($evidenceRecord) { $evidenceRecord.visibleOwnerTransitionAtMs } else { $null }
     firstVisibleMs = if ($evidenceRecord) { $evidenceRecord.firstVisibleMs } else { $null }
-    replacementMs = if ($evidenceRecord) { $evidenceRecord.replacementMs } else { $null }
+    sameCaptureFullScreenVisibleMs = $sameCaptureFullScreenVisibleMs
+    replacementMs = $replacementMs
     originalVisibleToPresetAppliedVisibleMs = if ($evidenceRecord) { $evidenceRecord.originalVisibleToPresetAppliedVisibleMs } else { $null }
     fallbackRatio = $fallbackRatio
     outputRoot = $OutputRoot
@@ -545,7 +732,12 @@ $bundle = [ordered]@{
         booth = @($BoothVisualEvidencePaths)
         operator = @($OperatorVisualEvidencePaths)
     }
-    rollbackEvidence = @($RollbackEvidencePaths)
+    rollbackEvidence = @(
+        $artifacts.Keys |
+            Where-Object { $_ -like 'rollbackEvidence*' } |
+            Sort-Object |
+            ForEach-Object { $artifacts[$_].destination }
+    )
     parity = [ordered]@{
         result = $parityResult
         reason = $parityReason

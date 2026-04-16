@@ -1,6 +1,8 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -800,6 +802,78 @@ fn authoring_workspace_surfaces_symlinked_draft_dirs_as_manual_inspection_entrie
     assert!(!workspace.invalid_drafts[0].can_repair);
     assert!(workspace.invalid_drafts[0].message.contains("링크"));
     assert!(workspace.invalid_drafts[0].guidance.contains("수동 점검"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[cfg(windows)]
+#[test]
+fn direct_authoring_commands_reject_symlinked_draft_dirs() {
+    let base_dir = unique_test_root("direct-symlink-draft-commands");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    let drafts_root = resolve_draft_authoring_root(&base_dir);
+    let outside_target = base_dir.join("outside-linked-draft");
+    let linked_draft_dir = drafts_root.join("preset_soft-glow-draft");
+
+    fs::create_dir_all(&outside_target).expect("symlink target directory should exist");
+    fs::create_dir_all(&drafts_root).expect("draft root should exist");
+    fs::create_dir_all(outside_target.join("previews")).expect("preview dir should exist");
+    fs::create_dir_all(outside_target.join("samples")).expect("sample dir should exist");
+    fs::create_dir_all(outside_target.join("xmp")).expect("xmp dir should exist");
+    fs::write(
+        outside_target.join("draft.json"),
+        serde_json::to_vec_pretty(&create_authoring_draft_summary_for_symlink())
+            .expect("draft should serialize"),
+    )
+    .expect("draft json should write");
+    fs::write(outside_target.join("previews/soft-glow.jpg"), "preview")
+        .expect("preview should write");
+    fs::write(outside_target.join("samples/soft-glow-cut.jpg"), "sample")
+        .expect("sample should write");
+    fs::write(outside_target.join("xmp/soft-glow.xmp"), "xmp").expect("xmp should write");
+
+    symlink_dir(&outside_target, &linked_draft_dir).expect("draft symlink should be created");
+
+    let save_error = save_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        DraftPresetEditPayloadDto {
+            display_name: "Soft Glow Draft Updated".into(),
+            ..sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft Updated")
+        },
+    )
+    .expect_err("save should reject symlinked draft directories");
+    let validate_error = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect_err("validation should reject symlinked draft directories");
+    let publish_error = publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: 2,
+            validation_checked_at: "2026-03-26T00:10:00Z".into(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect_err("publish should reject symlinked draft directories");
+
+    assert_eq!(save_error.code, "validation-error");
+    assert!(save_error.message.contains("링크"));
+    assert_eq!(validate_error.code, "validation-error");
+    assert!(validate_error.message.contains("링크"));
+    assert_eq!(publish_error.code, "validation-error");
+    assert!(publish_error.message.contains("링크"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1940,6 +2014,119 @@ fn publication_rejection_keeps_catalog_and_active_session_unchanged_and_records_
 }
 
 #[test]
+fn concurrent_duplicate_publish_returns_a_rejection_and_records_it() {
+    let base_dir = unique_test_root("publish-duplicate-race");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_soft-glow-draft");
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should pass before publish");
+
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let final_bundle_dir = catalog_root
+        .join("preset_soft-glow-draft")
+        .join("2026.03.26");
+    let preset_dir = final_bundle_dir
+        .parent()
+        .expect("published preset directory should have a parent")
+        .to_path_buf();
+    let competing_bundle_dir = final_bundle_dir.clone();
+    let competing_base_dir = base_dir.clone();
+    let race_thread = thread::spawn(move || {
+        for _ in 0..400 {
+            if let Ok(entries) = fs::read_dir(&preset_dir) {
+                let temp_bundle_visible = entries.filter_map(Result::ok).any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("2026.03.26.tmp-")
+                });
+
+                if temp_bundle_visible {
+                    fs::create_dir_all(&competing_bundle_dir)
+                        .expect("competing bundle directory should be created");
+                    fs::write(competing_bundle_dir.join("bundle.json"), "{}")
+                        .expect("competing bundle should be written");
+                    persist_competing_published_state(
+                        &competing_base_dir,
+                        "preset_soft-glow-draft",
+                        "2026.03.26",
+                        "2026-03-26T00:20:00Z",
+                    );
+                    return;
+                }
+            }
+
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        panic!("temp publish bundle never became visible");
+    });
+
+    let result = publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: Some("race check".into()),
+        },
+    )
+    .expect("duplicate race should return a typed rejection");
+
+    race_thread.join().expect("competing publish should finish");
+
+    match result {
+        PublishValidatedPresetResultDto::Rejected {
+            draft,
+            reason_code,
+            audit_record,
+            ..
+        } => {
+            assert_eq!(draft.lifecycle_state, "published");
+            assert_eq!(reason_code, "duplicate-version");
+            assert_eq!(audit_record.action, "rejected");
+        }
+        PublishValidatedPresetResultDto::Published { .. } => {
+            panic!("duplicate race should not publish")
+        }
+    }
+
+    let audit_path = base_dir
+        .join("preset-authoring")
+        .join("publication-audit")
+        .join("preset_soft-glow-draft.json");
+    let audit_bytes = fs::read_to_string(audit_path).expect("audit should be written");
+    assert!(audit_bytes.contains("\"action\": \"published\""));
+    assert!(audit_bytes.contains("\"reasonCode\": \"duplicate-version\""));
+    let draft_path = resolve_draft_authoring_root(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join("draft.json");
+    let persisted_draft = fs::read_to_string(draft_path).expect("draft should be readable");
+    assert!(persisted_draft.contains("\"lifecycleState\": \"published\""));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn publication_rejects_metadata_mismatch_and_future_session_scope_violations() {
     let base_dir = unique_test_root("publish-metadata-rejections");
     let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
@@ -2468,6 +2655,146 @@ fn create_published_bundle(
         serde_json::to_vec_pretty(&bundle).expect("bundle should serialize"),
     )
     .expect("bundle should write");
+}
+
+fn create_authoring_draft_summary_for_symlink() -> serde_json::Value {
+    serde_json::json!({
+      "schemaVersion": "draft-preset-artifact/v1",
+      "presetId": "preset_soft-glow-draft",
+      "displayName": "Soft Glow Draft",
+      "draftVersion": 2,
+      "lifecycleState": "validated",
+      "darktableVersion": "5.4.1",
+      "xmpTemplatePath": "xmp/soft-glow.xmp",
+      "previewProfile": {
+        "profileId": "preview-standard",
+        "displayName": "Preview Standard",
+        "outputColorSpace": "sRGB"
+      },
+      "finalProfile": {
+        "profileId": "final-standard",
+        "displayName": "Final Standard",
+        "outputColorSpace": "sRGB"
+      },
+      "noisePolicy": {
+        "policyId": "balanced-noise",
+        "displayName": "Balanced Noise",
+        "reductionMode": "balanced"
+      },
+      "preview": {
+        "assetPath": "previews/soft-glow.jpg",
+        "altText": "Soft Glow draft portrait"
+      },
+      "sampleCut": {
+        "assetPath": "samples/soft-glow-cut.jpg",
+        "altText": "Soft Glow sample cut"
+      },
+      "description": "부드러운 피부톤 baseline",
+      "notes": "승인 전 내부 검토용",
+      "validation": {
+        "status": "passed",
+        "latestReport": {
+          "schemaVersion": "draft-preset-validation/v1",
+          "presetId": "preset_soft-glow-draft",
+          "draftVersion": 2,
+          "lifecycleState": "validated",
+          "status": "passed",
+          "checkedAt": "2026-03-26T00:10:00Z",
+          "findings": []
+        },
+        "history": [{
+          "schemaVersion": "draft-preset-validation/v1",
+          "presetId": "preset_soft-glow-draft",
+          "draftVersion": 2,
+          "lifecycleState": "validated",
+          "status": "passed",
+          "checkedAt": "2026-03-26T00:10:00Z",
+          "findings": []
+        }]
+      },
+      "publicationHistory": [],
+      "updatedAt": "2026-03-26T00:10:00Z"
+    })
+}
+
+fn persist_competing_published_state(
+    base_dir: &Path,
+    preset_id: &str,
+    published_version: &str,
+    noted_at: &str,
+) {
+    let draft_path = resolve_draft_authoring_root(base_dir)
+        .join(preset_id)
+        .join("draft.json");
+    let draft_bytes =
+        fs::read_to_string(&draft_path).expect("existing draft should be readable for race setup");
+    let mut draft_value: serde_json::Value =
+        serde_json::from_str(&draft_bytes).expect("existing draft should be valid json");
+    let publication_history =
+        build_competing_publication_history(preset_id, published_version, noted_at);
+
+    draft_value["lifecycleState"] = serde_json::Value::String("published".into());
+    draft_value["updatedAt"] = serde_json::Value::String(noted_at.into());
+    draft_value["publicationHistory"] =
+        serde_json::to_value(&publication_history).expect("history should serialize");
+
+    fs::write(
+        &draft_path,
+        serde_json::to_vec_pretty(&draft_value).expect("draft should serialize"),
+    )
+    .expect("competing draft should be written");
+
+    let audit_path = base_dir
+        .join("preset-authoring")
+        .join("publication-audit")
+        .join(format!("{preset_id}.json"));
+    fs::create_dir_all(
+        audit_path
+            .parent()
+            .expect("publication audit path should have a parent"),
+    )
+    .expect("publication audit dir should exist");
+    fs::write(
+        audit_path,
+        serde_json::to_vec_pretty(&publication_history).expect("history should serialize"),
+    )
+    .expect("publication audit should be written");
+}
+
+fn build_competing_publication_history(
+    preset_id: &str,
+    published_version: &str,
+    noted_at: &str,
+) -> Vec<PresetPublicationAuditRecordDto> {
+    vec![
+        PresetPublicationAuditRecordDto {
+            schema_version: "preset-publication-audit/v1".into(),
+            preset_id: preset_id.into(),
+            draft_version: 1,
+            published_version: published_version.into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            review_note: Some("race winner".into()),
+            action: "approved".into(),
+            reason_code: None,
+            guidance: "승인 검토가 완료되었고 immutable 게시 아티팩트를 확정하고 있어요.".into(),
+            noted_at: noted_at.into(),
+        },
+        PresetPublicationAuditRecordDto {
+            schema_version: "preset-publication-audit/v1".into(),
+            preset_id: preset_id.into(),
+            draft_version: 1,
+            published_version: published_version.into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            review_note: None,
+            action: "published".into(),
+            reason_code: None,
+            guidance: "게시가 완료되었고 이 버전은 미래 세션 catalog에서만 선택할 수 있어요."
+                .into(),
+            noted_at: noted_at.into(),
+        },
+    ]
 }
 
 fn snapshot_tree(root: &Path) -> Vec<(String, String)> {

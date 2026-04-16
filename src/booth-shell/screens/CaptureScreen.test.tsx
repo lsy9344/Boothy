@@ -58,7 +58,7 @@ function createCaptureRecord(
       captureAcknowledgedAtMs: 100,
       previewVisibleAtMs: null,
       captureBudgetMs: 1000,
-      previewBudgetMs: 5000,
+      previewBudgetMs: 2500,
       previewBudgetState: 'pending',
     },
     ...overrides,
@@ -378,8 +378,9 @@ describe('CaptureScreen', () => {
       'src',
       expect.stringContaining('capture_pending_fast.jpg'),
     )
+    expect(screen.getByRole('heading', { name: /방금 찍은 사진/i })).toBeInTheDocument()
     expect(
-      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+      screen.getByText(/지금 보이는 첫 사진은 임시 미리보기예요\./i),
     ).toBeInTheDocument()
   })
 
@@ -1725,6 +1726,51 @@ describe('CaptureScreen', () => {
     expect(playTimingCueMock).toHaveBeenCalledWith('ended')
   })
 
+  it('shows a neutral ended bridge and hides session actions before explicit post-end truth arrives', async () => {
+    playTimingCueMock.mockClear()
+
+    renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          schemaVersion: 'capture-readiness/v1',
+          sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+          surfaceState: 'blocked',
+          customerState: 'Session Ended',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '촬영 시간이 끝났어요.',
+          supportMessage: '마무리 안내가 나올 때까지 잠시만 기다려 주세요.',
+          reasonCode: 'ended',
+          latestCapture: createCaptureRecord({
+            renderStatus: 'previewWaiting',
+            postEndState: 'postEndPending',
+          }),
+          postEnd: null,
+          timing: createTimingSnapshot({
+            phase: 'ended',
+            captureAllowed: false,
+            warningTriggeredAt: '2026-03-20T00:10:01.000Z',
+            endedTriggeredAt: '2026-03-20T00:15:00.000Z',
+          }),
+        },
+      },
+    )
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /촬영이 끝났고 다음 단계를 준비 중이에요\./i,
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/안전한 다음 안내를 보여드릴 때까지 잠시만 기다려 주세요\./i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /다음 촬영 룩 바꾸기/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /잠시 기다리기/i })).toBeDisabled()
+    expect(playTimingCueMock).toHaveBeenCalledWith('ended')
+  })
+
   it('shows current-session thumbnails and keeps pending captures visible when a fast preview already exists', async () => {
     renderCaptureScreen(
       {},
@@ -1797,7 +1843,7 @@ describe('CaptureScreen', () => {
                 captureAcknowledgedAtMs: 80,
                 previewVisibleAtMs: null,
                 captureBudgetMs: 1000,
-                previewBudgetMs: 5000,
+                previewBudgetMs: 2500,
                 previewBudgetState: 'pending',
               },
               renderStatus: 'previewWaiting',
@@ -1809,7 +1855,7 @@ describe('CaptureScreen', () => {
     )
 
     const images = await screen.findAllByRole('img')
-    const rail = screen.getByRole('list', { name: /현재 세션 사진 레일/i })
+    const rail = screen.getByRole('list', { name: /현재 세션 사진 히스토리/i })
     const scrollBy = vi.fn()
 
     Object.defineProperty(rail, 'scrollBy', {
@@ -1846,8 +1892,9 @@ describe('CaptureScreen', () => {
       'src',
       'fixtures/current-session-waiting.jpg',
     )
+    expect(screen.getByRole('heading', { name: /방금 찍은 사진/i })).toBeInTheDocument()
     expect(
-      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+      screen.getByText(/지금 보이는 첫 사진은 임시 미리보기예요\./i),
     ).toBeInTheDocument()
     expect(screen.queryByText(/filesystem|render|diagnostic/i)).not.toBeInTheDocument()
 
@@ -1888,7 +1935,7 @@ describe('CaptureScreen', () => {
               captureAcknowledgedAtMs: 220,
               previewVisibleAtMs: null,
               captureBudgetMs: 1000,
-              previewBudgetMs: 5000,
+              previewBudgetMs: 2500,
               previewBudgetState: 'pending',
             },
             renderStatus: 'previewWaiting',
@@ -1929,7 +1976,7 @@ describe('CaptureScreen', () => {
                 captureAcknowledgedAtMs: 220,
                 previewVisibleAtMs: null,
                 captureBudgetMs: 1000,
-                previewBudgetMs: 5000,
+                previewBudgetMs: 2500,
                 previewBudgetState: 'pending',
               },
               renderStatus: 'previewWaiting',
@@ -1949,7 +1996,7 @@ describe('CaptureScreen', () => {
                 captureAcknowledgedAtMs: 120,
                 previewVisibleAtMs: 180,
                 captureBudgetMs: 1000,
-                previewBudgetMs: 5000,
+                previewBudgetMs: 2500,
                 previewBudgetState: 'withinBudget',
               },
               renderStatus: 'previewReady',
@@ -2042,7 +2089,7 @@ describe('CaptureScreen', () => {
                 captureAcknowledgedAtMs: 220,
                 previewVisibleAtMs: null,
                 captureBudgetMs: 1000,
-                previewBudgetMs: 5000,
+                previewBudgetMs: 2500,
                 previewBudgetState: 'pending',
               },
               renderStatus: 'previewWaiting',
@@ -2062,8 +2109,9 @@ describe('CaptureScreen', () => {
       'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_fast_pending.jpg',
     )
     expect(screen.getByText('최신 사진')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /방금 찍은 사진/i })).toBeInTheDocument()
     expect(
-      screen.getByText(/방금 찍은 사진을 현재 룩으로 마무리하고 있어요\./i),
+      screen.getByText(/지금 보이는 첫 사진은 임시 미리보기예요\./i),
     ).toBeInTheDocument()
   })
 
@@ -2168,7 +2216,7 @@ describe('CaptureScreen', () => {
                 captureAcknowledgedAtMs: 320,
                 previewVisibleAtMs: null,
                 captureBudgetMs: 1000,
-                previewBudgetMs: 5000,
+                previewBudgetMs: 2500,
                 previewBudgetState: 'pending',
               },
               renderStatus: 'previewWaiting',

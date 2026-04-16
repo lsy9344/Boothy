@@ -247,12 +247,23 @@ describe('branch rollout contracts', () => {
         canarySuccessCount: 1,
         notedAt: '2026-04-14T01:45:02.000Z',
       },
+      decisionSummary: {
+        laneOwner: 'dedicated-renderer',
+        decisionStage: null,
+        fallbackReason: null,
+        canaryGate: 'Go',
+        kpiStatus: 'pass',
+        rollbackProofPresent: true,
+        blockers: [],
+      },
       message: 'preview route canary 승격을 적용했어요.',
     })
 
     expect(parsed.routeStage).toBe('canary')
     expect(parsed.auditEntry.targetRouteStage).toBe('canary')
     expect(parsed.auditEntry.result).toBe('applied')
+    expect(parsed.decisionSummary.canaryGate).toBe('Go')
+    expect(parsed.decisionSummary.rollbackProofPresent).toBe(true)
   })
 
   it('parses preview route status results for a promoted preset version', () => {
@@ -263,10 +274,21 @@ describe('branch rollout contracts', () => {
       routeStage: 'canary',
       resolvedRoute: 'local-renderer-sidecar',
       reason: 'operator-canary',
+      decisionSummary: {
+        laneOwner: 'dedicated-renderer',
+        decisionStage: null,
+        fallbackReason: null,
+        canaryGate: 'Go',
+        kpiStatus: 'pass',
+        rollbackProofPresent: true,
+        blockers: [],
+      },
       message: '이 프리셋 버전은 canary 상태예요.',
     })
 
     expect(parsed.routeStage).toBe('canary')
     expect(parsed.resolvedRoute).toBe('local-renderer-sidecar')
+    expect(parsed.decisionSummary.kpiStatus).toBe('pass')
+    expect(parsed.decisionSummary.decisionStage).toBeNull()
   })
 })

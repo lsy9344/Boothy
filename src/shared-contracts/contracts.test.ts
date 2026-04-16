@@ -27,6 +27,7 @@ import {
   operatorRecoveryBlockedCategorySchema,
   operatorRecoverySummarySchema,
   operatorSessionSummarySchema,
+  previewPromotionCanaryAssessmentSchema,
   previewPromotionEvidenceBundleSchema,
   previewPromotionEvidenceRecordSchema,
   publicationAuditRecordSchema,
@@ -261,8 +262,13 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      captureId: 'capture_20260410_001',
+      requestId: 'request_20260410_001',
+      visibleOwner: 'inline-truthful-fallback',
+      visibleOwnerTransitionAtMs: 2410,
       firstVisibleMs: 2810,
-      replacementMs: 3615,
+      sameCaptureFullScreenVisibleMs: 2410,
+      replacementMs: 2410,
       originalVisibleToPresetAppliedVisibleMs: 805,
       hardwareCapability: 'dedicated-renderer-available',
       warmState: 'warm-ready',
@@ -334,8 +340,13 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       routeStage: 'canary',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
+      captureId: 'capture_20260410_001',
+      requestId: 'request_20260410_001',
+      visibleOwner: 'inline-truthful-fallback',
+      visibleOwnerTransitionAtMs: 2410,
       firstVisibleMs: 2810,
-      replacementMs: 3615,
+      sameCaptureFullScreenVisibleMs: 2410,
+      replacementMs: 2410,
       originalVisibleToPresetAppliedVisibleMs: 805,
       hardwareCapability: 'dedicated-renderer-available',
       warmState: 'warm-ready',
@@ -554,10 +565,98 @@ describe('shared contracts baseline', () => {
 
     expect(parsed.routeStage).toBe('canary')
     expect(parsed.laneOwner).toBe('dedicated-renderer')
+    expect(parsed.captureRequestedAtMs).toBe(100)
+    expect(parsed.rawPersistedAtMs).toBe(100)
+    expect(parsed.truthfulArtifactReadyAtMs).toBe(900)
+    expect(parsed.visibleOwner).toBe('dedicated-renderer')
+    expect(parsed.visibleOwnerTransitionAtMs).toBe(2410)
+    expect(parsed.sameCaptureFullScreenVisibleMs).toBe(2410)
+    expect(parsed.replacementMs).toBe(2410)
     expect(parsed.originalVisibleToPresetAppliedVisibleMs).toBe(805)
+    expect(parsed.improvementSummary).toContain('promotionGateTargetMs=2500')
+    expect(parsed.improvementSummary).toContain('fastPreviewCapPx=128x128')
+    expect(parsed.improvementSummary).toContain(
+      'waitForLateHelperFastPreviewReady=true',
+    )
+    expect(parsed.improvementSummary).toContain(
+      'dedupeEarlyFastPreviewPromotion=true',
+    )
+    expect(parsed.improvementSummary).toContain(
+      'skipRedundantShadowWarmupAfterDedicatedWarmup=true',
+    )
+    expect(parsed.improvementSummary).toContain(
+      'skipSpeculativeCloseWhenDedicatedRouteWarm=true',
+    )
     expect(parsed.routePolicySnapshotPath).toContain(
       'branch-config/preview-renderer-policy.json',
     )
+  })
+
+  it('keeps legacy replacementMs parseable without inferring the canonical full-screen KPI', () => {
+    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+    delete fixture.sameCaptureFullScreenVisibleMs
+
+    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
+
+    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
+    expect(parsed.replacementMs).toBe(2410)
+  })
+
+  it('keeps legacy preview-promotion evidence records parseable without improvementSummary metadata', () => {
+    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+    delete fixture.sameCaptureFullScreenVisibleMs
+    delete fixture.improvementSummary
+
+    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
+
+    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
+    expect(parsed.replacementMs).toBe(2410)
+    expect(parsed.improvementSummary).toBeUndefined()
+  })
+
+  it('keeps legacy preview-promotion evidence records parseable without new selected-capture proof fields', () => {
+    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+    delete fixture.captureRequestedAtMs
+    delete fixture.rawPersistedAtMs
+    delete fixture.truthfulArtifactReadyAtMs
+    delete fixture.visibleOwner
+    delete fixture.visibleOwnerTransitionAtMs
+    delete fixture.sameCaptureFullScreenVisibleMs
+    delete fixture.improvementSummary
+
+    const parsed = previewPromotionEvidenceRecordSchema.parse(fixture)
+
+    expect(parsed.captureRequestedAtMs).toBeUndefined()
+    expect(parsed.rawPersistedAtMs).toBeUndefined()
+    expect(parsed.truthfulArtifactReadyAtMs).toBeUndefined()
+    expect(parsed.visibleOwner).toBeUndefined()
+    expect(parsed.visibleOwnerTransitionAtMs).toBeUndefined()
+    expect(parsed.sameCaptureFullScreenVisibleMs).toBeUndefined()
+  })
+
+  it('allows canonical and legacy full-screen metrics to differ for side-by-side comparison', () => {
+    const fixture = readContractFixture('preview-promotion-evidence-record-v1.json')
+
+    const parsedRecord = previewPromotionEvidenceRecordSchema.parse({
+      ...fixture,
+      sameCaptureFullScreenVisibleMs: 2400,
+      replacementMs: 2600,
+    })
+
+    expect(parsedRecord.sameCaptureFullScreenVisibleMs).toBe(2400)
+    expect(parsedRecord.replacementMs).toBe(2600)
+
+    const parsedSummary = operatorSessionSummarySchema.parse({
+        ...createOperatorSessionSummary(),
+        previewArchitecture: {
+          ...createOperatorSessionSummary().previewArchitecture,
+          sameCaptureFullScreenVisibleMs: 2400,
+          replacementMs: 2600,
+        },
+      })
+
+    expect(parsedSummary.previewArchitecture.sameCaptureFullScreenVisibleMs).toBe(2400)
+    expect(parsedSummary.previewArchitecture.replacementMs).toBe(2600)
   })
 
   it('rejects preview-promotion evidence records that drop route policy or correlation paths', () => {
@@ -591,8 +690,13 @@ describe('shared contracts baseline', () => {
       fallbackReasonCode: null,
       routeStage: 'canary',
       warmState: 'warm-ready',
+      captureRequestedAtMs: 100,
+      rawPersistedAtMs: 100,
+      truthfulArtifactReadyAtMs: 900,
+      visibleOwner: 'dedicated-renderer',
+      visibleOwnerTransitionAtMs: 2410,
       firstVisibleMs: 2810,
-      replacementMs: 3615,
+      replacementMs: 2410,
       originalVisibleToPresetAppliedVisibleMs: 805,
       fallbackRatio: 0,
       outputRoot: 'C:/evidence/session/capture',
@@ -643,6 +747,62 @@ describe('shared contracts baseline', () => {
     )
   })
 
+  it('parses preview-promotion canary assessments with explicit Go / No-Go checks and blockers', () => {
+    const parsed = previewPromotionCanaryAssessmentSchema.parse({
+      schemaVersion: 'preview-promotion-canary-assessment/v1',
+      generatedAt: '2026-04-15T07:45:00.000Z',
+      bundleManifestPath: 'C:/evidence/session/capture/preview-promotion-evidence-bundle.json',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      captureId: 'capture_20260410_001',
+      requestId: 'request_20260410_001',
+      presetId: 'preset_soft-glow',
+      publishedVersion: '2026.04.10',
+      routeStage: 'canary',
+      laneOwner: 'dedicated-renderer',
+      gate: 'No-Go',
+      nextStageAllowed: false,
+      summary: 'rollback proof missing keeps the canary at No-Go.',
+      blockers: ['rollback-proof-missing'],
+      checks: {
+        kpi: {
+          status: 'pass',
+          actualMs: 2410,
+          thresholdMs: 2500,
+          reason: 'within-threshold',
+        },
+        fallbackStability: {
+          status: 'pass',
+          actualRatio: 0,
+          thresholdRatio: 0,
+          reason: 'no-fallback-observed',
+        },
+        wrongCapture: {
+          status: 'pass',
+          reason: 'selected-capture timing chain preserved',
+        },
+        fidelityDrift: {
+          status: 'pass',
+          parityResult: 'pass',
+          reason: 'baseline-within-threshold',
+        },
+        rollbackReadiness: {
+          status: 'fail',
+          evidenceCount: 0,
+          reason: 'rollback-proof-missing',
+        },
+        activeSessionSafety: {
+          status: 'pass',
+          reason: 'capture-time route snapshot and canary scope preserved',
+        },
+      },
+    })
+
+    expect(parsed.gate).toBe('No-Go')
+    expect(parsed.nextStageAllowed).toBe(false)
+    expect(parsed.checks.rollbackReadiness.status).toBe('fail')
+    expect(parsed.blockers).toContain('rollback-proof-missing')
+  })
+
   it('rejects preview-promotion evidence bundles that omit required visual or rollback proof', () => {
     expect(() =>
       previewPromotionEvidenceBundleSchema.parse({
@@ -657,8 +817,13 @@ describe('shared contracts baseline', () => {
         fallbackReasonCode: null,
         routeStage: 'canary',
         warmState: 'warm-ready',
+        captureRequestedAtMs: 100,
+        rawPersistedAtMs: 100,
+        truthfulArtifactReadyAtMs: 900,
+        visibleOwner: 'dedicated-renderer',
+        visibleOwnerTransitionAtMs: 2410,
         firstVisibleMs: 2810,
-        replacementMs: 3615,
+        replacementMs: 2410,
         originalVisibleToPresetAppliedVisibleMs: 805,
         fallbackRatio: 0,
         outputRoot: 'C:/evidence/session/capture',
@@ -711,8 +876,13 @@ describe('shared contracts baseline', () => {
         fallbackReasonCode: null,
         routeStage: 'canary',
         warmState: 'warm-ready',
+        captureRequestedAtMs: 100,
+        rawPersistedAtMs: 100,
+        truthfulArtifactReadyAtMs: 900,
+        visibleOwner: 'dedicated-renderer',
+        visibleOwnerTransitionAtMs: 2410,
         firstVisibleMs: 2810,
-        replacementMs: 3615,
+        replacementMs: 2410,
         originalVisibleToPresetAppliedVisibleMs: 805,
         fallbackRatio: 0,
         outputRoot: 'C:/evidence/session/capture',
@@ -1030,7 +1200,8 @@ describe('shared contracts baseline', () => {
         laneOwner: 'inline-truthful-fallback',
         fallbackReasonCode: 'route-policy-shadow',
         firstVisibleMs: 2810,
-        replacementMs: 3615,
+        sameCaptureFullScreenVisibleMs: 2410,
+        replacementMs: 2410,
         originalVisibleToPresetAppliedVisibleMs: 805,
         hardwareCapability: 'dedicated-renderer-available',
         warmState: 'warm-ready',
@@ -1074,7 +1245,8 @@ describe('shared contracts baseline', () => {
       previewArchitecture: {
         routeStage: 'canary',
         laneOwner: 'inline-truthful-fallback',
-        replacementMs: 3615,
+        sameCaptureFullScreenVisibleMs: 2410,
+        replacementMs: 2410,
         warmState: 'warm-ready',
       },
     })
@@ -1145,7 +1317,8 @@ describe('shared contracts baseline', () => {
             laneOwner: 'inline-truthful-fallback',
             fallbackReasonCode: 'route-policy-shadow',
             firstVisibleMs: 2810,
-            replacementMs: 3615,
+            sameCaptureFullScreenVisibleMs: 2410,
+            replacementMs: 2410,
             originalVisibleToPresetAppliedVisibleMs: 805,
             hardwareCapability: 'dedicated-renderer-available',
             warmState: 'warming',
@@ -1929,7 +2102,7 @@ describe('shared contracts baseline', () => {
         captureAcknowledgedAtMs: 100,
         previewVisibleAtMs: null,
         captureBudgetMs: 1000,
-        previewBudgetMs: 5000,
+        previewBudgetMs: 2500,
         previewBudgetState: 'pending',
       },
     })
@@ -2016,7 +2189,7 @@ describe('shared contracts baseline', () => {
         fastPreviewVisibleAtMs: 180,
         xmpPreviewReadyAtMs: null,
         captureBudgetMs: 1000,
-        previewBudgetMs: 5000,
+        previewBudgetMs: 2500,
         previewBudgetState: 'pending',
       },
     })
@@ -2119,7 +2292,7 @@ describe('shared contracts baseline', () => {
         captureAcknowledgedAtMs: 100,
         previewVisibleAtMs: null,
         captureBudgetMs: 1000,
-        previewBudgetMs: 5000,
+        previewBudgetMs: 2500,
         previewBudgetState: 'pending',
       },
     })
@@ -2157,7 +2330,7 @@ describe('shared contracts baseline', () => {
         captureAcknowledgedAtMs: 100,
         previewVisibleAtMs: 500,
         captureBudgetMs: 1000,
-        previewBudgetMs: 5000,
+        previewBudgetMs: 2500,
         previewBudgetState: 'withinBudget',
       },
     })

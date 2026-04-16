@@ -1011,11 +1011,21 @@ pub struct OperatorPreviewArchitectureSummaryDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_reason_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_owner_transition_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warm_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warm_state_observed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_visible_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_capture_full_screen_visible_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replacement_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1279,6 +1289,20 @@ pub struct PreviewRendererRoutePolicyAuditEntryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PreviewRendererRouteDecisionSummaryDto {
+    pub lane_owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_stage: Option<String>,
+    pub fallback_reason: Option<String>,
+    pub canary_gate: Option<String>,
+    pub kpi_status: Option<String>,
+    pub rollback_proof_present: bool,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreviewRendererRouteMutationResultDto {
     pub schema_version: String,
     pub action: String,
@@ -1287,6 +1311,7 @@ pub struct PreviewRendererRouteMutationResultDto {
     pub route_stage: String,
     pub approval: BranchRolloutApprovalDto,
     pub audit_entry: PreviewRendererRoutePolicyAuditEntryDto,
+    pub decision_summary: PreviewRendererRouteDecisionSummaryDto,
     pub message: String,
 }
 
@@ -1299,6 +1324,7 @@ pub struct PreviewRendererRouteStatusResultDto {
     pub route_stage: String,
     pub resolved_route: String,
     pub reason: String,
+    pub decision_summary: PreviewRendererRouteDecisionSummaryDto,
     pub message: String,
 }
 

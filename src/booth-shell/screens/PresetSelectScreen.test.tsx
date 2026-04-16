@@ -135,7 +135,7 @@ function createCaptureRecord() {
       captureAcknowledgedAtMs: 100,
       previewVisibleAtMs: null,
       captureBudgetMs: 1000,
-      previewBudgetMs: 5000,
+      previewBudgetMs: 2500,
       previewBudgetState: 'pending',
     },
   }

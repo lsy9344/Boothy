@@ -3,7 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     thread,
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
@@ -48,6 +48,7 @@ struct ManifestWriteFailureInjection {
 
 static MANIFEST_WRITE_FAILURE_INJECTION: OnceLock<Mutex<ManifestWriteFailureInjection>> =
     OnceLock::new();
+static MANIFEST_WRITE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,6 +295,10 @@ pub(crate) fn write_session_manifest(
     manifest_path: &Path,
     manifest: &SessionManifest,
 ) -> Result<(), HostErrorEnvelope> {
+    let manifest_write_lock = manifest_write_lock(manifest_path);
+    let _manifest_write_guard = manifest_write_lock.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("세션 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
         HostErrorEnvelope::persistence(format!("세션 매니페스트를 직렬화하지 못했어요: {error}"))
     })?;
@@ -403,6 +408,18 @@ fn remove_temp_manifest_if_present(temp_path: &Path) {
     }
 }
 
+fn manifest_write_lock(manifest_path: &Path) -> Arc<Mutex<()>> {
+    let lock_registry = MANIFEST_WRITE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = lock_registry
+        .lock()
+        .expect("manifest write lock registry should be available");
+
+    registry
+        .entry(manifest_path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 #[doc(hidden)]
 pub fn set_manifest_write_retryable_failures_for_tests(manifest_path: &Path, failures: usize) {
     let injection = MANIFEST_WRITE_FAILURE_INJECTION
@@ -475,4 +492,89 @@ pub fn resolve_app_session_base_dir(app_local_data_dir: PathBuf) -> PathBuf {
         .map(PathBuf::from)
         .map(|user_profile| user_profile.join("Pictures").join("dabi_shoot"))
         .unwrap_or_else(|| app_local_data_dir.join("dabi_shoot"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{env, sync::Barrier};
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "boothy-session-repository-{label}-{}",
+            generate_session_id()
+        ))
+    }
+
+    #[test]
+    fn concurrent_manifest_writes_keep_the_manifest_present_and_readable() {
+        let base_dir = unique_test_root("concurrent-manifest-writes");
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should be created");
+        let manifest_path = SessionPaths::new(&base_dir, &session.session_id).manifest_path;
+        let backup_path = manifest_backup_path(&manifest_path);
+        let temp_path = manifest_temp_path(&manifest_path);
+        let barrier = Arc::new(Barrier::new(3));
+
+        let writer_a_path = manifest_path.clone();
+        let writer_a_barrier = Arc::clone(&barrier);
+        let writer_a = thread::spawn(move || {
+            let mut manifest = read_session_manifest(&writer_a_path)
+                .expect("writer A should load the initial manifest");
+            writer_a_barrier.wait();
+
+            for sequence in 0..150 {
+                manifest.active_preset_display_name = Some(format!("writer-a-{sequence}"));
+                manifest.updated_at = format!("2026-04-16T00:00:{:02}Z", sequence % 60);
+                write_session_manifest(&writer_a_path, &manifest)
+                    .expect("writer A should serialize its manifest writes");
+            }
+        });
+
+        let writer_b_path = manifest_path.clone();
+        let writer_b_barrier = Arc::clone(&barrier);
+        let writer_b = thread::spawn(move || {
+            let mut manifest = read_session_manifest(&writer_b_path)
+                .expect("writer B should load the initial manifest");
+            writer_b_barrier.wait();
+
+            for sequence in 0..150 {
+                manifest.active_preset_display_name = Some(format!("writer-b-{sequence}"));
+                manifest.updated_at = format!("2026-04-16T00:01:{:02}Z", sequence % 60);
+                write_session_manifest(&writer_b_path, &manifest)
+                    .expect("writer B should serialize its manifest writes");
+            }
+        });
+
+        barrier.wait();
+        writer_a
+            .join()
+            .expect("writer A thread should finish without panic");
+        writer_b
+            .join()
+            .expect("writer B thread should finish without panic");
+
+        assert!(manifest_path.is_file(), "manifest should still exist after concurrent writes");
+        assert!(
+            !backup_path.exists(),
+            "backup file should be cleaned up after concurrent writes"
+        );
+        assert!(
+            !temp_path.exists(),
+            "temporary manifest should be cleaned up after concurrent writes"
+        );
+
+        let manifest =
+            read_session_manifest(&manifest_path).expect("final manifest should still deserialize");
+        assert_eq!(manifest.session_id, session.session_id);
+        assert!(manifest.active_preset_display_name.is_some());
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
 }

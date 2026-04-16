@@ -223,6 +223,15 @@ export const previewRendererRouteMutationResultStateSchema = z.enum([
   'rejected',
 ])
 
+export const previewRendererCanaryGateSchema = z.enum(['Go', 'No-Go'])
+
+export const previewRendererCanaryCheckStatusSchema = z.enum(['pass', 'fail'])
+
+export const previewRendererRouteDecisionStageSchema = z.enum([
+  'default',
+  'rollback',
+])
+
 export const previewRendererRoutePromotionInputSchema = z.object({
   presetId: presetIdSchema,
   publishedVersion: publishedVersionSchema,
@@ -256,6 +265,16 @@ export const previewRendererRoutePolicyAuditEntrySchema = z.object({
   notedAt: z.string().datetime(),
 })
 
+export const previewRendererRouteDecisionSummarySchema = z.object({
+  laneOwner: z.string().trim().min(1),
+  decisionStage: previewRendererRouteDecisionStageSchema.nullable(),
+  fallbackReason: z.string().trim().min(1).nullable(),
+  canaryGate: previewRendererCanaryGateSchema.nullable(),
+  kpiStatus: previewRendererCanaryCheckStatusSchema.nullable(),
+  rollbackProofPresent: z.boolean(),
+  blockers: z.array(z.string().trim().min(1)).max(16),
+})
+
 export const previewRendererRouteMutationResultSchema = z.object({
   schemaVersion: z.enum([
     'preview-renderer-route-mutation-result/v1',
@@ -267,6 +286,7 @@ export const previewRendererRouteMutationResultSchema = z.object({
   routeStage: previewRendererRouteStageSchema,
   approval: branchRolloutApprovalSchema,
   auditEntry: previewRendererRoutePolicyAuditEntrySchema,
+  decisionSummary: previewRendererRouteDecisionSummarySchema,
   message: safeCopySchema,
 })
 
@@ -277,5 +297,6 @@ export const previewRendererRouteStatusResultSchema = z.object({
   routeStage: previewRendererRouteStageSchema,
   resolvedRoute: z.string().trim().min(1),
   reason: z.string().trim().min(1),
+  decisionSummary: previewRendererRouteDecisionSummarySchema,
   message: safeCopySchema,
 })

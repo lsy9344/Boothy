@@ -1,6 +1,6 @@
 # Story 6.2: 실장비 hardware validation gate와 evidence 기반 done 정책
 
-Status: done
+Status: backlog
 
 Correct Course Note: automated pass는 구현 완료의 근거일 뿐 제품 관점 완료가 아니다. 지정된 hardware validation evidence가 `Go`로 잠기기 전까지 truth-critical story는 `review`를 유지해야 한다.
 
