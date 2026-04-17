@@ -21,10 +21,35 @@ function formatRollbackProofLabel(rollbackProofPresent: boolean) {
   return rollbackProofPresent ? 'confirmed' : 'pending'
 }
 
+function formatEvidenceTrack(track: string | null) {
+  return track ?? 'comparison-only legacy'
+}
+
+function formatEvidenceUsage(track: string | null) {
+  return track === 'actual-primary-lane'
+    ? 'actual-lane promotion input'
+    : 'comparison-only'
+}
+
+function resolveDisplayRoute(
+  routeStage: PreviewRendererRouteStatusResult['routeStage'],
+  implementationTrack: string | null,
+) {
+  if (routeStage === 'shadow') {
+    return 'darktable'
+  }
+
+  return implementationTrack === 'actual-primary-lane'
+    ? 'actual-primary-lane'
+    : 'local-renderer-sidecar'
+}
+
 function formatDecisionSummary(summary: PreviewRendererRouteDecisionSummary) {
   return (
     <>
-      <p>lane owner: {summary.laneOwner}</p>
+      <p>evidence track: {formatEvidenceTrack(summary.implementationTrack)}</p>
+      <p>evidence usage: {formatEvidenceUsage(summary.implementationTrack)}</p>
+      <p>close owner: {summary.laneOwner}</p>
       {summary.decisionStage === null ? null : (
         <p>decision stage: {summary.decisionStage}</p>
       )}
@@ -126,8 +151,10 @@ export function PreviewRouteGovernancePanel({
         presetId: nextResult.presetId,
         publishedVersion: nextResult.publishedVersion,
         routeStage: nextResult.routeStage,
-        resolvedRoute:
-          nextResult.routeStage === 'shadow' ? 'darktable' : 'local-renderer-sidecar',
+        resolvedRoute: resolveDisplayRoute(
+          nextResult.routeStage,
+          nextResult.decisionSummary.implementationTrack,
+        ),
         reason:
           nextResult.routeStage === 'default'
             ? 'host-approved-default'

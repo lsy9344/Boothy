@@ -231,7 +231,8 @@ function createPreviewRouteResult(overrides: Record<string, unknown> = {}) {
       notedAt: '2026-04-14T01:45:02.000Z',
     },
     decisionSummary: {
-      laneOwner: 'dedicated-renderer',
+      implementationTrack: 'actual-primary-lane',
+      laneOwner: 'local-fullscreen-lane',
       decisionStage: null,
       fallbackReason: null,
       canaryGate: 'Go',
@@ -250,10 +251,11 @@ function createPreviewRouteStatusResult(overrides: Record<string, unknown> = {})
     presetId: 'preset_new-draft-2',
     publishedVersion: '2026.04.10',
     routeStage: 'canary',
-    resolvedRoute: 'local-renderer-sidecar',
+    resolvedRoute: 'actual-primary-lane',
     reason: 'operator-canary',
     decisionSummary: {
-      laneOwner: 'dedicated-renderer',
+      implementationTrack: 'actual-primary-lane',
+      laneOwner: 'local-fullscreen-lane',
       decisionStage: null,
       fallbackReason: null,
       canaryGate: 'Go',
@@ -383,7 +385,8 @@ describe('SettingsScreen', () => {
     expect(
       await screen.findByText(/preview route canary 승격을 적용했어요\./i),
     ).toBeInTheDocument()
-    expect(screen.getAllByText(/lane owner: dedicated-renderer/i)).toHaveLength(2)
+    expect(screen.getAllByText(/evidence track: actual-primary-lane/i)).toHaveLength(2)
+    expect(screen.getAllByText(/close owner: local-fullscreen-lane/i)).toHaveLength(2)
     expect(screen.getAllByText(/canary verdict: Go/i)).toHaveLength(2)
     expect(screen.getAllByText(/rollback proof: confirmed/i)).toHaveLength(2)
     expect(screen.queryByText(/fallback reason:/i)).not.toBeInTheDocument()
@@ -417,9 +420,10 @@ describe('SettingsScreen', () => {
     })
 
     expect(await screen.findByText(/현재 상태: canary/i)).toBeInTheDocument()
-    expect(screen.getByText(/적용 경로: local-renderer-sidecar/i)).toBeInTheDocument()
+    expect(screen.getByText(/적용 경로: actual-primary-lane/i)).toBeInTheDocument()
     expect(screen.getByText(/이 프리셋 버전은 canary 상태예요\./i)).toBeInTheDocument()
-    expect(screen.getByText(/lane owner: dedicated-renderer/i)).toBeInTheDocument()
+    expect(screen.getByText(/evidence track: actual-primary-lane/i)).toBeInTheDocument()
+    expect(screen.getByText(/close owner: local-fullscreen-lane/i)).toBeInTheDocument()
     expect(screen.getByText(/kpi status: pass/i)).toBeInTheDocument()
     expect(screen.queryByText(/fallback reason:/i)).not.toBeInTheDocument()
   })
@@ -430,6 +434,7 @@ describe('SettingsScreen', () => {
         action: 'rollback',
         routeStage: 'shadow',
         decisionSummary: {
+          implementationTrack: 'prototype-track',
           laneOwner: 'inline-truthful-fallback',
           decisionStage: 'rollback',
           fallbackReason: null,
@@ -475,6 +480,7 @@ describe('SettingsScreen', () => {
     })
 
     expect(await screen.findByText(/preview route rollback을 적용했어요\./i)).toBeInTheDocument()
+    expect(screen.getAllByText(/evidence track: prototype-track/i)).toHaveLength(2)
     expect(screen.getAllByText(/decision stage: rollback/i)).toHaveLength(2)
     expect(screen.getByText(/현재 상태: shadow/i)).toBeInTheDocument()
   })

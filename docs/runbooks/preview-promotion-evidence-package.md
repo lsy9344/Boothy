@@ -21,15 +21,18 @@ This runbook freezes the evidence package Boothy uses before arguing for preview
 - Primary release acceptance is `same-capture preset-applied full-screen visible <= 2500ms`.
 - Preview confirmation follows the same `2500ms` threshold as a supporting guardrail and cannot close release sign-off by itself.
 - `preview-promotion-evidence.jsonl` is the canonical machine-readable summary for lane owner, fallback reason, route stage, warm state, and preview timing deltas.
+- Story 1.28 additive migration keeps legacy `laneOwner` wording, but assembled promotion evidence must also carry `implementationTrack`; only `actual-primary-lane` records can count toward actual-lane promotion, while legacy/untyped records remain comparison-only bundle inputs.
 - The operator-safe bundle must preserve the selected capture chain only: `request-capture -> file-arrived -> capture_preview_ready -> recent-session-visible -> capture_preview_transition_summary` for one `sessionId/requestId/captureId`.
 - `sameCaptureFullScreenVisibleMs` is the new-track release field; legacy `replacementMs` remains comparison-only or backward-compatible alias data.
 - `firstVisibleMs`, tiny preview success, and recent-strip visibility are supporting diagnostics only and cannot replace the new-track release field.
 - The machine-readable record must point to capture-time policy/catalog snapshots so later policy changes do not reinterpret an already recorded booth run.
 - `visibleOwner` and `visibleOwnerTransitionAtMs` are required evidence. If the selected capture chain drops them, bundle assembly fails closed instead of inferring a close owner.
+- If the selected capture evidence is missing `implementationTrack` or reports `prototype-track`, bundle assembly may still proceed for comparison/audit, but canary/default promotion must fail closed instead of upgrading legacy prototype proof into actual-lane success.
 - Whole-session timing logs are not operator-safe evidence. The assembled bundle must copy only the selected capture timing chain so wrong-capture and cross-session attribution stay auditable.
 - The assembled evidence bundle also computes `fallbackRatio` from the matching session/preset/version evidence family for the same promoted route stage.
 - Legacy Stories 1.18, 1.19, and 1.20 remain legacy comparison only.
 - Stories 1.21 and 1.22 own the metric/evidence baseline.
+- Story 1.22 owns the trace/evidence reset only.
 - Stories 1.23 through 1.27 own prototype/evidence/gate history only and must not be read as final actual-lane implementation proof.
 - Stories 1.28 through 1.31 own actual implementation, vocabulary realignment, actual-lane canary, and actual-lane default/rollback proof before Story 1.13 can reopen as the final guarded release-close owner.
 - Evidence, dashboard wording, and ledger copy must keep the boundary between `legacy comparison only` and `new-track release field` explicit.

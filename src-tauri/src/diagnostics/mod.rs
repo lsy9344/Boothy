@@ -38,6 +38,7 @@ struct DiagnosticsContext {
     observed_at: Option<String>,
     event_name: Option<String>,
     post_end_state: Option<String>,
+    implementation_track: Option<String>,
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
@@ -54,6 +55,7 @@ struct DiagnosticsContext {
 #[derive(Debug, Default)]
 struct PreviewTransitionSummaryContext {
     observed_at: Option<String>,
+    implementation_track: Option<String>,
     lane_owner: Option<String>,
     fallback_reason_code: Option<String>,
     route_stage: Option<String>,
@@ -579,6 +581,7 @@ fn read_diagnostics_context(base_dir: &Path, session_id: &str) -> DiagnosticsCon
         };
 
         if summary.saw_lane_owner && summary.saw_fallback_reason && summary.saw_route_stage {
+            context.implementation_track = summary.implementation_track;
             context.lane_owner = summary.lane_owner;
             context.fallback_reason_code = summary.fallback_reason_code;
             context.route_stage = summary.route_stage;
@@ -637,13 +640,25 @@ fn build_preview_architecture_summary(
             .or_else(|| warm_state_snapshot.map(|snapshot| snapshot.observed_at.clone()))
     };
     let timing_metrics = build_preview_timing_metrics(latest_capture, diagnostics);
+    let implementation_track = diagnostics
+        .implementation_track
+        .clone()
+        .or_else(|| route_snapshot.and_then(|snapshot| snapshot.implementation_track.clone()));
+    let normalized_route = route_snapshot.map(|snapshot| {
+        normalize_preview_architecture_route(
+            snapshot.route.as_str(),
+            implementation_track.as_deref(),
+        )
+        .to_string()
+    });
 
     OperatorPreviewArchitectureSummaryDto {
-        route: route_snapshot.map(|snapshot| snapshot.route.clone()),
+        route: normalized_route,
         route_stage: diagnostics
             .route_stage
             .clone()
             .or_else(|| route_snapshot.map(|snapshot| snapshot.route_stage.clone())),
+        implementation_track,
         lane_owner: diagnostics.lane_owner.clone(),
         fallback_reason_code: diagnostics
             .fallback_reason_code
@@ -673,6 +688,17 @@ fn build_preview_architecture_summary(
         original_visible_to_preset_applied_visible_ms: timing_metrics
             .original_visible_to_preset_applied_visible_ms,
         hardware_capability: dedicated_renderer_hardware_capability().into(),
+    }
+}
+
+fn normalize_preview_architecture_route<'a>(
+    route: &'a str,
+    implementation_track: Option<&str>,
+) -> &'a str {
+    match implementation_track {
+        Some("actual-primary-lane") => "actual-primary-lane",
+        Some("prototype-track") if route == "actual-primary-lane" => "local-renderer-sidecar",
+        _ => route,
     }
 }
 
@@ -803,6 +829,9 @@ fn parse_preview_transition_summary_context(line: &str) -> Option<PreviewTransit
             "laneOwner" => {
                 summary.saw_lane_owner = true;
                 summary.lane_owner = normalize_diagnostics_value(value);
+            }
+            "implementationTrack" => {
+                summary.implementation_track = normalize_diagnostics_value(value);
             }
             "fallbackReason" => {
                 summary.saw_fallback_reason = true;

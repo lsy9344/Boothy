@@ -235,6 +235,8 @@ pub struct PreviewRendererRouteSnapshot {
     pub route_stage: String,
     #[serde(default)]
     pub fallback_reason_code: Option<String>,
+    #[serde(default)]
+    pub implementation_track: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

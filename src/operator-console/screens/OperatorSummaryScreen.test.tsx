@@ -58,8 +58,9 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
     previewArchitecture: {
-      route: 'local-renderer-sidecar',
+      route: 'actual-primary-lane',
       routeStage: 'canary',
+      implementationTrack: 'actual-primary-lane',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
       firstVisibleMs: 2903,
@@ -310,9 +311,10 @@ describe('OperatorSummaryScreen', () => {
     const loadOperatorRecoverySummary = vi.fn().mockResolvedValue(
       createOperatorRecoverySummary({
         previewArchitecture: {
-          route: 'local-renderer-sidecar',
+          route: 'actual-primary-lane',
           routeStage: 'canary',
-          laneOwner: 'dedicated-renderer',
+          implementationTrack: 'actual-primary-lane',
+          laneOwner: 'local-fullscreen-lane',
           fallbackReasonCode: 'none',
           firstVisibleMs: 1280,
           sameCaptureFullScreenVisibleMs: 1840,
@@ -338,7 +340,8 @@ describe('OperatorSummaryScreen', () => {
     })
 
     expect(await screen.findByText(/Preview Architecture/i)).toBeInTheDocument()
-    expect(screen.getByText(/^dedicated-renderer$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/^actual-primary-lane$/i)).toHaveLength(2)
+    expect(screen.getByText(/^local-fullscreen-lane$/i)).toBeInTheDocument()
     expect(screen.getByText(/canary/i)).toBeInTheDocument()
     expect(screen.getByText(/dedicated-renderer-available/i)).toBeInTheDocument()
     expect(screen.getByText(/warm-ready/i)).toBeInTheDocument()
@@ -356,7 +359,8 @@ describe('OperatorSummaryScreen', () => {
         previewArchitecture: {
           route: 'local-renderer-sidecar',
           routeStage: 'canary',
-          laneOwner: 'dedicated-renderer',
+          implementationTrack: 'prototype-track',
+          laneOwner: 'local-fullscreen-lane',
           fallbackReasonCode: 'none',
           firstVisibleMs: 1280,
           sameCaptureFullScreenVisibleMs: null,
@@ -382,6 +386,7 @@ describe('OperatorSummaryScreen', () => {
     })
 
     expect(await screen.findByText(/Preview Architecture/i)).toBeInTheDocument()
+    expect(screen.getByText(/^prototype-track$/i)).toBeInTheDocument()
     expect(screen.getByText(/^Same-Capture Full Screen$/i)).toBeInTheDocument()
     expect(screen.getByText(/^Slot Replacement$/i)).toBeInTheDocument()
     expect(screen.getByText(/목표 2\.5초 이하 · 아직 계측 없음/i)).toBeInTheDocument()

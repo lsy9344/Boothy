@@ -199,7 +199,11 @@ function PreviewArchitectureCard({ summary }: { summary: OperatorRecoverySummary
           <dd>{formatFieldValue(architecture.routeStage)}</dd>
         </div>
         <div className="operator-console__fact">
-          <dt>Lane Owner</dt>
+          <dt>Implementation Track</dt>
+          <dd>{formatFieldValue(architecture.implementationTrack)}</dd>
+        </div>
+        <div className="operator-console__fact">
+          <dt>Close Owner</dt>
           <dd>{formatFieldValue(architecture.laneOwner)}</dd>
         </div>
         <div className="operator-console__fact">

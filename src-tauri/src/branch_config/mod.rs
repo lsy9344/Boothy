@@ -61,6 +61,10 @@ const BRANCH_ROLLOUT_LOCK_MAX_ATTEMPTS: u32 = 500;
 const BRANCH_ROLLOUT_LOCK_STALE_AFTER_MS: u64 = 30_000;
 const PREVIEW_RENDERER_ROUTE_DARKTABLE: &str = "darktable";
 const PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR: &str = "local-renderer-sidecar";
+const PROTOTYPE_TRACK: &str = "prototype-track";
+const ACTUAL_PRIMARY_LANE_TRACK: &str = "actual-primary-lane";
+const ACTUAL_PRIMARY_LANE_ROUTE: &str = "actual-primary-lane";
+const ACTUAL_PRIMARY_LANE_OWNER: &str = "local-fullscreen-lane";
 
 static BRANCH_ROLLOUT_AUDIT_COUNTER: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_RENDERER_ROUTE_POLICY_AUDIT_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -156,6 +160,8 @@ struct PreviewPromotionEvidenceRecordSummary {
     #[serde(default)]
     fallback_reason_code: Option<String>,
     route_stage: String,
+    #[serde(default)]
+    implementation_track: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -170,6 +176,8 @@ struct PreviewPromotionCanaryAssessmentRecord {
     preset_id: String,
     published_version: String,
     route_stage: String,
+    #[serde(default)]
+    implementation_track: Option<String>,
     lane_owner: String,
     gate: PreviewPromotionCanaryGate,
     next_stage_allowed: bool,
@@ -468,7 +476,7 @@ pub fn load_preview_renderer_route_status_in_dir(
 
     let policy = load_preview_renderer_route_policy(base_dir)?;
 
-    let (route_stage, resolved_route, reason, message) = if let Some(rule) =
+    let (route_stage, raw_resolved_route, reason, message) = if let Some(rule) =
         policy.forced_fallback_routes.iter().find(|rule| {
             rule.preset_id == input.preset_id && rule.preset_version == input.published_version
         }) {
@@ -527,11 +535,11 @@ pub fn load_preview_renderer_route_status_in_dir(
         route_stage: route_stage.clone(),
         decision_summary: build_preview_renderer_route_decision_summary(
             &route_stage,
-            &resolved_route,
+            &raw_resolved_route,
             Some(reason.as_str()),
             &decision_gate,
         )?,
-        resolved_route,
+        resolved_route: raw_resolved_route.clone(),
         reason,
         message,
     })
@@ -1528,7 +1536,7 @@ fn upsert_preview_route_policy_for_promotion(
         upsert_preview_route_rule(
             &mut policy.default_routes,
             PreviewRendererRoutePolicyRule {
-                route: PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR.into(),
+                route: ACTUAL_PRIMARY_LANE_ROUTE.into(),
                 preset_id: input.preset_id.clone(),
                 preset_version: input.published_version.clone(),
                 reason: Some("host-approved-default".into()),
@@ -1545,7 +1553,7 @@ fn upsert_preview_route_policy_for_promotion(
     upsert_preview_route_rule(
         &mut policy.canary_routes,
         PreviewRendererRoutePolicyRule {
-            route: PREVIEW_RENDERER_ROUTE_LOCAL_SIDECAR.into(),
+            route: ACTUAL_PRIMARY_LANE_ROUTE.into(),
             preset_id: input.preset_id.clone(),
             preset_version: input.published_version.clone(),
             reason: Some("host-approved-canary".into()),
@@ -1621,8 +1629,12 @@ fn evaluate_preview_route_default_gate(
 ) -> Result<PreviewRouteDefaultGate, HostErrorEnvelope> {
     let canary_success_count =
         count_repeated_canary_success_path(base_dir, preset_id, published_version)?;
-    let latest_assessment =
-        load_latest_preview_promotion_canary_assessment(base_dir, preset_id, published_version)?;
+    let latest_assessment = load_latest_preview_promotion_canary_assessment(
+        base_dir,
+        preset_id,
+        published_version,
+        Some(ACTUAL_PRIMARY_LANE_TRACK),
+    )?;
     let latest_evidence = latest_assessment
         .as_ref()
         .map(|assessment| {
@@ -1646,9 +1658,11 @@ fn evaluate_preview_route_default_gate(
         })
     } else if latest_assessment.is_none() {
         Some(PreviewRouteDefaultGateRejection {
-            message: "Story 1.24 typed canary Go verdict와 rollback readiness evidence를 먼저 확인해 주세요.".into(),
+            message:
+                "actual primary lane typed canary Go verdict와 rollback readiness evidence를 먼저 확인해 주세요."
+                    .into(),
             audit_detail:
-                "Story 1.24 typed canary verdict를 찾지 못해 default 승격을 적용하지 않았어요."
+                "actual primary lane typed canary verdict를 찾지 못해 default 승격을 적용하지 않았어요."
                     .into(),
             reason_code: "preview-route-default-canary-assessment-missing".into(),
         })
@@ -1681,6 +1695,30 @@ fn evaluate_preview_route_default_gate(
 fn build_preview_route_default_gate_rejection(
     assessment: &PreviewPromotionCanaryAssessmentRecord,
 ) -> Option<PreviewRouteDefaultGateRejection> {
+    if assessment.implementation_track.as_deref() != Some(ACTUAL_PRIMARY_LANE_TRACK) {
+        return Some(PreviewRouteDefaultGateRejection {
+            message:
+                "actual primary lane assessment만 default gate 입력으로 사용할 수 있어요."
+                    .into(),
+            audit_detail:
+                "actual primary lane assessment가 아니라 default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-implementation-track-missing".into(),
+        });
+    }
+
+    if assessment.lane_owner != ACTUAL_PRIMARY_LANE_OWNER {
+        return Some(PreviewRouteDefaultGateRejection {
+            message:
+                "legacy close owner evidence로는 actual primary lane default 승격을 열 수 없어요."
+                    .into(),
+            audit_detail:
+                "legacy close owner evidence가 남아 있어 actual primary lane default 승격을 적용하지 않았어요."
+                    .into(),
+            reason_code: "preview-route-default-legacy-owner".into(),
+        });
+    }
+
     if assessment.route_stage != "canary" {
         return Some(PreviewRouteDefaultGateRejection {
             message: "canary scope로 기록된 typed assessment만 default gate 입력으로 사용할 수 있어요."
@@ -1811,15 +1849,42 @@ fn build_preview_renderer_route_decision_summary(
     decision_gate: &PreviewRouteDefaultGate,
 ) -> Result<PreviewRendererRouteDecisionSummaryDto, HostErrorEnvelope> {
     let latest_evidence = decision_gate.latest_evidence.clone();
-    let lane_owner = decision_gate
-        .latest_assessment
-        .as_ref()
-        .map(|assessment| assessment.lane_owner.clone())
-        .or_else(|| latest_evidence.as_ref().map(|record| record.lane_owner.clone()))
-        .unwrap_or_else(|| infer_preview_route_lane_owner(resolved_route).into());
-    let fallback_reason = latest_evidence
-        .as_ref()
-        .and_then(|record| record.fallback_reason_code.clone());
+    let comparison_only_shadow = route_stage == "shadow";
+    let implementation_track = if comparison_only_shadow {
+        Some(PROTOTYPE_TRACK.into())
+    } else {
+        decision_gate
+            .latest_assessment
+            .as_ref()
+            .and_then(|assessment| assessment.implementation_track.clone())
+            .or_else(|| {
+                latest_evidence
+                    .as_ref()
+                    .and_then(|record| record.implementation_track.clone())
+            })
+    };
+    let actual_lane_evidence = if comparison_only_shadow {
+        None
+    } else {
+        latest_evidence.as_ref().filter(|record| {
+            record.implementation_track.as_deref() == Some(ACTUAL_PRIMARY_LANE_TRACK)
+        })
+    };
+    let lane_owner = if comparison_only_shadow {
+        infer_preview_route_lane_owner(resolved_route).into()
+    } else {
+        decision_gate
+            .latest_assessment
+            .as_ref()
+            .map(|assessment| assessment.lane_owner.clone())
+            .or_else(|| actual_lane_evidence.map(|record| record.lane_owner.clone()))
+            .unwrap_or_else(|| infer_preview_route_lane_owner(resolved_route).into())
+    };
+    let fallback_reason = if comparison_only_shadow {
+        None
+    } else {
+        actual_lane_evidence.and_then(|record| record.fallback_reason_code.clone())
+    };
     let canary_gate = decision_gate
         .latest_assessment
         .as_ref()
@@ -1843,6 +1908,7 @@ fn build_preview_renderer_route_decision_summary(
         .unwrap_or_default();
 
     Ok(PreviewRendererRouteDecisionSummaryDto {
+        implementation_track,
         lane_owner,
         decision_stage: infer_preview_route_decision_stage(route_stage, decision_reason),
         fallback_reason,
@@ -1886,7 +1952,8 @@ fn count_repeated_canary_success_path(
             };
             let same_scope = parsed["presetId"].as_str() == Some(preset_id)
                 && parsed["publishedVersion"].as_str() == Some(published_version);
-            let success_path = parsed["laneOwner"].as_str() == Some("dedicated-renderer")
+            let success_path = parsed["laneOwner"].as_str() == Some(ACTUAL_PRIMARY_LANE_OWNER)
+                && parsed["implementationTrack"].as_str() == Some(ACTUAL_PRIMARY_LANE_TRACK)
                 && parsed["routeStage"].as_str() == Some("canary")
                 && parsed["fallbackReasonCode"].is_null()
                 && matches!(
@@ -1984,6 +2051,7 @@ fn load_latest_preview_promotion_canary_assessment(
     base_dir: &Path,
     preset_id: &str,
     published_version: &str,
+    required_implementation_track: Option<&str>,
 ) -> Result<Option<PreviewPromotionCanaryAssessmentRecord>, HostErrorEnvelope> {
     let sessions_root = base_dir.join("sessions");
     if !sessions_root.exists() {
@@ -2013,6 +2081,8 @@ fn load_latest_preview_promotion_canary_assessment(
             || assessment.session_id.trim().is_empty()
             || assessment.request_id.trim().is_empty()
             || assessment.capture_id.trim().is_empty()
+            || required_implementation_track.is_some()
+                && assessment.implementation_track.as_deref() != required_implementation_track
         {
             continue;
         }
@@ -2066,7 +2136,7 @@ fn infer_preview_route_lane_owner(resolved_route: &str) -> &'static str {
     if resolved_route == PREVIEW_RENDERER_ROUTE_DARKTABLE {
         "inline-truthful-fallback"
     } else {
-        "dedicated-renderer"
+        ACTUAL_PRIMARY_LANE_OWNER
     }
 }
 

@@ -1007,6 +1007,8 @@ pub struct OperatorPreviewArchitectureSummaryDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route_stage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub implementation_track: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lane_owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_reason_code: Option<String>,
@@ -1290,6 +1292,7 @@ pub struct PreviewRendererRoutePolicyAuditEntryDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewRendererRouteDecisionSummaryDto {
+    pub implementation_track: Option<String>,
     pub lane_owner: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_stage: Option<String>,

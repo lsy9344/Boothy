@@ -76,11 +76,15 @@ export const boothAliasSchema = z
   .string()
   .trim()
   .min(1, '고객 별칭이 비어 있을 수 없어요.')
+const implementationTrackSchema = z
+  .enum(['actual-primary-lane', 'prototype-track'])
+  .nullable()
 
 export const previewRendererRouteSnapshotSchema = z.object({
   route: z.string().trim().min(1),
   routeStage: z.string().trim().min(1),
   fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
+  implementationTrack: implementationTrackSchema.optional(),
 })
 
 export const previewRendererWarmStateSnapshotSchema = z.object({

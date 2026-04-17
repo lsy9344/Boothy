@@ -67,7 +67,7 @@ fn lock_dedicated_renderer_test_env() -> MutexGuard<'static, ()> {
 }
 
 #[test]
-fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready() {
+fn actual_primary_lane_ignores_dedicated_renderer_queue_saturation() {
     let _env_lock = lock_dedicated_renderer_test_env();
     let base_dir = unique_test_root("queue-saturated-fallback");
     ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
@@ -135,7 +135,7 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
         &session.session_id,
         &capture.capture.capture_id,
     )
-    .expect("queue saturation should fall back to the inline truthful renderer");
+    .expect("actual primary lane should not depend on dedicated renderer queue saturation");
     drop(env_guard);
 
     assert_eq!(completed_capture.render_status, "previewReady");
@@ -156,11 +156,13 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
             .join("timing-events.log"),
     )
     .expect("timing log should exist");
-    assert!(timing_events.contains("event=preview-render-queue-saturated"));
     assert!(timing_events.contains("event=capture_preview_ready"));
     assert!(timing_events.contains("event=capture_preview_transition_summary"));
-    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
-    assert!(timing_events.contains("fallbackReason=render-queue-saturated"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
+    assert!(
+        !timing_events.contains("render-queue-saturated"),
+        "actual primary lane should not leak dedicated renderer queue saturation into the close path"
+    );
 
     let readiness_after = get_capture_readiness_in_dir(
         &base_dir,
@@ -168,7 +170,7 @@ fn queue_saturated_dedicated_renderer_submission_falls_back_without_false_ready(
             session_id: session.session_id.clone(),
         },
     )
-    .expect("readiness should resolve after fallback completion");
+    .expect("readiness should resolve after host-owned close completion");
     assert_eq!(readiness_after.reason_code, "ready");
     assert_eq!(readiness_after.surface_state, "previewReady");
 
@@ -244,7 +246,81 @@ fn route_policy_shadow_mode_keeps_inline_truth_even_when_dev_env_requests_sideca
 }
 
 #[test]
-fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overwrite() {
+fn actual_primary_lane_closes_without_sidecar_spawn_dependency() {
+    let _env_lock = lock_dedicated_renderer_test_env();
+    let base_dir = unique_test_root("actual-lane-no-sidecar-dependency");
+    ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+    write_preview_renderer_policy(
+        &base_dir,
+        serde_json::json!({
+          "schemaVersion": "preview-renderer-route-policy/v1",
+          "defaultRoute": "darktable",
+          "defaultRoutes": [],
+          "canaryRoutes": [
+            {
+              "route": "local-renderer-sidecar",
+              "presetId": "preset_soft-glow",
+              "presetVersion": "2026.04.10",
+              "reason": "integration-canary"
+            }
+          ],
+          "forcedFallbackRoutes": []
+        }),
+    );
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let env_guard = ScopedEnvVarGuard::set(
+        "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE",
+        "sidecar-unavailable",
+    );
+    let completed_capture = complete_capture_preview_with_dedicated_renderer_in_dir(
+        None,
+        &base_dir,
+        &session.session_id,
+        &capture.capture.capture_id,
+    )
+    .expect("actual primary lane should not depend on dedicated sidecar spawn");
+    drop(env_guard);
+
+    let timing_events = fs::read_to_string(
+        SessionPaths::new(&base_dir, &session.session_id)
+            .diagnostics_dir
+            .join("timing-events.log"),
+    )
+    .expect("timing log should exist");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
+    assert!(timing_events.contains("routeStage=canary"));
+    assert!(
+        !timing_events.contains("fallbackReason=sidecar-unavailable"),
+        "actual primary lane should not degrade to fallback when dedicated renderer is unavailable"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn actual_primary_lane_replaces_legacy_preview_placeholder_with_host_owned_close() {
     let _env_lock = lock_dedicated_renderer_test_env();
     let base_dir = unique_test_root("accepted-close-owner");
     ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
@@ -328,10 +404,10 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
             .map(|path| path.replace('\\', "/")),
         Some(normalized_canonical_preview_path)
     );
-    assert_eq!(
-        fs::read(&canonical_preview_path).expect("accepted preview should stay on disk"),
+    assert_ne!(
+        fs::read(&canonical_preview_path).expect("actual lane preview should stay on disk"),
         dedicated_renderer_bytes,
-        "accepted dedicated renderer output should not be overwritten by the inline fallback path"
+        "actual primary lane should replace the legacy placeholder with a host-owned preview artifact"
     );
     let timing_events = fs::read_to_string(
         SessionPaths::new(&base_dir, &session.session_id)
@@ -341,7 +417,7 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
     .expect("timing log should exist");
     assert!(timing_events.contains("event=capture_preview_ready"));
     assert!(timing_events.contains("event=capture_preview_transition_summary"));
-    assert!(timing_events.contains("laneOwner=dedicated-renderer"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
     assert!(timing_events.contains("fallbackReason=none"));
     assert!(timing_events.contains("routeStage=canary"));
     assert!(timing_events.contains("originalVisibleToPresetAppliedVisibleMs="));
@@ -368,7 +444,7 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
         evidence_record
             .get("laneOwner")
             .and_then(|value| value.as_str()),
-        Some("dedicated-renderer")
+        Some("local-fullscreen-lane")
     );
     assert_eq!(
         evidence_record
@@ -392,7 +468,7 @@ fn accepted_dedicated_renderer_result_claims_truthful_close_without_inline_overw
         evidence_record
             .get("visibleOwner")
             .and_then(|value| value.as_str()),
-        Some("dedicated-renderer")
+        Some("local-fullscreen-lane")
     );
     assert_eq!(
         evidence_record
@@ -615,7 +691,7 @@ fn recent_session_visible_appends_corrected_full_screen_evidence_record() {
         last_record
             .get("visibleOwner")
             .and_then(|value| value.as_str()),
-        Some("dedicated-renderer")
+        Some("local-fullscreen-lane")
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -893,7 +969,7 @@ fn active_session_keeps_selected_route_even_after_policy_rolls_back() {
     )
     .expect("timing log should exist");
     assert_eq!(completed_capture.render_status, "previewReady");
-    assert!(timing_events.contains("laneOwner=dedicated-renderer"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
     assert!(timing_events.contains("routeStage=canary"));
     assert!(
         !timing_events.contains("fallbackReason=route-policy-rollback"),
@@ -995,8 +1071,8 @@ fn stale_dedicated_renderer_result_is_ignored_when_no_sidecar_run_happens() {
         .expect("timing log should exist");
     assert_eq!(completed_capture.render_status, "previewReady");
     assert!(timing_events.contains("event=capture_preview_transition_summary"));
-    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
-    assert!(timing_events.contains("fallbackReason=resident-not-warmed"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
+    assert!(timing_events.contains("fallbackReason=none"));
     assert!(timing_events.contains("warmState=cold"));
     assert!(
         !timing_events.contains("laneOwner=dedicated-renderer"),
@@ -1203,7 +1279,7 @@ fn resident_preview_warm_hit_claims_truthful_close_from_dedicated_renderer() {
             .join("timing-events.log"),
     )
     .expect("timing log should exist");
-    assert!(timing_events.contains("laneOwner=dedicated-renderer"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
     assert!(timing_events.contains("fallbackReason=none"));
     assert!(timing_events.contains("warmState=warm-hit"));
 
@@ -1239,7 +1315,7 @@ fn resident_preview_warm_hit_claims_truthful_close_from_dedicated_renderer() {
     );
     assert_eq!(
         operator_summary.preview_architecture.lane_owner.as_deref(),
-        Some("dedicated-renderer")
+        Some("local-fullscreen-lane")
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1409,8 +1485,8 @@ fn resident_preview_logs_warm_state_loss_falls_back_safely() {
             .join("timing-events.log"),
     )
     .expect("timing log should exist");
-    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
-    assert!(timing_events.contains("fallbackReason=warm-state-loss"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
+    assert!(timing_events.contains("fallbackReason=none"));
     assert!(timing_events.contains("warmState=warm-state-lost"));
 
     let capability_snapshot =
@@ -1439,7 +1515,7 @@ fn resident_preview_logs_warm_state_loss_falls_back_safely() {
 }
 
 #[test]
-fn resident_preview_spawn_failure_clears_stale_warm_state_for_operator_truth() {
+fn resident_preview_close_ignores_sidecar_start_failure_after_warmup() {
     let _env_lock = lock_dedicated_renderer_test_env();
     let base_dir = unique_test_root("resident-preview-spawn-failure");
     ensure_default_preset_catalog_in_dir(&base_dir).expect("default catalog should exist");
@@ -1503,9 +1579,9 @@ fn resident_preview_spawn_failure_clears_stale_warm_state_for_operator_truth() {
             .join("timing-events.log"),
     )
     .expect("timing log should exist");
-    assert!(timing_events.contains("laneOwner=inline-truthful-fallback"));
-    assert!(timing_events.contains("fallbackReason=sidecar-unavailable"));
-    assert!(timing_events.contains("warmState=warm-state-lost"));
+    assert!(timing_events.contains("laneOwner=local-fullscreen-lane"));
+    assert!(timing_events.contains("fallbackReason=none"));
+    assert!(timing_events.contains("warmState=warm-hit"));
 
     let manifest: boothy_lib::session::session_manifest::SessionManifest = serde_json::from_str(
         &fs::read_to_string(SessionPaths::new(&base_dir, &session.session_id).manifest_path)
@@ -1517,7 +1593,7 @@ fn resident_preview_spawn_failure_clears_stale_warm_state_for_operator_truth() {
             .active_preview_renderer_warm_state
             .as_ref()
             .map(|snapshot| snapshot.state.as_str()),
-        Some("warm-state-lost")
+        Some("warm-hit")
     );
 
     let capability_snapshot =
@@ -1526,10 +1602,10 @@ fn resident_preview_spawn_failure_clears_stale_warm_state_for_operator_truth() {
             true,
         );
     let operator_summary = load_operator_recovery_summary_in_dir(&base_dir, &capability_snapshot)
-        .expect("operator summary should project the degraded warm state");
+        .expect("operator summary should preserve the active actual-lane warm state");
     assert_eq!(
         operator_summary.preview_architecture.warm_state.as_deref(),
-        Some("warm-state-lost")
+        Some("warm-hit")
     );
 
     let _ = fs::remove_dir_all(base_dir);

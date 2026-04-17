@@ -230,14 +230,19 @@ function Find-EvidenceFamily {
 function Get-FallbackRatio {
     param([object[]]$EvidenceRecords)
 
-    $records = @($EvidenceRecords)
+    $records = @(
+        $EvidenceRecords | Where-Object {
+            (Get-OptionalRecordValue -Record $_ -PropertyName 'implementationTrack') -eq 'actual-primary-lane'
+        }
+    )
     if ($records.Count -eq 0) {
         return 1.0
     }
 
     $fallbackCount = @(
         $records | Where-Object {
-            $_.laneOwner -ne 'dedicated-renderer' -or (
+            (Get-OptionalRecordValue -Record $_ -PropertyName 'implementationTrack') -ne 'actual-primary-lane' -or
+            $_.laneOwner -ne 'local-fullscreen-lane' -or (
                 $null -ne $_.fallbackReasonCode -and
                 $_.fallbackReasonCode -ne '' -and
                 $_.fallbackReasonCode -ne 'none'
@@ -713,6 +718,7 @@ $bundle = [ordered]@{
     laneOwner = if ($evidenceRecord) { $evidenceRecord.laneOwner } else { 'unknown' }
     fallbackReasonCode = if ($evidenceRecord) { $evidenceRecord.fallbackReasonCode } else { $null }
     routeStage = if ($evidenceRecord) { $evidenceRecord.routeStage } else { 'shadow' }
+    implementationTrack = Get-OptionalRecordValue -Record $evidenceRecord -PropertyName 'implementationTrack'
     warmState = if ($evidenceRecord) { $evidenceRecord.warmState } else { $null }
     captureRequestedAtMs = if ($evidenceRecord) { $evidenceRecord.captureRequestedAtMs } else { $null }
     rawPersistedAtMs = if ($evidenceRecord) { $evidenceRecord.rawPersistedAtMs } else { $null }

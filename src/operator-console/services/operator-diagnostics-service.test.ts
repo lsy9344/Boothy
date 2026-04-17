@@ -59,8 +59,9 @@ function createOperatorRecoverySummary(overrides: Record<string, unknown> = {}) 
       detail: '아직 종료 후 완료 경계로 들어가지 않았어요.',
     },
     previewArchitecture: {
-      route: 'local-renderer-sidecar',
+      route: 'actual-primary-lane',
       routeStage: 'canary',
+      implementationTrack: 'actual-primary-lane',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
       captureId: 'capture_20260410_001',
@@ -224,6 +225,7 @@ describe('operator diagnostics service', () => {
       previewArchitecture: {
         captureId: 'capture_20260410_001',
         requestId: 'request_20260410_001',
+        implementationTrack: 'actual-primary-lane',
         sameCaptureFullScreenVisibleMs: 3615,
         replacementMs: 3615,
         visibleOwner: 'inline-truthful-fallback',

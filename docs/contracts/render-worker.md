@@ -27,8 +27,9 @@
 - RAW copy, placeholder SVG, bundle 대표 preview tile은 `previewReady` 성공 산출물로 승격하면 안 된다.
 - Story 1.23은 host-owned local lane이 `display-sized preset-applied truthful artifact`를 만드는 prototype owner다. 이 단계의 성공은 prototype proof까지만 의미하며, Story 1.24 canary, Story 1.25 default/rollback, Story 1.13 final release close를 대신하지 않는다.
 - resident prototype evidence는 `capture_preview_transition_summary` 계열 진단에서 `laneOwner`, `fallbackReason`, `routeStage`, `warmState`,
-  `sameCaptureFullScreenVisibleMs`, `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 same-capture close chain을 재구성할 수 있어야 한다.
+  `implementationTrack`, `sameCaptureFullScreenVisibleMs`, `firstVisibleMs`, `replacementMs`, `originalVisibleToPresetAppliedVisibleMs`를 함께 남겨 same-capture close chain을 재구성할 수 있어야 한다.
 - darktable-compatible path remains the parity/fallback/final reference and must survive even when the local prototype lane owns the customer-visible truthful artifact.
+- Story 1.28부터는 additive discriminator `implementationTrack`으로 `actual-primary-lane`과 `prototype-track`을 구분한다. 기존 `laneOwner` vocabulary가 남아 있더라도 promotion/release 판단은 actual track evidence로만 닫아야 한다.
 
 ## Final 규칙
 

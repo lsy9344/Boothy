@@ -14,6 +14,9 @@ export const previewPromotionCanaryAssessmentSchemaVersion =
 
 const optionalMetricSchema = z.number().int().nonnegative().nullable().optional()
 const optionalRuntimePathSchema = runtimePathSchema.nullable().optional()
+const implementationTrackSchema = z
+  .enum(['actual-primary-lane', 'prototype-track'])
+  .nullable()
 const canaryCheckStatusSchema = z.enum(['pass', 'fail'])
 const parityMeasurementSchema = z
   .object({
@@ -74,6 +77,7 @@ export const previewPromotionEvidenceRecordSchema = z
     laneOwner: z.string().trim().min(1),
     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
     routeStage: z.string().trim().min(1),
+    implementationTrack: implementationTrackSchema.optional(),
     warmState: previewRendererWarmStateSchema.nullable().optional(),
     captureRequestedAtMs: z.number().int().nonnegative().optional(),
     rawPersistedAtMs: z.number().int().nonnegative().optional(),
@@ -107,6 +111,7 @@ export const previewPromotionEvidenceBundleSchema = z
     laneOwner: z.string().trim().min(1),
     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
     routeStage: z.string().trim().min(1),
+    implementationTrack: implementationTrackSchema.optional(),
     warmState: previewRendererWarmStateSchema.nullable().optional(),
     captureRequestedAtMs: z.number().int().nonnegative(),
     rawPersistedAtMs: z.number().int().nonnegative(),
@@ -152,6 +157,7 @@ export const previewPromotionCanaryAssessmentSchema = z
     presetId: presetIdSchema,
     publishedVersion: publishedVersionSchema,
     routeStage: z.string().trim().min(1),
+    implementationTrack: implementationTrackSchema.optional(),
     laneOwner: z.string().trim().min(1),
     gate: z.enum(['Go', 'No-Go']),
     nextStageAllowed: z.boolean(),

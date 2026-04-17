@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-16 17:21:45 +09:00
+# last_updated: 2026-04-17 23:49:00 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,14 +41,14 @@
 # - Story 1.26 does not open just because Story 1.13 is blocked; it opens only if the actual-lane forward path repeatedly misses the approved hardware KPI
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-16 17:21:45 +09:00"
+last_updated: "2026-04-17 23:49:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
-recommended_next_story: "1.28"
-recommended_next_action: "Start Story 1.28 actual primary lane close owner implementation, then progress through Stories 1.29, 1.30, and 1.31 before reconsidering Story 1.13. Keep Story 1.26 closed unless the actual-lane track still repeatedly misses the approved hardware KPI."
-recommended_next_preview_track_action: "Treat Stories 1.23 through 1.27 as completed prototype/evidence history, execute the actual-lane track through Story 1.31, and reopen Story 1.13 only if canonical actual-lane Go evidence with rollback proof is accepted."
+recommended_next_story: "1.30"
+recommended_next_action: "Open Story 1.30 and run the actual primary lane hardware canary revalidation now that Story 1.29 review has closed and the governance/operator/contracts gates fail closed on actual-lane evidence."
+recommended_next_preview_track_action: "Treat Story 1.28 and Story 1.29 as done. Open Story 1.30 for actual-lane hardware canary revalidation, then keep Story 1.13 blocked until Story 1.31 establishes an accepted canonical actual-lane Go candidate with rollback proof."
 preview_architecture_tracks:
   old_track:
     - "1.18 retired dedicated close baseline evidence"
@@ -90,9 +90,9 @@ story_gate_notes:
   1-24: "Completed prototype-track canary gate. This evidence supports the prototype track only and does not reopen Story 1.13."
   1-25: "Completed prototype-track default/rollback gate. This governance proof does not by itself reopen Story 1.13."
   1-27: "Completed prototype-track corrective follow-up. It remains historical supporting evidence and does not replace the actual-lane track."
-  1-28: "Backlog actual-lane implementation start. This is the next forward implementation step."
-  1-29: "Backlog actual-lane evidence and vocabulary lock. This story prevents prototype wording from being misread as final architecture completion."
-  1-30: "Backlog actual-lane canary gate. Its verdict is required before Story 1.31."
+  1-28: "Done. The actual primary lane closes through a distinct runtime owner and legacy dedicated-renderer evidence no longer passes the actual-lane gate."
+  1-29: "Done. Governance/operator/contracts now read actual-lane proof family first, and review patches closed route relabeling, rollback track inheritance, visible-owner mismatch, fallback-ratio pollution, schema drift, and operator vocabulary drift."
+  1-30: "Ready for the actual-lane canary gate. Start only as the next story after Story 1.29 closure, using the corrected actual-lane evidence semantics."
   1-31: "Backlog actual-lane default/rollback gate. Story 1.13 stays blocked until this story creates an accepted canonical actual-lane Go candidate."
   1-13: "Blocked until canonical actual-lane Go candidate and rollback evidence are accepted after Story 1.31."
   1-26: "Do not open unless repeated approved-hardware KPI failure is confirmed after the actual-lane track."
@@ -126,9 +126,9 @@ development_status:
   1-25-local-lane-default-decision과-rollback-gate: done
   1-26-local-lane-실패-시에만-remote-reserve-poc-개시: backlog
   1-27-local-hot-path-darktable-절연과-2500ms-kpi-재검증: done
-  1-28-actual-primary-lane-close-owner-구현과-prototype-route-분리: ready-for-dev
-  1-29-actual-primary-lane-evidence와-vocabulary-realignment: backlog
-  1-30-actual-primary-lane-hardware-canary-재검증: backlog
+  1-28-actual-primary-lane-close-owner-구현과-prototype-route-분리: done
+  1-29-actual-primary-lane-evidence와-vocabulary-realignment: done
+  1-30-actual-primary-lane-hardware-canary-재검증: in-progress
   1-31-actual-primary-lane-default-decision과-rollback-gate: backlog
   epic-1-retrospective: optional
 

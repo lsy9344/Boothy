@@ -1726,7 +1726,11 @@ fn should_skip_speculative_preview_render_for_route(
     warm_state_snapshot: Option<&PreviewRendererWarmStateSnapshot>,
     active_preset: &ActivePresetBinding,
 ) -> bool {
-    if route_snapshot.route != "local-renderer-sidecar"
+    let uses_actual_primary_lane_route = route_snapshot.route == "actual-primary-lane"
+        || (route_snapshot.route == "local-renderer-sidecar"
+            && route_snapshot.implementation_track.as_deref() == Some("actual-primary-lane"));
+
+    if !uses_actual_primary_lane_route
         || !matches!(route_snapshot.route_stage.as_str(), "canary" | "default")
         || route_snapshot.fallback_reason_code.is_some()
     {
@@ -1889,6 +1893,7 @@ mod tests {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         };
         let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
             preset_id: "preset_test-look".into(),
@@ -1915,6 +1920,7 @@ mod tests {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         };
         let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
             preset_id: "preset_other".into(),

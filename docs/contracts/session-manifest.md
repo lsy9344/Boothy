@@ -67,6 +67,7 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
   "activePreviewRendererRoute": {
     "route": "local-renderer-sidecar",
     "routeStage": "canary",
+    "implementationTrack": "actual-primary-lane",
     "fallbackReasonCode": null
   },
   "activePreviewRendererWarmState": {
@@ -108,6 +109,7 @@ Story 1.14는 이 baseline을 잠그는 범위만 소유하고, Canon helper 세
 - `activePresetId`: `session-manifest/v1` 호환성을 위한 legacy mirror
 - `activePresetDisplayName`: booth/operator copy 정렬용 표시 이름 mirror
 - `activePreviewRendererRoute`: active session이 선택한 capture-time route snapshot. Story 1.23 prototype owner는 이 snapshot 위에서만 local lane truth를 해석할 수 있으며, later policy change 또는 rollback이 생겨도 이미 선택된 세션 의미를 reinterpreted 하면 안 된다.
+- `activePreviewRendererRoute.implementationTrack`: Story 1.28부터 도입된 additive discriminator. `actual-primary-lane`과 `prototype-track`을 capture-time meaning으로 고정해 later policy change나 vocabulary drift가 과거 capture를 재해석하지 못하게 한다.
 - `activePreviewRendererWarmState`: active session 기준 warm-state evidence snapshot. route snapshot과 별개 additive evidence이며, `presetId +
   publishedVersion + state + observedAt`를 최소 단위로 유지한다.
 - `timing`: `session-timing/v1` 스냅샷. current runtime baseline에서는 session start 시점부터 host가 함께 기록한다.

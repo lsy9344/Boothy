@@ -231,6 +231,9 @@ export const previewRendererRouteDecisionStageSchema = z.enum([
   'default',
   'rollback',
 ])
+const previewRendererImplementationTrackSchema = z
+  .enum(['actual-primary-lane', 'prototype-track'])
+  .nullable()
 
 export const previewRendererRoutePromotionInputSchema = z.object({
   presetId: presetIdSchema,
@@ -266,6 +269,7 @@ export const previewRendererRoutePolicyAuditEntrySchema = z.object({
 })
 
 export const previewRendererRouteDecisionSummarySchema = z.object({
+  implementationTrack: previewRendererImplementationTrackSchema,
   laneOwner: z.string().trim().min(1),
   decisionStage: previewRendererRouteDecisionStageSchema.nullable(),
   fallbackReason: z.string().trim().min(1).nullable(),

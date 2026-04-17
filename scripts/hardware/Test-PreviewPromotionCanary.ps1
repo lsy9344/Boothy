@@ -481,6 +481,7 @@ function New-MalformedBundleAssessment {
         presetId = $presetId
         publishedVersion = $publishedVersion
         routeStage = 'unknown'
+        implementationTrack = $null
         laneOwner = 'unknown'
         gate = 'No-Go'
         nextStageAllowed = $false
@@ -526,6 +527,7 @@ try {
     $presetId = Convert-ToTrimmedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'presetId') -FieldName 'presetId'
     $publishedVersion = Convert-ToTrimmedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'publishedVersion') -FieldName 'publishedVersion'
     $routeStage = Convert-ToTrimmedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'routeStage') -FieldName 'routeStage'
+    $implementationTrack = Convert-ToAllowedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'implementationTrack') -FieldName 'implementationTrack' -AllowedValues @('actual-primary-lane', 'prototype-track') -AllowNull
     $laneOwner = Convert-ToTrimmedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'laneOwner') -FieldName 'laneOwner'
     $fallbackReasonCode = Convert-ToTrimmedString -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'fallbackReasonCode') -FieldName 'fallbackReasonCode' -AllowNull
     $sameCaptureFullScreenVisibleMs = Convert-ToNullableInt -Value (Get-ObjectPropertyValue -Object $bundle -PropertyName 'sameCaptureFullScreenVisibleMs') -FieldName 'sameCaptureFullScreenVisibleMs'
@@ -576,7 +578,8 @@ try {
         }
     }
 
-    $selectedCaptureFallback = $laneOwner -ne 'dedicated-renderer' -or (
+    $selectedCaptureFallback = $laneOwner -ne 'local-fullscreen-lane' -or
+        $visibleOwner -ne 'local-fullscreen-lane' -or (
         Test-HasFallbackReason -FallbackReasonCode $fallbackReasonCode
     )
     $checks.fallbackStability = if (
@@ -660,7 +663,9 @@ try {
         $evidenceFreshnessCheck.status -eq 'pass' -and
         $followUpCaptureHealthCheck.status -eq 'pass' -and
         $routeStage -eq 'canary' -and
+        $implementationTrack -eq 'actual-primary-lane' -and
         -not [string]::IsNullOrWhiteSpace($visibleOwner) -and
+        $visibleOwner -eq $laneOwner -and
         $null -ne $visibleOwnerTransitionAtMs -and
         (Test-PathWithinRoot -Path $routePolicyPath -Root $bundleRoot) -and
         (Test-PathWithinRoot -Path $catalogStatePath -Root $bundleRoot)
@@ -675,6 +680,14 @@ try {
         elseif ($followUpCaptureHealthCheck.status -ne 'pass') {
             $blockers.Add('follow-up-capture-health') | Out-Null
             New-CheckResult -Status 'fail' -Reason $followUpCaptureHealthCheck.reason
+        }
+        elseif ($implementationTrack -ne 'actual-primary-lane') {
+            $blockers.Add('implementation-track-not-actual') | Out-Null
+            New-CheckResult -Status 'fail' -Reason 'selected evidence is comparison-only because implementationTrack is not actual-primary-lane.'
+        }
+        elseif ($visibleOwner -ne $laneOwner) {
+            $blockers.Add('visible-owner-mismatch') | Out-Null
+            New-CheckResult -Status 'fail' -Reason 'visibleOwner does not match the selected close owner evidence.'
         }
         else {
             $blockers.Add('active-session-safety') | Out-Null
@@ -702,6 +715,7 @@ try {
         presetId = $presetId
         publishedVersion = $publishedVersion
         routeStage = $routeStage
+        implementationTrack = $implementationTrack
         laneOwner = $laneOwner
         gate = $gate
         nextStageAllowed = $nextStageAllowed

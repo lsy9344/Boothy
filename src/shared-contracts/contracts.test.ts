@@ -260,6 +260,7 @@ function createOperatorSessionSummary(overrides: Record<string, unknown> = {}) {
     previewArchitecture: {
       route: 'local-renderer-sidecar',
       routeStage: 'canary',
+      implementationTrack: 'actual-primary-lane',
       laneOwner: 'inline-truthful-fallback',
       fallbackReasonCode: 'route-policy-shadow',
       captureId: 'capture_20260410_001',
@@ -564,11 +565,11 @@ describe('shared contracts baseline', () => {
     )
 
     expect(parsed.routeStage).toBe('canary')
-    expect(parsed.laneOwner).toBe('dedicated-renderer')
+    expect(parsed.laneOwner).toBe('local-fullscreen-lane')
     expect(parsed.captureRequestedAtMs).toBe(100)
     expect(parsed.rawPersistedAtMs).toBe(100)
     expect(parsed.truthfulArtifactReadyAtMs).toBe(900)
-    expect(parsed.visibleOwner).toBe('dedicated-renderer')
+    expect(parsed.visibleOwner).toBe('local-fullscreen-lane')
     expect(parsed.visibleOwnerTransitionAtMs).toBe(2410)
     expect(parsed.sameCaptureFullScreenVisibleMs).toBe(2410)
     expect(parsed.replacementMs).toBe(2410)
@@ -686,14 +687,14 @@ describe('shared contracts baseline', () => {
       requestId: 'request_20260410_001',
       presetId: 'preset_soft-glow',
       publishedVersion: '2026.04.10',
-      laneOwner: 'dedicated-renderer',
+      laneOwner: 'local-fullscreen-lane',
       fallbackReasonCode: null,
       routeStage: 'canary',
       warmState: 'warm-ready',
       captureRequestedAtMs: 100,
       rawPersistedAtMs: 100,
       truthfulArtifactReadyAtMs: 900,
-      visibleOwner: 'dedicated-renderer',
+      visibleOwner: 'local-fullscreen-lane',
       visibleOwnerTransitionAtMs: 2410,
       firstVisibleMs: 2810,
       replacementMs: 2410,
@@ -758,7 +759,8 @@ describe('shared contracts baseline', () => {
       presetId: 'preset_soft-glow',
       publishedVersion: '2026.04.10',
       routeStage: 'canary',
-      laneOwner: 'dedicated-renderer',
+      implementationTrack: 'actual-primary-lane',
+      laneOwner: 'local-fullscreen-lane',
       gate: 'No-Go',
       nextStageAllowed: false,
       summary: 'rollback proof missing keeps the canary at No-Go.',
@@ -813,14 +815,14 @@ describe('shared contracts baseline', () => {
         requestId: 'request_20260410_001',
         presetId: 'preset_soft-glow',
         publishedVersion: '2026.04.10',
-        laneOwner: 'dedicated-renderer',
+        laneOwner: 'local-fullscreen-lane',
         fallbackReasonCode: null,
         routeStage: 'canary',
         warmState: 'warm-ready',
         captureRequestedAtMs: 100,
         rawPersistedAtMs: 100,
         truthfulArtifactReadyAtMs: 900,
-        visibleOwner: 'dedicated-renderer',
+        visibleOwner: 'local-fullscreen-lane',
         visibleOwnerTransitionAtMs: 2410,
         firstVisibleMs: 2810,
         replacementMs: 2410,
@@ -872,14 +874,14 @@ describe('shared contracts baseline', () => {
         requestId: 'request_20260410_001',
         presetId: 'preset_soft-glow',
         publishedVersion: '2026.04.10',
-        laneOwner: 'dedicated-renderer',
+        laneOwner: 'local-fullscreen-lane',
         fallbackReasonCode: null,
         routeStage: 'canary',
         warmState: 'warm-ready',
         captureRequestedAtMs: 100,
         rawPersistedAtMs: 100,
         truthfulArtifactReadyAtMs: 900,
-        visibleOwner: 'dedicated-renderer',
+        visibleOwner: 'local-fullscreen-lane',
         visibleOwnerTransitionAtMs: 2410,
         firstVisibleMs: 2810,
         replacementMs: 2410,
@@ -1197,6 +1199,7 @@ describe('shared contracts baseline', () => {
       previewArchitecture: {
         route: 'local-renderer-sidecar',
         routeStage: 'canary',
+        implementationTrack: 'actual-primary-lane',
         laneOwner: 'inline-truthful-fallback',
         fallbackReasonCode: 'route-policy-shadow',
         firstVisibleMs: 2810,
@@ -1314,6 +1317,7 @@ describe('shared contracts baseline', () => {
           previewArchitecture: {
             route: 'local-renderer-sidecar',
             routeStage: 'canary',
+            implementationTrack: 'actual-primary-lane',
             laneOwner: 'inline-truthful-fallback',
             fallbackReasonCode: 'route-policy-shadow',
             firstVisibleMs: 2810,

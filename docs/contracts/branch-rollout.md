@@ -43,3 +43,10 @@ The host returns operator-safe refusal guidance for these cases:
 - unknown branch identifier
 - active-session defer
 - audit write failure rollback guard
+
+## Preview Route Decision Summary
+
+- Preview route governance surfaces must read `decisionSummary.implementationTrack` first, then `decisionSummary.laneOwner`.
+- `implementationTrack=actual-primary-lane` means the decision summary is carrying actual-lane promotion proof.
+- `implementationTrack=prototype-track` or `null` means the summary is comparison-only and must not be read as release-relevant actual-lane completion.
+- `laneOwner` remains a backward-compatible machine field, but human-facing settings/operator copy should treat it as the close-owner label inside the selected track, not as the primary proof-family discriminator.

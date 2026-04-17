@@ -182,6 +182,7 @@ fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover()
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {
@@ -230,7 +231,7 @@ fn operator_diagnostics_exposes_preview_architecture_state_for_guarded_cutover()
 
     assert_eq!(
         summary.preview_architecture.route.as_deref(),
-        Some("local-renderer-sidecar")
+        Some("actual-primary-lane")
     );
     assert_eq!(
         summary.preview_architecture.route_stage.as_deref(),
@@ -285,6 +286,7 @@ fn operator_diagnostics_prefers_recent_session_visible_for_full_screen_metric() 
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {
@@ -391,6 +393,7 @@ fn operator_diagnostics_ignores_partial_preview_transition_lines() {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {
@@ -434,7 +437,7 @@ fn operator_diagnostics_ignores_partial_preview_transition_lines() {
 
     assert_eq!(
         summary.preview_architecture.route.as_deref(),
-        Some("local-renderer-sidecar")
+        Some("actual-primary-lane")
     );
     assert_eq!(
         summary.preview_architecture.route_stage.as_deref(),
@@ -464,6 +467,7 @@ fn operator_diagnostics_prefers_newer_manifest_warm_state_snapshot() {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {
@@ -537,6 +541,7 @@ fn operator_diagnostics_prefers_diagnostics_warm_state_when_timestamps_tie() {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {
@@ -610,6 +615,7 @@ fn operator_diagnostics_prefers_newer_manifest_warm_state_within_the_same_second
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
+            implementation_track: Some("actual-primary-lane".into()),
         },
     );
     let manifest = SessionManifest {

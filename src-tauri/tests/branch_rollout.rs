@@ -398,6 +398,10 @@ fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
         promoted_policy["defaultRoutes"][0]["presetVersion"],
         "2026.04.10"
     );
+    assert_eq!(
+        promoted_policy["defaultRoutes"][0]["route"],
+        "actual-primary-lane"
+    );
 
     let rollback = rollback_preview_renderer_route_in_dir(
         &base_dir,
@@ -415,6 +419,11 @@ fn preview_route_promotion_and_rollback_are_host_owned_and_auditable() {
         rollback.decision_summary.decision_stage.as_deref(),
         Some("rollback")
     );
+    assert_eq!(
+        rollback.decision_summary.implementation_track.as_deref(),
+        Some("prototype-track")
+    );
+    assert_eq!(rollback.decision_summary.lane_owner, "inline-truthful-fallback");
     assert_eq!(rollback.decision_summary.fallback_reason, None);
 
     let policy: serde_json::Value = serde_json::from_str(
@@ -574,12 +583,250 @@ fn preview_route_default_promotion_rejects_without_typed_go_canary_assessment() 
     .expect_err("default promotion should fail closed without a typed canary Go verdict");
 
     assert_eq!(error.code, "validation-error");
-    assert!(
-        error
-            .message
-            .contains("typed canary")
-            || error.message.contains("Story 1.24")
+    assert!(error.message.contains("actual primary lane"));
+    assert!(error.message.contains("typed canary Go verdict"));
+    assert!(!error.message.contains("Story 1.24"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_prototype_track_evidence_even_with_go_assessment() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-prototype-track-evidence");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:00:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "requestId": "request_20260412_001",
+            "captureId": "capture_20260412_001",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "local-fullscreen-lane",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 1605,
+            "sameCaptureFullScreenVisibleMs": 2410,
+            "replacementMs": 2410,
+            "originalVisibleToPresetAppliedVisibleMs": 805,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/sessions/session/diagnostics/captured-preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/sessions/session/diagnostics/captured-catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": null,
+            "implementationTrack": "prototype-track"
+        }),
     );
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:02:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "requestId": "request_20260412_002",
+            "captureId": "capture_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "local-fullscreen-lane",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "warmState": "warm-hit",
+            "firstVisibleMs": 1580,
+            "sameCaptureFullScreenVisibleMs": 2395,
+            "replacementMs": 2395,
+            "originalVisibleToPresetAppliedVisibleMs": 815,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/sessions/session/diagnostics/captured-preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/sessions/session/diagnostics/captured-catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture-2.jpg",
+            "warmStateDetailPath": null,
+            "implementationTrack": "prototype-track"
+        }),
+    );
+    let mut assessment = go_canary_assessment(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    assessment["laneOwner"] = serde_json::json!("dedicated-renderer");
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        assessment,
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("prototype-track evidence should not unlock actual-lane default promotion");
+
+    assert_eq!(error.code, "validation-error");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_prototype_track_assessment_even_with_actual_evidence() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-prototype-track-assessment");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        "request_20260412_001",
+        "capture_20260412_001",
+    );
+    seed_preview_promotion_evidence(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    let mut assessment = go_canary_assessment(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    assessment["implementationTrack"] = serde_json::json!("prototype-track");
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        assessment,
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("prototype-track assessment should not unlock actual-lane default promotion");
+
+    assert_eq!(error.code, "validation-error");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_default_promotion_rejects_legacy_dedicated_renderer_owner_even_with_actual_track(
+) {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-legacy-owner");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:00:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+            "requestId": "request_20260412_001",
+            "captureId": "capture_20260412_001",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
+            "warmState": "warm-ready",
+            "firstVisibleMs": 1605,
+            "sameCaptureFullScreenVisibleMs": 2410,
+            "originalVisibleToPresetAppliedVisibleMs": 805,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    seed_preview_promotion_evidence_line(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        serde_json::json!({
+            "schemaVersion": "preview-promotion-evidence-record/v1",
+            "observedAt": "2026-04-12T08:02:15+09:00",
+            "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+            "requestId": "request_20260412_002",
+            "captureId": "capture_20260412_002",
+            "presetId": "preset_soft-glow",
+            "publishedVersion": "2026.04.10",
+            "laneOwner": "dedicated-renderer",
+            "fallbackReasonCode": null,
+            "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
+            "warmState": "warm-hit",
+            "firstVisibleMs": 1580,
+            "sameCaptureFullScreenVisibleMs": 2395,
+            "originalVisibleToPresetAppliedVisibleMs": 815,
+            "sessionManifestPath": "C:/boothy/sessions/session/session.json",
+            "timingEventsPath": "C:/boothy/sessions/session/diagnostics/timing-events.log",
+            "routePolicySnapshotPath": "C:/boothy/branch-config/preview-renderer-policy.json",
+            "publishedBundlePath": "C:/boothy/preset-catalog/published/preset_soft-glow/2026.04.10/bundle.json",
+            "catalogStatePath": "C:/boothy/preset-catalog/catalog-state.json",
+            "previewAssetPath": "C:/boothy/sessions/session/renders/previews/capture-2.jpg",
+            "warmStateDetailPath": "C:/boothy/sessions/session/diagnostics/dedicated-renderer/warm-state.json",
+            "improvementSummary": "promotionGateTargetMs=2500"
+        }),
+    );
+    let mut assessment = go_canary_assessment(
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        "request_20260412_002",
+        "capture_20260412_002",
+    );
+    assessment["laneOwner"] = serde_json::json!("dedicated-renderer");
+    seed_preview_promotion_canary_assessment(
+        &base_dir,
+        "session_01hs6n1r8b8zc5v4ey2x7b9g1n",
+        assessment,
+    );
+
+    let error = promote_preview_renderer_route_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRoutePromotionInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+            target_route_stage: "default".into(),
+            actor_id: "release-kim".into(),
+            actor_label: "Kim Release".into(),
+        },
+    )
+    .expect_err("legacy dedicated-renderer owner should not unlock actual-lane default promotion");
+
+    assert_eq!(error.code, "validation-error");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -616,8 +863,9 @@ fn preview_route_default_promotion_rejects_when_latest_canary_assessment_is_no_g
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
             "routeStage": "canary",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "gate": "No-Go",
+            "implementationTrack": "actual-primary-lane",
             "nextStageAllowed": false,
             "summary": "rollback proof missing keeps the canary at No-Go.",
             "blockers": ["rollback-proof-missing"],
@@ -808,10 +1056,54 @@ fn preview_route_status_reports_canary_for_a_promoted_preset_version() {
     .expect("status should load");
 
     assert_eq!(status.route_stage, "canary");
-    assert_eq!(status.resolved_route, "local-renderer-sidecar");
+    assert_eq!(status.resolved_route, "actual-primary-lane");
     assert_eq!(status.message, "이 프리셋 버전은 canary 상태예요.");
     assert_eq!(status.decision_summary.decision_stage, None);
     assert_eq!(status.decision_summary.fallback_reason, None);
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn preview_route_status_keeps_legacy_policy_route_visible_until_the_policy_is_updated() {
+    let _env_lock = lock_branch_rollout_test_env();
+    let base_dir = unique_test_root("preview-route-policy-legacy-status");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+
+    seed_preview_renderer_policy(&base_dir);
+    let policy_path = base_dir
+        .join("branch-config")
+        .join("preview-renderer-policy.json");
+    let mut policy: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&policy_path).expect("policy should exist"),
+    )
+    .expect("policy should deserialize");
+    policy["canaryRoutes"] = serde_json::json!([
+        {
+            "route": "local-renderer-sidecar",
+            "presetId": "preset_soft-glow",
+            "presetVersion": "2026.04.10",
+            "reason": "host-approved-canary"
+        }
+    ]);
+    fs::write(
+        &policy_path,
+        serde_json::to_string_pretty(&policy).expect("policy should serialize"),
+    )
+    .expect("policy should persist");
+
+    let status = load_preview_renderer_route_status_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PreviewRendererRouteStatusInputDto {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.04.10".into(),
+        },
+    )
+    .expect("status should load");
+
+    assert_eq!(status.route_stage, "canary");
+    assert_eq!(status.resolved_route, "local-renderer-sidecar");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -901,9 +1193,10 @@ fn preview_route_default_promotion_rejects_records_missing_snapshot_evidence() {
             "captureId": "capture_20260412_002",
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-ready",
             "firstVisibleMs": 2815,
             "replacementMs": 3610,
@@ -954,9 +1247,10 @@ fn preview_route_default_promotion_does_not_add_a_budget_gate_in_story_1_21() {
             "captureId": "capture_20260412_001",
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-ready",
             "firstVisibleMs": 1810,
             "replacementMs": 2495,
@@ -982,9 +1276,10 @@ fn preview_route_default_promotion_does_not_add_a_budget_gate_in_story_1_21() {
             "captureId": "capture_20260412_002",
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-ready",
             "firstVisibleMs": 1890,
             "replacementMs": 3610,
@@ -1044,9 +1339,10 @@ fn preview_route_default_promotion_accepts_canonical_full_screen_metric_without_
             "captureId": "capture_20260412_001",
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-ready",
             "firstVisibleMs": 1605,
             "sameCaptureFullScreenVisibleMs": 2410,
@@ -1072,9 +1368,10 @@ fn preview_route_default_promotion_accepts_canonical_full_screen_metric_without_
             "captureId": "capture_20260412_002",
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-hit",
             "firstVisibleMs": 1580,
             "sameCaptureFullScreenVisibleMs": 2395,
@@ -1112,7 +1409,11 @@ fn preview_route_default_promotion_accepts_canonical_full_screen_metric_without_
     )
     .expect("canonical metric evidence should satisfy repeated canary success path");
     assert_eq!(promoted.route_stage, "default");
-    assert_eq!(promoted.decision_summary.lane_owner, "dedicated-renderer");
+    assert_eq!(
+        promoted.decision_summary.implementation_track.as_deref(),
+        Some("actual-primary-lane")
+    );
+    assert_eq!(promoted.decision_summary.lane_owner, "local-fullscreen-lane");
     assert_eq!(promoted.decision_summary.canary_gate.as_deref(), Some("Go"));
     assert_eq!(promoted.decision_summary.kpi_status.as_deref(), Some("pass"));
     assert!(promoted.decision_summary.rollback_proof_present);
@@ -1354,9 +1655,10 @@ fn seed_preview_promotion_evidence(
             "captureId": capture_id,
             "presetId": "preset_soft-glow",
             "publishedVersion": "2026.04.10",
-            "laneOwner": "dedicated-renderer",
+            "laneOwner": "local-fullscreen-lane",
             "fallbackReasonCode": null,
             "routeStage": "canary",
+            "implementationTrack": "actual-primary-lane",
             "warmState": "warm-ready",
             "firstVisibleMs": 1605,
             "replacementMs": 2410,
@@ -1424,7 +1726,8 @@ fn go_canary_assessment(session_id: &str, request_id: &str, capture_id: &str) ->
         "presetId": "preset_soft-glow",
         "publishedVersion": "2026.04.10",
         "routeStage": "canary",
-        "laneOwner": "dedicated-renderer",
+        "laneOwner": "local-fullscreen-lane",
+        "implementationTrack": "actual-primary-lane",
         "gate": "Go",
         "nextStageAllowed": true,
         "summary": "same-capture KPI, rollback proof, and active-session safety passed.",

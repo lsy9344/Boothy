@@ -10,6 +10,10 @@ const validPngBuffer = Buffer.from(
   'base64',
 )
 
+function isoNowWithOffset(offsetMs = 0) {
+  return new Date(Date.now() + offsetMs).toISOString()
+}
+
 function createFixtureRepo() {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'boothy-hardware-scripts-'))
   createdRoots.push(repoRoot)
@@ -20,6 +24,7 @@ function createFixtureRepo() {
   const presetId = 'preset_soft-glow'
   const publishedVersion = '2026.04.10'
   const sessionRoot = path.join(repoRoot, 'sessions', sessionId)
+  const observedAt = isoNowWithOffset(-60_000)
 
   mkdirSync(path.join(sessionRoot, 'diagnostics', 'dedicated-renderer'), {
     recursive: true,
@@ -163,14 +168,14 @@ function createFixtureRepo() {
         captureId +
         '\trequest=' +
         requestId +
-        '\tevent=recent-session-visible\tdetail=visibleOwner=dedicated-renderer;visibleOwnerTransitionAtMs=2410',
+        '\tevent=recent-session-visible\tdetail=visibleOwner=local-fullscreen-lane;visibleOwnerTransitionAtMs=2410',
       '2026-04-12T08:00:15+09:00\tsession=' +
         sessionId +
         '\tcapture=' +
         captureId +
         '\trequest=' +
         requestId +
-        '\tevent=capture_preview_transition_summary\tdetail=laneOwner=dedicated-renderer;fallbackReason=none;routeStage=canary;warmState=warm-ready;firstVisibleMs=1605;replacementMs=2410;originalVisibleToPresetAppliedVisibleMs=805',
+        '\tevent=capture_preview_transition_summary\tdetail=laneOwner=local-fullscreen-lane;fallbackReason=none;routeStage=canary;warmState=warm-ready;firstVisibleMs=1605;replacementMs=2410;originalVisibleToPresetAppliedVisibleMs=805',
     ].join('\n'),
   )
   writeFileSync(
@@ -193,20 +198,21 @@ function createFixtureRepo() {
     ),
     JSON.stringify({
       schemaVersion: 'preview-promotion-evidence-record/v1',
-      observedAt: '2026-04-12T08:00:15+09:00',
+      observedAt,
       sessionId,
       requestId,
       captureId,
       presetId,
       publishedVersion,
-      laneOwner: 'dedicated-renderer',
+      laneOwner: 'local-fullscreen-lane',
       fallbackReasonCode: null,
       routeStage: 'canary',
+      implementationTrack: 'actual-primary-lane',
       warmState: 'warm-ready',
       captureRequestedAtMs: 100,
       rawPersistedAtMs: 100,
       truthfulArtifactReadyAtMs: 900,
-      visibleOwner: 'dedicated-renderer',
+      visibleOwner: 'local-fullscreen-lane',
       visibleOwnerTransitionAtMs: 2410,
       firstVisibleMs: 1605,
       sameCaptureFullScreenVisibleMs: 2410,
@@ -446,9 +452,9 @@ describe('hardware evidence scripts', () => {
     )
 
     expect(result.schemaVersion).toBe('preview-promotion-evidence-bundle/v1')
-    expect(result.laneOwner).toBe('dedicated-renderer')
+    expect(result.laneOwner).toBe('local-fullscreen-lane')
     expect(result.routeStage).toBe('canary')
-    expect(result.visibleOwner).toBe('dedicated-renderer')
+    expect(result.visibleOwner).toBe('local-fullscreen-lane')
     expect(result.visibleOwnerTransitionAtMs).toBe(2410)
     expect(result.captureRequestedAtMs).toBe(100)
     expect(result.rawPersistedAtMs).toBe(100)
@@ -462,6 +468,158 @@ describe('hardware evidence scripts', () => {
     )
     expect(result.parity.result).toBe('not-run')
     expect(result.missingArtifacts).toEqual([])
+    },
+    40000,
+  )
+
+  it(
+    'builds a comparison-only bundle when selected capture evidence is still marked as prototype track',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
+      record.implementationTrack = 'prototype-track'
+      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+
+      const bundle = runPowershell(
+        path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'),
+        [
+          '-RepoRoot',
+          fixture.repoRoot,
+          '-SessionId',
+          fixture.sessionId,
+          '-CaptureId',
+          fixture.captureId,
+          '-PresetId',
+          fixture.presetId,
+          '-PublishedVersion',
+          fixture.publishedVersion,
+          '-BoothVisualEvidencePaths',
+          fixture.boothVisualPath,
+          '-OperatorVisualEvidencePaths',
+          fixture.operatorVisualPath,
+          '-RollbackEvidencePaths',
+          fixture.rollbackEvidencePath,
+          '-DryRun',
+          '-EmitJson',
+        ],
+      )
+
+      expect(bundle.implementationTrack).toBe('prototype-track')
+      expect(bundle.fallbackRatio).toBe(1)
+    },
+    40000,
+  )
+
+  it(
+    'does not let prototype comparison history inflate fallbackRatio for actual-lane evidence',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const actualRecord = JSON.parse(
+        readFileSync(evidenceLogPath, 'utf8'),
+      ) as Record<string, unknown>
+      const prototypeRecord = {
+        ...actualRecord,
+        observedAt: isoNowWithOffset(-120_000),
+        requestId: 'request_legacy_001',
+        captureId: 'capture_legacy_001',
+        implementationTrack: 'prototype-track',
+        laneOwner: 'dedicated-renderer',
+        visibleOwner: 'dedicated-renderer',
+        fallbackReasonCode: 'legacy-comparison-only',
+      }
+      writeFileSync(
+        evidenceLogPath,
+        `${JSON.stringify(prototypeRecord)}\n${JSON.stringify(actualRecord)}\n`,
+      )
+
+      const bundle = runPowershell(
+        path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'),
+        [
+          '-RepoRoot',
+          fixture.repoRoot,
+          '-SessionId',
+          fixture.sessionId,
+          '-CaptureId',
+          fixture.captureId,
+          '-PresetId',
+          fixture.presetId,
+          '-PublishedVersion',
+          fixture.publishedVersion,
+          '-BoothVisualEvidencePaths',
+          fixture.boothVisualPath,
+          '-OperatorVisualEvidencePaths',
+          fixture.operatorVisualPath,
+          '-RollbackEvidencePaths',
+          fixture.rollbackEvidencePath,
+          '-DryRun',
+          '-EmitJson',
+        ],
+      )
+
+      expect(bundle.implementationTrack).toBe('actual-primary-lane')
+      expect(bundle.fallbackRatio).toBe(0)
+    },
+    40000,
+  )
+
+  it(
+    'builds a comparison-only bundle when selected capture evidence predates implementationTrack',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
+      delete record.implementationTrack
+      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+
+      const bundle = runPowershell(
+        path.resolve('scripts/hardware/New-PreviewPromotionEvidenceBundle.ps1'),
+        [
+          '-RepoRoot',
+          fixture.repoRoot,
+          '-SessionId',
+          fixture.sessionId,
+          '-CaptureId',
+          fixture.captureId,
+          '-PresetId',
+          fixture.presetId,
+          '-PublishedVersion',
+          fixture.publishedVersion,
+          '-BoothVisualEvidencePaths',
+          fixture.boothVisualPath,
+          '-OperatorVisualEvidencePaths',
+          fixture.operatorVisualPath,
+          '-RollbackEvidencePaths',
+          fixture.rollbackEvidencePath,
+          '-DryRun',
+          '-EmitJson',
+        ],
+      )
+
+      expect(bundle.implementationTrack).toBeNull()
+      expect(bundle.fallbackRatio).toBe(1)
     },
     40000,
   )
@@ -905,6 +1063,7 @@ describe('hardware evidence scripts', () => {
             laneOwner: 'dedicated-renderer',
             fallbackReasonCode: null,
             routeStage: 'canary',
+            implementationTrack: 'actual-primary-lane',
             warmState: 'warm-ready',
             firstVisibleMs: 1000,
             replacementMs: 1200,
@@ -1084,6 +1243,7 @@ describe('hardware evidence scripts', () => {
             laneOwner: 'inline-truthful-fallback',
             fallbackReasonCode: 'shadow-submission-only',
             routeStage: 'canary',
+            implementationTrack: 'actual-primary-lane',
             warmState: 'warm-ready',
             firstVisibleMs: 1100,
             replacementMs: null,
@@ -1504,6 +1664,7 @@ describe('hardware evidence scripts', () => {
             laneOwner: 'inline-truthful-fallback',
             fallbackReasonCode: 'shadow-submission-only',
             routeStage: 'canary',
+            implementationTrack: 'actual-primary-lane',
             warmState: 'warm-ready',
             firstVisibleMs: 1100,
             replacementMs: null,
@@ -1585,6 +1746,146 @@ describe('hardware evidence scripts', () => {
       expect(assessment.gate).toBe('No-Go')
       expect(assessment.checks.fallbackStability.status).toBe('fail')
       expect(assessment.blockers).toContain('fallback-instability')
+    },
+    40000,
+  )
+
+  it(
+    'keeps the canary verdict at No-Go when selected evidence is comparison-only legacy evidence',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
+      delete record.implementationTrack
+      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+
+      const previewPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'renders',
+        'previews',
+        `${fixture.captureId}.jpg`,
+      )
+      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
+      writeValidTestRaster(previewPath)
+      writeValidTestRaster(baselineImagePath)
+
+      const bundle = buildCanaryBundle(fixture, [
+        '-BaselineImagePath',
+        baselineImagePath,
+        '-BaselineMetadataPath',
+        fixture.oracleMetadataPath,
+      ])
+      const assessment = runPowershell(
+        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
+        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
+      )
+
+      expect(assessment.gate).toBe('No-Go')
+      expect(assessment.implementationTrack).toBeNull()
+      expect(assessment.checks.activeSessionSafety.status).toBe('fail')
+      expect(assessment.blockers).toContain('implementation-track-not-actual')
+    },
+    40000,
+  )
+
+  it(
+    'keeps the canary verdict at No-Go when selected evidence still reports the legacy dedicated-renderer owner',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
+      record.laneOwner = 'dedicated-renderer'
+      record.visibleOwner = 'dedicated-renderer'
+      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+      const previewPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'renders',
+        'previews',
+        `${fixture.captureId}.jpg`,
+      )
+      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
+      writeValidTestRaster(previewPath)
+      writeValidTestRaster(baselineImagePath)
+
+      const bundle = buildCanaryBundle(fixture, [
+        '-BaselineImagePath',
+        baselineImagePath,
+        '-BaselineMetadataPath',
+        fixture.oracleMetadataPath,
+      ])
+      const assessment = runPowershell(
+        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
+        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
+      )
+
+      expect(assessment.gate).toBe('No-Go')
+      expect(assessment.checks.fallbackStability.status).toBe('fail')
+      expect(assessment.blockers).toContain('fallback-instability')
+    },
+    40000,
+  )
+
+  it(
+    'keeps the canary verdict at No-Go when visibleOwner does not match the selected close owner',
+    () => {
+      const fixture = createFixtureRepo()
+      const evidenceLogPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'diagnostics',
+        'dedicated-renderer',
+        'preview-promotion-evidence.jsonl',
+      )
+      const record = JSON.parse(readFileSync(evidenceLogPath, 'utf8')) as Record<string, unknown>
+      record.visibleOwner = 'dedicated-renderer'
+      writeFileSync(evidenceLogPath, `${JSON.stringify(record)}\n`)
+      const previewPath = path.join(
+        fixture.repoRoot,
+        'sessions',
+        fixture.sessionId,
+        'renders',
+        'previews',
+        `${fixture.captureId}.jpg`,
+      )
+      const baselineImagePath = path.join(fixture.repoRoot, 'baseline-preview.png')
+      writeValidTestRaster(previewPath)
+      writeValidTestRaster(baselineImagePath)
+
+      const bundle = buildCanaryBundle(fixture, [
+        '-BaselineImagePath',
+        baselineImagePath,
+        '-BaselineMetadataPath',
+        fixture.oracleMetadataPath,
+      ])
+      const assessment = runPowershell(
+        path.resolve('scripts/hardware/Test-PreviewPromotionCanary.ps1'),
+        ['-BundlePath', bundle.bundleManifestPath, '-EmitJson'],
+      )
+
+      expect(assessment.gate).toBe('No-Go')
+      expect(assessment.checks.fallbackStability.status).toBe('fail')
+      expect(assessment.checks.activeSessionSafety.status).toBe('fail')
+      expect(assessment.blockers).toContain('fallback-instability')
+      expect(assessment.blockers).toContain('visible-owner-mismatch')
     },
     40000,
   )
@@ -1820,7 +2121,7 @@ describe('hardware evidence scripts', () => {
               {
                 schemaVersion: 'operator-audit-entry/v1',
                 eventId: 'audit-follow-up-timeout',
-                occurredAt: '2026-04-12T08:01:15+09:00',
+                occurredAt: isoNowWithOffset(60_000),
                 sessionId: fixture.sessionId,
                 eventCategory: 'critical-failure',
                 eventType: 'capture-round-trip-failed',

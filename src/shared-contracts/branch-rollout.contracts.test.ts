@@ -248,7 +248,8 @@ describe('branch rollout contracts', () => {
         notedAt: '2026-04-14T01:45:02.000Z',
       },
       decisionSummary: {
-        laneOwner: 'dedicated-renderer',
+        implementationTrack: 'actual-primary-lane',
+        laneOwner: 'local-fullscreen-lane',
         decisionStage: null,
         fallbackReason: null,
         canaryGate: 'Go',
@@ -262,6 +263,7 @@ describe('branch rollout contracts', () => {
     expect(parsed.routeStage).toBe('canary')
     expect(parsed.auditEntry.targetRouteStage).toBe('canary')
     expect(parsed.auditEntry.result).toBe('applied')
+    expect(parsed.decisionSummary.implementationTrack).toBe('actual-primary-lane')
     expect(parsed.decisionSummary.canaryGate).toBe('Go')
     expect(parsed.decisionSummary.rollbackProofPresent).toBe(true)
   })
@@ -272,10 +274,11 @@ describe('branch rollout contracts', () => {
       presetId: 'preset_new-draft-2',
       publishedVersion: '2026.04.10',
       routeStage: 'canary',
-      resolvedRoute: 'local-renderer-sidecar',
+      resolvedRoute: 'actual-primary-lane',
       reason: 'operator-canary',
       decisionSummary: {
-        laneOwner: 'dedicated-renderer',
+        implementationTrack: 'actual-primary-lane',
+        laneOwner: 'local-fullscreen-lane',
         decisionStage: null,
         fallbackReason: null,
         canaryGate: 'Go',
@@ -287,7 +290,8 @@ describe('branch rollout contracts', () => {
     })
 
     expect(parsed.routeStage).toBe('canary')
-    expect(parsed.resolvedRoute).toBe('local-renderer-sidecar')
+    expect(parsed.resolvedRoute).toBe('actual-primary-lane')
+    expect(parsed.decisionSummary.implementationTrack).toBe('actual-primary-lane')
     expect(parsed.decisionSummary.kpiStatus).toBe('pass')
     expect(parsed.decisionSummary.decisionStage).toBeNull()
   })

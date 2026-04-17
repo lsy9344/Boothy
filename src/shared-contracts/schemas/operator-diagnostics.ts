@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+const previewArchitectureImplementationTrackSchema = z
+  .enum(['actual-primary-lane', 'prototype-track'])
+  .nullable()
+
 import { liveCaptureTruthSchema } from './capture-readiness'
 import { previewRendererWarmStateSchema } from './dedicated-renderer'
 import { presetDisplayNameSchema, presetIdSchema, publishedVersionSchema } from './preset-core'
@@ -51,6 +55,7 @@ export const operatorRecentFailureSummarySchema = z.object({
 export const operatorPreviewArchitectureSummarySchema = z.object({
     route: z.string().trim().min(1).nullable().optional(),
     routeStage: z.string().trim().min(1).nullable().optional(),
+    implementationTrack: previewArchitectureImplementationTrackSchema.optional(),
     laneOwner: z.string().trim().min(1).nullable().optional(),
     fallbackReasonCode: z.string().trim().min(1).nullable().optional(),
     captureId: z.string().trim().min(1).nullable().optional(),

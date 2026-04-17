@@ -54,6 +54,13 @@ const DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION: &str =
 const DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION: &str = "dedicated-renderer-warmup-result/v1";
 const PREVIEW_PROMOTION_EVIDENCE_RECORD_SCHEMA_VERSION: &str =
     "preview-promotion-evidence-record/v1";
+const ACTUAL_PRIMARY_LANE_TRACK: &str = "actual-primary-lane";
+const ACTUAL_PRIMARY_LANE_ROUTE_KIND: &str = "actual-primary-lane";
+const ACTUAL_PRIMARY_LANE_OWNER: &str = "local-fullscreen-lane";
+const ACTUAL_PRIMARY_LANE_BINARY_IDENTITY: &str = "actual-primary-lane-host";
+const ACTUAL_PRIMARY_LANE_SOURCE_IDENTITY: &str = "local-native-gpu-resident-full-screen-lane";
+const LEGACY_DEDICATED_RENDERER_OWNER: &str = "dedicated-renderer";
+const PROTOTYPE_TRACK: &str = "prototype-track";
 const DEDICATED_RENDERER_TEST_OUTCOME_ENV: &str = "BOOTHY_TEST_DEDICATED_RENDERER_OUTCOME";
 const DEDICATED_RENDERER_TEST_START_FAILURE_ENV: &str =
     "BOOTHY_TEST_DEDICATED_RENDERER_START_FAILURE";
@@ -99,6 +106,7 @@ struct ResolvedPreviewRendererRoute {
     route: PreviewRendererRouteKind,
     route_stage: &'static str,
     fallback_reason_code: Option<&'static str>,
+    implementation_track: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +122,8 @@ struct PreviewPromotionEvidenceRecord {
     lane_owner: String,
     fallback_reason_code: Option<String>,
     route_stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementation_track: Option<String>,
     warm_state: Option<String>,
     capture_requested_at_ms: u64,
     raw_persisted_at_ms: u64,
@@ -270,6 +280,7 @@ impl PreviewRendererRouteKind {
     fn from_snapshot_route(value: &str) -> Option<Self> {
         match value {
             "darktable" => Some(Self::Darktable),
+            ACTUAL_PRIMARY_LANE_ROUTE_KIND => Some(Self::LocalRendererSidecar),
             "local-renderer-sidecar" => Some(Self::LocalRendererSidecar),
             _ => None,
         }
@@ -277,11 +288,44 @@ impl PreviewRendererRouteKind {
 }
 
 impl ResolvedPreviewRendererRoute {
+    fn is_actual_primary_lane(&self) -> bool {
+        matches!(self.route, PreviewRendererRouteKind::LocalRendererSidecar)
+            && self.implementation_track == Some(ACTUAL_PRIMARY_LANE_TRACK)
+    }
+
+    fn snapshot_route_kind(&self) -> &'static str {
+        if self.is_actual_primary_lane() {
+            ACTUAL_PRIMARY_LANE_ROUTE_KIND
+        } else {
+            self.route.as_str()
+        }
+    }
+
+    fn success_lane_owner(&self) -> &'static str {
+        if self.is_actual_primary_lane() {
+            ACTUAL_PRIMARY_LANE_OWNER
+        } else {
+            LEGACY_DEDICATED_RENDERER_OWNER
+        }
+    }
+
+    fn diagnostics_identity(&self) -> (&'static str, &'static str) {
+        if self.is_actual_primary_lane() {
+            (
+                ACTUAL_PRIMARY_LANE_BINARY_IDENTITY,
+                ACTUAL_PRIMARY_LANE_SOURCE_IDENTITY,
+            )
+        } else {
+            ("dedicated-renderer", "dedicated-renderer")
+        }
+    }
+
     fn snapshot(&self) -> PreviewRendererRouteSnapshot {
         PreviewRendererRouteSnapshot {
-            route: self.route.as_str().into(),
+            route: self.snapshot_route_kind().into(),
             route_stage: self.route_stage.into(),
             fallback_reason_code: self.fallback_reason_code.map(str::to_string),
+            implementation_track: self.implementation_track.map(str::to_string),
         }
     }
 }
@@ -344,6 +388,36 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
 ) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
     let (request, request_path, result_path, route) =
         build_preview_job_request_in_dir(base_dir, session_id, capture_id)?;
+
+    if route.is_actual_primary_lane() {
+        let capture = complete_preview_render_in_dir(base_dir, session_id, capture_id)?;
+        let warm_state = resolve_actual_primary_lane_warm_state_in_dir(
+            base_dir,
+            session_id,
+            &request.preset_id,
+            &request.published_version,
+        );
+        append_preview_transition_summary_in_dir(
+            base_dir,
+            &capture,
+            route.success_lane_owner(),
+            None,
+            route.route_stage,
+            route.implementation_track,
+            Some(warm_state.state.as_str()),
+            warm_state.diagnostics_detail_path.as_deref(),
+        );
+        let _ = sync_active_preview_warm_state_in_manifest(
+            base_dir,
+            session_id,
+            &request.preset_id,
+            &request.published_version,
+            Some(warm_state.state.as_str()),
+            warm_state.diagnostics_detail_path.as_deref(),
+        );
+        return Ok(capture);
+    }
+
     write_json_file(&request_path, &request)?;
 
     let preview_result = match submit_preview_job(
@@ -387,14 +461,15 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
 
     if let Some(result) = preview_result.as_ref() {
         if let Some(capture) = try_complete_preview_from_dedicated_result_in_dir(
-            base_dir, session_id, &request, result,
+            base_dir, session_id, &route, &request, result,
         )? {
             append_preview_transition_summary_in_dir(
                 base_dir,
                 &capture,
-                "dedicated-renderer",
+                route.success_lane_owner(),
                 None,
                 route.route_stage,
+                route.implementation_track,
                 result.warm_state.as_deref(),
                 result.warm_state_detail_path.as_deref(),
             );
@@ -419,6 +494,7 @@ pub fn complete_capture_preview_with_dedicated_renderer_in_dir(
             .as_ref()
             .and_then(|result| result.detail_code.as_deref()),
         route.route_stage,
+        route.implementation_track,
         preview_result
             .as_ref()
             .and_then(|result| result.warm_state.as_deref()),
@@ -885,6 +961,7 @@ fn validate_preview_job_result(
 fn try_complete_preview_from_dedicated_result_in_dir(
     base_dir: &Path,
     session_id: &str,
+    route: &ResolvedPreviewRendererRoute,
     request: &DedicatedRendererPreviewJobRequestDto,
     result: &DedicatedRendererPreviewJobResultDto,
 ) -> Result<Option<SessionCaptureRecord>, HostErrorEnvelope> {
@@ -936,7 +1013,7 @@ fn try_complete_preview_from_dedicated_result_in_dir(
         &request.capture_id,
         &request.request_id,
         RenderIntent::Preview,
-        &build_dedicated_renderer_ready_detail(request, result, ready_at_ms),
+        &build_dedicated_renderer_ready_detail(route, request, result, ready_at_ms),
     );
 
     let paths = SessionPaths::try_new(base_dir, session_id)?;
@@ -954,12 +1031,14 @@ fn try_complete_preview_from_dedicated_result_in_dir(
 }
 
 fn build_dedicated_renderer_ready_detail(
+    route: &ResolvedPreviewRendererRoute,
     request: &DedicatedRendererPreviewJobRequestDto,
     result: &DedicatedRendererPreviewJobResultDto,
     ready_at_ms: u64,
 ) -> String {
+    let (binary_identity, source_identity) = route.diagnostics_identity();
     format!(
-        "presetId={};publishedVersion={};binary=dedicated-renderer;source=dedicated-renderer;readyAtMs={ready_at_ms};detail=status={};detailCode={};warmState={}",
+        "presetId={};publishedVersion={};binary={binary_identity};source={source_identity};readyAtMs={ready_at_ms};detail=status={};detailCode={};warmState={}",
         request.preset_id,
         request.published_version,
         result.status,
@@ -974,6 +1053,7 @@ fn append_preview_transition_summary_in_dir(
     lane_owner: &str,
     fallback_reason: Option<&str>,
     route_stage: &str,
+    implementation_track: Option<&str>,
     warm_state: Option<&str>,
     warm_state_detail_path: Option<&str>,
 ) {
@@ -1004,6 +1084,13 @@ fn append_preview_transition_summary_in_dir(
         lane_owner,
         fallback_reason,
         route_stage,
+        implementation_track
+            .or_else(|| {
+                capture
+                    .preview_renderer_route
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.implementation_track.as_deref())
+            }),
         visible_owner_transition_at_ms,
         first_visible_ms,
         replacement_ms,
@@ -1036,6 +1123,13 @@ fn append_preview_transition_summary_in_dir(
         lane_owner,
         fallback_reason,
         route_stage,
+        implementation_track
+            .or_else(|| {
+                capture
+                    .preview_renderer_route
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.implementation_track.as_deref())
+            }),
         warm_state,
         warm_state_detail_path,
         visible_owner_transition_at_ms,
@@ -1073,6 +1167,7 @@ fn build_preview_transition_summary_detail(
     lane_owner: &str,
     fallback_reason: Option<&str>,
     route_stage: &str,
+    implementation_track: Option<&str>,
     visible_owner_transition_at_ms: Option<u64>,
     first_visible_ms: Option<u64>,
     replacement_ms: Option<u64>,
@@ -1084,7 +1179,7 @@ fn build_preview_transition_summary_detail(
         }
         _ => None,
     };
-    format!(
+    let mut detail = format!(
         "laneOwner={lane_owner};fallbackReason={};routeStage={route_stage};visibleOwner={lane_owner};visibleOwnerTransitionAtMs={};warmState={};firstVisibleMs={};replacementMs={};originalVisibleToPresetAppliedVisibleMs={}",
         fallback_reason.unwrap_or("none"),
         format_optional_metric(visible_owner_transition_at_ms),
@@ -1092,7 +1187,12 @@ fn build_preview_transition_summary_detail(
         format_optional_metric(first_visible_ms),
         format_optional_metric(replacement_ms),
         format_optional_metric(original_visible_to_preset_applied_visible_ms),
-    )
+    );
+    if let Some(implementation_track) = implementation_track {
+        detail = format!("{detail};implementationTrack={implementation_track}");
+    }
+
+    detail
 }
 
 fn append_preview_promotion_evidence_record_in_dir(
@@ -1101,6 +1201,7 @@ fn append_preview_promotion_evidence_record_in_dir(
     lane_owner: &str,
     fallback_reason: Option<&str>,
     route_stage: &str,
+    implementation_track: Option<&str>,
     warm_state: Option<&str>,
     warm_state_detail_path: Option<&str>,
     visible_owner_transition_at_ms: Option<u64>,
@@ -1158,6 +1259,11 @@ fn append_preview_promotion_evidence_record_in_dir(
         lane_owner: lane_owner.into(),
         fallback_reason_code: fallback_reason.map(str::to_string),
         route_stage: route_stage.into(),
+        implementation_track: capture
+            .preview_renderer_route
+            .as_ref()
+            .and_then(|snapshot| snapshot.implementation_track.clone())
+            .or_else(|| implementation_track.map(str::to_string)),
         warm_state: warm_state.map(str::to_string),
         capture_requested_at_ms: capture.timing.capture_acknowledged_at_ms,
         raw_persisted_at_ms: capture.raw.persisted_at_ms,
@@ -1273,6 +1379,63 @@ fn sync_active_preview_warm_state_in_manifest(
         diagnostics_detail_path: diagnostics_detail_path.map(str::to_string),
     });
     write_session_manifest(&paths.manifest_path, &manifest)
+}
+
+fn read_matching_active_warm_state_snapshot_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    published_version: &str,
+) -> Option<PreviewRendererWarmStateSnapshot> {
+    SessionPaths::try_new(base_dir, session_id)
+        .ok()
+        .and_then(|paths| read_session_manifest(&paths.manifest_path).ok())
+        .and_then(|manifest| manifest.active_preview_renderer_warm_state)
+        .filter(|snapshot| {
+            snapshot.preset_id == preset_id && snapshot.published_version == published_version
+        })
+}
+
+#[derive(Debug, Clone)]
+struct ActualPrimaryLaneWarmState {
+    state: String,
+    diagnostics_detail_path: Option<String>,
+}
+
+fn resolve_actual_primary_lane_warm_state_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    preset_id: &str,
+    published_version: &str,
+) -> ActualPrimaryLaneWarmState {
+    let Some(snapshot) = read_matching_active_warm_state_snapshot_in_dir(
+        base_dir,
+        session_id,
+        preset_id,
+        published_version,
+    ) else {
+        return ActualPrimaryLaneWarmState {
+            state: "cold".into(),
+            diagnostics_detail_path: None,
+        };
+    };
+
+    let diagnostics_detail_path = snapshot.diagnostics_detail_path.clone();
+    let detail_exists = diagnostics_detail_path
+        .as_deref()
+        .map(PathBuf::from)
+        .map(|path| path.is_file())
+        .unwrap_or(false);
+    let state = match snapshot.state.as_str() {
+        "warm-ready" | "warm-hit" if detail_exists => "warm-hit",
+        "warm-ready" | "warm-hit" => "warm-state-lost",
+        state => state,
+    };
+
+    ActualPrimaryLaneWarmState {
+        state: state.into(),
+        diagnostics_detail_path,
+    }
 }
 
 fn clear_previous_result_file(result_path: &Path) {
@@ -1547,6 +1710,7 @@ fn resolve_preview_renderer_route_in_dir(
                 route: PreviewRendererRouteKind::Darktable,
                 route_stage: "shadow",
                 fallback_reason_code: Some("route-policy-shadow"),
+                implementation_track: Some(PROTOTYPE_TRACK),
             };
         }
         PreviewRendererRoutePolicyLoadResult::Invalid => {
@@ -1554,6 +1718,7 @@ fn resolve_preview_renderer_route_in_dir(
                 route: PreviewRendererRouteKind::Darktable,
                 route_stage: "shadow",
                 fallback_reason_code: Some("route-policy-invalid"),
+                implementation_track: Some(PROTOTYPE_TRACK),
             };
         }
     };
@@ -1567,6 +1732,7 @@ fn resolve_preview_renderer_route_in_dir(
             route: PreviewRendererRouteKind::Darktable,
             route_stage: "shadow",
             fallback_reason_code: Some("route-policy-rollback"),
+            implementation_track: Some(PROTOTYPE_TRACK),
         };
     }
 
@@ -1585,6 +1751,10 @@ fn resolve_preview_renderer_route_in_dir(
                 PreviewRendererRouteKind::Darktable => Some("route-policy-shadow"),
                 PreviewRendererRouteKind::LocalRendererSidecar => None,
             },
+            implementation_track: Some(match route.route {
+                PreviewRendererRouteKind::Darktable => PROTOTYPE_TRACK,
+                PreviewRendererRouteKind::LocalRendererSidecar => ACTUAL_PRIMARY_LANE_TRACK,
+            }),
         };
     }
 
@@ -1603,6 +1773,10 @@ fn resolve_preview_renderer_route_in_dir(
                 PreviewRendererRouteKind::Darktable => Some("route-policy-shadow"),
                 PreviewRendererRouteKind::LocalRendererSidecar => None,
             },
+            implementation_track: Some(match route.route {
+                PreviewRendererRouteKind::Darktable => PROTOTYPE_TRACK,
+                PreviewRendererRouteKind::LocalRendererSidecar => ACTUAL_PRIMARY_LANE_TRACK,
+            }),
         };
     }
 
@@ -1611,11 +1785,13 @@ fn resolve_preview_renderer_route_in_dir(
             route: PreviewRendererRouteKind::Darktable,
             route_stage: "shadow",
             fallback_reason_code: Some("route-policy-shadow"),
+            implementation_track: Some(PROTOTYPE_TRACK),
         },
         PreviewRendererRouteKind::LocalRendererSidecar => ResolvedPreviewRendererRoute {
             route: PreviewRendererRouteKind::LocalRendererSidecar,
             route_stage: "default",
             fallback_reason_code: None,
+            implementation_track: Some(ACTUAL_PRIMARY_LANE_TRACK),
         },
     }
 }
@@ -1657,6 +1833,12 @@ fn resolved_preview_renderer_route_from_snapshot(
             _ => return None,
         },
         fallback_reason_code,
+        implementation_track: match snapshot.implementation_track.as_deref() {
+            Some(ACTUAL_PRIMARY_LANE_TRACK) => Some(ACTUAL_PRIMARY_LANE_TRACK),
+            Some(PROTOTYPE_TRACK) => Some(PROTOTYPE_TRACK),
+            Some(_) => return None,
+            None => None,
+        },
     })
 }
 
@@ -2071,9 +2253,11 @@ mod tests {
         build_preview_result, build_preview_transition_summary_detail, build_warmup_result,
         fallback_reason_for_missing_preview_result, preview_output_is_fresh_for_request,
         reconcile_sidecar_start_result, resolve_preview_renderer_route_in_dir,
-        resolve_preview_source_asset_path,
-        sidecar_binary_name_for_target, validate_preview_job_result, validate_warmup_result,
+        resolve_preview_renderer_route_snapshot_in_dir, resolve_preview_source_asset_path,
+        resolved_preview_renderer_route_from_snapshot, sidecar_binary_name_for_target,
+        validate_preview_job_result, validate_warmup_result,
         wait_for_child_exit_with_timeout, PreviewRendererRouteKind,
+        PreviewRendererRouteSnapshot, ACTUAL_PRIMARY_LANE_TRACK, PROTOTYPE_TRACK,
         DEDICATED_RENDERER_REQUEST_SCHEMA_VERSION, DEDICATED_RENDERER_RESULT_SCHEMA_VERSION,
         DEDICATED_RENDERER_WARMUP_REQUEST_SCHEMA_VERSION,
         DEDICATED_RENDERER_WARMUP_RESULT_SCHEMA_VERSION,
@@ -2356,6 +2540,53 @@ mod tests {
     }
 
     #[test]
+    fn preview_renderer_route_snapshot_uses_a_distinct_actual_lane_route_kind() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-preview-route-distinct-actual-{}",
+            std::process::id()
+        ));
+        let policy_path = base_dir
+            .join("branch-config")
+            .join("preview-renderer-policy.json");
+        fs::create_dir_all(
+            policy_path
+                .parent()
+                .expect("policy path should have a parent directory"),
+        )
+        .expect("policy directory should exist");
+        fs::write(
+            &policy_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+              "schemaVersion": PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION,
+              "defaultRoute": "darktable",
+              "defaultRoutes": [],
+              "canaryRoutes": [
+                {
+                  "route": "local-renderer-sidecar",
+                  "presetId": "preset_soft-glow",
+                  "presetVersion": "2026.04.10",
+                  "reason": "manual-canary"
+                }
+              ],
+              "forcedFallbackRoutes": []
+            }))
+            .expect("policy should serialize"),
+        )
+        .expect("policy should write");
+
+        let snapshot =
+            resolve_preview_renderer_route_snapshot_in_dir(&base_dir, "preset_soft-glow", "2026.04.10");
+
+        assert_eq!(snapshot.route, "actual-primary-lane");
+        assert_eq!(
+            snapshot.implementation_track.as_deref(),
+            Some(ACTUAL_PRIMARY_LANE_TRACK)
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn preview_renderer_route_uses_default_local_sidecar_when_policy_promotes_it() {
         let base_dir = std::env::temp_dir().join(format!(
             "boothy-preview-route-default-sidecar-{}",
@@ -2602,6 +2833,7 @@ mod tests {
             "inline-truthful-fallback",
             Some("shadow-submission-only"),
             "shadow",
+            Some(PROTOTYPE_TRACK),
             Some(6425),
             Some(2810),
             Some(3615),
@@ -2614,6 +2846,38 @@ mod tests {
         assert!(detail.contains("originalVisibleToPresetAppliedVisibleMs=805"));
         assert!(detail.contains("routeStage=shadow"));
         assert!(detail.contains("warmState=warm-ready"));
+    }
+
+    #[test]
+    fn preview_transition_summary_marks_actual_lane_track_separately_from_prototype_route() {
+        let detail = build_preview_transition_summary_detail(
+            "dedicated-renderer",
+            None,
+            "canary",
+            Some(ACTUAL_PRIMARY_LANE_TRACK),
+            Some(2410),
+            Some(1605),
+            Some(2410),
+            Some("warm-ready"),
+        );
+
+        assert!(detail.contains("laneOwner=dedicated-renderer"));
+        assert!(detail.contains("implementationTrack=actual-primary-lane"));
+        assert!(detail.contains("routeStage=canary"));
+    }
+
+    #[test]
+    fn legacy_snapshot_without_track_stays_untyped() {
+        let route = resolved_preview_renderer_route_from_snapshot(&PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+            implementation_track: None,
+        })
+        .expect("legacy snapshot should still parse");
+
+        assert_eq!(route.route_stage, "canary");
+        assert_eq!(route.implementation_track, None);
     }
 
     #[test]
