@@ -32,12 +32,13 @@ const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
 #[cfg(test)]
 const TEST_RENDER_QUEUE_LIMIT_ENV: &str = "BOOTHY_TEST_RENDER_QUEUE_LIMIT";
-// Keep the render-backed close display-sized enough to stay faithful on hardware,
-// while still avoiding the old full-size RAW path.
+const DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY: &str = ":memory:";
+// Keep the render-backed close faithful enough for booth verification while
+// shrinking the fast-preview rerender cost toward the 2500ms hardware gate.
 pub(crate) const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 1024;
 pub(crate) const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 1024;
-pub(crate) const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 768;
-pub(crate) const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 768;
+pub(crate) const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 512;
+pub(crate) const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 512;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -350,6 +351,11 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
     }
 
     let output_root = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let staging_output_path = build_peer_staging_render_output_path(
+        output_path,
+        "preview-rendering",
+        RenderIntent::Preview,
+    );
     fs::create_dir_all(output_root).map_err(|error| RenderWorkerError {
         reason_code: "render-output-dir-unavailable",
         customer_message: safe_render_failure_message(RenderIntent::Preview),
@@ -357,6 +363,7 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
             "speculative render output directory를 준비하지 못했어요: {error}"
         ),
     })?;
+    let _ = fs::remove_file(&staging_output_path);
     let _ = fs::remove_file(output_path);
 
     let invocation = build_darktable_invocation_from_source(
@@ -364,7 +371,7 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
         &bundle.darktable_version,
         &bundle.xmp_template_path,
         source_asset_path,
-        output_path,
+        &staging_output_path,
         RenderIntent::Preview,
         PreviewRenderSourceKind::FastPreviewRaster,
     );
@@ -384,7 +391,16 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
 
     let render_started = Instant::now();
     let invocation_result = run_darktable_invocation(&invocation, RenderIntent::Preview)?;
-    validate_render_output(output_path, RenderIntent::Preview)?;
+    if let Err(error) = validate_render_output(&staging_output_path, RenderIntent::Preview) {
+        let _ = fs::remove_file(&staging_output_path);
+        return Err(error);
+    }
+    if let Err(error) =
+        promote_render_output(&staging_output_path, output_path, RenderIntent::Preview)
+    {
+        let _ = fs::remove_file(&staging_output_path);
+        return Err(error);
+    }
     let render_elapsed_ms = render_started.elapsed().as_millis();
 
     Ok(PreparedPreviewRender {
@@ -966,6 +982,29 @@ fn build_staging_render_output_path(
     output_root.join(format!("{capture_id}.{stage_label}.jpg"))
 }
 
+fn build_peer_staging_render_output_path(
+    output_path: &Path,
+    stage_label: &str,
+    intent: RenderIntent,
+) -> PathBuf {
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(match intent {
+            RenderIntent::Preview => "preview",
+            RenderIntent::Final => "final",
+        });
+    let extension = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("jpg");
+
+    parent.join(format!("{stem}.{stage_label}.{extension}"))
+}
+
 fn promote_render_output(
     staging_output_path: &Path,
     output_path: &Path,
@@ -1323,7 +1362,10 @@ fn build_darktable_invocation_from_source(
         "--configdir".into(),
         configdir.to_string_lossy().replace('\\', "/"),
         "--library".into(),
-        library.to_string_lossy().replace('\\', "/"),
+        match intent {
+            RenderIntent::Preview => DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY.into(),
+            RenderIntent::Final => library.to_string_lossy().replace('\\', "/"),
+        },
     ]);
 
     DarktableInvocation {
@@ -1392,7 +1434,9 @@ fn resolve_preview_render_source(
                 }
             }
 
-            if is_valid_render_preview_asset(&canonical_preview_asset) {
+            if capture.timing.fast_preview_visible_at_ms.is_some()
+                && is_valid_render_preview_asset(&canonical_preview_asset)
+            {
                 return PreviewRenderSource {
                     asset_path: canonical_preview_asset.to_string_lossy().into_owned(),
                     kind: PreviewRenderSourceKind::FastPreviewRaster,
@@ -1917,6 +1961,9 @@ mod tests {
         assert!(invocation
             .arguments
             .contains(&"--disable-opencl".to_string()));
+        assert!(invocation.arguments.windows(2).any(|pair| {
+            pair[0] == "--library" && pair[1] == DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY
+        }));
         assert_eq!(
             invocation.render_source_kind,
             PreviewRenderSourceKind::RawOriginal
@@ -2342,6 +2389,9 @@ mod tests {
         assert!(invocation
             .arguments
             .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert!(invocation.arguments.windows(2).any(|pair| {
+            pair[0] == "--library" && pair[1] == DARKTABLE_PREVIEW_LIBRARY_IN_MEMORY
+        }));
         assert!(
             FAST_PREVIEW_RENDER_MAX_WIDTH_PX < RAW_PREVIEW_MAX_WIDTH_PX,
             "fast-preview-raster should use a smaller cap than raw-original preview"

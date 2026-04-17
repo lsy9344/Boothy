@@ -68,7 +68,7 @@ const PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE_ENV: &str =
     "BOOTHY_TEST_PREVIEW_PROMOTION_EVIDENCE_WRITE_FAILURE";
 const PREVIEW_RENDERER_ROUTE_POLICY_SCHEMA_VERSION: &str = "preview-renderer-route-policy/v1";
 const PREVIEW_PROMOTION_IMPROVEMENT_SUMMARY: &str =
-    "strategyVersion=2026-04-16d;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=768x768;rawPreviewCapPx=1024x1024";
+    "strategyVersion=2026-04-18a;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=512x512;rawPreviewCapPx=1024x1024";
 const DEDICATED_RENDERER_PROCESS_TIMEOUT: Duration = Duration::from_secs(50);
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

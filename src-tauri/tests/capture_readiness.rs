@@ -1936,9 +1936,12 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=fast-preview-promoted"));
     assert!(
-        timing_events.contains("event=preview-render-failed")
-            || timing_events.contains("sourceAsset=fast-preview-raster"),
+        timing_events.contains("sourceAsset=fast-preview-raster"),
         "late same-capture preview should restart the speculative fast path before raw fallback"
+    );
+    assert!(
+        !timing_events.contains("event=preview-render-failed"),
+        "speculative same-capture close should not log a false render failure after promotion"
     );
 
     let _ = fs::remove_dir_all(base_dir);

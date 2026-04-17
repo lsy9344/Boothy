@@ -1726,11 +1726,10 @@ fn should_skip_speculative_preview_render_for_route(
     warm_state_snapshot: Option<&PreviewRendererWarmStateSnapshot>,
     active_preset: &ActivePresetBinding,
 ) -> bool {
-    let uses_actual_primary_lane_route = route_snapshot.route == "actual-primary-lane"
-        || (route_snapshot.route == "local-renderer-sidecar"
-            && route_snapshot.implementation_track.as_deref() == Some("actual-primary-lane"));
+    let uses_legacy_dedicated_route = route_snapshot.route == "local-renderer-sidecar"
+        && route_snapshot.implementation_track.as_deref() != Some("actual-primary-lane");
 
-    if !uses_actual_primary_lane_route
+    if !uses_legacy_dedicated_route
         || !matches!(route_snapshot.route_stage.as_str(), "canary" | "default")
         || route_snapshot.fallback_reason_code.is_some()
     {
@@ -1888,12 +1887,39 @@ mod tests {
     }
 
     #[test]
-    fn skips_speculative_preview_when_dedicated_route_is_warm_and_active() {
+    fn keeps_speculative_preview_when_actual_primary_lane_is_warm_and_active() {
         let route_snapshot = PreviewRendererRouteSnapshot {
             route: "local-renderer-sidecar".into(),
             route_stage: "canary".into(),
             fallback_reason_code: None,
             implementation_track: Some("actual-primary-lane".into()),
+        };
+        let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
+            preset_id: "preset_test-look".into(),
+            published_version: "2026.03.31".into(),
+            state: "warm-hit".into(),
+            observed_at: "2026-04-14T06:30:00Z".into(),
+            diagnostics_detail_path: None,
+        };
+        let active_preset = ActivePresetBinding {
+            preset_id: "preset_test-look".into(),
+            published_version: "2026.03.31".into(),
+        };
+
+        assert!(!should_skip_speculative_preview_render_for_route(
+            &route_snapshot,
+            Some(&warm_state_snapshot),
+            &active_preset,
+        ));
+    }
+
+    #[test]
+    fn skips_speculative_preview_only_for_legacy_dedicated_route_when_warm_and_active() {
+        let route_snapshot = PreviewRendererRouteSnapshot {
+            route: "local-renderer-sidecar".into(),
+            route_stage: "canary".into(),
+            fallback_reason_code: None,
+            implementation_track: None,
         };
         let warm_state_snapshot = PreviewRendererWarmStateSnapshot {
             preset_id: "preset_test-look".into(),

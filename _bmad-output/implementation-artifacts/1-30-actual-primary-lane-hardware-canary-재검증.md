@@ -195,6 +195,35 @@ GPT-5 Codex
 - `pnpm lint`
 - `pnpm test:run`
 - `cargo test`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\session.json`
+- `Get-Content -Tail 200 C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\diagnostics\timing-events.log`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\diagnostics\dedicated-renderer\captured-preview-renderer-policy-capture_20260417145722178_cda7f3f391.json`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\diagnostics\dedicated-renderer\captured-catalog-state-capture_20260417145722178_cda7f3f391.json`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72cbb23ac0d6c\diagnostics\dedicated-renderer\warm-state-preset_new-draft-2-2026.04.10.json`
+- `cargo test keeps_speculative_preview_when_actual_primary_lane_is_warm_and_active --lib`
+- `cargo test preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close --lib`
+- `cargo test --test capture_readiness -- --test-threads=1`
+- `cargo test -- --test-threads=1`
+- `Get-ChildItem C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\diagnostics\dedicated-renderer`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\session.json`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl`
+- `rg -n "speculative-preview-skipped|preview-render-failed|capture_preview_transition_summary|fast-preview-promoted" C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\diagnostics\timing-events.log`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\diagnostics\dedicated-renderer\captured-preview-renderer-policy-capture_20260417152640743_872e63439c.json`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72e63461d4218\diagnostics\dedicated-renderer\captured-catalog-state-capture_20260417152640743_872e63439c.json`
+- `cargo test complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallback --test capture_readiness -- --exact`
+- `cargo test --test capture_readiness -- --test-threads=1`
+- `cargo test --test dedicated_renderer -- --test-threads=1`
+- `cargo test preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close --lib`
+- `cargo test keeps_speculative_preview_when_actual_primary_lane_is_warm_and_active --lib`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72f841c327b68\session.json`
+- `Get-Content -Tail 260 C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72f841c327b68\diagnostics\timing-events.log`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72f841c327b68\diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl`
+- `Get-ChildItem C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72f841c327b68\diagnostics\dedicated-renderer`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72ffe3a9f1244\session.json`
+- `Get-Content -Tail 280 C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72ffe3a9f1244\diagnostics\timing-events.log`
+- `Get-Content -Raw C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a72ffe3a9f1244\diagnostics\dedicated-renderer\preview-promotion-evidence.jsonl`
+- `cargo test fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview --lib`
 
 ### Completion Notes List
 
@@ -204,7 +233,24 @@ GPT-5 Codex
 - [ ] Hardware ledger updated with actual-lane canary verdict
 - Targeted Story 1.30 verification passed after replacing the last stale `Story 1.24` default-gate rejection copy with actual primary lane wording.
 - Full JS regression (`pnpm test:run`) passed.
-- Full Rust regression is currently blocked by `render::tests::preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close`, which failed during `cargo test` in the existing render lane worktree state and is outside this story's mapped task list.
+- Actual-lane follow-up patch now keeps speculative same-capture close active even when the route is warm on `actual-primary-lane`, instead of skipping the close path on dedicated-renderer warm-state assumptions that do not match the host-owned actual lane.
+- Direct preview render no longer treats a pending canonical preview file as a reusable fast-preview fallback unless first-visible fast-preview evidence was actually recorded for that capture.
+- Rust verification relevant to the preview close path passed after the patch: the targeted regression tests passed, `cargo test --test capture_readiness -- --test-threads=1` passed, and the broader single-thread Rust regression passed through the preview/canary suites before hitting unrelated `operator_audit` failures outside this story scope.
+- User-reported real capture session `session_000000000018a72cbb23ac0d6c` was inspected as Story 1.30 field evidence. Session manifest and selected capture records stayed on `route=actual-primary-lane`, `routeStage=canary`, `implementationTrack=actual-primary-lane`, `laneOwner=local-fullscreen-lane`, and the captured route-policy snapshot preserved `preset_new-draft-2@2026.04.10` on operator canary.
+- The same session still reads as `No-Go` candidate evidence for Story 1.30: 5 preview-promotion evidence rows were recorded, all 5 missed the `sameCaptureFullScreenVisibleMs <= 2500ms` gate (`min=9129ms`, `max=24076ms`, `avg=15610ms`), so repeated success-path evidence was not achieved.
+- Timing evidence also showed one early canary failure before the over-budget successes: `capture_20260417145623072_2b1612892e` logged `preview-render-failed reason=render-process-failed`, and later captures stayed `fallbackReason=none` / `warmState=warm-hit` but still closed far beyond KPI.
+- This field session is suitable as story reference input, but it has not yet been assembled into a canonical Story 1.30 evidence bundle or ledger row with rollback proof / final blocker accounting.
+- User-reported real capture session `session_000000000018a72e63461d4218` was also inspected as newer Story 1.30 field evidence. The session manifest stayed on `route=actual-primary-lane`, `routeStage=canary`, `implementationTrack=actual-primary-lane`, `fallbackReasonCode=null`, and `warmState=warm-hit`, while the captured route-policy snapshot still preserved `preset_new-draft-2@2026.04.10` as an operator canary entry and the captured catalog snapshot matched catalog revision `3`.
+- This newer session shows improved but still failing same-capture close timings. All 6 captures in `session.json` ended `previewReady` but also `previewBudgetState=exceededBudget`, and the evidence log recorded 6 close-time rows with `sameCaptureFullScreenVisibleMs` between `7532ms` and `9169ms`; 5 later visible-owner refresh rows then extended that value to `14457ms` through `14910ms`. Story 1.30 therefore still lacks the required `<= 2500ms` repeated actual-lane success-path evidence and remains a `No-Go` candidate.
+- Timing evidence for the same session showed `fast-preview-promoted` on every capture and no `speculative-preview-skipped` entry, but each capture still ended with `preview-render-failed reason=render-output-missing` immediately after the `capture_preview_transition_summary`. That makes this session useful as field evidence for progress, not as a canonical `Go` bundle.
+- Root cause of the repeated `render-output-missing` evidence was a host-side race in the speculative same-capture close path: the host promoted the speculative preview file into the canonical preview path as soon as it became visible, while the worker that created that file was still validating the same on-disk path. In field logs that produced a false post-success `preview-render-failed` even though the close had already succeeded.
+- The speculative close path now renders into a sibling staging file and only promotes into the speculative output path after validation, matching the safer canonical preview promotion pattern. Related Rust verification passed: the targeted speculative-close regression, full `capture_readiness`, full `dedicated_renderer`, and the two earlier actual-lane/pending-preview unit regressions all passed after the fix.
+- User-reported real capture session `session_000000000018a72f841c327b68` was inspected after the speculative-close race fix. The session stayed on `route=actual-primary-lane`, `routeStage=canary`, `implementationTrack=actual-primary-lane`, `laneOwner=local-fullscreen-lane`, `fallbackReasonCode=null`, and `warmState=warm-hit` across all 6 captures, and the earlier false `preview-render-failed reason=render-output-missing` evidence no longer appeared in the timing log.
+- This newer field session still remains a `No-Go` candidate for Story 1.30 because close latency is the remaining blocker. The 6 close-time evidence rows landed between `7551ms` and `9368ms`, and the render-ready detail for each same-capture close shows `sourceAsset=fast-preview-raster` with `elapsedMs` between `4324ms` and `4693ms`. The corresponding `originalVisibleToPresetAppliedVisibleMs` values also stayed between `4428ms` and `4764ms`, so the product gate is now blocked by render cost rather than false-failure noise.
+- To reduce that cost, the fast-preview rerender cap for same-capture close was lowered from `768x768` to `512x512` in both the host actual-lane path and the dedicated-renderer sidecar contract metadata. The evidence improvement summary was versioned to `2026-04-18a`, and the relevant Rust verification (`preview_invocation_avoids_pending_canonical_preview_assets_during_truthful_close`, full `capture_readiness`, and full `dedicated_renderer`) passed after the cap change.
+- User-reported real capture session `session_000000000018a72ffe3a9f1244` was then inspected after the `512x512` cap change. The field evidence stayed on `route=actual-primary-lane`, `routeStage=canary`, `implementationTrack=actual-primary-lane`, `fallbackReasonCode=null`, and `warmState=warm-hit`, and the render-ready detail correctly reflected `fastPreviewCapPx=512x512`.
+- That new session showed the cap reduction alone was insufficient: close-time `sameCaptureFullScreenVisibleMs` still landed between `7805ms` and `9122ms`, while the fast-preview rerender itself still cost `4404ms` to `4728ms`. Product-wise, the path remained blocked by fixed preview invocation cost rather than by output size.
+- The remaining root-cause hypothesis from the session trace was that the host actual-lane preview close still opened a disk-backed preview library (`.boothy-darktable/preview/library.db`) on every render, while the sidecar prototype path already used `--library :memory:` and the evidence summary had long advertised `previewCliLibrary=memory`. The host preview invocation now matches that cheaper in-memory preview library path for `RenderIntent::Preview`, while final renders remain on the existing disk-backed library path. Targeted preview invocation regression tests and full `capture_readiness` passed after the change, but this latest in-memory-library optimization still needs fresh hardware rerun evidence.
 
 ### File List
 
@@ -214,6 +260,8 @@ GPT-5 Codex
 - `src/shared-contracts/schemas/hardware-validation.ts`
 - `src/shared-contracts/contracts.test.ts`
 - `src-tauri/src/branch_config/mod.rs`
+- `src-tauri/src/capture/ingest_pipeline.rs`
+- `src-tauri/src/render/mod.rs`
 - `src-tauri/tests/branch_rollout.rs`
 - `src/governance/hardware-validation-governance.test.ts`
 - `docs/runbooks/preview-promotion-evidence-package.md`

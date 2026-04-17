@@ -496,7 +496,7 @@ fn actual_primary_lane_replaces_legacy_preview_placeholder_with_host_owned_close
             .get("improvementSummary")
             .and_then(|value| value.as_str()),
         Some(
-            "strategyVersion=2026-04-16d;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=768x768;rawPreviewCapPx=1024x1024"
+            "strategyVersion=2026-04-18a;promotionGateTargetMs=2500;displaySizedClosePreview=true;sidecarStagingPromote=true;sidecarWindowsPathNormalization=true;alwaysPassCanonicalPreviewCandidate=true;waitForLateFastPreviewCandidate=true;lateFastPreviewWaitBudgetMs=500;waitForLateHelperFastPreviewReady=true;lateHelperFastPreviewWaitBudgetMs=500;dedupeEarlyFastPreviewPromotion=true;skipRedundantShadowWarmupAfterDedicatedWarmup=true;skipSpeculativeCloseWhenDedicatedRouteWarm=true;previewCliLibrary=memory;previewCliDisableOpencl=true;hostPreviewDisableOpencl=true;fastPreviewCapPx=512x512;rawPreviewCapPx=1024x1024"
         )
     );
     let expected_catalog_snapshot_path = SessionPaths::new(&base_dir, &session.session_id)
