@@ -114,7 +114,7 @@ booth customer로서,
 
 - PRD는 capture success, preview truth, final completion을 분리하라고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - PRD는 same-capture fast preview를 허용하되, preset-applied preview ready와 혼동하면 안 된다고 명시한다. [Source: _bmad-output/planning-artifacts/prd.md#FR-004 Current-Session Capture Persistence and Truthful Preview Confidence]
-- NFR-003은 current-session image를 가능한 빨리 보여주되, 5초 기준의 preset-applied preview ready truth를 따로 유지하도록 보정됐다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
+- NFR-003은 current-session image의 faster first-visible feel과 release-close 판단을 분리해 읽도록 재정렬됐다. current official preview-track gate는 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 본다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
 - Architecture는 helper optional fast-preview handoff, canonical preview promotion, same-path replacement, split telemetry를 허용한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
 - UX는 `Preview Waiting` 중 same-capture fast preview를 먼저 보여줄 수 있어도 상태 자체는 그대로 유지하라고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 

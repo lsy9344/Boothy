@@ -1,8 +1,17 @@
 # Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
 
-Status: in-progress
+Status: review
 
 Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Story 1.9는 `review / No-Go` 상태로 유지하고 Story 1.10이 다음 truth-critical corrective follow-up을 소유한다. 이번 스토리의 목적은 UI 표현을 다시 만지는 것이 아니라, booth hardware에서 검증된 known-good preview invocation으로 correctness를 복구하고, per-session seam 계측을 다시 닫으며, first-visible 경로를 per-capture one-shot spawn이 아닌 상주형 worker 중심 topology로 승격하는 것이다.
+
+## Current Role In This Worktree
+
+- `2026-04-19` 기준 이 문서는 active implementation restart를 지시하는 문서가 아니다.
+- 현재 이 worktree는 older `resident first-visible` line을 다시 검증하는 `validation candidate spec / revalidation context`로 읽어야 한다.
+- 이 lane은 historically better customer-perceived speed를 보였기 때문에 다시 보는 것이며, current official release gate를 이미 닫았기 때문에 돌아온 것이 아니다.
+- current release judgment는 여전히 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
+- GPU-enabled acceleration은 이 lane에서 함께 검증할 가설일 뿐, lane을 자동으로 승격시키는 성공 보장이 아니다.
+- 아래 구현 체크리스트와 기록은 historical trace다. current purpose는 old lane을 release-proof로 오해하지 않고 revalidation scope를 잠그는 데 있다.
 
 ### Validation Gate Reference
 
@@ -10,11 +19,16 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
   - `HV-05` truthful `Preview Waiting -> Preview Ready`
   - approved booth hardware latency package
   - per-session seam log package (`request-capture -> file-arrived -> fast-preview-visible -> preview-render-start -> capture_preview_ready -> recent-session-visible`)
+- Rerun execution reference:
+  - `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`
 - Current hardware gate: `No-Go`
 - Close policy:
   - automated pass만으로 닫지 않는다.
   - latest approved booth session 1개만 봐도 first-visible lane과 later render-backed truth lane을 같은 세션 경로에서 다시 닫을 수 있어야 한다.
+  - current official release judgment는 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 만족해야 한다.
   - preview lane correctness, replacement close, queue saturation fallback, `Preview Waiting` truth 유지가 함께 증명돼야 한다.
+  - historically better first-visible / replacement comparison numbers는 validation priority를 높여 주는 근거일 뿐, current release-proof로 읽으면 안 된다.
+  - GPU 활성/가속은 optional acceleration hypothesis로만 다루며, lane의 공식 합격선을 바꾸지 않는다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -23,6 +37,13 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
 booth customer로서,
 방금 찍은 사진이 제품 기준에 맞는 속도로 최근 세션에 나타나길 원한다.
 그래서 저장 성공 이후 긴 blank wait나 불안정한 preview replacement 없이 믿고 다음 촬영을 이어갈 수 있다.
+
+## Current Validation Questions
+
+1. 이 old lane이 실제 approved hardware에서 `빠른 first-visible + later truthful close` 구조를 current contract 그대로 다시 만들 수 있는가
+2. 그 결과가 current dual release gate에 얼마나 가까운가, 그리고 어디서 여전히 멀어지는가
+3. GPU-enabled acceleration이 있다면 first-visible과 truthful close를 함께 줄이는 데 실제 도움이 되는가
+4. historical better run이 current release-proof가 아니라는 경계를 깨지 않고도, 다음 실험 범위를 더 좁힐 수 있는가
 
 ## Acceptance Criteria
 
@@ -34,7 +55,10 @@ booth customer로서,
 6. first-visible source는 hardware 상태와 path health에 따라 fast preview, camera thumbnail, intermediate preview, resident-worker output 중 아무 approved same-capture source든 선택할 수 있다. 다만 booth customer experience는 preset-applied preview readiness가 실제로 닫히기 전까지 truthful `Preview Waiting`을 유지해야 한다.
 7. resident worker가 warm state를 잃거나 queue saturation에 빠지거나 안전한 first-visible result를 만들지 못해도 capture truth는 보존돼야 한다. booth는 false-ready나 cross-session leakage 대신 truthful `Preview Waiting`과 normal render follow-up path로 안전 fallback 해야 한다.
 
-## Tasks / Subtasks
+## Historical Implementation Checklist (Trace Only)
+
+이 섹션은 `2026-04-04` 시점의 implementation trace를 보존하기 위한 것이다.
+현재 worktree에서는 자동 재개용 구현 계획이 아니라, old lane이 어떤 가정과 경계 위에 서 있었는지 확인하는 근거로만 읽는다.
 
 - [x] known-good preview invocation baseline을 고정한다. (AC: 1, 5, 6, 7)
   - [x] `src-tauri/src/render/mod.rs` 안에 흩어진 preview invocation 조건을 booth hardware validated baseline으로 재정렬하고, 기본 preview lane에서 허용되는 flag/argument/source policy를 한 곳에서 판정하게 한다.
@@ -54,7 +78,7 @@ booth customer로서,
 - [ ] per-session seam instrumentation을 복구한다. (AC: 2)
   - [ ] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
   - [ ] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
-  - [ ] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다.
+  - [ ] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다. current rerun checklist와 package definition은 `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`를 기준으로 사용한다.
 
 - [x] truth ownership과 customer-safe UX를 유지한다. (AC: 5, 6, 7)
   - [x] `previewReady`, `preview.readyAtMs`, related readiness update는 계속 later render-backed booth-safe preview만 올리도록 유지한다.
@@ -64,7 +88,7 @@ booth customer로서,
 - [ ] regression test와 hardware validation package를 준비한다. (AC: 1, 2, 3, 4, 5, 6, 7)
   - [ ] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
   - [ ] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
-  - [ ] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다.
+  - [ ] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다. 현재 rerun 직전 실행 계획은 `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`에 고정한다.
 
 ### Review Findings
 
@@ -84,6 +108,7 @@ booth customer로서,
 - 대신 실장비에서 흔들린 preview lane correctness를 known-good baseline으로 되돌리고, 제품 기준 미달인 first-visible 속도를 topology 변경으로 해결하는 corrective story다.
 - 고객 약속은 그대로다. 먼저 같은 컷이 보일 수는 있지만, preset-applied preview가 닫히기 전까지는 계속 truthful `Preview Waiting`이다.
 - 엔진 교체는 아직 범위 밖이다. 이번 단계는 `same engine, different topology`다.
+- 다만 `2026-04-19` 현재 이 story의 역할은 active implementation을 밀어붙이는 것이 아니라, old lane을 validation candidate로 다시 읽을 때 필요한 경계와 evidence scope를 잠그는 것이다.
 
 ### 왜 이 스토리가 새로 필요해졌는가
 
@@ -122,6 +147,7 @@ booth customer로서,
 - `src-tauri/src/capture/ingest_pipeline.rs`에는 `fast-preview-visible`, `capture_preview_ready` 기록과 canonical preview promotion 흐름이 이미 존재한다.
 - `src-tauri/src/commands/runtime_commands.rs`와 `src-tauri/src/timing/mod.rs`를 통해 `recent-session-visible` 같은 per-session timing event를 남길 기반도 이미 있다.
 - 즉 resident worker를 완전히 새로 발명하는 것보다, existing warm-up / queue / timing seams를 default preview topology로 재배선하는 편이 현재 구조와 가장 잘 맞는다.
+- 그러나 current worktree에서 이것을 곧바로 다시 구현 재개하라는 뜻은 아니다. 먼저 이 topology를 validation lane으로 재정의하고 current release gate와 비교 가능한 근거를 다시 잠가야 한다.
 
 ### 이전 스토리 인텔리전스
 
@@ -188,10 +214,11 @@ booth customer로서,
 
 ### 최신 기술 / 제품 컨텍스트
 
-- 2026-04-03 internal technical research는 현재 제품의 1차 정답을 `앱 셸 유지 + first-visible 전용 저지연 sidecar/worker`로 정리했고, 그 다음 대안으로 local dedicated renderer, watch-folder bridge, edge appliance를 제시했다. 이번 스토리는 그중 가장 작은 구조 변경 단계다. [Source: _bmad-output/planning-artifacts/research/technical-filtered-thumbnail-latency-research-2026-04-03.md]
+- 2026-04-03 internal technical research는 당시 제품의 유력 방향을 `앱 셸 유지 + first-visible 전용 저지연 sidecar/worker`로 정리했고, 그 다음 대안으로 local dedicated renderer, watch-folder bridge, edge appliance를 제시했다. `2026-04-19` 현재는 이것을 current release-proof 정답이 아니라 old lane validation candidate의 historical rationale로 읽어야 한다. [Source: _bmad-output/planning-artifacts/research/technical-filtered-thumbnail-latency-research-2026-04-03.md]
 - 2026-04-03 recent-session fast preview research는 current front-end가 이미 pending preview를 natural same-slot replacement로 소비할 수 있으므로, 핵심은 UI 대공사가 아니라 same-capture source를 더 빠르고 안정적으로 공급하는 worker topology라고 정리했다. [Source: _bmad-output/planning-artifacts/research/technical-recent-session-fast-preview-research-2026-04-03.md]
 - official darktable 문서와 내부 research는 embedded thumbnail/early preview를 먼저 보여주고 later 정확한 preview로 교체하는 staged preview 패턴이 업계적으로 자연스럽다는 점을 재확인한다. 이 문장은 research artifact의 공식 문서 종합을 요약한 해석이다. [Source: _bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md]
 - official Tauri sidecar 문서 기준으로도 외부 바이너리를 bundle하고 Rust host에서 sidecar로 호출하는 패턴은 현재 helper/worker 구조와 충돌하지 않는다. 따라서 이번 스토리에 별도 플랫폼 pivot은 필요 없다. 이 문장은 공식 sidecar 문서를 현재 repo 구조에 적용한 추론이다.
+- GPU-enabled acceleration은 current worktree에서 함께 점검할 수 있는 유효한 hypothesis지만, 문서상 공식 성공 보장이나 route promotion 근거로 읽어서는 안 된다.
 
 ### 금지사항 / 안티패턴
 
@@ -221,7 +248,7 @@ booth customer로서,
 - [Source: docs/contracts/session-manifest.md]
 - [Source: history/recent-session-thumbnail-speed-brief.md]
 
-## Dev Agent Record
+## Historical Implementation Record
 
 ### Agent Model Used
 

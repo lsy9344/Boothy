@@ -23,7 +23,7 @@ booth customer로서,
 
 1. booth가 유효한 촬영 가능 상태이고 활성 프리셋이 선택된 상태에서 고객이 촬영에 성공하면, 새 소스 사진은 성공 안내 전에 활성 세션에 먼저 안전하게 저장되어야 한다. 또한 활성 프리셋은 캡처 또는 확인 surface에서 계속 보여야 한다.
 2. 성공적으로 저장된 촬영의 고객 안전 프리뷰가 아직 준비되지 않았다면 booth는 `Preview Waiting`에 진입해야 하며, 첫 문장은 사진 저장 완료를 확인하고 다음 문장은 확인용 프리뷰 준비 중과 지금 가능한 다음 행동을 설명해야 한다.
-3. 성공적으로 인정된 촬영의 즉시 결과는 승인된 하드웨어에서 1초 이내에 인지 가능해야 하며, 현재 세션 프리뷰 확인은 95백분위 기준 5초 이내에 보여야 한다. 준비가 더 걸리면 false-ready 상태 대신 truthful `Preview Waiting`을 유지해야 한다.
+3. 성공적으로 인정된 촬영의 즉시 결과는 승인된 하드웨어에서 1초 이내에 인지 가능해야 하며, 프리뷰가 아직 준비되지 않았다면 false-ready 상태 대신 truthful `Preview Waiting`을 유지해야 한다. preview-track release judgment는 이 스토리 단독의 5초 기준이 아니라 current official dual gate로 별도 읽어야 한다.
 4. booth가 `Preview Waiting` 상태일 때 최신 사진 레일이 아직 비어 있어도 현재 세션 기준 정상일 수 있음을 설명해야 하며, 고객에게 내부 렌더 실패 원인이나 helper/filesystem 진단어를 노출하면 안 된다.
 
 ## Tasks / Subtasks
@@ -46,8 +46,8 @@ booth customer로서,
   - [x] 최신 사진 레일은 active session에 상관된 preview asset만 사용하고, preview ready 이후에만 새 항목을 노출한다.
   - [x] in-memory cache는 화면 반응성을 위해 사용할 수 있지만 session folder truth보다 우선하면 안 된다.
 - [x] 성능 계측과 truthful fallback을 추가한다. (AC: 3)
-  - [x] capture acknowledged 시각과 preview visible 시각을 기록할 seam을 두어 1초/5초 예산 검증이 가능하도록 한다.
-  - [x] 5초를 넘는 경우 false completion 또는 빈 성공 상태를 보여주지 말고 explicit `Preview Waiting`을 유지한다.
+  - [x] capture acknowledged 시각과 preview visible 시각을 기록할 seam을 두어 1초 ack 검증과 later preview truth 검증이 가능하도록 한다.
+  - [x] preview 준비가 더 걸리는 경우 false completion 또는 빈 성공 상태를 보여주지 말고 explicit `Preview Waiting`을 유지한다.
   - [x] retry 가능한 지연과 safe boundary 초과를 host error envelope로 구분하되, 고객에게는 wait/call guidance만 전달한다.
 - [x] 테스트로 truthfulness와 세션 격리를 잠근다. (AC: 1, 2, 3, 4)
   - [x] contract test: session manifest, capture result payload, preview status payload의 필수 필드와 schema version을 검증한다.
@@ -155,7 +155,7 @@ booth customer로서,
   - capture success 후 preview가 아직 없으면 `previewWaiting`이 먼저 보이고, preview asset이 준비되면 그때 rail이 갱신된다.
   - 다른 세션의 asset이 현재 세션 latest photo rail에 노출되지 않는다.
   - active preset visibility가 capture/waiting/confirmation 흐름 내내 유지된다.
-  - performance instrumentation이 1초 ack, 5초 p95 preview readiness 측정을 지원한다.
+  - performance instrumentation이 1초 ack 측정과 preview truth seam 검증을 지원한다. current preview-track release gate는 dual 3000ms 기준으로 별도 읽는다.
 - 아키텍처 문서상 테스트 스택은 강하게 고정되어 있지 않다. 대신 contract, session manifest, host adapter, booth workflow seam 중심으로 검증해야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Starter Template Evaluation]
 
 ### 금지사항 / 안티패턴

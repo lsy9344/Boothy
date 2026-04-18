@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-04-03 08:26 +09:00
+Last Updated: 2026-04-19 18:10 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -10,6 +10,22 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 - `done` requires both `automated pass` and a canonical hardware ledger row marked `Go`.
 - If hardware evidence is missing, incomplete, or recorded as `No-Go`, the story stays in `review` or returns to `review`.
 - Release promotion stays on `release hold` until every gated story needed for the release baseline has a `Go` row in this ledger.
+
+## Current Preview Track Interpretation
+
+- Current preview-track release judgment requires both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms` on approved hardware.
+- The newer `actual-primary-lane` route is currently interpreted as a bounded `No-Go`, not as an active `Go` candidate.
+- This worktree currently reuses the older `resident first-visible` line as a validation lane because it previously showed better customer-perceived speed.
+- That older line is not release-proof. Historical better runs are comparison evidence only until they are revalidated against the current dual hardware gate.
+- GPU-enabled acceleration belongs here only as an acceleration hypothesis to test inside the validation lane. It is not a standalone release decision.
+
+## Preview Route Decision Snapshot
+
+| Route | Current role | Current status | Interpretation | Evidence |
+| --- | --- | --- | --- | --- |
+| newer `actual-primary-lane` | former primary release candidate | `bounded No-Go` | repeated approved-hardware reruns failed the current dual release gate; further open-ended tuning is paused | `docs/runbooks/preview-track-route-decision-20260418.md` |
+| older `resident first-visible` line | current validation lane | `revalidation pending` | historically stronger product feel, but not yet proven against the current dual release gate | `docs/runbooks/current-actual-lane-handoff-20260419.md`; `_bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md` |
+| GPU-enabled acceleration on old lane | validation hypothesis | `unproven` | may be tested to improve first-visible and truthful close together, but does not change the release gate or route status by itself | `docs/runbooks/current-actual-lane-handoff-20260419.md` |
 
 ## Canonical Release-Gated Stories
 
@@ -27,6 +43,7 @@ Supporting regression / follow-up notes:
 - Story 1.7 supplies implementation-level capture correlation evidence for `HV-04` and `HV-05`, but it is not the canonical release close owner in this ledger.
 - Story 1.8 is the corrective follow-up that proves selected preset apply truth across preview/final boundaries, and it remains `review` until one hardware package ties `session.json` preset binding, `bundle.json` render metadata, preview/final outputs, and diagnostics together.
 - Story 2.3 is the supporting follow-up validation note for `HV-06`; Story 1.3 is not reopened as an independent close owner.
+- Story 1.10 currently serves as the revalidation spec for the old `resident first-visible` lane. Historical implementation evidence exists, but the lane is not counted as release-proof until a new hardware package closes the current dual gate.
 
 ## Sprint Review Gateboard
 
@@ -36,6 +53,7 @@ Supporting regression / follow-up notes:
 | 1.5 | Pass | Pass | Go | Closed. HV-04/HV-05 package confirmed from persisted RAW, preview, and session timing metrics. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a1cccdd183a524\` |
 | 1.6 | Pass | Partial helper/readiness proof | No-Go | Reconnect-safe `HV-10` package and canonical helper metadata were not normalized into one close row. | Noah Lee | `history/camera-helper-troubleshooting-history.md` |
 | 1.8 | Pass | User field observation recorded; canonical package still missing | No-Go | 2026-04-03 최신 재현 세션에서 `Preview Waiting`은 즉시 보였지만 fast preview는 여전히 비어 있었고, 약 `3.3초 ~ 3.4초` 뒤 render-backed preset preview만 나타났다. `file-arrived`는 fast thumbnail 시도보다 먼저 닫혔으나 helper가 `fast-thumbnail-download-failed` 뒤 customer-visible fast preview를 만들지 못했다. `HV-05/HV-07/HV-08/HV-11/HV-12` canonical evidence는 아직 한 회차로 묶이지 않았다. | Noah Lee | `_bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md` |
+| 1.10 | Historical implementation evidence exists; current lane revalidation not yet rerun | Revalidation pending | No-Go for release judgment | The older `resident first-visible` line is the current validation lane because it once showed better feel metrics, but those better runs were legacy comparison numbers and do not prove the current dual 3000ms release gate. | Noah Lee | `docs/runbooks/current-actual-lane-handoff-20260419.md` |
 | 3.2 | Pass | Missing | No-Go | `HV-08/HV-11` execution and evidence package are not yet recorded. | Noah Lee | `TBD` |
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
@@ -138,6 +156,29 @@ Supporting regression / follow-up notes:
   - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_daylight\2026.03.27\bundle.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_test-look\2026.03.31\bundle.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json`
+
+### Story 1.10
+
+- story key: `1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입`
+- HV checklist ID: `HV-05` plus current preview-track dual gate package
+- evidence package path: `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md ; docs/runbooks/current-actual-lane-handoff-20260419.md ; history/recent-session-thumbnail-speed-brief.md ; _bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md`
+- executedAt: `historical implementation 2026-04-04; current revalidation pending as of 2026-04-19`
+- validator: `Noah Lee`
+- booth PC: `TBD`
+- camera model: `TBD`
+- darktable pin: `release-5.4.1 / c3f96ca`
+- helper identifier: `TBD`
+- Go / No-Go result: `No-Go`
+- release blocker: `This lane previously produced better first-visible / replacement comparison numbers, but it has not yet been revalidated against the current official gate of sameCaptureFullScreenVisibleMs <= 3000ms and originalVisibleToPresetAppliedVisibleMs <= 3000ms. The lane is a validation candidate, not release-proof.`
+- follow-up owner: `Noah Lee`
+- rerun prerequisite: `Use docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md to collect one-session seam evidence, confirm first-visible/truthful-close ownership, read the current dual gate separately, and keep GPU acceleration closed as a comparison hypothesis only.`
+- target rerun date: `TBD`
+- core evidence paths:
+  - `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`
+  - `docs/runbooks/current-actual-lane-handoff-20260419.md`
+  - `docs/runbooks/preview-track-route-decision-20260418.md`
+  - `history/recent-session-thumbnail-speed-brief.md`
+  - `_bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md`
 
 ### Story 3.2
 

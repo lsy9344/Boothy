@@ -35,7 +35,7 @@ FR9: 운영자는 현재 세션 문맥, 실패 상태, 허용된 복구 액션, 
 
 NFR1: 고객용 주요 상태 화면은 동적 세션 값을 제외하고 기본 지시 문장 1개, 보조 문장 1개, 주요 액션 라벨 1개 이내의 문구 밀도를 유지해야 하며, 기술 진단어·darktable 용어·저작 도구 용어를 노출하면 안 된다.
 NFR2: 모든 활성 지점은 승인된 프리셋 카탈로그, 게시 프리셋 버전, 고객용 타이밍 규칙, 핵심 부스 여정을 동일하게 유지해야 하며, 차이는 승인된 지역 설정으로만 제한되어야 한다.
-NFR3: 주요 고객 액션은 1초 이내에 응답이 인지되어야 하며, 성공적으로 저장된 촬영의 현재 세션 프리뷰 확인은 승인된 Windows 하드웨어에서 95백분위 기준 5초 이내에 보여야 한다.
+NFR3: 주요 고객 액션은 1초 이내에 응답이 인지되어야 하며, preview-track release sign-off는 승인된 Windows 하드웨어에서 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 만족해야 한다. current-session image의 faster first-visible feel은 별도 비교 지표로 읽고, release gate와 혼동하면 안 된다.
 NFR4: 소스 캡처, 프리뷰, 최종 결과물, 검토, 삭제, 완료 흐름 전반에서 교차 세션 자산 누출은 0건이어야 하며, 저장되는 고객 식별 정보는 승인된 최소 범위로 제한되어야 한다.
 NFR5: 5분 전 경고와 종료 시각 알림은 99% 세션에서 허용 오차 내에 동작해야 하고, 세션의 90% 이상은 종료 시각 10초 내에 명시적 사후 상태로 진입해야 하며, 렌더 재시도나 실패가 이미 저장된 유효 촬영을 훼손하면 안 된다.
 NFR6: 제품은 선택된 지점 집합에 대한 단계적 배포와 단일 승인 액션 기반 롤백을 지원해야 하며, 활성 고객 세션 중 강제 업데이트는 0건이어야 하고, 승인된 프리셋 카탈로그의 렌더 호환성이 유지되어야 한다.
@@ -232,7 +232,8 @@ So that I know my photo is saved even if the confirmation preview is still being
 **Given** a successful capture is acknowledged
 **When** the booth reports the immediate outcome on approved hardware
 **Then** the primary customer action is acknowledged within 1 second
-**And** the current-session preview confirmation is shown within 5 seconds for the 95th percentile of successful captures or the booth remains in truthful `Preview Waiting` until the preview is ready
+**And** the booth keeps truthful `Preview Waiting` until the preview is actually ready
+**And** preview-track release judgment is read separately by the current dual hardware gate `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
 
 **Given** the booth is in `Preview Waiting`
 **When** the preview rail is still empty

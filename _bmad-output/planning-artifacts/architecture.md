@@ -864,10 +864,11 @@ The document defines enough consistency rules for multiple AI agents to implemen
 ### Gap Analysis Results
 
 **Critical Gaps:**
-- None identified.
+- The document remains structurally valid, but it does not by itself express the current preview-track phase interpretation that newer `actual-primary-lane` is bounded `No-Go` and this worktree is being used as an old-lane validation lane.
 
 **Important Gaps:**
-- None identified. Source-input hygiene has been reconciled against the approved current artifact set.
+- Release-phase interpretation for the preview track now depends on the newer runbooks and ledger, not on this architecture document alone.
+- Agents must not read this architecture file as proof that preview-track implementation should resume immediately from this worktree.
 
 **Nice-to-Have Gaps:**
 - Future implementation artifacts may benefit from separate contract example files for `session.json`, preset bundles, and sidecar protocol messages if they are not created alongside the first stories.
@@ -906,7 +907,7 @@ The document defines enough consistency rules for multiple AI agents to implemen
 
 ### Architecture Readiness Assessment
 
-**Overall Status:** READY FOR IMPLEMENTATION
+**Overall Status:** STRUCTURALLY READY; CURRENT PREVIEW TRACK STILL REQUIRES VALIDATION-LANE INTERPRETATION
 
 **Confidence Level:** High
 

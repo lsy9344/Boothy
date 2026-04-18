@@ -15,7 +15,7 @@ stepsCompleted:
   - 'step-e-01-discovery'
   - 'step-e-02-review'
   - 'step-e-03-edit'
-lastEdited: '2026-03-20'
+lastEdited: '2026-04-19'
 editHistory:
   - date: '2026-03-08'
     changes: 'BMAD structure, measurable FR/NFR, traceability, desktop app requirements added'
@@ -53,6 +53,8 @@ editHistory:
     changes: 'Validation-report follow-up: removed broken source references from frontmatter and source list, and normalized FR-004, FR-006, FR-007, and FR-009 to actor-first phrasing'
   - date: '2026-03-20'
     changes: 'Final cleanup pass: normalized PRD title to BMAD template convention and added a short executive digest for faster stakeholder review'
+  - date: '2026-04-19'
+    changes: 'Preview-track release interpretation realigned: dual 3000ms hardware gate locked, first-visible lane framed as validation candidate rather than release-proof path, and GPU acceleration reduced to a validation hypothesis'
 ---
 
 # Product Requirements Document - Boothy
@@ -65,7 +67,7 @@ This PRD defines product behavior, product boundaries, and required operational 
 - Customer boundary: customers start with a simple name-plus-phone-last-four booth alias, select one approved published preset, capture confidently, and never enter a direct editing workflow.
 - Operational boundary: capture success, preview readiness, and final completion are separate truths that must be reported honestly.
 - Internal control: authorized staff manage preset authoring, approval, publication, and rollback outside the booth runtime.
-- Release focus: the MVP succeeds when branches deliver consistent presets, truthful state transitions, bounded operator recovery, and no cross-session privacy leaks.
+- Release focus: preview-track release sign-off on approved hardware requires both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms`; faster first-visible feel alone does not close the release gate.
 
 ## Source Documents
 
@@ -166,6 +168,13 @@ The customer-facing experience should translate booth state into simple, action-
 
 Within the first 60 days of pilot rollout, Boothy should let customers start quickly, choose an approved look, capture confidently, and complete a clearly timed booth session while reducing support burden compared with the previous booth flow and preserving branch-consistent preset results.
 
+### Current Preview Release Interpretation
+
+- The current official preview-track hardware judgment requires both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms` on approved hardware.
+- First-visible current-session speed remains a separate product-feel metric and may improve customer confidence, but it does not by itself satisfy release sign-off.
+- The historical resident `first-visible` lane is currently treated as a validation candidate worth rechecking, not as a release-proof path.
+- GPU-enabled acceleration is treated as an acceleration hypothesis inside that validation lane. It must be proven with the lane, not assumed to make the lane release-ready.
+
 ### KPI Table
 
 | Metric | Baseline | Target | Measurement Method |
@@ -173,8 +182,9 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 | Monthly phone / remote support incidents | Approx. 500 incidents per month across all branches | 250 or fewer incidents per month | Combined support and remote assistance logs |
 | Self-start session success rate | Unknown | 85% or higher | Sessions that reach first successful current-session raw persistence without operator intervention |
 | Preset selection completion rate | New metric | 95% or higher | Sessions that reach preset selection and choose a preset within 20 seconds without operator intervention |
-| First-visible current-session image latency | New metric | Measured separately on approved booth hardware so the team can improve same-capture first-visible speed against the active hardware baseline | Request-level seam logs and pilot timing review |
-| Preset-applied preview readiness latency | New metric | Preset-applied current-session preview visible within 5 seconds for 95th-percentile successful captures after raw persistence | Lifecycle logs and pilot timing review |
+| First-visible current-session image latency | New metric | Measured separately on approved hardware as a product-feel metric only; it is not sufficient for release sign-off on its own | Request-level seam logs and pilot timing review |
+| Same-capture preset-applied full-screen visible | New metric | `sameCaptureFullScreenVisibleMs <= 3000ms` on approved hardware for release sign-off | Request-level seam logs, hardware validation packages, and pilot timing review |
+| Original-visible-to-preset-applied-visible | New metric | `originalVisibleToPresetAppliedVisibleMs <= 3000ms` on approved hardware for release sign-off | Request-level seam logs, hardware validation packages, and pilot timing review |
 | Published preset reproducibility rate | New metric | 99% or higher | Same approved preset version produces expected preview and final output within approved variance across pilot branches |
 | Adjusted end-time visibility correctness | New metric | 99% or higher | Sessions where the displayed end time matches the approved timing policy from session start |
 | Warning and end alert reliability | New metric | 99% or higher | Qualifying sessions where the 5-minute warning and exact-end alert occur within +/- 5 seconds of scheduled time |
@@ -264,6 +274,7 @@ Each published booth preset is an approved artifact bundle, not just a display n
 - Each preset includes the approved booth-safe preview behavior and final render behavior required for downstream use.
 - A same-capture first-visible image may appear earlier to reduce blank waiting, and that first-visible source may come from a fast preview, camera thumbnail, intermediate preview, or approved low-latency worker output.
 - Preset-applied `previewReady` truth still comes only from the published artifact's render behavior for that capture-bound preset version.
+- Better first-visible feel and release-proof preview close must be read separately; an earlier same-capture image does not by itself prove the current hardware release gate.
 - Only approved published preset artifacts may appear in the customer booth catalog.
 
 ### Booth-Safe Runtime Boundary
@@ -734,14 +745,16 @@ The system shall keep 100% of active branches on the same approved customer pres
 
 ### NFR-003 Booth Responsiveness and Preview Readiness
 
-The system shall acknowledge primary customer actions within 1 second, surface a truthful first-visible current-session image as early as safely possible after source-photo persistence, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking, request-level seam logs, and pilot logs.
+The system shall acknowledge primary customer actions within 1 second, surface a truthful first-visible current-session image as early as safely possible after source-photo persistence, and judge preview-track release readiness on approved Windows hardware by both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms`, as measured by performance benchmarking, request-level seam logs, and pilot logs.
 
 **Acceptance Criteria**
 - Primary customer actions such as session start, preset selection, delete confirmation, and post-end state entry are acknowledged within 1 second.
 - First-visible current-session image latency is measured separately from preset-applied preview readiness so the product can improve the early customer-visible result without weakening preview truth.
 - When a same-capture fast preview is available, the booth may surface it before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied preview is actually ready.
 - The first-visible source may come from an approved fast preview, camera thumbnail, intermediate preview, or low-latency worker output as long as same-capture correctness is preserved.
-- 95th-percentile successful captures show preset-applied current-session preview confirmation within 5 seconds after source-photo persistence.
+- Current release judgment requires both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms` on approved hardware.
+- Historical first-visible-heavy lanes may still be explored as validation candidates, but better first-visible feel alone is not release-proof.
+- GPU or other acceleration tactics are acceptable only as validation hypotheses that must still satisfy the same hardware release gate.
 - If preset-applied preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
 - Performance is measured on approved branch hardware with request-level seam evidence that distinguishes first-visible latency from preset-applied readiness latency.
 
