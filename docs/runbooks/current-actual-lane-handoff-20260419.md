@@ -16,9 +16,10 @@ Use this note as the minimum current-state transfer package while working in thi
 
 ## Current Release Gate
 
-- Canonical release judgment still requires both:
-  - `sameCaptureFullScreenVisibleMs <= 3000ms`
+- Canonical release judgment now uses one official product gate only:
   - `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+  - product wording: `preset-applied visible <= 3000ms`
+- `sameCaptureFullScreenVisibleMs` remains a reference/comparison metric for first-visible speed and route regression reading.
 - `first-visible`, tiny preview, or recent-strip speed alone do not count as release success.
 
 Source snapshot taken from the newer workspace:
@@ -27,7 +28,7 @@ Source snapshot taken from the newer workspace:
 
 ## Why The Newer Track Was Stopped
 
-- Story `1.30` actual-primary-lane canary remained a bounded `No-Go` candidate.
+- Story `1.30` actual-primary-lane canary became bounded `No-Go` evidence against the official `preset-applied visible <= 3000ms` gate.
 - Repeated hardware reruns improved some symptoms but never approached the release gate closely enough.
 - Additional reruns were judged low-value compared with route change.
 
@@ -51,7 +52,7 @@ Latest approved-hardware style field sessions from the newer workspace still mis
 Practical conclusion:
 
 - The remaining blocker was no longer only race noise.
-- The core hot path still cost too much even after multiple host-side reductions.
+- The core hot path still cost too much to close the official `preset-applied visible <= 3000ms` gate even after multiple host-side reductions.
 
 Primary evidence source snapshot:
 
@@ -89,7 +90,7 @@ Historical real-hardware style evidence in this line was meaningfully better tha
 Important boundary:
 
 - those numbers were better for user-perceived speed
-- they still do not prove the current release gate
+- they still do not prove the official `preset-applied visible <= 3000ms` gate
 - they are the reason this line is worth revisiting, not proof that a simple rollback is enough
 
 Primary historical evidence source already present in this worktree:
@@ -100,13 +101,15 @@ Primary historical evidence source already present in this worktree:
 
 - Returning here is not a claim that this older line is already the winner.
 - Returning here means this line remains the strongest product-feel candidate for a Lightroom-like fast preview experience.
-- If this line is retried, treat it as a focused validation lane, not as automatic release proof.
+- Latest rerun now closes this line as a focused baseline/comparison lane, not as automatic release proof.
+- Story `1.31` remains unopened.
+- Story `1.26` is now the officially opened reserve path because this comparison lane still did not support a credible route change.
 
-## Immediate Focus In This Worktree
+## Current Operational Use In This Worktree
 
-- Reconstruct the old resident first-visible behavior cleanly.
-- Evaluate whether GPU-enabled acceleration can improve the first-visible path and follow-up replacement path together.
-- Keep current release-gate awareness visible while testing, so better feel is not confused with release proof.
+- Keep this older line as a closed `No-Go` baseline and comparison reference.
+- Do not treat additional old-line tuning as the primary execution path.
+- Use any further GPU comparison only as side evidence while Story `1.26` progresses as the active reserve path.
 
 ## Source Snapshots To Keep In Mind
 

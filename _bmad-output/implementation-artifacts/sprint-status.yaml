@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-19 18:10:00 +09:00
+# last_updated: 2026-04-20 10:58:00 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,17 +38,32 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-19 18:10:00 +09:00"
+last_updated: "2026-04-20 10:58:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
 preview_route_status:
-  current_release_judgment: "sameCaptureFullScreenVisibleMs <= 3000ms and originalVisibleToPresetAppliedVisibleMs <= 3000ms"
+  current_release_judgment: "originalVisibleToPresetAppliedVisibleMs <= 3000ms (`preset-applied visible <= 3000ms`)"
   newer_actual_primary_lane: "bounded No-Go"
-  current_worktree_role: "old resident first-visible line revalidation lane"
-  gpu_acceleration_scope: "validation hypothesis only"
+  current_worktree_role: "Story 1.26 reserve path active; Story 1.10 old line frozen as closed No-Go baseline"
+  gpu_acceleration_scope: "old-line comparison evidence only"
+  official_verdict_owner: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
+  route_story_status:
+    current_no_go_evidence: "1.30"
+    closed_old_lane_baseline: "1.10"
+    unopened_success_side_default_or_rollback_gate: "1.31"
+    opened_reserve_path: "1.26"
+  canonical_direction_docs:
+    non_bmad_entrypoint: "{project-root}/docs/README.md"
+    reserve_path_opening_note: "{project-root}/docs/runbooks/story-1-26-reserve-path-opening-20260420.md"
+    gpu_direction_note: "{project-root}/docs/runbooks/current-preview-gpu-direction-20260419.md"
+  next_validation_sequence:
+    - "freeze Story 1.10 as the closed No-Go baseline package"
+    - "implement Story 1.26 in the host-owned local native/GPU resident reserve-path scope"
+    - "collect a one-session approved-hardware package against the official preset-applied-visible gate"
+    - "record ledger Go / No-Go before considering any 1.31 action"
 
 development_status:
   epic-1: in-progress
@@ -61,7 +76,8 @@ development_status:
   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
   1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
   1-9-fast-preview-handoff와-xmp-preview-교체: review
-  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: review
+  1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
+  1-26-host-owned-local-native-gpu-resident-preview-lane-검증: ready-for-dev
   epic-1-retrospective: optional
 
   epic-2: in-progress

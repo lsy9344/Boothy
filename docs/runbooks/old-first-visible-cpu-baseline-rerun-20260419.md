@@ -11,11 +11,13 @@ scope: old-resident-first-visible-validation-lane
 
 - 이 runbook은 old `resident first-visible` line의 `one-session revalidation evidence`를 다시 닫기 위한 실행 기준이다.
 - 이번 rerun은 release winner 선발이나 route promotion이 아니다.
-- 이번 rerun의 목적은 current contract 아래에서 historical feel candidate가 실제로 다시 재현되는지 확인하는 것이다.
+- 이번 rerun의 목적은 current contract 아래에서 historical feel candidate가 실제로 다시 재현되는지 확인하는 baseline/comparison evidence를 남기는 것이다.
 
 ## 해석 경계
 
-- official release gate는 그대로 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
+- official release gate는 오직 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
+- 제품 언어로는 `preset-applied visible <= 3000ms`다.
+- `sameCaptureFullScreenVisibleMs`는 first-visible baseline/reference/comparison metric으로만 유지한다.
 - 이번 rerun의 1차 성공은 `one-session package` 안에서 first-visible seam, truthful close seam, `Preview Waiting` truth, same-slot replacement, wrong-capture 0을 다시 설명할 수 있는지다.
 - 과거 better run은 rerun priority를 높이는 comparison evidence일 뿐 current release-proof가 아니다.
 - GPU는 이번 문서에서 decision input이 아니라 future comparison hypothesis다.
@@ -109,7 +111,9 @@ scope: old-resident-first-visible-validation-lane
 - [ ] later render worker가 actual `truthful close owner`인지 설명할 수 있다.
 - [ ] raw/direct fallback이 winning close owner로 승격되지 않았음을 설명할 수 있다.
 
-### F. Story 1.10 Pending To Rerun Checks
+### F. Historical Story 1.10 Rerun Checks
+
+`2026-04-20` 기준 이 섹션은 active checklist가 아니라 closed baseline evidence를 설명하는 historical reference다.
 
 - [ ] per-session seam instrumentation pending item:
   - same session `timing-events.log`만으로 required seam chain을 닫을 수 있어야 한다.
@@ -171,8 +175,22 @@ $timing | Select-String 'sourceAsset=raw-original'
   - `Preview Waiting` truth 유지 여부
   - same-slot replacement 유지 여부
   - wrong-capture 0 여부
-- dual 3000ms gate는 별도 release column으로만 읽는다.
+- official release column은 `originalVisibleToPresetAppliedVisibleMs <= 3000ms` 하나로만 읽는다.
+- `sameCaptureFullScreenVisibleMs`는 separate reference/comparison column으로만 읽는다.
 - 이 회차의 결론은 `revalidation success / revalidation fail / release gate fail`로 분리해서 적는다.
+
+### Step 4. Canonical Ledger Update
+
+- session readout이 끝나면 canonical hardware close record를 반드시 갱신한다.
+- official `Go / No-Go` verdict owner는 local 메모나 story 문서가 아니라
+  `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`다.
+- 따라서 아래 항목을 ledger row에 함께 적어야 한다.
+  - verdict: `Go` / `No-Go`
+  - blocker summary
+  - owner
+  - evidence path
+  - 이번 회차가 `revalidation success / revalidation fail / release gate fail` 중 어디에 속하는지
+- one-session package가 complete해도 ledger update가 없으면 official hardware close는 닫힌 것으로 보지 않는다.
 
 ## GPU Comparison Gate
 
@@ -206,10 +224,11 @@ GPU comparison을 열더라도 규칙은 같다.
 
 ### Release Success
 
-아래는 separate gate다.
+아래 하나만 official gate다.
 
-- `sameCaptureFullScreenVisibleMs <= 3000ms`
 - `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+
+`sameCaptureFullScreenVisibleMs`는 release success가 아니라 reference/comparison metric이다.
 
 revalidation success와 release success는 같은 뜻이 아니다.
 

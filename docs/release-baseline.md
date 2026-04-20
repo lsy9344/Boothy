@@ -57,12 +57,14 @@ The exact NSIS output path depends on how `tauri build` is invoked (`debug` vs r
 
 ## Current Preview Route Status
 
-- The current official preview-track hardware judgment requires both `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms`.
-- The newer `actual-primary-lane` route is currently treated as a bounded `No-Go`, based on repeated approved-hardware reruns that remained far outside that dual gate.
-- This worktree does not claim a replacement release winner yet. It exists to revalidate the older `resident first-visible` line as a validation lane because it previously produced better customer-perceived speed.
-- Historical better numbers in that older lane are comparison evidence only. They do not prove the current release gate and must not be read as automatic rollback proof.
-- GPU-enabled acceleration is scoped here as a validation hypothesis for the old lane, not as an official success guarantee.
-- Until a candidate lane records `Go` in the hardware ledger against the current gate, preview-track release promotion remains on `release hold`.
+- The current official preview-track hardware judgment uses one product gate only: `preset-applied visible <= 3000ms`, recorded as `originalVisibleToPresetAppliedVisibleMs <= 3000ms`.
+- `sameCaptureFullScreenVisibleMs` remains in the evidence package as a reference/comparison metric for first-visible speed, route regression detection, and matched baseline reading. It is not an official release gate.
+- The newer `actual-primary-lane` route is currently treated as a bounded `No-Go`, based on repeated approved-hardware reruns that remained far outside the official `preset-applied visible <= 3000ms` gate.
+- The older `resident first-visible` line is now frozen as a closed `No-Go` baseline after the latest approved-hardware rerun still failed the official gate.
+- Story `1.26` is now the officially opened reserve path for the next preview-route attempt.
+- Historical better numbers in the old lane remain comparison evidence only. They do not prove the official `preset-applied visible <= 3000ms` gate and must not be read as automatic rollback proof.
+- GPU-enabled acceleration on the old lane is now side evidence only, not the primary route.
+- Until a candidate lane records `Go` in the hardware ledger against the official `preset-applied visible <= 3000ms` gate, preview-track release promotion remains on `release hold`.
 
 ## Current State
 

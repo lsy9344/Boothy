@@ -35,7 +35,7 @@ FR9: 운영자는 현재 세션 문맥, 실패 상태, 허용된 복구 액션, 
 
 NFR1: 고객용 주요 상태 화면은 동적 세션 값을 제외하고 기본 지시 문장 1개, 보조 문장 1개, 주요 액션 라벨 1개 이내의 문구 밀도를 유지해야 하며, 기술 진단어·darktable 용어·저작 도구 용어를 노출하면 안 된다.
 NFR2: 모든 활성 지점은 승인된 프리셋 카탈로그, 게시 프리셋 버전, 고객용 타이밍 규칙, 핵심 부스 여정을 동일하게 유지해야 하며, 차이는 승인된 지역 설정으로만 제한되어야 한다.
-NFR3: 주요 고객 액션은 1초 이내에 응답이 인지되어야 하며, preview-track release sign-off는 승인된 Windows 하드웨어에서 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 만족해야 한다. current-session image의 faster first-visible feel은 별도 비교 지표로 읽고, release gate와 혼동하면 안 된다.
+NFR3: 주요 고객 액션은 1초 이내에 응답이 인지되어야 하며, preview-track official release sign-off는 승인된 Windows 하드웨어에서 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`만 만족하면 된다. `sameCaptureFullScreenVisibleMs`와 current-session image의 faster first-visible feel은 별도 reference/comparison 또는 product-feel 지표로 읽고, official gate와 혼동하면 안 된다.
 NFR4: 소스 캡처, 프리뷰, 최종 결과물, 검토, 삭제, 완료 흐름 전반에서 교차 세션 자산 누출은 0건이어야 하며, 저장되는 고객 식별 정보는 승인된 최소 범위로 제한되어야 한다.
 NFR5: 5분 전 경고와 종료 시각 알림은 99% 세션에서 허용 오차 내에 동작해야 하고, 세션의 90% 이상은 종료 시각 10초 내에 명시적 사후 상태로 진입해야 하며, 렌더 재시도나 실패가 이미 저장된 유효 촬영을 훼손하면 안 된다.
 NFR6: 제품은 선택된 지점 집합에 대한 단계적 배포와 단일 승인 액션 기반 롤백을 지원해야 하며, 활성 고객 세션 중 강제 업데이트는 0건이어야 하고, 승인된 프리셋 카탈로그의 렌더 호환성이 유지되어야 한다.
@@ -233,7 +233,8 @@ So that I know my photo is saved even if the confirmation preview is still being
 **When** the booth reports the immediate outcome on approved hardware
 **Then** the primary customer action is acknowledged within 1 second
 **And** the booth keeps truthful `Preview Waiting` until the preview is actually ready
-**And** preview-track release judgment is read separately by the current dual hardware gate `sameCaptureFullScreenVisibleMs <= 3000ms` and `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+**And** preview-track official release judgment is read only by `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+**And** `sameCaptureFullScreenVisibleMs` and first-visible speed remain separate reference/comparison or product-feel metrics
 
 **Given** the booth is in `Preview Waiting`
 **When** the preview rail is still empty
@@ -423,6 +424,54 @@ So that I can trust the booth immediately after each capture and keep shooting w
 **When** the booth evaluates customer-safe fallback
 **Then** capture truth remains preserved
 **And** the booth falls back to truthful `Preview Waiting` and the normal render follow-up path instead of false-ready or cross-session leakage
+
+Story 1.10 closure note:
+- `2026-04-20` 기준 이 story는 active implementation restart 지시가 아니라 closed `No-Go` baseline으로 읽는다.
+- current official release judgment는 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`만 사용한다.
+- `sameCaptureFullScreenVisibleMs`와 first-visible 계열 값은 historical matched comparison, regression reading, product-feel interpretation을 위한 reference metrics로 남긴다.
+- `1.30`은 actual-primary-lane 기준 현재 `No-Go` evidence로 읽고, `1.31`은 unopened 상태로 남는다.
+- Story `1.26`은 now-open reserve path이며, GPU-enabled acceleration on old line은 primary path가 아니라 optional comparison evidence다.
+- current execution order는 `1.10 baseline freeze -> 1.26 reserve path implementation -> approved hardware gate readout`이다.
+- current canonical direction은 `_bmad-output`보다 `docs/README.md`와 `docs/runbooks/current-preview-gpu-direction-20260419.md`를 먼저 읽고 해석한다.
+
+### Story 1.26: host-owned local native/GPU resident reserve path와 display-sized preset-applied truthful artifact 검증
+
+As a booth customer,
+I want the booth to close my preset-applied preview on approved hardware fast enough for the official product gate without relaxing preview truth,
+So that the booth feels immediate while still showing honest `Preview Waiting` and correct same-capture results.
+
+**Acceptance Criteria:**
+
+**Given** the previous actual-primary lane and old `resident first-visible` lane are both frozen as `No-Go` evidence against the official gate
+**When** the team opens the next preview route
+**Then** Story 1.26 uses a `host-owned local native/GPU resident full-screen lane` as the reserve topology
+**And** the hot path does not rely on repeated per-capture `darktable-cli` close ownership
+
+**Given** the reserve topology produces the booth-visible preset-applied result
+**When** the runtime closes preview truth for the current capture
+**Then** the close owner is a `display-sized preset-applied truthful artifact`
+**And** `previewReady` and related ready timing remain owned by that truthful artifact rather than by first-visible or comparison assets
+
+**Given** a first-visible or intermediate image may still appear earlier in the customer flow
+**When** the booth is still waiting for the truthful preset-applied artifact
+**Then** the booth keeps truthful `Preview Waiting`
+**And** same-session, same-capture correctness, same-slot continuity, wrong-capture discard, and cross-session leakage protection remain intact
+
+**Given** approved booth hardware validation runs for this reserve path
+**When** timing evidence is read
+**Then** the only official pass condition is `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+**And** `sameCaptureFullScreenVisibleMs` and first-visible feel remain reference or product-feel metrics only
+
+**Given** the reserve path fails the official gate or breaks correctness guardrails
+**When** the team records the result
+**Then** the story is kept in `review` or equivalent route-hold state
+**And** Story `1.31` is not reopened from this result alone
+
+Story 1.26 opening note:
+- `2026-04-20` 기준 이 story는 officially opened reserve path다.
+- scope는 `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact`로 좁게 고정한다.
+- darktable path는 parity reference, fallback, final/export truth로 남기고, main preview hot path owner로 되돌리지 않는다.
+- old line GPU/OpenCL comparison은 필요 시 side evidence로 남길 수 있지만, Story 1.26의 primary critical path는 아니다.
 
 ## Epic 2: 현재 세션 중심의 촬영 제어와 시간 인지
 

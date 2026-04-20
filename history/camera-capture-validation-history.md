@@ -961,3 +961,446 @@ Select-String -Path <camera-helper-events.jsonl 경로> -Pattern "<requestId>"
 
 1. 이후 다시 같은 패턴이 나오기 전까지는 `2026-04-01 18:40 +09:00` 항목의 원인/수정 조합을 현행 정상 해법으로 본다.
 2. 다음 회귀가 생기면 새 session evidence를 다시 분리해서, 같은 root cause의 재발인지 다른 경계의 새 실패인지부터 구분한다.
+
+### 2026-04-19 03:18 +09:00 최신 다중 촬영 로그 재검증: 촬영 성공은 유지됐고, 남은 개선 포인트는 legacy canonical fast preview의 불필요한 speculative lane였다
+
+사용자 최신 제보:
+
+1. 앱을 다시 실행해 같은 세션에서 여러 장을 연속 촬영했다.
+2. 이번에는 `Phone Required`로 잠기지 않았고, 로그 확인과 검증 기록 업데이트를 요청했다.
+
+실제 확인 근거:
+
+- 최신 앱 로그는 `C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`였고,
+  최신 실기기 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a784657d261d40`였다.
+- 이 세션의 `session.json` 기준으로
+  - `lifecycle.stage = capture-ready`
+  - `captures`가 4장 모두 저장됨
+  - 4장 모두 `renderStatus = previewReady`
+  였다.
+- 같은 세션의 `camera-helper-events.jsonl`에는 네 요청 모두
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  까지 정상으로 닫혀 있었다.
+- 즉 이번 최신 실기기 재현에서는
+  **다중 촬영 성공 여부 자체는 정상**으로 봐도 된다.
+
+남아 있던 이상 징후:
+
+- 각 촬영의 `capture_preview_ready`는 계속 `previewBudgetState=exceededBudget`였다.
+  - 1장: `elapsedMs=8340`
+  - 2장: `elapsedMs=7313`
+  - 3장: `elapsedMs=6984`
+  - 4장: `elapsedMs=7946`
+- 동시에 앱 로그에는 각 촬영마다 아래 경고가 반복됐다.
+  - `resident_first_visible_render_failed ... reason_code=render-output-missing`
+- 실제 preview worker stderr 로그(`.boothy-darktable/preview/logs/preview-stderr-1776534155884956900.log`)에는
+  `libpng warning: IDAT: Extra compressed data`, `libpng error: Not enough image data`가 남아 있었다.
+
+이번 회차 해석:
+
+- 최신 실기기 기준 문제는 더 이상 `촬영 실패`나 `Phone Required` 재발이 아니다.
+- 실제 남은 문제는
+  **helper handoff 메타데이터 없이 canonical preview로 늦게 올라온 fast preview(`legacy-canonical-scan`)까지
+  resident first-visible speculative render lane에 태우고 있었다는 점**이었다.
+- 이 경로는 customer correctness에는 직접 필요하지 않은데,
+  실기기에서는 출력이 닫히지 않거나 실패 로그만 남기고,
+  capture close에서 불필요한 대기와 잡음을 추가할 수 있었다.
+
+이번 회차 수정:
+
+- capture ingest에서 fast preview 승격 결과에 `kind`를 함께 보존하도록 보강했다.
+- `legacy-canonical-scan`으로 올라온 fast preview는
+  - `persist_capture_in_dir(...)`
+  - `complete_preview_render_in_dir(...)`
+  두 경계 모두에서 resident speculative first-visible render를 시작하지 않게 바꿨다.
+- 따라서 canonical same-capture preview가 늦게 보이는 경우에도
+  - current/latest rail의 빠른 썸네일은 그대로 유지하고
+  - 불필요한 speculative worker/lock/source staging 없이
+  다음 truthful preview close로 바로 넘어가게 정리했다.
+
+검증:
+
+- 실기기 로그 확인:
+  - 최신 세션 `session_000000000018a784657d261d40`
+  - 4연속 촬영 성공, `capture-ready` 유지 확인
+- 회귀 테스트:
+  - `cargo test --manifest-path src-tauri/Cargo.toml complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallback -- --exact`
+  - 통과
+- 관련 스위트:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness`
+  - 기본 병렬 실행에서는 일부 테스트가 `session-persistence-failed`로 흔들렸다.
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+  - 직렬 실행에서는 `65 passed; 0 failed`
+
+현재 판단:
+
+- `Phone Required` 재발 없이 여러 장 촬영이 닫히는 최신 제품 기준은 유지됐다.
+- 이번 코드 변경은 다중 촬영 correctness를 바꾸기보다,
+  **legacy canonical fast preview가 남기던 불필요한 speculative worker 흔적과 실패 잡음을 줄이는 안정화 개선**으로 기록한다.
+
+### 2026-04-19 03:20 +09:00 최신 다중 촬영 로그 재확인: 일부 사진만 프리셋 체감이 달랐던 원인은 truthful preview close의 source 불일치였다
+
+사용자 최신 제보:
+
+1. 앱을 다시 실행해 여러 장을 다시 촬영했다.
+2. `Phone Required`는 없었지만, 일부 사진은 프리셋 적용이 덜 된 것처럼 보였다고 제보했다.
+
+실제 확인 근거:
+
+- 최신 실기기 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a78554f6baf6cc`였다.
+- 이 세션의 `session.json` 기준으로
+  - `lifecycle.stage = capture-ready`
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 총 6장 모두 `renderStatus = previewReady`
+  였다.
+- 즉 최신 실기기 기준으로는
+  **다중 촬영 저장 자체는 정상**이었다.
+
+이번에 새로 확인된 이상 징후:
+
+- 같은 세션의 `diagnostics/timing-events.log`에서 6장의 `preview-render-ready`를 비교해 보니,
+  - 5장은 `sourceAsset=fast-preview-raster`, `widthCap=256;heightCap=256`
+  - 1장은 `sourceAsset=raw-original`, `widthCap=384;heightCap=384`
+  로 닫히고 있었다.
+- 같은 preset bundle(`preset_new-draft-2 / 2026.04.10 / look2`)을 썼는데도
+  **truthful preview close의 render source가 shot마다 달랐다**는 뜻이다.
+- 사용자가 본 "일부 사진만 프리셋 적용이 안 된 것처럼 보임"은
+  이 불일치와 직접 맞닿아 있다고 판단했다.
+
+이번 회차 해석:
+
+- fast thumbnail/canonical preview JPEG는 current/latest rail의 즉시 가시성에는 유효하다.
+- 하지만 이를 그대로 `previewReady`의 truth source로 확정하면,
+  일부 shot은 RAW 기반 preset 결과가 아니라
+  빠른 JPEG 기반 결과로 닫히게 된다.
+- 즉 문제는 촬영 실패가 아니라,
+  **첫 화면용 fast preview와 제품 기준의 최종 preview-ready를 같은 것으로 취급하던 점**이었다.
+
+이번 회차 수정:
+
+- `complete_preview_render_in_dir(...)`의 truthful preview close는
+  fast thumbnail/speculative output이 있어도 `RawOriginal` 기준으로만 닫히게 바꿨다.
+- 이미 끝난 speculative preview output은
+  first-visible 자산 보강까지만 허용하고,
+  더 이상 `preview-render-ready` / `capture_preview_ready`를 만족시키지 않게 정리했다.
+- `camera-thumbnail` fast preview는 resident speculative render 시작 대상에서도 제외했다.
+- 따라서 제품 기준으로는
+  - 빠른 썸네일 노출은 유지하고
+  - 닫힌 preview-ready는 shot마다 동일하게 RAW 기반 preset 결과로 맞추게 됐다.
+
+검증:
+
+- 실기기 로그 확인:
+  - 최신 세션 `session_000000000018a78554f6baf6cc`
+  - 6장 모두 저장 성공, `capture-ready` 유지 확인
+  - `preview-render-ready` source가 `fast-preview-raster`와 `raw-original`로 섞여 있던 증거 확인
+- 회귀 테스트:
+  - `cargo test --manifest-path src-tauri/Cargo.toml preview_render_keeps_fast_first_visible_but_closes_truthfully_from_raw_after_handoff -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml complete_preview_render_ignores_a_finished_speculative_preview_until_raw_truth_is_ready -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml complete_preview_render_prefers_raw_truth_even_when_a_healthy_speculative_close_finishes_first -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml complete_preview_render_still_avoids_a_duplicate_render_while_speculative_close_is_active -- --exact`
+  - 모두 통과
+- 관련 스위트:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+  - `65 passed; 0 failed`
+
+현재 판단:
+
+- 최신 제품 기준에서 다중 촬영 안정성은 유지되고 있다.
+- 이번 수정의 핵심은
+  **사용자가 최종적으로 보게 되는 preview-ready를 fast thumbnail 기반 근사치가 아니라 RAW 기반 preset 결과로 통일했다는 점**이다.
+
+### 2026-04-19 19:37 +09:00 최신 실기기 세션 기록: `look2`는 booth runtime 문제가 아니라 no-op preset artifact였다
+
+사용자 최신 제보:
+
+1. 앱을 다시 실행한 뒤 같은 세션에서 약 3회 촬영했다.
+2. 로그를 확인하고 기록으로 남겨 달라고 요청했다.
+3. 체감상 `preset_new-draft-2 / look2`가 적용되지 않는 것 같다고 제보했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7baa73c91f894`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 총 3장 저장
+  - 1장은 `renderStatus = previewWaiting`으로 남았고 `preview-render-failed`
+  - 2장과 3장은 `renderStatus = previewReady`
+  였다.
+- 같은 세션의 `timing-events.log` 기준으로 2장과 3장은
+  - `preview-render-ready`
+  - `capture_preview_ready`
+  - `recent-session-visible`
+  까지 정상으로 닫혔다.
+- 즉 이번 최신 세션 기준으로는
+  **촬영 저장과 preview close 자체는 대체로 정상**이었다.
+
+하지만 이번 회차에서 새로 확인된 핵심 증거:
+
+- 같은 RAW에 대해 아래 세 가지를 직접 비교했다.
+  - 세션에 실제 저장된 canonical preview
+  - 동일 RAW + `preset_new-draft-2 / look2.xmp`
+  - 동일 RAW + no-XMP baseline
+- 픽셀 비교 결과는 세 경우 모두 차이가 `0`이었다.
+  - 즉 `look2`는 로그상 `previewReady`가 찍혀도
+    **고객이 실제로 보게 되는 booth preview에서는 기본 렌더와 구분되는 변화가 없었다.**
+- 같은 방식으로 `preset_mono-pop` XMP를 비교하면 no-XMP 대비 픽셀 차이가 `2.298`로 확인됐다.
+  - 따라서 이번 문제는 darktable/XMP 적용 엔진 전체가 죽은 것이 아니라,
+    **현재 게시된 `preset_new-draft-2 / look2` artifact가 사실상 no-op**이라는 쪽으로 보는 것이 맞다.
+
+이번 회차 수정:
+
+- draft preset validation에 `render proof`를 추가했다.
+- validation은 대표 preview 자산을 기준으로
+  - no-XMP baseline render
+  - XMP 적용 render
+  를 각각 실행해 픽셀 차이를 비교한다.
+- 두 결과가 동일하면 이제 `render-delta-missing`으로 실패한다.
+- 따라서 `look2`처럼 booth customer가 보기에 기본 렌더와 같은 no-op preset은
+  더 이상 booth-safe published artifact로 통과할 수 없다.
+
+이번 시점의 제품 판단:
+
+- 최신 세션 기준으로 capture path와 preview close는 유지됐다.
+- 하지만 `preset_new-draft-2 / look2`는 현재 게시 artifact 자체가 no-op이므로,
+  **운영 관점에서는 다시 authoring/export 후 재검증이 필요한 preset**으로 본다.
+- 이번 코드 변경의 목적은 runtime을 바꾸는 것이 아니라,
+  이런 no-op preset이 다시 부스 경로로 올라오는 일을 사전에 차단하는 것이다.
+
+### 2026-04-19 20:08 +09:00 추가 확인: 최신 세션에서도 preset switch 자체는 정상이며, 체감상 "미적용"은 `look2` no-op 특성으로 재현됐다
+
+추가 확인 배경:
+
+1. 사용자가 "프리셋을 다른 걸로 바꿨는데도 적용이 안 되는 것 같다"고 다시 제보했다.
+2. 가장 최근 세션과 실제 render proof를 다시 확인해,
+   switch 미반영인지 preset artifact 문제인지 최종적으로 분리할 필요가 있었다.
+
+최신 세션 기준 증거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7bc6ede49630c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - 앞 3장은 `preset_test-look / 2026.03.31`
+  - 뒤 2장은 `preset_new-draft-2 / 2026.04.10`
+  으로 저장되었다.
+- 즉 같은 세션 안에서도 booth runtime은
+  **preset switch 자체를 무시하지 않았고, 이후 촬영부터 새 preset binding을 정상 반영했다.**
+- 같은 세션의 `timing-events.log`에서도 뒤 2장 preview close는
+  - `activePresetId=preset_new-draft-2`
+  - `preview-render-ready`
+  - `.../preset_new-draft-2/2026.04.10/xmp/look2.xmp`
+  로 기록되었다.
+
+render proof 재확인 결과:
+
+- 같은 RAW(`capture_20260419105011545_bbf40b020a.CR2`)를 기준으로
+  - booth session canonical preview
+  - no-XMP baseline render
+  - `look2.xmp` render
+  - `test-look.xmp` render
+  를 다시 비교했다.
+- 비교 결과는 다음과 같았다.
+  - session preview vs `look2`: `0.0`
+  - baseline vs `look2`: `0.0`
+  - baseline vs `test-look`: `1.130307`
+- 따라서 최신 세션 기준으로도
+  **"프리셋 전환이 안 됐다"기보다, `look2`가 booth preview에서 기본 렌더와 픽셀 수준으로 동일한 no-op preset처럼 동작했다**고 판단하는 것이 맞다.
+
+이번 시점 결론:
+
+- runtime preset switch 경로는 이번 최신 세션에서도 정상 동작했다.
+- 고객 체감 문제의 직접 원인은 여전히 `preset_new-draft-2 / look2` artifact 자체였다.
+- 이번 authoring validation 보강으로
+  이런 no-op preset은 이후 draft validation에서 `render-delta-missing`으로 차단된다.
+- 관련 회귀 검증:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test preset_authoring`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test operator_audit`
+  - 모두 통과
+
+### 2026-04-19 20:28 +09:00 최신 실기기 세션 로그 추가 기록: 다중 촬영 안정성은 유지됐고, 최종 preview close는 여전히 7초대 후반에서 8초대 초반이다
+
+사용자 최신 요청:
+
+1. 가장 최근 세션 로그를 다시 확인해 달라고 요청했다.
+2. 몇 초대까지 나왔는지와 현재 진행 상태를 함께 기록해 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7be86a69cb3b8`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `activePresetDisplayName = look2`
+  - 총 4장 모두 `renderStatus = previewReady`
+  - 세션 종료 시점 `lifecycle.stage = capture-ready`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 최종 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  로 닫혔다.
+- 같은 세션의 `diagnostics/camera-helper-events.jsonl`에서는 4개 요청 모두
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  까지 정상으로 이어졌다.
+- 같은 세션의 `diagnostics/timing-events.log`에서 `capture_preview_ready`는 아래처럼 기록됐다.
+  - 1장: `elapsedMs=8441`
+  - 2장: `elapsedMs=7370`
+  - 3장: `elapsedMs=7431`
+  - 4장: `elapsedMs=7423`
+- 따라서 이번 최신 세션 기준으로 최종 preview close는
+  **대략 7.3초대에서 8.4초대까지** 확인됐다.
+- 같은 로그의 `preview-render-ready` 자체는 아래 범위였다.
+  - 1장: `elapsedMs=4566`
+  - 2장: `elapsedMs=4312`
+  - 3장: `elapsedMs=4436`
+  - 4장: `elapsedMs=4331`
+  즉 RAW 기반 preset render 자체는 **대략 4.3초대에서 4.6초대**였다.
+
+이번 시점의 제품 판단:
+
+- 최신 세션에서는 `Phone Required`, `capture-download-timeout`, `preview-render-failed` 재발 증거가 없었다.
+- 즉 현재 제품 상태는 **촬영 correctness와 연속 촬영 안정성은 유지**되고 있다고 본다.
+- 다만 모든 shot의 `capture_preview_ready`가 계속 `budgetState=exceededBudget`로 남아 있어,
+  **고객 체감 응답성은 아직 목표 시간 안으로 들어오지 못한 상태**다.
+- 또한 이번 세션도 `look2`를 사용했지만, 이번 로그만으로는 기존에 확인했던
+  `look2` no-op artifact 결론을 뒤집는 새 근거는 없었다.
+
+운영 브리핑:
+
+1. 지금 단계의 핵심 진척은 "안정성 확보"다. 최신 세션에서도 4연속 촬영이 정상 저장되고 다시 `capture-ready`로 복귀했다.
+2. 현재 남은 제품 이슈는 "속도"와 "preset artifact 품질" 쪽이다. 촬영 실패보다는 preview close가 7~8초대로 느린 점이 더 직접적인 체감 문제다.
+3. 따라서 다음 우선순위는 capture path 복구가 아니라, preview-ready 체감 시간을 줄이거나 `look2` artifact를 다시 authoring/export해서 운영 품질을 맞추는 쪽으로 보는 것이 맞다.
+
+### 2026-04-19 21:40 +09:00 최신 실패 세션 기록: 두 번째 샷은 `capture-accepted` 뒤 RAW handoff가 30초 budget 안에 닫히지 못했다
+
+사용자 최신 제보:
+
+1. 가장 최근 세션 로그를 확인해 달라고 요청했다.
+2. 촬영 중 두 번째 샷에서 멈췄다고 제보했고, 개선도 함께 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c217f2a2948c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - 총 1장만 저장
+  - 세션 최종 stage는 `capture-ready`
+  - 첫 장은 `renderStatus = previewReady`
+  였다.
+- 같은 세션의 `camera-helper-requests.jsonl`에는 요청이 2개 있었고,
+  - 첫 요청 `request_000000000000064fcf62c29790`는 정상 저장됐다.
+  - 둘째 요청 `request_000000000000064fcf63499fc8`는 요청만 남고 저장본이 생기지 않았다.
+- 같은 세션의 `camera-helper-events.jsonl` 기준으로 둘째 요청은
+  - `capture-accepted`
+  - 이후 `file-arrived` 없음
+  - `recovery-status(detailCode=capture-download-timeout)`
+  - `helper-error(detailCode=capture-download-timeout)`
+  순서로 끝났다.
+- 최종 `camera-helper-status.json`은 다시
+  - `cameraState = ready`
+  - `helperState = healthy`
+  로 회복했다.
+
+이번 회차 해석:
+
+- 이번 실패는 프런트 과승격이 아니라, **둘째 샷의 실제 RAW handoff가 helper 기본 timeout 안에 닫히지 못한 케이스**로 보는 것이 맞다.
+- 첫 장 성공 뒤 곧바로 둘째 요청이 `capture-accepted`까지 간 점을 보면, 요청 소비 자체보다 **follow-up transfer completion budget 부족** 쪽 증거가 더 강했다.
+- 세션이 나중에 다시 `capture-ready`로 풀린 것도, 카메라 전체 상실보다 **느린 handoff 후 recovery** 패턴에 가깝다.
+
+이번 회차 수정:
+
+- Canon helper 기본 capture completion timeout을 `30초 -> 45초`로 늘렸다.
+- host capture round-trip timeout도 `35초 -> 50초`로 늘려 helper보다 먼저 실패 잠금을 걸지 않게 맞췄다.
+- timeout 기본값을 테스트로 고정해, 이후 follow-up capture headroom이 다시 줄어드는 회귀를 막는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml default_capture_round_trip_timeout_keeps_additional_headroom`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
+  - `BOOTHY_CANON_SDK_ROOT=C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU`
+- 모두 통과
+
+이번 시점 제품 판단:
+
+- 최신 실패 세션의 직접 증거는 둘째 샷 `capture-download-timeout`이었다.
+- 이번 수정은 촬영 correctness 로직을 바꾸기보다, **실장비 follow-up capture가 느릴 때 premature timeout으로 세션 흐름이 끊기지 않도록 headroom을 늘린 안정화 조정**으로 기록한다.
+
+### 2026-04-19 22:07 +09:00 최신 baseline rerun 세션 기록: one-session package는 닫혔지만 official `preset-applied visible <= 3000ms` gate는 여전히 실패했다
+
+사용자 최신 요청:
+
+1. 최근 세션을 확인해서 그대로 진행해 달라고 요청했다.
+2. `1.10` old resident first-visible baseline evidence lane으로 쓸 수 있는지 판단이 필요했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 총 3장 모두 `renderStatus = previewReady`
+  - 세션 종료 시점 `lifecycle.stage = capture-ready`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `cameraModel = Canon EOS 700D`
+  로 닫혔다.
+- 같은 세션의 `camera-helper-events.jsonl`에는 3개 요청 모두
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  가 같은 `requestId` / `captureId`로 이어졌다.
+- 같은 세션의 `timing-events.log`에는 3개 요청 모두
+  - `request-capture`
+  - `file-arrived`
+  - `preview-render-start`
+  - `recent-session-pending-visible`
+  - `capture_preview_ready`
+  - `recent-session-visible`
+  가 남아 있었다.
+- 즉 이번 최신 세션은 `1.10` 기준의 one-session evidence package로는 사용할 수 있다고 판단했다.
+
+이번 세션의 직접 수치:
+
+- same-capture first-visible reference:
+  - 1장: `4685ms`
+  - 2장: `3587ms`
+  - 3장: `3270ms`
+- official release gate인 preset-applied visible:
+  - 1장: `8972ms`
+  - 2장: `7942ms`
+  - 3장: `7967ms`
+- `preview-render-ready elapsedMs`:
+  - 1장: `5226ms`
+  - 2장: `4337ms`
+  - 3장: `4685ms`
+
+추가 메타데이터:
+
+- booth PC: `NOAHLEE`
+- observed darktable CLI version: `5.4.0`
+- observed OpenCL/GPU capability: `darktable-cltest`는 현장 재확인 시 `120s timeout`으로 관찰값을 닫지 못했다.
+
+이번 회차 해석:
+
+- 이번 최신 세션은 촬영 저장, helper correlation, same-session replacement, 최종 `capture-ready` 복귀까지는 정상이다.
+- 따라서 old line baseline evidence lane 관점에서는
+  **revalidation evidence package 자체는 닫혔다**고 보는 것이 맞다.
+- 하지만 공식 제품 게이트는 여전히
+  `preset-applied visible <= 3000ms`
+  인데,
+  이번 세션은 3장 모두 `7.9s ~ 9.0s` 수준에 머물렀다.
+- 즉 이번 최신 세션의 결론은
+  **revalidation success / release gate fail**이다.
+
+이번 시점 제품 판단:
+
+1. `1.10`은 더 이상 `rerun pending`으로 보기 어렵다. 최신 세션 하나로 baseline evidence package는 실제로 수집됐다.
+2. 다만 이 결과는 old line이 release-proof라는 뜻이 아니다. official gate 실패 증거가 다시 한 번 확인된 것이다.
+3. 따라서 현재 단계의 의미는 `old line이 재현 가능한지 확인`까지이며, 다음 route 판단은 여전히 `1.26 reserve path` 개시 여부 쪽으로 읽는 편이 맞다.

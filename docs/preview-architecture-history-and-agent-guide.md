@@ -18,7 +18,7 @@
 - `2026-04-19` 기준으로, 이 worktree는 과거 `resident first-visible` 중심 라인을 다시 검증하는 `validation lane`이다.
 - 이것은 과거 경로를 자동 승격하거나 그대로 release-proof로 되돌린다는 뜻이 아니다.
 - 최신 runbook 해석상 newer `actual-primary-lane`은 bounded `No-Go`이고, 그래서 old lane을 다시 보는 것이다.
-- old lane은 historically better product feel candidate일 뿐이며, current official release gate는 여전히 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
+- old lane은 historically better product feel candidate일 뿐이며, current official release gate는 `preset-applied visible <= 3000ms`이고 측정값으로는 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
 - GPU 활성/가속도 이 validation lane 안에서 함께 볼 가설일 뿐, 공식 성공 보장은 아니다.
 
 ---
@@ -27,10 +27,10 @@
 
 - 문제는 "새 preview 아키텍처가 아직 안 켜져 있다"가 아니었다.
 - `local dedicated renderer + first-visible lane 분리` 구조는 실제 하드웨어 canary까지 적용됐다.
-- 하지만 이 구조는 제품 KPI인 `same-capture preset-applied full-screen visible <= 3000ms and original-visible-to-preset-applied-visible <= 3000ms`를 반복적으로 닫지 못했다.
+- 하지만 이 구조는 공식 제품 게이트인 `preset-applied visible <= 3000ms`를 반복적으로 닫지 못했다.
 - 따라서 기존 dedicated renderer 경로는 `activation baseline`과 `evidence contract proof`로는 성공했지만, 최종 primary close architecture로는 부족하다는 판단이 문서화되어 있다.
 - `2026-04-16` 기준 판단에서는 이후 forward path가 `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` 쪽으로 재정렬됐다.
-- 다만 `2026-04-19` 현재 이 worktree의 실무 목적은 그 새 primary lane을 바로 구현하는 것이 아니라, older `resident first-visible` line을 validation candidate로 다시 읽고 current gate와 충돌하지 않는지 검증하는 일이다.
+- `2026-04-20` 기준으로는 old `resident first-visible` line이 closed `No-Go` baseline으로 확정됐고, 그 forward path가 Story `1.26` reserve path로 공식 오픈됐다.
 - 최신 후속 조사에서는 세션 소실 race, preview close latency, follow-up capture timeout이 서로 다른 문제축으로 다시 분리되어 기록됐다.
 
 ---
@@ -39,7 +39,8 @@
 
 ### Canonical KPI
 
-- primary release sign-off: `same-capture preset-applied full-screen visible <= 3000ms and original-visible-to-preset-applied-visible <= 3000ms`
+- primary release sign-off: `preset-applied visible <= 3000ms` (`originalVisibleToPresetAppliedVisibleMs <= 3000ms`)
+- `sameCaptureFullScreenVisibleMs`: first-visible/reference/comparison metric only, not an official release gate
 - same capture 정합성: `wrong-capture = 0`
 - preset fidelity drift: `0`
 - fallback stability: accepted threshold 이내
@@ -367,11 +368,11 @@
 - route policy, warm-state, evidence bundle, rollback semantics를 운영 계약으로 다룰 수 있다.
 - selected-capture evidence chain을 새 track 기준으로 재정렬할 수 있다.
 - local lane prototype, canary verdict, default/rollback gate를 문서/계약/테스트로 잠글 수 있다.
-- 과거 better run은 존재했지만, 현재 공식 dual gate를 닫았다고 증명된 historical architecture는 아직 없다.
+- 과거 better run은 존재했지만, 현재 공식 `preset-applied visible <= 3000ms` 게이트를 닫았다고 증명된 historical architecture는 아직 없다.
 
 ### 추가 검증이 필요했던 가설
 
-- approved hardware에서 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`
+- approved hardware에서 `preset-applied visible <= 3000ms` (`originalVisibleToPresetAppliedVisibleMs <= 3000ms`)
 - repeated canary success로 `Go`를 줄 수 있는 local lane
 - one-action rollback proof가 포함된 final release close
 - follow-up capture timeout이 충분히 사라졌다는 것
@@ -394,21 +395,21 @@
 
 새 에이전트가 이 영역을 이어받을 때 권장 읽기 순서는 아래와 같다.
 
-1. 이 문서
-2. `docs/runbooks/current-actual-lane-handoff-20260419.md`
-3. `docs/runbooks/preview-track-route-decision-20260418.md`
-4. `docs/release-baseline.md`
-5. `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
-6. `history/recent-session-thumbnail-speed-agent-context.md`
-7. `history/recent-session-thumbnail-speed-brief.md`
+1. `docs/README.md`
+2. `docs/runbooks/current-preview-gpu-direction-20260419.md`
+3. 이 문서
+4. `docs/runbooks/current-actual-lane-handoff-20260419.md`
+5. `docs/runbooks/preview-track-route-decision-20260418.md`
+6. `docs/release-baseline.md`
+7. `history/README.md`
 8. `docs/contracts/render-worker.md`
 9. `docs/contracts/session-manifest.md`
 
 이 순서를 권장하는 이유는 다음과 같다.
 
-- 먼저 current route decision과 release gate를 이해하고
-- 그다음 old lane을 왜 다시 보는지와 seam 정의를 확인하고
-- 마지막에 contract/gate 문서를 읽는 편이 current worktree 목적과 충돌을 줄인다.
+- 먼저 canonical doc map과 GPU 방향 판단을 읽고
+- 그다음 current route decision과 release gate를 이해하고
+- 마지막에 history/contract 문서를 읽는 편이 current worktree 목적과 충돌을 줄인다.
 
 ---
 

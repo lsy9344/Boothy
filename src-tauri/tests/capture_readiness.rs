@@ -1452,7 +1452,7 @@ fn fast_preview_updates_are_emitted_from_the_canonical_preview_path_before_captu
 }
 
 #[test]
-fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
+fn preview_render_keeps_fast_first_visible_but_closes_truthfully_from_raw_after_handoff() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -1648,7 +1648,11 @@ fn preview_render_can_finish_from_fast_preview_before_raw_handoff_closes() {
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=preview-render-start"));
     assert!(timing_events.contains("event=preview-render-ready"));
-    assert!(timing_events.contains("sourceAsset=fast-preview-raster"));
+    assert!(timing_events.contains("sourceAsset=raw-original"));
+    assert!(
+        !timing_events.contains("sourceAsset=fast-preview-raster"),
+        "camera thumbnails should stay first-visible only and not satisfy preview-ready"
+    );
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1920,10 +1924,25 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
     )
     .expect("timing events should be readable");
     assert!(timing_events.contains("event=fast-preview-promoted"));
+    let speculative_lock_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!(
+            "{}.{}.preview-speculative.lock",
+            result.capture.capture_id, result.capture.request_id
+        ));
+    let speculative_source_path = SessionPaths::new(&base_dir, &session.session_id)
+        .renders_previews_dir
+        .join(format!(
+            "{}.{}.preview-speculative-source.jpg",
+            result.capture.capture_id, result.capture.request_id
+        ));
     assert!(
-        timing_events.contains("event=preview-render-failed")
-            || timing_events.contains("sourceAsset=fast-preview-raster"),
-        "late same-capture preview should restart the speculative fast path before raw fallback"
+        !speculative_lock_path.exists(),
+        "legacy canonical fast previews should not leave a resident speculative lock behind"
+    );
+    assert!(
+        !speculative_source_path.exists(),
+        "legacy canonical fast previews should not stage a resident speculative source copy"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -1980,7 +1999,7 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
 
     let initial_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect("finished speculative output should close the preview immediately");
+            .expect("finished speculative output should close truthful preview immediately");
 
     assert_eq!(initial_capture.render_status, "previewReady");
     assert_eq!(
@@ -2000,7 +2019,7 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
             .timing
             .fast_preview_visible_at_ms
             .is_some(),
-        "speculative close should preserve first-visible timing"
+        "speculative truth close should preserve first-visible timing"
     );
 
     let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
@@ -2105,7 +2124,7 @@ fn complete_preview_render_waits_for_a_healthy_speculative_close_before_raw_fall
 }
 
 #[test]
-fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_close_is_active() {
+fn complete_preview_render_still_avoids_a_duplicate_render_while_speculative_close_is_active() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -2169,7 +2188,7 @@ fn complete_preview_render_does_not_start_a_duplicate_render_while_speculative_c
 
     let completed_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect("in-flight speculative close should finish before a duplicate render starts");
+            .expect("an active speculative close should not trigger a duplicate preview render");
 
     delayed_writer
         .join()

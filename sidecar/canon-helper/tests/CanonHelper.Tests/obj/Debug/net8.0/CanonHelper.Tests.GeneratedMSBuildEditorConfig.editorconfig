@@ -8,6 +8,6 @@ build_property.PlatformNeutralAssembly =
 build_property.EnforceExtendedAnalyzerRules = 
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = CanonHelper.Tests
-build_property.ProjectDir = C:\Code\Project\Boothy\sidecar\canon-helper\tests\CanonHelper.Tests\
+build_property.ProjectDir = C:\Code\Project\Boothy_lrc_first_visible\sidecar\canon-helper\tests\CanonHelper.Tests\
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 

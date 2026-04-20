@@ -236,8 +236,8 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
 - **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The host may promote an approved same-capture first-visible image into the session's canonical preview path before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker.
-- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement produced from the capture-bound published preset artifact.
+- **Preview pipeline model:** The preview pipeline is split into a `first-visible lane` and a `truth lane`. The host may promote an approved same-capture first-visible image into the session's canonical preview path before render completion, and that early source may come from fast preview, camera thumbnail, intermediate preview, or a resident low-latency worker. This lane exists for customer feel, matched comparison, and regression reading rather than for official release sign-off.
+- **Preview truth rule:** `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement produced from the capture-bound published preset artifact, and the official preview-track gate is interpreted from `originalVisibleToPresetAppliedVisibleMs <= 3000ms` (`preset-applied visible <= 3000ms`).
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
 - **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
 - **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
@@ -267,10 +267,10 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
 - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
-- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later render-backed output still replaces it at the same canonical path and only then advances `previewReady`.
+- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. The first-visible lane may be served by a warm resident worker rather than per-capture one-shot spawn, but if an early image was already promoted, the later render-backed output still replaces it at the same canonical path and only then advances `previewReady`. That render-backed close is the only official release-gate path.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
 - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
-- **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
+- **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric. `sameCaptureFullScreenVisibleMs` and first-visible events remain comparison metrics; `originalVisibleToPresetAppliedVisibleMs` is the official sign-off metric.
 - **Session seam logging rule:** Approved hardware validation must be able to close the preview seam from one recent session log containing `request-capture`, `file-arrived`, `fast-preview-visible` or equivalent first-visible event, `preview-render-start`, `capture_preview_ready`, and `recent-session-visible`.
 
 ### Frontend Architecture
@@ -864,11 +864,13 @@ The document defines enough consistency rules for multiple AI agents to implemen
 ### Gap Analysis Results
 
 **Critical Gaps:**
-- The document remains structurally valid, but it does not by itself express the current preview-track phase interpretation that newer `actual-primary-lane` is bounded `No-Go` and this worktree is being used as an old-lane validation lane.
+- The document remains structurally valid, but it does not by itself express the current preview-track phase interpretation that newer `actual-primary-lane` is bounded `No-Go`, Story `1.30` is the current evidence package for that `No-Go`, and this worktree is being used as an old-lane validation lane.
 
 **Important Gaps:**
 - Release-phase interpretation for the preview track now depends on the newer runbooks and ledger, not on this architecture document alone.
-- Agents must not read this architecture file as proof that preview-track implementation should resume immediately from this worktree.
+- Agents must not read this architecture file as proof that preview-track implementation should resume immediately from the old `resident first-visible` line.
+- Agents must read Story `1.10` as a closed `No-Go` baseline, Story `1.31` as unopened, and Story `1.26` as the officially opened reserve path.
+- Current preview-track direction should be interpreted from `docs/README.md`, `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`, and `docs/runbooks/current-preview-gpu-direction-20260419.md` first, then cross-checked against this architecture file.
 
 **Nice-to-Have Gaps:**
 - Future implementation artifacts may benefit from separate contract example files for `session.json`, preset bundles, and sidecar protocol messages if they are not created alongside the first stories.

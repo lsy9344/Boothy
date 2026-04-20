@@ -31,11 +31,11 @@ pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-reco
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
 
 const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
-// Real camera follow-up captures can take well past 15 seconds before the RAW
-// handoff closes. Keep the host budget longer than the helper budget so
-// helper-side failures surface first without the host prematurely locking the
-// session.
-const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 35_000;
+// Real camera follow-up captures can occasionally cross the 30 second mark
+// before the RAW handoff closes. Keep the host budget longer than the helper
+// budget so helper-side failures surface first without the host prematurely
+// locking the session.
+const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 50_000;
 const CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME: &str = ".camera-helper-capture-timeout-ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -729,4 +729,26 @@ fn current_time_ms() -> Result<u64, std::time::SystemTimeError> {
 
 fn strip_utf8_bom_prefix(value: &str) -> &str {
     value.trim_start_matches('\u{feff}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_capture_round_trip_timeout_keeps_additional_headroom_for_follow_up_handoffs() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-sidecar-timeout-default-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base_dir);
+        std::fs::create_dir_all(&base_dir).expect("base dir should be creatable");
+        std::env::remove_var("BOOTHY_CAPTURE_TIMEOUT_MS");
+
+        let timeout_ms = capture_round_trip_timeout_ms(&base_dir);
+
+        assert_eq!(timeout_ms, 50_000);
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
 }

@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "yz/z7XehInc=",
+  "dgSpecHash": "6yKpQ9l93MU=",
   "success": true,
-  "projectFilePath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
+  "projectFilePath": "C:\\Code\\Project\\Boothy_lrc_first_visible\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\KimYS\\.nuget\\packages\\microsoft.codecoverage\\17.14.1\\microsoft.codecoverage.17.14.1.nupkg.sha512",
     "C:\\Users\\KimYS\\.nuget\\packages\\microsoft.net.test.sdk\\17.14.1\\microsoft.net.test.sdk.17.14.1.nupkg.sha512",

@@ -16,7 +16,8 @@ use crate::{
     render::{
         enqueue_resident_preview_render_in_dir, is_valid_render_preview_asset,
         log_render_failure_in_dir, log_render_ready_in_dir, log_render_start_in_dir,
-        promote_preview_render_output, render_capture_asset_in_dir,
+        promote_preview_render_output, render_capture_asset_from_raw_in_dir,
+        render_capture_asset_in_dir,
         render_preview_asset_to_path_in_dir, RenderIntent,
     },
     session::{
@@ -58,6 +59,7 @@ const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
 
 struct FastPreviewPromotionResult {
     asset_path: String,
+    kind: Option<String>,
     visible_at_ms: Option<u64>,
 }
 
@@ -112,16 +114,20 @@ pub fn persist_capture_in_dir(
             handoff,
         )
     });
+    let seeded_fast_preview =
+        if promoted_fast_preview.is_none() {
+            seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
+        } else {
+            None
+        };
 
     if let Some(ref promoted_fast_preview) = promoted_fast_preview {
         capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
         capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
-    } else if let Some(seed_result) =
-        seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
-    {
+    } else if let Some(ref seed_result) = seeded_fast_preview {
         // If helper handoff metadata is missing or invalid but the same-capture
         // preview file already exists on disk, keep the fast-path alive.
-        capture.preview.asset_path = Some(seed_result.asset_path);
+        capture.preview.asset_path = Some(seed_result.asset_path.clone());
         capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
     }
 
@@ -145,15 +151,21 @@ pub fn persist_capture_in_dir(
     write_session_manifest(&paths.manifest_path, &manifest)?;
 
     if let Some(first_visible_asset_path) = capture.preview.asset_path.as_deref() {
-        start_speculative_preview_render_in_dir(
-            base_dir,
-            &manifest.session_id,
-            &capture.request_id,
-            &capture.capture_id,
-            &active_preset.preset_id,
-            &active_preset.published_version,
-            first_visible_asset_path,
-        );
+        let fast_preview_kind = promoted_fast_preview
+            .as_ref()
+            .or(seeded_fast_preview.as_ref())
+            .and_then(|promoted| promoted.kind.as_deref());
+        if should_start_speculative_preview_render(fast_preview_kind) {
+            start_speculative_preview_render_in_dir(
+                base_dir,
+                &manifest.session_id,
+                &capture.request_id,
+                &capture.capture_id,
+                &active_preset.preset_id,
+                &active_preset.published_version,
+                first_visible_asset_path,
+            );
+        }
     }
 
     Ok((manifest, capture, fast_preview_update))
@@ -394,9 +406,9 @@ pub fn complete_preview_render_in_dir(
             return Ok(speculative_capture);
         }
 
-        let promoted_late_fast_preview =
+        let promoted_late_fast_preview_kind =
             sync_helper_fast_preview_before_render(&paths, &mut manifest, capture_index)?;
-        if promoted_late_fast_preview {
+        if promoted_late_fast_preview_kind.is_some() {
             let capture = manifest
                 .captures
                 .get(capture_index)
@@ -406,15 +418,19 @@ pub fn complete_preview_render_in_dir(
                 capture.active_preset_id.as_deref(),
                 capture.preview.asset_path.as_deref(),
             ) {
-                start_speculative_preview_render_in_dir(
-                    base_dir,
-                    session_id,
-                    &capture.request_id,
-                    capture_id,
-                    preset_id,
-                    &capture.active_preset_version,
-                    first_visible_asset_path,
-                );
+                if should_start_speculative_preview_render(
+                    promoted_late_fast_preview_kind.as_deref(),
+                ) {
+                    start_speculative_preview_render_in_dir(
+                        base_dir,
+                        session_id,
+                        &capture.request_id,
+                        capture_id,
+                        preset_id,
+                        &capture.active_preset_version,
+                        first_visible_asset_path,
+                    );
+                }
                 let request_id = capture.request_id.clone();
                 drop(_pipeline_guard);
                 wait_for_speculative_preview_completion_for_request_in_dir(
@@ -483,7 +499,7 @@ pub fn complete_preview_render_in_dir(
         &capture_snapshot.request_id,
         RenderIntent::Preview,
     );
-    let rendered_preview = match render_capture_asset_in_dir(
+    let rendered_preview = match render_capture_asset_from_raw_in_dir(
         base_dir,
         session_id,
         &capture_snapshot,
@@ -715,15 +731,6 @@ fn try_complete_speculative_preview_render_in_dir(
                 .get_mut(capture_index)
                 .expect("capture index already resolved");
 
-            let budget_state = if preview_visible_at_ms
-                .saturating_sub(capture.timing.capture_acknowledged_at_ms)
-                <= PREVIEW_BUDGET_MS
-            {
-                "withinBudget"
-            } else {
-                "exceededBudget"
-            };
-
             capture.preview.asset_path =
                 Some(canonical_preview_path.to_string_lossy().into_owned());
             capture.preview.ready_at_ms = Some(preview_visible_at_ms);
@@ -736,7 +743,14 @@ fn try_complete_speculative_preview_render_in_dir(
                     .fast_preview_visible_at_ms
                     .unwrap_or(preview_visible_at_ms),
             );
-            capture.timing.preview_budget_state = budget_state.into();
+            capture.timing.preview_budget_state = if preview_visible_at_ms
+                .saturating_sub(capture.timing.capture_acknowledged_at_ms)
+                <= PREVIEW_BUDGET_MS
+            {
+                "withinBudget".into()
+            } else {
+                "exceededBudget".into()
+            };
 
             capture.clone()
         };
@@ -851,13 +865,13 @@ fn sync_helper_fast_preview_before_render(
     paths: &SessionPaths,
     manifest: &mut SessionManifest,
     capture_index: usize,
-) -> Result<bool, HostErrorEnvelope> {
+) -> Result<Option<String>, HostErrorEnvelope> {
     let Some(capture) = manifest.captures.get_mut(capture_index) else {
-        return Ok(false);
+        return Ok(None);
     };
 
     if capture.preview.asset_path.is_some() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let wait_cycles = (HELPER_FAST_PREVIEW_WAIT_MS / HELPER_FAST_PREVIEW_POLL_MS).max(1);
@@ -871,7 +885,7 @@ fn sync_helper_fast_preview_before_render(
             }
             manifest.updated_at = current_timestamp(SystemTime::now())?;
             write_session_manifest(&paths.manifest_path, manifest)?;
-            return Ok(true);
+            return Ok(promoted_fast_preview.kind);
         }
 
         thread::sleep(Duration::from_millis(HELPER_FAST_PREVIEW_POLL_MS));
@@ -885,7 +899,7 @@ fn sync_helper_fast_preview_before_render(
         HELPER_FAST_PREVIEW_WAIT_MS
     );
 
-    Ok(false)
+    Ok(None)
 }
 
 pub fn complete_final_render_in_dir(
@@ -1147,6 +1161,7 @@ fn seed_pending_preview_asset_path(
 
     Some(FastPreviewPromotionResult {
         asset_path,
+        kind: Some("legacy-canonical-scan".into()),
         visible_at_ms: current_time_ms().ok(),
     })
 }
@@ -1295,8 +1310,16 @@ fn promote_fast_preview_asset(
 
     Some(FastPreviewPromotionResult {
         asset_path,
+        kind: handoff.kind.clone(),
         visible_at_ms: current_time_ms().ok(),
     })
+}
+
+fn should_start_speculative_preview_render(fast_preview_kind: Option<&str>) -> bool {
+    !matches!(
+        fast_preview_kind,
+        Some("legacy-canonical-scan" | "camera-thumbnail")
+    )
 }
 
 fn validate_fast_preview_candidate(

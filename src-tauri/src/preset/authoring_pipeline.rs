@@ -1,8 +1,11 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use image::ImageReader;
 
 use crate::{
     contracts::dto::{
@@ -33,6 +36,9 @@ const PRESET_PUBLICATION_AUDIT_SCHEMA_VERSION: &str = "preset-publication-audit/
 const PUBLISHED_PRESET_BUNDLE_SCHEMA_VERSION: &str = "published-preset-bundle/v1";
 const AUTHORING_WINDOW_LABEL: &str = "authoring-window";
 const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
+const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
+const VALIDATION_RENDER_PROBE_MAX_WIDTH_PX: u32 = 64;
+const VALIDATION_RENDER_PROBE_MAX_HEIGHT_PX: u32 = 64;
 
 pub fn resolve_draft_authoring_root(base_dir: &Path) -> PathBuf {
     base_dir.join("preset-authoring").join("drafts")
@@ -1512,14 +1518,41 @@ fn build_validation_report(
         ));
     }
 
-    if let Some(xmp_path) = resolve_existing_workspace_file(draft_dir, &draft.xmp_template_path) {
-        if !is_render_compatible_xmp(&xmp_path) {
+    let xmp_path = resolve_existing_workspace_file(draft_dir, &draft.xmp_template_path);
+    let preview_asset_path = resolve_existing_workspace_file(draft_dir, &draft.preview.asset_path);
+
+    if let Some(xmp_path) = xmp_path.as_ref() {
+        if !is_render_compatible_xmp(xmp_path) {
             findings.push(validation_error(
                 "render-compatibility-check",
                 Some("xmpTemplatePath"),
                 "XMP template가 booth render 경로와 호환되는 형식을 확인하지 못했어요.",
                 "darktable에서 다시 내보낸 XMP template를 연결하고 history stack이 포함되었는지 확인해 주세요.",
             ));
+        }
+    }
+
+    if findings.is_empty() {
+        if let (Some(preview_asset_path), Some(xmp_path)) =
+            (preview_asset_path.as_ref(), xmp_path.as_ref())
+        {
+            match xmp_produces_visible_render_delta(preview_asset_path, xmp_path) {
+                Ok(true) => {}
+                Ok(false) => findings.push(validation_error(
+                    "render-delta-missing",
+                    Some("xmpTemplatePath"),
+                    "XMP template가 booth preview proof에서 기본 렌더와 구분되는 변화를 만들지 못했어요.",
+                    "대표 preview 자산으로 다시 export해 XMP 적용 결과가 기본 렌더와 실제로 달라지는지 확인한 뒤 재검증해 주세요.",
+                )),
+                Err(error) => findings.push(validation_error(
+                    "render-proof-unavailable",
+                    Some("xmpTemplatePath"),
+                    "XMP template의 booth render proof를 확인하지 못했어요.",
+                    &format!(
+                        "darktable-cli render proof를 다시 실행할 수 있게 preview asset과 XMP template를 점검해 주세요. detail={error}"
+                    ),
+                )),
+            }
         }
     }
 
@@ -1590,6 +1623,112 @@ fn resolve_existing_workspace_file(draft_dir: &Path, relative_path: &str) -> Opt
     }
 
     Some(resolved)
+}
+
+fn xmp_produces_visible_render_delta(
+    preview_asset_path: &Path,
+    xmp_path: &Path,
+) -> Result<bool, String> {
+    let probe_dir = build_validation_probe_dir()?;
+    let baseline_output = probe_dir.join("baseline.jpg");
+    let xmp_output = probe_dir.join("xmp.jpg");
+
+    let result = (|| {
+        run_render_validation_probe(preview_asset_path, None, &baseline_output)?;
+        run_render_validation_probe(preview_asset_path, Some(xmp_path), &xmp_output)?;
+        compare_render_probe_outputs(&baseline_output, &xmp_output)
+    })();
+
+    let _ = fs::remove_dir_all(&probe_dir);
+
+    result
+}
+
+fn build_validation_probe_dir() -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("validation probe timestamp를 만들지 못했어요: {error}"))?
+        .as_nanos();
+    let probe_dir = std::env::temp_dir().join(format!("boothy-render-proof-{stamp}"));
+
+    fs::create_dir_all(&probe_dir)
+        .map_err(|error| format!("validation probe 디렉터리를 만들지 못했어요: {error}"))?;
+
+    Ok(probe_dir)
+}
+
+fn run_render_validation_probe(
+    preview_asset_path: &Path,
+    xmp_path: Option<&Path>,
+    output_path: &Path,
+) -> Result<(), String> {
+    let binary = resolve_darktable_cli_binary_for_validation();
+    let mut command = Command::new(&binary);
+
+    command.arg(preview_asset_path);
+    if let Some(xmp_path) = xmp_path {
+        command.arg(xmp_path);
+    }
+    command
+        .arg(output_path)
+        .arg("--hq")
+        .arg("false")
+        .arg("--apply-custom-presets")
+        .arg("false")
+        .arg("--width")
+        .arg(VALIDATION_RENDER_PROBE_MAX_WIDTH_PX.to_string())
+        .arg("--height")
+        .arg(VALIDATION_RENDER_PROBE_MAX_HEIGHT_PX.to_string())
+        .arg("--core");
+
+    let output = command
+        .output()
+        .map_err(|error| format!("darktable-cli proof를 시작하지 못했어요: binary={binary} error={error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+        return Err(format!(
+            "darktable-cli proof가 실패했어요: exitCode={} stderr={stderr}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+
+    if !output_path.is_file() {
+        return Err("darktable-cli proof output이 생성되지 않았어요.".into());
+    }
+
+    Ok(())
+}
+
+fn resolve_darktable_cli_binary_for_validation() -> String {
+    std::env::var(DARKTABLE_CLI_BIN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "darktable-cli".into())
+}
+
+fn compare_render_probe_outputs(
+    baseline_output: &Path,
+    xmp_output: &Path,
+) -> Result<bool, String> {
+    let baseline = load_render_probe_pixels(baseline_output)?;
+    let xmp = load_render_probe_pixels(xmp_output)?;
+
+    Ok(baseline != xmp)
+}
+
+fn load_render_probe_pixels(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+    let image = ImageReader::open(path)
+        .map_err(|error| format!("render proof output을 열지 못했어요: path={} error={error}", path.display()))?
+        .decode()
+        .map_err(|error| format!("render proof output을 decode하지 못했어요: path={} error={error}", path.display()))?
+        .to_rgba8();
+
+    let (width, height) = image.dimensions();
+
+    Ok((width, height, image.into_raw()))
 }
 
 fn is_render_compatible_xmp(path: &Path) -> bool {

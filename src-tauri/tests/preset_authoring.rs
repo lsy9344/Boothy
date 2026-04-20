@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Once,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -35,7 +36,20 @@ use boothy_lib::{
     },
 };
 
+static FAKE_DARKTABLE_SETUP: Once = Once::new();
+
+fn setup_fake_darktable() {
+    FAKE_DARKTABLE_SETUP.call_once(|| {
+        let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("support")
+            .join("fake-darktable-cli.cmd");
+        std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", script_path);
+    });
+}
+
 fn unique_test_root(test_name: &str) -> PathBuf {
+    setup_fake_darktable();
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -307,6 +321,38 @@ fn draft_validation_accepts_standard_darktable_sidecar_history_entries() {
         .findings
         .iter()
         .any(|finding| finding.rule_code == "render-compatibility-check"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn draft_validation_rejects_xmp_templates_that_do_not_change_visible_render_output() {
+    let base_dir = unique_test_root("xmp-no-visible-delta");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_noop_render_assets(&base_dir, "preset_soft-glow-draft");
+
+    let result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should return a report");
+
+    assert_eq!(result.report.status, "failed");
+    assert_eq!(result.draft.lifecycle_state, "draft");
+    assert!(result
+        .report
+        .findings
+        .iter()
+        .any(|finding| finding.rule_code == "render-delta-missing"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1846,6 +1892,36 @@ fn scaffold_standard_darktable_sidecar_assets(base_dir: &Path, preset_id: &str) 
           <rdf:li darktable:operation="exposure" />
         </rdf:Seq>
       </darktable:history>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"#,
+    )
+    .expect("xmp should write");
+    fs::write(draft_root.join("previews/soft-glow.jpg"), "preview").expect("preview should write");
+    fs::write(draft_root.join("samples/soft-glow-cut.jpg"), "sample").expect("sample should write");
+}
+
+fn scaffold_noop_render_assets(base_dir: &Path, preset_id: &str) {
+    let draft_root = resolve_draft_authoring_root(base_dir).join(preset_id);
+
+    fs::create_dir_all(draft_root.join("darktable")).expect("darktable directory should exist");
+    fs::create_dir_all(draft_root.join("xmp")).expect("xmp directory should exist");
+    fs::create_dir_all(draft_root.join("previews")).expect("preview directory should exist");
+    fs::create_dir_all(draft_root.join("samples")).expect("sample directory should exist");
+    fs::write(draft_root.join("darktable/soft-glow.dtpreset"), "project")
+        .expect("project should write");
+    fs::write(
+        draft_root.join("xmp/soft-glow.xmp"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:darktable="http://darktable.sf.net/">
+      <darktable:history>
+        <rdf:Seq>
+          <rdf:li darktable:operation="exposure" />
+        </rdf:Seq>
+      </darktable:history>
+      <!-- force-no-visual-delta -->
     </rdf:Description>
   </rdf:RDF>
 </x:xmpmeta>"#,

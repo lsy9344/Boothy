@@ -1,17 +1,32 @@
 # Story 1.10: known-good preview lane 복구와 상주형 first-visible worker 도입
 
-Status: review
+Status: done
 
 Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Story 1.9는 `review / No-Go` 상태로 유지하고 Story 1.10이 다음 truth-critical corrective follow-up을 소유한다. 이번 스토리의 목적은 UI 표현을 다시 만지는 것이 아니라, booth hardware에서 검증된 known-good preview invocation으로 correctness를 복구하고, per-session seam 계측을 다시 닫으며, first-visible 경로를 per-capture one-shot spawn이 아닌 상주형 worker 중심 topology로 승격하는 것이다.
 
-## Current Role In This Worktree
+## Closed Role In This Worktree
 
-- `2026-04-19` 기준 이 문서는 active implementation restart를 지시하는 문서가 아니다.
-- 현재 이 worktree는 older `resident first-visible` line을 다시 검증하는 `validation candidate spec / revalidation context`로 읽어야 한다.
+- `2026-04-20` 기준 이 문서는 active implementation restart를 지시하는 문서가 아니다.
+- 현재 이 worktree는 older `resident first-visible` line을 다시 검증하는 `validation candidate spec`이 아니라, 이미 닫힌 closed `No-Go` baseline record로 읽어야 한다.
 - 이 lane은 historically better customer-perceived speed를 보였기 때문에 다시 보는 것이며, current official release gate를 이미 닫았기 때문에 돌아온 것이 아니다.
-- current release judgment는 여전히 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`다.
-- GPU-enabled acceleration은 이 lane에서 함께 검증할 가설일 뿐, lane을 자동으로 승격시키는 성공 보장이 아니다.
-- 아래 구현 체크리스트와 기록은 historical trace다. current purpose는 old lane을 release-proof로 오해하지 않고 revalidation scope를 잠그는 데 있다.
+- current official release judgment는 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`, 즉 `preset-applied visible <= 3000ms` 하나뿐이다.
+- `sameCaptureFullScreenVisibleMs`와 first-visible 수치는 계속 남기되, reference / comparison / feel metric으로만 읽는다.
+- GPU-enabled acceleration on this lane은 optional side evidence일 뿐, lane을 자동으로 승격시키는 성공 보장이 아니다.
+- 아래 구현 체크리스트와 기록은 historical trace다. current purpose는 old lane을 release-proof로 오해하지 않고 closed baseline으로 고정하는 데 있다.
+- current route reading은 `1.30 = official No-Go evidence`, `1.31 = unopened`, `1.26 = officially opened reserve path`다.
+
+### Current Closure Readout
+
+1. old `resident first-visible` lane의 CPU baseline package는 latest approved hardware session으로 다시 닫혔다.
+2. official `preset-applied visible <= 3000ms` gate는 여전히 실패했다.
+3. 이 story는 release winner candidate가 아니라 closed `No-Go` baseline으로 확정한다.
+4. 다음 active path는 Story `1.26 reserve path`다.
+
+### Canonical Reading Order
+
+- 이 story만 단독으로 읽지 않는다.
+- current direction은 먼저 `docs/README.md`, `docs/runbooks/current-preview-gpu-direction-20260419.md`, `docs/runbooks/current-actual-lane-handoff-20260419.md`를 읽고 해석한다.
+- `_bmad-output` 문서는 current route를 보조 설명하는 planning/trace artifact로 읽는다.
 
 ### Validation Gate Reference
 
@@ -22,13 +37,16 @@ Correct Course Note: 2026-04-04 승인된 sprint change proposal에 따라, Stor
 - Rerun execution reference:
   - `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`
 - Current hardware gate: `No-Go`
+- Official verdict owner:
+  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Close policy:
   - automated pass만으로 닫지 않는다.
   - latest approved booth session 1개만 봐도 first-visible lane과 later render-backed truth lane을 같은 세션 경로에서 다시 닫을 수 있어야 한다.
-  - current official release judgment는 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 만족해야 한다.
+  - current official release judgment는 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`, 즉 `preset-applied visible <= 3000ms`다.
   - preview lane correctness, replacement close, queue saturation fallback, `Preview Waiting` truth 유지가 함께 증명돼야 한다.
-  - historically better first-visible / replacement comparison numbers는 validation priority를 높여 주는 근거일 뿐, current release-proof로 읽으면 안 된다.
+  - `sameCaptureFullScreenVisibleMs`와 historically better first-visible / replacement comparison numbers는 validation priority를 높여 주는 reference 근거일 뿐, current release-proof로 읽으면 안 된다.
   - GPU 활성/가속은 optional acceleration hypothesis로만 다루며, lane의 공식 합격선을 바꾸지 않는다.
+  - 이 문서나 rerun note가 `Go`처럼 보이는 표현을 남기더라도 공식 판정은 ledger row가 소유한다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -41,7 +59,7 @@ booth customer로서,
 ## Current Validation Questions
 
 1. 이 old lane이 실제 approved hardware에서 `빠른 first-visible + later truthful close` 구조를 current contract 그대로 다시 만들 수 있는가
-2. 그 결과가 current dual release gate에 얼마나 가까운가, 그리고 어디서 여전히 멀어지는가
+2. 그 결과가 current official `preset-applied visible <= 3000ms` gate에 얼마나 가까운가, 그리고 어디서 여전히 멀어지는가
 3. GPU-enabled acceleration이 있다면 first-visible과 truthful close를 함께 줄이는 데 실제 도움이 되는가
 4. historical better run이 current release-proof가 아니라는 경계를 깨지 않고도, 다음 실험 범위를 더 좁힐 수 있는가
 
@@ -75,10 +93,10 @@ booth customer로서,
   - [x] current same-capture source 선택 규칙을 fast preview, camera thumbnail, intermediate preview, resident-worker output 우선순위와 health check 기준으로 정리한다.
   - [x] worker miss 또는 unsafe output일 때 기존 truthful `Preview Waiting` + normal render follow-up으로 즉시 내려가고 capture success는 유지되게 한다.
 
-- [ ] per-session seam instrumentation을 복구한다. (AC: 2)
-  - [ ] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
-  - [ ] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
-  - [ ] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다. current rerun checklist와 package definition은 `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`를 기준으로 사용한다.
+- [x] per-session seam instrumentation을 복구한다. (AC: 2)
+  - [x] `src-tauri/src/timing/mod.rs`, `src-tauri/src/commands/runtime_commands.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, 관련 UI emission 경로를 정리해 required seam events가 하나의 session diagnostics path에 빠짐없이 남게 한다.
+  - [x] `requestId`, `captureId`, `sessionId` 상관키가 first-visible / render-ready / recent-session-visible까지 일관되게 이어지도록 보강한다.
+  - [x] mixed global log를 다시 합치지 않고도 latest approved hardware session 1개만으로 latency split을 닫을 수 있게 진단 패키지를 정리한다. current rerun checklist와 package definition은 `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`를 기준으로 사용한다.
 
 - [x] truth ownership과 customer-safe UX를 유지한다. (AC: 5, 6, 7)
   - [x] `previewReady`, `preview.readyAtMs`, related readiness update는 계속 later render-backed booth-safe preview만 올리도록 유지한다.
@@ -86,8 +104,8 @@ booth customer로서,
   - [x] same-slot replacement, current-session isolation, wrong-capture/wrong-session discard 규칙을 다시 검증한다.
 
 - [ ] regression test와 hardware validation package를 준비한다. (AC: 1, 2, 3, 4, 5, 6, 7)
-  - [ ] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
-  - [ ] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
+  - [x] Rust integration test에 resident worker warm hit / cold fallback / queue saturation / warm-state loss / canonical same-path replacement / cross-session isolation 시나리오를 추가한다.
+  - [x] UI/provider regression에 `Preview Waiting` truth 유지, `recent-session-visible` logging, same-slot replacement continuity를 추가한다.
   - [ ] approved booth hardware에서 first-visible latency, later preset-applied readiness, seam log close, replacement correctness를 한 패키지로 다시 수집한다. 현재 rerun 직전 실행 계획은 `docs/runbooks/old-first-visible-cpu-baseline-rerun-20260419.md`에 고정한다.
 
 ### Review Findings
@@ -99,6 +117,8 @@ booth customer로서,
 - [x] [Review][Patch] speculative first-visible 이후 preview refinement guard가 `previewWaiting` capture를 바로 반환시켜 truthful preview close가 멈출 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:539]
 - [x] [Review][Patch] readiness 재조회 실패 시 current capture가 아직 `previewWaiting`이어도 UI fallback이 `previewReady`를 내보내 false-ready를 만들 수 있음 [src-tauri/src/commands/capture_commands.rs:197]
 - [x] [Review][Patch] story가 요구한 per-session seam event 복구가 이번 diff에서 아직 구현되지 않음 [src-tauri/src/capture/ingest_pipeline.rs:1369]
+- [x] [Review][Patch] resident/speculative preset-applied preview가 canonical slot 교체 후에도 truthful `previewReady`를 닫지 못함 [src-tauri/src/capture/ingest_pipeline.rs:707]
+- [x] [Review][Patch] sprint-status `last_updated`가 같은 날 더 이른 시각으로 되돌아가 revalidation 추적 순서를 흐림 [_bmad-output/implementation-artifacts/sprint-status.yaml:41]
 
 ## Dev Notes
 
@@ -113,13 +133,14 @@ booth customer로서,
 ### 왜 이 스토리가 새로 필요해졌는가
 
 - 2026-04-04 실장비 재검증에서 `capture acknowledged -> preview visible` 평균이 약 `9238ms`, warm 구간 최근 3컷도 `7616ms`, `7761ms`, `8189ms`로 제품 기준에 미달했다. [Source: history/recent-session-thumbnail-speed-brief.md]
+- 위 수치들은 first-visible / feel metric historical evidence로는 계속 중요하지만, 현재 official `Go / No-Go`는 preset-applied visible 3초 게이트를 ledger에서 닫는지로만 판단한다.
 - 일부 컷은 preview 파일과 `fastPreviewVisibleAtMs`가 있었는데도 최종 `session.json`이 `renderStatus=previewWaiting`으로 남아 replacement close 실패가 재현됐다. [Source: history/recent-session-thumbnail-speed-brief.md]
 - 같은 증거 묶음에는 `preview-render-queue-saturated`, preview stderr access violation, missing preview file 흔적이 함께 남아 current preview lane이 실험적 invocation 조합에서 불안정해졌다는 신호가 확인됐다. [Source: history/recent-session-thumbnail-speed-brief.md]
 - 승인된 2026-04-04 sprint change proposal은 다음 단계로 `known-good correctness 복구 + per-session seam 계측 복구 + 상주형 first-visible worker 설계/도입`을 함께 추진하도록 범위를 재정의했다. [Source: _bmad-output/planning-artifacts/sprint-change-proposal-20260404-010751.md]
 
 ### 스토리 기반 요구사항
 
-- PRD는 first-visible current-session image latency와 preset-applied preview readiness latency를 분리해서 측정하라고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
+- PRD는 first-visible current-session image latency와 preset-applied preview readiness latency를 분리해서 측정하라고 요구한다. 공식 제품 게이트는 후자(`preset-applied visible <= 3000ms`)만 사용한다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
 - PRD는 same-capture fast preview를 허용하지만 preview truth를 느슨하게 만들면 안 된다고 명시한다. [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - Architecture는 preview lane을 `first-visible lane`과 `truth lane`으로 나누고, approved same-capture source와 resident low-latency worker를 허용한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
 - Render Worker 계약은 known-good contract, resident worker 우선, same-path replacement, seam event 집합을 이미 baseline으로 고정했다. [Source: docs/contracts/render-worker.md]
@@ -151,7 +172,7 @@ booth customer로서,
 
 ### 이전 스토리 인텔리전스
 
-- Story 1.9는 first-visible same-capture preview와 later XMP replacement를 도입했지만, 현재 상태는 `review / No-Go`다. 실장비 증거상 latency 기준 미달과 replacement close 실패가 남아 있다. [Source: _bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md]
+- Story 1.9는 first-visible same-capture preview와 later XMP replacement를 도입했지만, 현재 상태는 `review / No-Go`다. 실장비 증거상 official preset-applied-visible gate 미달과 replacement close 실패가 남아 있다. [Source: _bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md]
 - Story 1.9의 핵심 교훈은 “UI가 아니라 preview 생성 topology가 병목”이라는 점이다. 남은 유효한 개선은 option 미세 조정보다 구조 변경이다. [Source: history/recent-session-thumbnail-speed-brief.md]
 - Story 1.8은 여전히 render-backed `previewReady` / `finalReady` truth owner다. 1.10도 이 소유권을 절대 건드리면 안 된다. [Source: _bmad-output/implementation-artifacts/1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결.md]
 - 최근 커밋 패턴은 seam logging, fallback 강화, recent-session latency 보정 순으로 이어졌기 때문에 1.10은 기존 자산을 폐기하지 말고 resident topology로 승격해야 한다.
@@ -219,6 +240,7 @@ booth customer로서,
 - official darktable 문서와 내부 research는 embedded thumbnail/early preview를 먼저 보여주고 later 정확한 preview로 교체하는 staged preview 패턴이 업계적으로 자연스럽다는 점을 재확인한다. 이 문장은 research artifact의 공식 문서 종합을 요약한 해석이다. [Source: _bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md]
 - official Tauri sidecar 문서 기준으로도 외부 바이너리를 bundle하고 Rust host에서 sidecar로 호출하는 패턴은 현재 helper/worker 구조와 충돌하지 않는다. 따라서 이번 스토리에 별도 플랫폼 pivot은 필요 없다. 이 문장은 공식 sidecar 문서를 현재 repo 구조에 적용한 추론이다.
 - GPU-enabled acceleration은 current worktree에서 함께 점검할 수 있는 유효한 hypothesis지만, 문서상 공식 성공 보장이나 route promotion 근거로 읽어서는 안 된다.
+- 현재 공식 경로 메모는 `1.30`을 bounded `No-Go` evidence로 유지하고, `1.31`은 열지 않으며, Story `1.26 reserve path`를 active route로 연다.
 
 ### 금지사항 / 안티패턴
 
@@ -227,6 +249,7 @@ booth customer로서,
 - resident worker를 도입하더라도 capture request acknowledgement를 worker 준비 완료까지 묶어 지연시키지 말 것.
 - worker miss를 capture failure로 승격하지 말 것.
 - session seam 진단이 빠졌는데도 hardware gate를 닫았다고 주장하지 말 것.
+- story note만으로 official verdict를 선언하지 말 것. `Go / No-Go`는 ledger row가 먼저다.
 
 ### References
 
@@ -260,6 +283,9 @@ GPT-5 Codex
 - 2026-04-04 01:26:15 +09:00 - Story 1.10을 `known-good baseline + resident worker topology + per-session seam logging + truthful fallback` 중심의 ready-for-dev guide로 정리했다.
 - 2026-04-04 01:48:21 +09:00 - `src-tauri/src/render/mod.rs`, `src-tauri/src/capture/ingest_pipeline.rs`, `src-tauri/src/commands/capture_commands.rs`, `src-tauri/src/commands/session_commands.rs`를 수정해 booth-safe preview invocation baseline, resident first-visible worker topology, truthful fallback/readiness ownership을 코드에 연결했다.
 - 2026-04-04 01:48:21 +09:00 - `cargo test --test capture_readiness -- --nocapture --test-threads=1`를 실행해 Rust capture regression 59개가 직렬 실행 기준 모두 통과함을 확인했고, Vitest는 `node_modules` 부재로 실행하지 못했다.
+- 2026-04-19 12:45:13 +09:00 - `cargo test -- --nocapture --test-threads=1`, `pnpm test:run`, `pnpm lint`를 실행해 resident worker, seam instrumentation, `Preview Waiting` truth, recent-session continuity 회귀가 현재 worktree에서 모두 통과함을 확인했다.
+- 2026-04-19 12:45:13 +09:00 - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`의 Story 1.8 corrective gate 문구를 현재 governance regression 기대와 다시 맞췄고, Story 1.10 checklist를 software-verified / hardware-rerun-pending 상태로 정리했다.
+- 2026-04-19 22:07:58 +09:00 - approved booth hardware latest session `session_000000000018a7c3f52370b574`를 확인해 one-session baseline evidence package를 수집했다. helper correlation, same-session replacement, `capture-ready` 복귀는 닫혔지만 preset-applied visible은 `8972ms`, `7942ms`, `7967ms`로 official gate 실패를 다시 기록했다.
 
 ### Completion Notes List
 
@@ -269,11 +295,14 @@ GPT-5 Codex
 - sprint tracking과 story file status를 `ready-for-dev` 기준으로 맞췄다.
 - booth-safe preview invocation policy를 한 곳에서 고정하고, first-visible worker가 queue miss 또는 unsafe output일 때도 `Preview Waiting` truth를 유지하도록 fallback을 연결했다.
 - capture completion 경로는 resident first-visible output을 canonical preview path에 먼저 올릴 수 있지만, `previewReady` / `preview.readyAtMs` / readiness update는 계속 later render-backed close만 소유하도록 되돌렸다.
-- 실장비 evidence package와 별도 UI test 실행은 아직 남아 있어 story status를 `in-progress`로 유지한다.
+- per-session seam logging, resident worker 회귀, `Preview Waiting` truth, recent-session continuity에 대한 Rust/Vitest/lint 검증을 2026-04-19 현재 worktree 기준으로 다시 통과시켰다.
+- approved booth hardware rerun package는 `2026-04-19 22:07 +09:00` 최신 세션으로 한 번 수집했다. 다만 이 회차도 official `preset-applied visible <= 3000ms` gate를 닫지 못했기 때문에 이 story는 closed `No-Go` baseline으로 확정한다. current official verdict는 ledger 기준 `No-Go`다.
+- `2026-04-20` 기준 이 story는 closed `No-Go` baseline으로 확정했고, active reserve path ownership은 Story `1.26`으로 넘긴다.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md
+- _bmad-output/implementation-artifacts/hardware-validation-ledger.md
 - _bmad-output/implementation-artifacts/sprint-status.yaml
 - docs/contracts/render-worker.md
 - docs/contracts/session-manifest.md
@@ -281,7 +310,12 @@ GPT-5 Codex
 - src-tauri/src/commands/capture_commands.rs
 - src-tauri/src/commands/session_commands.rs
 - src-tauri/src/render/mod.rs
+- src-tauri/tests/capture_readiness.rs
 
 ### Change Log
 
 - 2026-04-04 - booth-safe preview invocation baseline과 resident first-visible worker topology를 연결하고, preview truth ownership을 later render-backed close로 되돌렸다.
+- 2026-04-19 - software regression과 governance ledger를 현재 revalidation context에 다시 맞추고, Story 1.10을 hardware rerun 대기 `review` 상태로 재정리했다.
+- 2026-04-19 - preview-track official gate를 `preset-applied visible <= 3000ms` 단일 기준으로 다시 읽고, 이 story를 release-proof가 아닌 baseline evidence lane으로 재해석했다.
+- 2026-04-19 - 최신 approved hardware session `session_000000000018a7c3f52370b574`로 baseline evidence package를 실제로 수집했고, official gate fail을 ledger에 반영하는 current `No-Go` evidence로 연결했다.
+- 2026-04-20 - Story `1.10`을 closed `No-Go` baseline으로 확정하고, active reserve path ownership을 Story `1.26`으로 넘겼다.

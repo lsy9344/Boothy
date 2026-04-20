@@ -20,11 +20,11 @@ internal sealed class CanonSdkCamera : IDisposable
     ];
     private const string CaptureCompletionTimeoutOverrideFileName =
         ".camera-helper-capture-timeout-ms";
-    // Real follow-up captures on EOS 700D hardware can take well beyond 15 seconds
-    // before the transfer boundary closes. Keep enough headroom to avoid treating
-    // slow but valid RAW handoffs as fatal helper failures.
+    // Real follow-up captures on EOS 700D hardware can occasionally cross the
+    // 30 second mark before the transfer boundary closes. Keep enough headroom
+    // to avoid treating slow but valid RAW handoffs as fatal helper failures.
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
-        30000
+        45000
     );
 
     private readonly object _sync = new();

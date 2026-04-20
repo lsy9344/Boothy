@@ -16,7 +16,9 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
   - later XMP preview가 같은 canonical path를 교체하고 그때만 `previewReady`가 올라간다는 증거
   - burst capture와 cross-session 상황에서도 잘못된 이미지가 섞이지 않는다는 증거
 - Current hardware gate: `No-Go`
-- Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview, later XMP replacement, timing split, cross-session isolation을 한 패키지로 묶어야 한다.
+- Official verdict owner:
+  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+- Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview, later XMP replacement, timing split, cross-session isolation을 한 패키지로 묶어야 한다. 다만 preview-track official `Go / No-Go`는 이 story note가 아니라 ledger에서 `preset-applied visible <= 3000ms`로 판정한다.
 - Latest observed booth behavior (2026-04-03, user field observation):
   - `사진 찍기` 직후 booth state는 바로 `Preview Waiting`으로 진입했다.
   - `최근 세션`에는 촬영 직후 약 1초 안팎에 아무 pending fast preview도 보이지 않았다.
@@ -25,7 +27,7 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
   - 같은 세션의 helper `file-arrived` 이벤트에는 `fastPreviewPath: null`만 남았고, `fast-preview-ready` 이벤트는 관찰되지 않았다. 즉 RAW 저장 완료 경계는 이미 fast preview 시도와 분리됐지만, helper가 camera thumbnail 실패 뒤 customer-visible fast preview를 만들지 못했다.
   - 같은 세션의 `timing-events.log`에는 `fast-preview-promoted`가 없었고, 첫 capture `preview-render-ready`만 `2026-04-02T22:25:54Z`, 두 번째 capture `preview-render-ready`만 `2026-04-02T22:26:02Z`에 기록됐다.
   - 같은 세션의 `session.json`에는 각 capture의 `timing.fastPreviewVisibleAtMs`가 비어 있었고 `timing.xmpPreviewReadyAtMs`만 각각 `1775168754531`, `1775168762126`으로 채워져 있었다.
-  - 따라서 이번 실장비 증거는 "저장 완료 경계 분리"는 확인했지만 Story 1.9의 핵심 목표인 blank waiting 완화와 same-slot replacement는 아직 미달이며, 남은 병목은 host/UI 이전 helper fast preview 생성 경로다. 하드웨어 판정은 계속 `No-Go`다.
+  - 따라서 이번 실장비 증거는 "저장 완료 경계 분리"는 확인했지만 Story 1.9의 핵심 목표인 blank waiting 완화와 same-slot replacement는 아직 미달이며, 남은 병목은 host/UI 이전 helper fast preview 생성 경로다. 동시에 observed `preset-applied visible`도 약 `3.3초 ~ 3.4초`여서 current official gate(`<= 3000ms`)를 넘는다. 하드웨어 판정은 계속 `No-Go`다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -114,7 +116,7 @@ booth customer로서,
 
 - PRD는 capture success, preview truth, final completion을 분리하라고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate]
 - PRD는 same-capture fast preview를 허용하되, preset-applied preview ready와 혼동하면 안 된다고 명시한다. [Source: _bmad-output/planning-artifacts/prd.md#FR-004 Current-Session Capture Persistence and Truthful Preview Confidence]
-- NFR-003은 current-session image의 faster first-visible feel과 release-close 판단을 분리해 읽도록 재정렬됐다. current official preview-track gate는 `sameCaptureFullScreenVisibleMs <= 3000ms`와 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`를 함께 본다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
+- NFR-003은 current-session image의 faster first-visible feel과 release-close 판단을 분리해 읽도록 재정렬됐다. current official preview-track gate는 `originalVisibleToPresetAppliedVisibleMs <= 3000ms`, 즉 `preset-applied visible <= 3000ms` 하나뿐이다. first-visible은 comparison / feel metric으로 계속 본다. [Source: _bmad-output/planning-artifacts/prd.md#NFR-003 Booth Responsiveness and Preview Readiness]
 - Architecture는 helper optional fast-preview handoff, canonical preview promotion, same-path replacement, split telemetry를 허용한다. [Source: _bmad-output/planning-artifacts/architecture.md#API & Communication Patterns]
 - UX는 `Preview Waiting` 중 same-capture fast preview를 먼저 보여줄 수 있어도 상태 자체는 그대로 유지하라고 요구한다. [Source: _bmad-output/planning-artifacts/ux-design-specification.md#Preview Waiting 보호 흐름]
 
@@ -210,6 +212,7 @@ booth customer로서,
   - Boothy도 구조 변경 없이 같은 제품 전략을 제한적으로 도입할 수 있다.
   - darktable cold-start, queue, GPU/OpenCL은 후속 최적화 포인트다.
 - 따라서 Story 1.9 구현은 "새 기술 도입"보다 "existing host/helper/render seams를 staged preview로 연결"하는 데 집중해야 한다. [Source: _bmad-output/planning-artifacts/research/technical-capture-preview-latency-research-2026-04-01.md]
+- 현재 route 해석에서는 `1.30`이 official `No-Go` evidence를 소유하고, `1.31`은 unopened 상태로 남는다. Story 1.9의 historical measurements는 helper 병목과 first-visible feel 비교 근거로 유지하되, reserve-path 판단이 필요해지면 다음 후보는 `1.26`이다.
 
 ### 금지사항 / 안티패턴
 
@@ -218,6 +221,7 @@ booth customer로서,
 - capture helper, render worker, UI 각각이 별도 preview truth를 만들지 말 것.
 - pending fast preview와 later render preview를 서로 다른 unrelated thumbnail slot으로 분리하지 말 것.
 - Story 1.8 hardware close를 우회하기 위해 representative tile이나 raw copy를 ready truth처럼 보여주지 말 것.
+- story note나 rerun note만으로 preview-track official verdict가 바뀐 것처럼 쓰지 말 것. 최종 판정은 ledger가 소유한다.
 
 ### References
 
@@ -277,6 +281,7 @@ GPT-5 Codex
 - 이번 follow-up 변경 후 `pnpm vitest run ...`, `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness --test operator_audit --test operator_recovery`, `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`를 재통과했다.
 - 최신 실장비 세션 `session_000000000018a2aa911a1263d8` 증거로 `file-arrived -> fast-thumbnail-attempted -> fast-thumbnail-failed -> preview-render-ready` 순서를 확인했고, 남은 원인을 helper fast preview 생성 실패로 좁혔다.
 - helper는 이제 camera thumbnail이 실패해도 RAW 파일에서 fast preview를 다시 만들도록 시도하고, fallback까지 실패하면 `fast-preview-fallback-failed`로 남겨 다음 하드웨어 검증에서 root cause를 더 빠르게 구분할 수 있게 했다.
+- 2026-04-19 - historical first-visible / replacement measurements는 그대로 보존하되, 이 story의 official 해석을 `preset-applied visible <= 3000ms` 단일 게이트와 ledger-owned verdict에 맞춰 다시 정렬했다.
 
 ### File List
 

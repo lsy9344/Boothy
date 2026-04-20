@@ -2,14 +2,16 @@
 
 Status: done
 
-Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 canonical ledger 기준으로 닫혔다. 2026-03-31 실장비 검증에서 persisted RAW, preview artifact, 그리고 `session.json` capture timing metrics가 한 패키지로 확인되어 Story 1.5는 `done`으로 올린다. Story 1.7은 capture correlation supporting evidence를 공급하지만 canonical close ownership은 이 문서와 ledger가 소유한다.
+Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 canonical ledger 기준으로 닫혔다. 2026-03-31 실장비 검증에서 persisted RAW, preview artifact, 그리고 `session.json` capture timing metrics가 한 패키지로 확인되어 Story 1.5는 `done`으로 올린다. Story 1.7은 capture correlation supporting evidence를 공급하지만, 이 문서는 Story 1.5의 local acceptance/close context만 기록하고 canonical hardware close record와 official preview-track `Go / No-Go` verdict는 ledger가 단독으로 소유한다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Required HV checklist IDs: `HV-04`, `HV-05`
 - Current hardware gate: `Go`
-- Close policy: `automated pass` alone does not close this story; canonical ledger row `Go`가 기록되어 `done` 기준을 충족했다.
+- Official verdict owner:
+  - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+- Close policy: `automated pass` alone does not close this story; canonical ledger row `Go`가 기록되어 `done` 기준을 충족했다. 이 문서는 Story 1.5의 HV-04/HV-05 local acceptance/close context를 설명할 뿐이고, preview-track 전체 official gate verdict와 canonical `Go / No-Go` ownership은 `hardware-validation-ledger.md`에만 있다.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -23,7 +25,7 @@ booth customer로서,
 
 1. booth가 유효한 촬영 가능 상태이고 활성 프리셋이 선택된 상태에서 고객이 촬영에 성공하면, 새 소스 사진은 성공 안내 전에 활성 세션에 먼저 안전하게 저장되어야 한다. 또한 활성 프리셋은 캡처 또는 확인 surface에서 계속 보여야 한다.
 2. 성공적으로 저장된 촬영의 고객 안전 프리뷰가 아직 준비되지 않았다면 booth는 `Preview Waiting`에 진입해야 하며, 첫 문장은 사진 저장 완료를 확인하고 다음 문장은 확인용 프리뷰 준비 중과 지금 가능한 다음 행동을 설명해야 한다.
-3. 성공적으로 인정된 촬영의 즉시 결과는 승인된 하드웨어에서 1초 이내에 인지 가능해야 하며, 프리뷰가 아직 준비되지 않았다면 false-ready 상태 대신 truthful `Preview Waiting`을 유지해야 한다. preview-track release judgment는 이 스토리 단독의 5초 기준이 아니라 current official dual gate로 별도 읽어야 한다.
+3. 성공적으로 인정된 촬영의 즉시 결과는 승인된 하드웨어에서 1초 이내에 인지 가능해야 하며, 프리뷰가 아직 준비되지 않았다면 false-ready 상태 대신 truthful `Preview Waiting`을 유지해야 한다. preview-track release judgment는 이 스토리 단독의 5초 기준이 아니라 current official single gate(`preset-applied visible <= 3000ms`)로 별도 읽어야 한다.
 4. booth가 `Preview Waiting` 상태일 때 최신 사진 레일이 아직 비어 있어도 현재 세션 기준 정상일 수 있음을 설명해야 하며, 고객에게 내부 렌더 실패 원인이나 helper/filesystem 진단어를 노출하면 안 된다.
 
 ## Tasks / Subtasks
@@ -155,7 +157,7 @@ booth customer로서,
   - capture success 후 preview가 아직 없으면 `previewWaiting`이 먼저 보이고, preview asset이 준비되면 그때 rail이 갱신된다.
   - 다른 세션의 asset이 현재 세션 latest photo rail에 노출되지 않는다.
   - active preset visibility가 capture/waiting/confirmation 흐름 내내 유지된다.
-  - performance instrumentation이 1초 ack 측정과 preview truth seam 검증을 지원한다. current preview-track release gate는 dual 3000ms 기준으로 별도 읽는다.
+  - performance instrumentation이 1초 ack 측정과 preview truth seam 검증을 지원한다. current preview-track release gate는 `preset-applied visible <= 3000ms` 단일 기준으로 별도 읽는다.
 - 아키텍처 문서상 테스트 스택은 강하게 고정되어 있지 않다. 대신 contract, session manifest, host adapter, booth workflow seam 중심으로 검증해야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Starter Template Evaluation]
 
 ### 금지사항 / 안티패턴

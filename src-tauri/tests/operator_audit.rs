@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Barrier},
+    sync::{Arc, Barrier, Once},
     thread,
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
@@ -45,7 +45,20 @@ use boothy_lib::{
     },
 };
 
+static FAKE_DARKTABLE_SETUP: Once = Once::new();
+
+fn setup_fake_darktable() {
+    FAKE_DARKTABLE_SETUP.call_once(|| {
+        let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("support")
+            .join("fake-darktable-cli.cmd");
+        std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", script_path);
+    });
+}
+
 fn unique_test_root(test_name: &str) -> PathBuf {
+    setup_fake_darktable();
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
