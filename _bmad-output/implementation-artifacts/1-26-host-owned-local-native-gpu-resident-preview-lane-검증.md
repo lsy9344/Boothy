@@ -1,6 +1,6 @@
 # Story 1.26: host-owned local native/GPU resident preview lane 검증
 
-Status: ready-for-dev
+Status: review
 
 Correct Course Note: `2026-04-20` preview-track route decision에 따라, Story `1.10` old `resident first-visible` line은 closed `No-Go` baseline으로 고정하고, Story `1.26`이 다음 official reserve path를 소유한다. 이번 스토리의 목적은 darktable hot path를 더 미세조정하는 것이 아니라, `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` 범위로 새 preview route를 좁게 정의하고 승인 하드웨어에서 official gate를 다시 검증하는 것이다.
 
@@ -61,15 +61,15 @@ booth customer로서,
 
 ## Tasks / Subtasks
 
-- [ ] reserve topology boundary를 고정한다. (AC: 1, 2, 3, 4, 5)
-  - [ ] host-owned local native/GPU resident full-screen lane의 owner boundary를 문서와 코드에서 한 곳으로 고정한다.
-  - [ ] `display-sized preset-applied truthful artifact`가 어떤 시점과 경로에서 생성되고 `previewReady`를 소유하는지 명시한다.
-  - [ ] darktable path가 parity reference, fallback, final/export truth로 남는 경계를 분리한다.
+- [x] reserve topology boundary를 고정한다. (AC: 1, 2, 3, 4, 5)
+  - [x] host-owned local native/GPU resident full-screen lane의 owner boundary를 문서와 코드에서 한 곳으로 고정한다.
+  - [x] `display-sized preset-applied truthful artifact`가 어떤 시점과 경로에서 생성되고 `previewReady`를 소유하는지 명시한다.
+  - [x] darktable path가 parity reference, fallback, final/export truth로 남는 경계를 분리한다.
 
-- [ ] truthful close ownership과 booth contract를 유지한다. (AC: 2, 3, 4)
-  - [ ] first-visible / intermediate asset이 있어도 `Preview Waiting`과 later truthful close ownership이 느슨해지지 않게 한다.
-  - [ ] same-slot continuity, wrong-capture discard, cross-session isolation guardrail을 reserve path에 맞게 다시 잠근다.
-  - [ ] `previewReady`가 non-truthful asset에서 먼저 올라가지 않도록 회귀를 막는다.
+- [x] truthful close ownership과 booth contract를 유지한다. (AC: 2, 3, 4)
+  - [x] first-visible / intermediate asset이 있어도 `Preview Waiting`과 later truthful close ownership이 느슨해지지 않게 한다.
+  - [x] same-slot continuity, wrong-capture discard, cross-session isolation guardrail을 reserve path에 맞게 다시 잠근다.
+  - [x] `previewReady`가 non-truthful asset에서 먼저 올라가지 않도록 회귀를 막는다.
 
 - [ ] per-session instrumentation과 gate readout을 유지한다. (AC: 4, 5)
   - [ ] one-session package만으로 official gate와 reference metrics를 함께 읽을 수 있게 seam logging을 유지하거나 보강한다.
@@ -77,9 +77,9 @@ booth customer로서,
   - [ ] ledger readout에 필요한 evidence path 형식을 미리 고정한다.
 
 - [ ] hardware validation package를 수집한다. (AC: 5, 6)
-  - [ ] 승인 하드웨어 one-session package를 수집한다.
-  - [ ] official gate, correctness, truth ownership을 ledger에 기록한다.
-  - [ ] 결과에 따라 `Go` 또는 bounded `No-Go`를 선언한다.
+  - [x] 승인 하드웨어 one-session package를 수집한다.
+  - [x] official gate, correctness, truth ownership을 ledger에 기록한다.
+  - [x] 결과에 따라 `Go` 또는 bounded `No-Go`를 선언한다.
 
 ## Dev Notes
 
@@ -160,20 +160,39 @@ GPT-5 Codex
 ### Debug Log References
 
 - 2026-04-20 10:58:00 +09:00 - Story `1.10` latest approved hardware rerun result, preview route docs, PRD/epics/architecture interpretation, and hardware ledger ownership을 함께 읽고 Story `1.26` reserve path opening scope를 정리했다.
+- 2026-04-20 11:37:12 +09:00 - reserve path truthful close owner를 `preset-applied-preview` 계약으로 고정하고, `src-tauri/src/capture/ingest_pipeline.rs`, `docs/contracts/render-worker.md`, `docs/contracts/session-manifest.md`, `src-tauri/tests/capture_readiness.rs`를 함께 갱신했다.
+- 2026-04-20 11:37:12 +09:00 - `cargo test -- --test-threads=1`, `pnpm test:run`, `pnpm lint`를 실행해 reserve path truthful close 회귀와 기존 booth 흐름이 현재 worktree 기준 모두 통과함을 확인했다.
+- 2026-04-20 11:54:11 +09:00 - 승인 하드웨어 최신 세션 `session_000000000018a7f0faf87fd164`를 읽어 one-session package를 수집했다. official gate는 실패했고, field evidence의 actual close owner는 여전히 `darktable-cli + raw-original`로 남아 있었다.
+- 2026-04-20 12:46:22 +09:00 - owner attribution 수정 뒤 승인 하드웨어 최신 세션 `session_000000000018a7f3c5b88c698c`를 다시 읽었다. 2장~4장은 field evidence에서 `preset-applied-preview` close owner가 관찰됐지만 official gate는 여전히 `8616ms`, `7712ms`, `8165ms`, `7643ms`로 실패했고 1장은 `raw-original` close로 남았다.
 
 ### Completion Notes List
 
 - Story `1.26` reserve path를 공식 오픈 상태로 정의했다.
 - scope를 `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact`로 좁게 고정했다.
 - official gate, comparison metric, correctness guardrail, darktable boundary를 분리했다.
+- `preset-applied-preview`가 canonical preview path에 닫히면 host가 즉시 truthful `previewReady`를 기록하고 per-capture `darktable-cli` preview close를 다시 열지 않도록 reserve path owner boundary를 코드에 고정했다.
+- `Preview Waiting` truth와 same-capture guardrail을 유지한 채 reserve path truthful close를 검증하는 Rust regression을 추가했고, existing Rust/Vitest/lint 회귀를 현재 worktree에서 다시 통과시켰다.
+- approved hardware one-session package는 실제로 수집했다.
+- 다만 최신 field evidence에서 intended reserve truthful close owner인 `preset-applied-preview`는 관찰되지 않았고, actual close owner는 여전히 `darktable-cli + raw-original`이었다.
+- official `preset-applied visible <= 3000ms` gate도 `7486ms`, `7716ms`, `8796ms`로 실패했고 첫 샷은 `preview-render-failed`로 `previewWaiting`에 남았다.
+- owner attribution 수정 뒤 최신 approved hardware rerun에서는 2장~4장이 `preset-applied-preview` close owner로 field evidence에 남았고, 지난 회차의 logging mismatch blocker는 주된 원인이 아니게 됐다.
+- 그러나 official `preset-applied visible <= 3000ms` gate는 최신 회차에서도 `8616ms`, `7712ms`, `8165ms`, `7643ms`로 실패했고, 첫 샷은 여전히 `raw-original` close로 남았다.
+- 따라서 story는 `review / No-Go`로 유지하고, 다음 단계는 hardware rerun 반복이 아니라 `first-shot coverage`와 `preset-applied close latency`를 먼저 줄이는 것이다.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md
+- docs/contracts/render-worker.md
+- docs/contracts/session-manifest.md
 - docs/runbooks/story-1-26-reserve-path-opening-20260420.md
 - _bmad-output/implementation-artifacts/hardware-validation-ledger.md
 - _bmad-output/implementation-artifacts/sprint-status.yaml
+- src-tauri/src/capture/ingest_pipeline.rs
+- src-tauri/tests/capture_readiness.rs
 
 ### Change Log
 
 - 2026-04-20 - Story `1.26` reserve path를 공식 오픈하고 current preview-track active route로 정의했다.
+- 2026-04-20 - reserve path truthful close owner를 `preset-applied-preview` 계약으로 연결하고, darktable preview close가 fallback/parity 경계로만 남도록 software boundary와 regression coverage를 추가했다.
+- 2026-04-20 - 승인 하드웨어 one-session package를 수집했지만, reserve path intended close owner가 field evidence에서 관찰되지 않아 Story `1.26`을 hardware `No-Go`로 기록했다.
+- 2026-04-20 - owner attribution 수정 뒤 approved hardware rerun에서 `preset-applied-preview` close owner는 field evidence에 보였지만, official gate 실패와 first-shot raw-original close가 남아 Story `1.26`은 계속 hardware `No-Go`로 유지됐다.

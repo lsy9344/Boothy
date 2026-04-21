@@ -87,10 +87,12 @@ pub fn load_operator_session_summary_in_dir(
         manifest.post_end.as_ref().map(|post_end| post_end.state()),
     );
     let recent_failure = build_recent_failure_summary(
+        &manifest,
         reason_code.as_str(),
         render_status,
         manifest.post_end.as_ref().map(|post_end| post_end.state()),
         manifest.timing.as_ref().map(|timing| timing.phase.as_str()),
+        live_capture_truth.as_ref(),
         &diagnostics,
     );
 
@@ -342,9 +344,29 @@ fn map_camera_connection_state_from_detail_code(detail_code: &str) -> Option<&'s
         "camera-not-found" | "usb-disconnected" | "unsupported-camera" => Some("disconnected"),
         "sdk-initializing" | "session-opening" => Some("connecting"),
         "connected-idle" | "camera-ready" => Some("connected"),
-        "reconnect-pending" | "sdk-init-failed" => Some("recovery-required"),
+        "reconnect-pending"
+        | "sdk-init-failed"
+        | "sdk-init-timeout"
+        | "session-open-timeout"
+        | "camera-connect-timeout"
+        | "camera-open-failed"
+        | "session-open-failed" => Some("recovery-required"),
         _ => None,
     }
+}
+
+fn is_startup_connect_failure_truth(live_capture_truth: Option<&LiveCaptureTruthDto>) -> bool {
+    matches!(
+        live_capture_truth.and_then(|truth| truth.detail_code.as_deref()),
+        Some(
+            "camera-connect-timeout"
+                | "sdk-init-timeout"
+                | "session-open-timeout"
+                | "camera-open-failed"
+                | "session-open-failed"
+                | "sdk-init-failed"
+        )
+    )
 }
 
 fn has_connected_camera_context(manifest: &SessionManifest) -> bool {
@@ -602,10 +624,12 @@ fn derive_blocked_state_category(
 }
 
 fn build_recent_failure_summary(
+    manifest: &SessionManifest,
     reason_code: &str,
     render_status: Option<&str>,
     post_end_state: Option<&str>,
     timing_phase: Option<&str>,
+    live_capture_truth: Option<&LiveCaptureTruthDto>,
     diagnostics: &DiagnosticsContext,
 ) -> Option<OperatorRecentFailureSummaryDto> {
     if diagnostics.malformed {
@@ -647,12 +671,24 @@ fn build_recent_failure_summary(
             })
         }
         "phone-required" if render_status.is_none() && post_end_state.is_none() => {
+            if manifest.captures.is_empty()
+                && manifest.active_preset.is_some()
+                && is_startup_connect_failure_truth(live_capture_truth)
+            {
+                return Some(OperatorRecentFailureSummaryDto {
+                    title: "카메라 연결 시작이 실패했어요.".into(),
+                    detail:
+                        "startup connect/open 단계가 timeout 또는 실패로 닫혀 운영자 확인이 필요한 상태예요."
+                            .into(),
+                    observed_at: live_capture_truth.and_then(|truth| truth.observed_at.clone()),
+                });
+            }
             return Some(OperatorRecentFailureSummaryDto {
                 title: "최근 촬영을 세션에 저장하지 못했어요.".into(),
                 detail: "셔터 동작 뒤 RAW handoff를 확인하지 못해 운영자 확인이 필요한 상태예요."
                     .into(),
                 observed_at: None,
-            })
+            });
         }
         _ => {}
     }

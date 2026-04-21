@@ -22,6 +22,8 @@
   - helper/카메라 연결/timeout/readiness 관련 문제 해결 이력
 - [current-session-photo-troubleshooting-history.md](./current-session-photo-troubleshooting-history.md)
   - 현재 세션 표시/동작 관련 문제 해결 이력
+- [startup-connect-triage-checklist.md](./startup-connect-triage-checklist.md)
+  - startup/connect family를 새 버그로 오판하지 않기 위한 빠른 판별 체크리스트
 
 ## 권장 읽기 순서
 
@@ -31,6 +33,7 @@
 4. 필요한 경우에만 `photo-button-latency-history.md`
 5. helper 문제를 볼 때만 `camera-helper-troubleshooting-history.md`
 6. 세션/레일 문제를 볼 때만 `current-session-photo-troubleshooting-history.md`
+7. startup/connect 재현을 다시 볼 때 `startup-connect-triage-checklist.md`
 
 ## 에이전트용 메모
 

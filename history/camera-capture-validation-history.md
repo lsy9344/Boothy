@@ -1404,3 +1404,2384 @@ render proof 재확인 결과:
 1. `1.10`은 더 이상 `rerun pending`으로 보기 어렵다. 최신 세션 하나로 baseline evidence package는 실제로 수집됐다.
 2. 다만 이 결과는 old line이 release-proof라는 뜻이 아니다. official gate 실패 증거가 다시 한 번 확인된 것이다.
 3. 따라서 현재 단계의 의미는 `old line이 재현 가능한지 확인`까지이며, 다음 route 판단은 여전히 `1.26 reserve path` 개시 여부 쪽으로 읽는 편이 맞다.
+
+### 2026-04-20 11:54 +09:00 최신 `1.26` reserve path 하드웨어 검증 기록: official gate는 실패했고, intended reserve close owner도 실제로 관찰되지 않았다
+
+사용자 최신 요청:
+
+1. 앱을 실행해 하드웨어 검증을 마쳤다고 알렸다.
+2. 최신 로그를 확인해 데이터 기록과 현재 다음 절차를 정리해 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 총 4장 촬영
+  - 1장은 `renderStatus = previewWaiting`
+  - 나머지 3장은 `renderStatus = previewReady`
+  - 세션 종료 시점 `lifecycle.stage = capture-ready`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `cameraModel = Canon EOS 700D`
+  로 닫혔다.
+- 같은 세션의 `camera-helper-events.jsonl`에서는 4개 요청 모두
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  까지 이어졌다.
+- 그러나 같은 세션의 `timing-events.log`에서 customer-visible close owner를 보면
+  - `fast-preview-promoted kind=legacy-canonical-scan`
+  - `preview-render-ready ... binary=C:\Program Files\darktable\bin\darktable-cli.exe`
+  - `sourceAsset=raw-original`
+  로 기록됐다.
+- 즉 이번 회차에서는 Story `1.26`이 의도한
+  `same-capture preset-applied-preview -> host-owned truthful close owner`
+  가 실제로 관찰되지 않았고,
+  여전히 `darktable-cli + raw-original` preview close가 제품 close owner로 남아 있었다.
+
+이번 세션의 직접 수치:
+
+- same-capture first-visible reference:
+  - 1장: `3100ms`
+  - 2장: `2962ms`
+  - 3장: `3015ms`
+  - 4장: `3698ms`
+- official release gate인 preset-applied visible:
+  - 1장: `미닫힘` (`previewWaiting`, `preview-render-failed`)
+  - 2장: `7486ms`
+  - 3장: `7716ms`
+  - 4장: `8796ms`
+- preview close 자체의 `previewReady - raw persisted`:
+  - 2장: `4831ms`
+  - 3장: `5122ms`
+  - 4장: `6453ms`
+
+이번 회차 해석:
+
+- 세션 자체는 완전히 붕괴하지 않았다. helper는 healthy로 돌아왔고, 마지막 stage도 `capture-ready`로 복귀했다.
+- 하지만 이번 패키지는 Story `1.26`의 성공 근거가 아니다.
+- 이유는 두 가지다.
+  - official `preset-applied visible <= 3000ms` gate를 전혀 닫지 못했다.
+  - 더 중요하게는 intended reserve truthful close owner인 `preset-applied-preview`가 실제 field evidence에서 보이지 않았다.
+- 이번 세션의 실제 close owner는 여전히 `darktable-cli` 기반 `raw-original` preview close로 읽는 것이 맞다.
+- 따라서 이번 하드웨어 패키지의 결론은
+  **Story `1.26` hardware `No-Go`**
+  이다.
+
+이번 시점 제품 판단:
+
+1. `1.26`은 아직 release candidate가 아니다.
+2. 지금 필요한 것은 하드웨어를 한 번 더 찍는 것이 아니라, 왜 booth hardware에서 reserve path의 intended close owner가 실제로 발동하지 않았는지 software/diagnostics mismatch를 먼저 좁히는 일이다.
+3. 다음 단계는 `1.26`을 `review / No-Go`로 기록하고, reserve path가 실제 field에서 `preset-applied-preview`를 만들지 못한 이유를 먼저 디버깅한 뒤에 rerun 하는 것이다.
+
+### 2026-04-20 12:46 +09:00 최신 `1.26` reserve path 하드웨어 재검증 기록: owner attribution은 보였지만 official gate는 여전히 실패했다
+
+사용자 최신 요청:
+
+1. reserve path owner logging 수정 뒤 다시 하드웨어 검증을 마쳤다고 알렸다.
+2. 최신 로그를 확인해 데이터 기록과 다음 단계를 정리해 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 총 4장 모두 `renderStatus = previewReady`
+  - 세션 종료 시점 `lifecycle.stage = capture-ready`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `cameraModel = Canon EOS 700D`
+  로 닫혔다.
+- 같은 세션의 `timing-events.log`를 보면
+  - 1장은 `preview-render-ready ... sourceAsset=raw-original`
+  - 2장~4장은 `preview-render-ready ... sourceAsset=preset-applied-preview`
+  - `recent-session-visible`도 2장~4장은 `previewKind=preset-applied-preview`
+  로 남았다.
+- 즉 이번 회차에서는 이전 blocker였던 owner attribution ambiguity는 일부 해소됐다. reserve path close owner가 적어도 2장~4장에서는 field evidence에 그대로 드러났다.
+- 다만 1장은 여전히 `raw-original` close로 닫혔고, reserve path가 모든 샷에서 일관되게 product close owner로 올라오지는 못했다.
+
+이번 세션의 직접 수치:
+
+- same-capture first-visible reference:
+  - 1장: `3942ms`
+  - 2장: `3282ms`
+  - 3장: `2861ms`
+  - 4장: `2816ms`
+- official release gate인 preset-applied visible:
+  - 1장: `8616ms`
+  - 2장: `7712ms`
+  - 3장: `8165ms`
+  - 4장: `7643ms`
+
+이번 회차 해석:
+
+- 이전과 달리 `preset-applied-preview`가 field/UI evidence에 실제 close owner로 찍히는 샷이 확인됐다.
+- 따라서 지난 회차의 핵심 blocker였던 `owner logging mismatch`는 이번 evidence로는 주된 이슈가 아니다.
+- 그러나 제품 합격선인 `preset-applied visible <= 3000ms`는 여전히 전혀 닫히지 않았다.
+- 더구나 첫 샷은 아직 `raw-original` close로 남아서 reserve path coverage도 완전히 닫히지 않았다.
+- 따라서 이번 세션의 결론도
+  **Story `1.26` hardware `No-Go`**
+  이다.
+
+이번 시점 제품 판단:
+
+1. `1.26`은 owner attribution 관점에서는 한 단계 전진했지만, release candidate는 아니다.
+2. 이제 우선순위는 `누가 닫았는지`보다 `왜 reserve close가 7초대 후반~8초대에서 닫히는지`, 그리고 `왜 첫 샷은 아직 raw-original로 닫히는지`를 줄이는 일이다.
+3. 다음 단계는 하드웨어를 반복 촬영하는 것이 아니라, `first-shot coverage`와 `preset-applied close latency`를 먼저 줄인 뒤 approved hardware에서 다시 한 세션을 재검증하는 것이다.
+
+### 2026-04-20 13:27 +09:00 최신 `1.26` 현장 실패 세션 기록: 첫 컷은 실제 preset-applied truth가 아니었고, 둘째 요청은 `capture-accepted` 뒤 handoff가 끝내 닫히지 않았다
+
+사용자 최신 요청:
+
+1. 방금 실장비 검증을 마쳤으니 최신 로그를 확인해 기록하라고 요청했다.
+2. 첫 번째 사진은 프리셋이 실제로 적용되지 않았고, 두 번째 촬영은 한참 멈춘 뒤 실패했다고 제보했다.
+3. 위 두 증상을 같이 수정해 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f61aa8bc153c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - 저장된 컷은 1장뿐이었고
+  - 그 1장은 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`
+  - 세션 최종 stage는 `phone-required`
+  였다.
+- 그러나 같은 세션의 `camera-helper-events.jsonl`를 보면 첫 번째 요청 `request_000000000000064fdcb391aef8`은
+  - `capture-accepted`
+  - `file-arrived`
+  - `fast-preview-ready`
+  까지 닫혔지만,
+  - `fast-preview-ready.fastPreviewKind = windows-shell-thumbnail`
+  로 남아 있었다.
+- 같은 첫 번째 요청의 `timing-events.log`는
+  - `fast-preview-promoted kind=preset-applied-preview`
+  - `preview-render-ready ... sourceAsset=preset-applied-preview`
+  - `recent-session-visible ... previewKind=preset-applied-preview`
+  를 기록했다.
+- 즉 host는 첫 컷을 `preset-applied-preview`로 닫았지만, helper truth는 실제로 `windows-shell-thumbnail`였다.
+  이번 회차의 첫 컷은 **진짜 preset-applied close가 아니라 same-capture shell thumbnail 오판정**으로 읽는 것이 맞다.
+- 두 번째 요청 `request_000000000000064fdcb44c3298`은
+  - `camera-helper-requests.jsonl`에 기록됐고
+  - `camera-helper-events.jsonl`에는 `capture-accepted`와 `fast-thumbnail-attempted(camera-thumbnail)`까지만 남았으며
+  - 이후 `file-arrived`, `fast-preview-ready`, `recovery-status`, `helper-error`가 끝내 오지 않았다.
+- 같은 세션의 마지막 `camera-helper-status.json`은
+  - `cameraState = capturing`
+  - `helperState = healthy`
+  - `requestId = request_000000000000064fdcb44c3298`
+  - `detailCode = capture-in-flight`
+  에 멈춰 있었다.
+
+이번 회차 해석:
+
+- 첫 컷 문제의 직접 원인은, host가 same-capture canonical preview를 진짜 `preset-applied-preview`처럼 올려 버린 truth classification bug였다.
+- 둘째 요청 문제의 직접 증거는 `capture-accepted` 뒤 `file-arrived`도 `capture-download-timeout`도 안 남은 채 helper가 `capturing`에 걸려 버렸다는 점이다.
+- 따라서 이번 세션은 단순한 속도 문제만이 아니라,
+  - `first-shot truthful owner 오판정`
+  - `follow-up capture orphan/stall`
+  두 경계가 같이 드러난 실패 패키지다.
+- 이번 세션의 결론도
+  **Story `1.26` hardware `No-Go`**
+  이다.
+
+이번 회차 수정:
+
+- host는 canonical same-capture scan을 다시 `legacy-canonical-scan` pending path로만 취급하고,
+  실제 truthful handoff가 있을 때만 `preset-applied-preview` close owner를 허용하도록 되돌렸다.
+- helper에는 active capture task가 timeout을 넘기고도 끝나지 않을 때
+  service loop가 강제로 `capture-download-timeout` recovery로 닫는 watchdog을 추가했다.
+- preview direct fallback은 speculative render가 큐를 점유 중일 때 바로 hard fail하지 않도록,
+  queue saturation에서 짧게 기다렸다가 재시도하도록 보강했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
+  - `BOOTHY_CANON_SDK_ROOT=C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU`
+- 모두 통과
+
+이번 시점 제품 판단:
+
+1. 최신 현장 로그 기준으로, 첫 컷이 `preset-applied-preview`처럼 보였던 것은 성공이 아니라 오판정이었다.
+2. 둘째 촬영 정지는 helper가 follow-up capture를 orphan 상태로 남기고 회복 로그도 못 쓰는 경계가 실제로 열려 있었던 것으로 본다.
+3. 지금 필요한 다음 단계는 post-fix build로 approved hardware 세션 1개를 다시 찍어,
+   첫 컷이 더 이상 shell thumbnail을 truthful close로 주장하지 않는지와,
+   둘째 요청이 최소한 `file-arrived` 또는 `capture-download-timeout` recovery로 닫히는지를 확인하는 일이다.
+
+### 2026-04-20 14:02 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: 이전 first-shot truth 문제는 남아 있었고, 최신 재검증에서는 첫 요청 RAW handoff 자체가 live helper loop를 붙잡고 멈췄다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 로그를 확인하고 기록하라고 요청했다.
+2. 첫 번째 사진은 프리셋이 적용되지 않았다고 체감했고, 두 번째 사진은 멈춘 뒤 결국 촬영되지 않았다고 제보했다.
+3. 로그 확인 후 실제 멈춘 경계를 고치라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f7ff7a8886b4`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - 세션 최종 stage는 `phone-required`
+  였다.
+- 같은 세션의 `camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `fast-thumbnail-attempted(camera-thumbnail)`
+  만 남았고,
+  - `file-arrived`
+  - `fast-preview-ready`
+  - `recovery-status`
+  - `helper-error`
+  는 끝내 오지 않았다.
+- 같은 세션의 `camera-helper-status.json` 마지막 상태는
+  - `cameraState = capturing`
+  - `helperState = healthy`
+  - `requestId = request_000000000000064fdd2fef19e0`
+  - `detailCode = capture-in-flight`
+  로 멈춰 있었다.
+- 같은 세션의 `captures/originals`에는
+  - `capture_20260420050112090_f16e3f9885.downloading.CR2`
+  - `Length = 0`
+  인 임시 RAW 파일만 남아 있었다.
+- `timing-events.log`에는 `request-capture` 외에 저장/preview 완료 경계가 전혀 남지 않았다.
+- 운영 감사 로그 `operator-audit-log.json`은 이 세션을 `capture-round-trip-failed` / `capture-timeout`으로 기록했다.
+- 바로 직전 실패 세션 `session_000000000018a7f61aa8bc153c`에서는 이미
+  - 첫 저장 컷이 helper truth 기준 `windows-shell-thumbnail`였는데도 host가 `preset-applied-preview`로 닫아 버린 first-shot truthful close 오판정
+  - 둘째 요청이 `capture-accepted` 뒤 `capture-in-flight`에 걸린 정지
+  가 동시에 확인돼 있었다.
+
+이번 회차 해석:
+
+- 최신 14:02 세션은 첫 요청에서 이미 RAW handoff가 닫히지 않았기 때문에, 이번 로그만으로는 첫 컷 프리셋 적용 여부를 다시 판정할 단계까지 가지도 못했다.
+- 대신 최신 로그는 더 근본적인 경계를 보여 줬다. helper의 live capture path가 `camera-thumbnail` 시도 직후 RAW transfer를 끝내 닫지 못했고, 그 동안 helper loop도 timeout recovery/status 갱신을 쓰지 못했다.
+- 즉 이번 시점의 직접 원인은
+  - 이전 세션에서 이미 확인된 `first-shot truthful close 오판정`
+  - 최신 세션에서 새로 확인된 `live RAW handoff가 helper loop 자체를 붙잡는 stall`
+  두 갈래로 정리된다.
+- 이번 세션의 결론도
+  **Story `1.26` hardware `No-Go`**
+  이다.
+
+이번 회차 수정:
+
+- helper RAW download는 SDK object callback을 오래 붙잡지 않도록 전용 long-running worker로 다시 분리했다.
+- live `camera-thumbnail` 즉시 추출은 EOS 700D 현장에서는 RAW handoff를 멈추게 할 수 있어, post-download raw fallback을 우선하는 쪽으로 껐다.
+- 따라서 helper loop는 capture stall 중에도 살아 있어서 `capture-download-timeout` recovery를 계속 쓸 수 있게 됐다.
+- 첫 컷 truthful close는 이전 회차에서 이미 고친 대로, 실제 preset-applied truth가 아닌 same-capture preview는 더 이상 `preset-applied-preview`로 주장하지 않게 유지된다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj`
+  - `6 passed`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_capture_download_timeout_recovers -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_times_out_when_helper_accepts_but_no_file_arrives -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_saved_keeps_a_fast_same_capture_thumbnail_visible_while_preview_render_is_still_pending -- --exact`
+  - 모두 통과
+- 참고로 `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1` 전체 스위트는 이번 턴에도 첫 실패 1건 뒤 mutex poison으로 연쇄 실패가 나와, 제품 수정 검증은 helper 전체 + 관련 Rust 개별 회귀 테스트로 확인했다.
+
+이번 시점 제품 판단:
+
+1. latest failure는 “둘째 샷만 hang”이 아니라, 아예 첫 요청부터 live RAW handoff가 helper loop를 묶어 버릴 수 있음을 보여 준다.
+2. 따라서 reserve path의 다음 승인 기준은 속도보다 먼저, `capture-accepted` 뒤 helper가 무한 정지하지 않고 반드시 `file-arrived` 또는 `capture-download-timeout` recovery 중 하나로 닫히는지다.
+3. post-fix approved hardware 재검증에서는
+   - 첫 컷이 실제 preset-applied truth 없이 그렇게 주장하지 않는지
+   - 최신처럼 `.downloading.CR2`만 남기고 멈추지 않는지
+   를 같은 세션 패키지에서 같이 확인해야 한다.
+
+### 2026-04-20 14:17 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: helper는 떠 있었지만 첫 status를 전혀 쓰지 못해 preset-selected / preparing에 고정됐다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에는 화면이 `preparing`에서 멈춰 있다고 제보했다.
+3. 최신 로그를 기준으로 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f8e4828da598`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - 세션 최종 stage는 `preset-selected`
+  였다.
+- 같은 세션의 `diagnostics` 폴더에는
+  - `camera-helper-status.json`
+  - `camera-helper-events.jsonl`
+  - `timing-events.log`
+  가 아예 생성되지 않았다.
+- 전역 운영 감사 로그 `operator-audit-log.json`에도 이 세션은 `session-started` 1건만 남았고,
+  이후 `capture-round-trip-failed` 같은 후속 기록도 없었다.
+- 반면 같은 시점의 프로세스 상태를 보면
+  - `dotnet run --project ... CanonHelper.csproj --session-id session_000000000018a7f8e4828da598`
+  - `canon-helper.exe --session-id session_000000000018a7f8e4828da598`
+  가 둘 다 살아 있었다.
+- 즉 이번 회차는 helper supervisor가 launch 자체를 실패한 것이 아니라,
+  helper가 실제로 떠 있는 동안 첫 `camera-status` 파일을 쓰기 전 경계에서 막혀
+  host가 live truth를 영원히 `missing`으로 읽어 `Preparing`에 고정된 케이스로 보는 것이 맞다.
+
+이번 회차 해석:
+
+- 이전 14:02 세션은 RAW handoff stall이었고, 이번 14:17 세션은 그보다 더 앞단인 helper startup/connect stall이다.
+- 최신 세션에서는 촬영 요청 단계까지도 가지 못했기 때문에, 원본/preview/timeout diagnostics가 하나도 남지 않았다.
+- 제품 관점의 직접 원인은
+  - helper launch 이후 첫 status 파일이 없으면 host가 `camera-preparing`으로만 해석하는 구조
+  - startup 상태가 오래 stale 되어도 이를 failure boundary로 승격하지 않는 readiness 규칙
+  이 두 개가 겹친 것이다.
+- 이번 세션의 결론도
+  **Story `1.26` hardware `No-Go`**
+  이다.
+
+이번 회차 수정:
+
+- helper supervisor는 helper를 띄우는 즉시 `cameraState=connecting`, `helperState=starting`, `detailCode=helper-starting` startup status를 먼저 기록하도록 바꿨다.
+- host readiness는 이 startup status가 5초 이상 stale 되면 더 이상 `Preparing`으로 붙잡지 않고 `Phone Required`로 승격하도록 바꿨다.
+- 따라서 같은 종류의 startup hang이 다시 나더라도, 제품은 무한 `preparing` 대신 운영자 개입이 필요한 고장 경계로 닫히게 된다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::helper_supervisor::tests::starting_helper_status_is_written_before_live_status_arrives -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_stays_blocked_until_live_helper_truth_is_fresh -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+  - 모두 통과
+
+이번 시점 제품 판단:
+
+1. 최신 `preparing` 정지는 helper가 없어서가 아니라, helper가 첫 status를 못 남긴 startup stall이었다.
+2. 이번 패치로 같은 stall은 더 이상 고객 화면에서 무한 `preparing`으로 남지 않는다.
+3. 다만 low-level camera open 자체가 왜 막혔는지는 아직 hardware 재검증이 필요하므로, post-fix 확인에서는 먼저 `preparing` 무한정지가 사라졌는지부터 다시 보면 된다.
+
+### 2026-04-20 14:31~14:32 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: startup status stale 승격이 작동해 phone required는 떴지만, 실제 원인은 dotnet helper cold start 경로였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에는 화면에 `phone required`가 발생했다고 제보했다.
+3. 최신 실패를 기준으로 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 연속된 두 개였다.
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9acaf600638`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9b49261d518`
+- 두 세션의 `session.json` 기준 공통 상태는
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - 세션 stage는 둘 다 `preset-selected`
+  였다.
+- 두 세션의 `diagnostics` 폴더에는
+  - `camera-helper-status.json`만 있었고
+  - `camera-helper-events.jsonl`
+  - `timing-events.log`
+  - `camera-helper-requests.jsonl`
+  는 생성되지 않았다.
+- 두 세션의 `camera-helper-status.json`은 둘 다
+  - `cameraState = connecting`
+  - `helperState = starting`
+  - `detailCode = helper-starting`
+  - `sequence = 0`
+  만 남아 있었다.
+- 전역 운영 감사 로그 `operator-audit-log.json`에도 두 세션은 `session-started` 외의 추가 실패 이벤트가 없었다.
+- 같은 시점 로컬 환경을 확인한 결과
+  - `sidecar/canon-helper/src/CanonHelper/bin/Debug/net8.0/canon-helper.exe`는 이미 존재했고
+  - `dotnet --version`도 정상 응답했다.
+- 즉 현재 launcher는 이미 실행 가능한 `canon-helper.exe`가 있어도 debug 환경에서는 `dotnet run --project ...`를 우선 택하고 있었고,
+  이 cold start 동안 seeded startup status가 stale 되어 host readiness가 `phone required`로 승격된 것으로 읽는 편이 맞다.
+
+이번 회차 해석:
+
+- 이번 `phone required`는 새로운 capture failure가 아니라, 직전 회차에서 넣은 `stale startup => failure escalation`이 실제로 작동한 결과였다.
+- 그 자체는 무한 `preparing`보다 낫지만, 이번 evidence는 왜 stale 되었는지가 더 중요했다.
+- 최신 두 세션의 직접 원인은 camera raw path가 아니라 `helper launch path`였다.
+  - 이미 존재하는 `canon-helper.exe` 대신
+  - 느린 `dotnet run` cold start를 우선 택하면서
+  - 첫 live status 갱신 전에 startup seed가 stale 되었다.
+- 따라서 이번 세션의 결론도
+  **Story `1.26` hardware `No-Go`**
+  이지만,
+  blocker 해석은 `camera startup itself`보다 `slow launch selection on dev booth path` 쪽으로 더 좁혀졌다.
+
+이번 회차 수정:
+
+- helper supervisor는 이제 실행 가능한 `canon-helper.exe`가 존재하면 `dotnet run`보다 먼저 그 실행 파일을 우선 사용한다.
+- startup seed status 기록과 stale startup 승격은 유지한다.
+- 따라서 같은 dev booth 환경에서는 cold start 빌드 시간 때문에 `phone required`로 넘어가는 경로를 먼저 줄이고,
+  정말 helper가 시작되지 못할 때만 failure boundary가 남도록 정리했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::helper_supervisor::tests::existing_helper_executable_is_preferred_over_dotnet_run -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib capture::helper_supervisor::tests::starting_helper_status_is_written_before_live_status_arrives -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_stays_blocked_until_live_helper_truth_is_fresh -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+  - 모두 통과
+
+이번 시점 제품 판단:
+
+1. 최신 `phone required`는 새 촬영 failure가 아니라, launch가 느린 helper 경로 선택 때문에 생긴 startup stale escalation이었다.
+2. 이번 패치로 booth 개발 환경에서는 이미 빌드된 helper exe를 바로 써서 이 경로를 줄였다.
+3. post-fix 실장비 확인에서는 우선 `preset 선택 뒤 phone required로 바로 튀지 않는지`부터 다시 보면 된다.
+
+### 2026-04-20 14:41 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: launch 경로는 정상화됐지만 helper 내부 camera connect 시도가 loop를 붙잡아 첫 live status를 못 남겼다
+
+사용자 최신 요청:
+
+1. `history` 문서를 보면 어떤 조건에서 카메라 상태가 보이고 촬영 준비가 되는지 적혀 있으니 그 기준으로 다시 해결하라고 요청했다.
+2. 같은 문제가 계속 발생하니 최신 로그를 다시 확인하고 기록하라고 요청했다.
+3. 잘 되던 기능에서 왜 이런 문제가 반복되느냐는 제품 관점 설명도 함께 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fa2f55d79a94`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json`에는 host가 launch 직후 심어 둔 seed 1건만 남아 있었다.
+  - `cameraState = connecting`
+  - `helperState = starting`
+  - `detailCode = helper-starting`
+  - `sequence = 0`
+- 하지만 같은 시점 프로세스 상태를 보면 실제로는
+  - `canon-helper.exe --runtime-root C:\Users\KimYS\Pictures\dabi_shoot --session-id session_000000000018a7fa2f55d79a94`
+  가 살아 있었다.
+- 별도로 helper binary를 직접 `--self-check`로 확인하면
+  - runtime DLL present
+  - SDK initialize 성공
+  - camera count = 1
+  - `detailCode = camera-ready`
+  가 즉시 나왔다.
+- 즉 이번 최신 failure는 더 이상 `dotnet run` cold start가 아니고,
+  이미 올라온 helper 내부에서 **camera connect / session open 시도가 helper loop를 붙잡는 경계**가 남아 있었던 것으로 읽는 편이 맞다.
+
+`history` / 계약 문서 기준으로 이번 상태를 다시 읽으면:
+
+- booth가 `Ready`가 되려면 helper raw truth가 최소
+  - same session
+  - fresh status
+  - `cameraState = ready`
+  - `helperState = healthy`
+  로 닫혀야 한다.
+- 반대로 `connecting`, `connected-idle`, `starting`, `recovering`은 모두 blocked path다.
+- 따라서 latest session처럼 helper가 살아 있어도 첫 live `camera-status`가 제품적으로 닫히지 않으면 booth는 준비 완료가 될 수 없다.
+
+이번 회차 해석:
+
+- 14:31~14:32 수정으로 `launch target` 문제는 줄였지만, 그 바로 다음 경계인 `helper 내부 camera open`이 여전히 bounded 되지 않아 같은 제품 문제로 보인 것이다.
+- 그래서 현장에서는
+  - 어떤 회차는 `preparing`
+  - 어떤 회차는 `phone required`
+  - 어떤 회차는 첫 shot false close
+  - 어떤 회차는 둘째 shot stall
+  처럼 다른 증상으로 보였지만,
+  실제로는 reserve path 주변의 adjacent boundary들이 순서대로 드러난 것으로 보는 것이 맞다.
+- "예전에는 되던 기능"처럼 보였던 이유도,
+  예전에는 이 경계가 운 좋게 빨리 닫혀 증상이 가려졌고, 최근엔 truthful close / RAW handoff / stale startup guard를 하나씩 추가하면서 숨겨져 있던 정지 경계가 더 빨리 드러난 것이다.
+
+이번 회차 수정:
+
+- helper의 camera connect 시도를 main loop 바깥 background task로 분리했다.
+- 따라서 SDK initialize / camera scan / session open이 느리거나 막히더라도 helper loop 자체는 계속 살아 있어 live status를 주기적으로 쓸 수 있다.
+- helper는 connect 진행 중 상태를 더 잘게 남긴다.
+  - `sdk-initializing`
+  - `scanning`
+  - `session-opening`
+  - `session-opened`
+- 그리고 connect 시도가 일정 시간 안에 닫히지 않으면 더 이상 무한 준비 상태로 두지 않고 `camera-connect-timeout` 명시 failure로 승격한다.
+
+검증:
+
+- helper targeted tests
+  - connect attempt가 background로 분리돼 loop를 block하지 않는지
+  - connect timeout이 explicit error로 승격되는지
+  - 기존 RAW callback non-blocking / capture watchdog 회귀
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest failure는 더 이상 launch path 문제가 아니다. helper 내부 connect/open 경계가 bounded 되지 않았던 것이 직접 원인이다.
+2. 이번 패치로 같은 종류의 정지는 최소한 live status와 explicit failure로 닫히므로, `살아 있는 helper인데 booth는 이유 없이 준비되지 않음` 상태는 줄어든다.
+3. 이 기능이 계속 깨져 보인 이유는 하나의 버그가 흔들린 것이 아니라, reserve path 주변에 붙어 있던 서로 다른 경계들이 최근 truthful/health guard 도입으로 차례대로 드러났기 때문이다.
+
+### 2026-04-20 14:59 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: `camera-connect-timeout`은 카메라 미발견이 아니라 async connect 이후 SDK 경합으로 읽는 편이 맞다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에도 `phone required`가 발생했다고 제보했다.
+3. 같은 문제를 실제로 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fb29e752039c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `diagnostics`에는 `camera-helper-status.json`만 남았고, 최종 상태는
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  였다.
+- 별도로 같은 helper binary를 `--self-check`로 직접 실행하면
+  - SDK initialize 성공
+  - camera count = 1
+  - `detailCode = camera-ready`
+  가 즉시 나왔다.
+- 즉 이번 세션의 의미는 "카메라가 실제로 없다"가 아니라,
+  booth helper runtime 안에서 connect/session-open 경계가 제 시간 안에 닫히지 못했다는 쪽이 더 맞다.
+
+이번 회차 해석:
+
+- 직전 회차에서 helper connect를 background task로 분리하면서 loop 생존성은 좋아졌지만,
+  그 이후에도 main loop가 session-open 전 SDK event pump를 계속 만질 수 있었다.
+- Canon EDSDK는 이런 startup 경합에 민감해서,
+  self-check처럼 단독 실행에서는 바로 `camera-ready`가 나와도
+  실제 booth helper runtime에서는 connect/open이 스스로 방해받아 `camera-connect-timeout`으로 닫힐 수 있다.
+- 따라서 이번 `phone required`는 새로운 hardware fault라기보다,
+  **비동기 connect 보강 뒤 session-open 전 SDK 호출이 겹친 회귀**로 읽는 편이 맞다.
+
+이번 회차 수정:
+
+- helper는 camera session이 실제로 열린 뒤에만 SDK event pump를 돌리도록 바꿨다.
+- 즉 connect/open이 진행 중일 때는 main loop가 EDSDK event pump를 건드리지 않게 막았다.
+- 이로써
+  - loop는 계속 살아 있어 status를 기록하고
+  - connect/open 자체는 단독 경로로 닫히며
+  - 둘 사이의 startup SDK 경합은 줄어든다.
+
+검증:
+
+- helper targeted tests
+  - connect attempt가 background로 분리돼 loop를 block하지 않는지
+  - connect timeout이 explicit error로 승격되는지
+  - RAW callback non-blocking / capture watchdog 회귀
+  - **session-open 전에는 SDK event pump를 건드리지 않는지**
+  - 모두 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `phone required`는 카메라가 실제로 사라진 것이 아니라, helper startup/connect 경합이 만든 false failure였다.
+2. 이번 패치로 launch 뒤 connect/open과 event pump가 서로 경합하던 경로를 직접 줄였다.
+3. 반복된 재발처럼 보인 이유는 reserve path 주변 여러 경계가 순차적으로 드러난 데 더해, 이번에는 그 중 하나를 막는 과정에서 startup SDK 경합 회귀가 새로 생겼기 때문이다.
+
+### 2026-04-20 15:17 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: `camera-connect-timeout`의 직접 원인은 async connect를 `Task.Run`으로 옮기며 STA 문맥을 잃은 쪽이 더 유력하다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에도 `phone required`가 발생했다고 제보했다.
+3. 같은 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc2aba129e1c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는 다시
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  였다.
+- 그런데 같은 helper binary를 별도로 `--self-check`로 직접 실행하면 여전히
+  - SDK initialize 성공
+  - camera count = 1
+  - `detailCode = camera-ready`
+  가 즉시 나왔다.
+- 즉 event pump 경합만 줄여서는 부족했고, helper runtime과 self-check 사이에 남은 결정적 차이는
+  **connect/open이 실행되는 thread 문맥**이었다.
+
+이번 회차 해석:
+
+- helper `Program.Main`은 STA thread에서 시작된다.
+- 하지만 이전 회차의 async connect 보강은 `Task.Run(TryOpenCamera)`로 connect/open을 threadpool로 옮겼고,
+  이 경로는 self-check와 달리 STA 문맥을 보장하지 못한다.
+- Canon EDSDK는 startup/open 경계에서 이런 thread 문맥 차이에 민감할 수 있으므로,
+  self-check는 바로 `camera-ready`인데 booth helper runtime만 `camera-connect-timeout`이 나는 현재 증거와 가장 잘 맞는 해석은
+  **connect worker가 STA를 잃은 회귀**다.
+
+이번 회차 수정:
+
+- helper connect/open worker를 일반 threadpool `Task.Run`이 아니라
+  **전용 STA background thread**에서 실행하도록 바꿨다.
+- 동시에 직전 회차에서 넣은
+  - session-open 전 SDK event pump 차단
+  - connect 진행 중 bounded status 유지
+  는 그대로 유지한다.
+- 따라서 이제 booth helper runtime도 self-check와 같은 STA 문맥에서 camera open을 시도하게 된다.
+
+검증:
+
+- helper targeted tests
+  - connect attempt가 loop를 block하지 않는지
+  - connect timeout이 explicit error로 승격되는지
+  - **connect attempt가 실제로 STA thread에서 도는지**
+  - session-open 전에는 SDK event pump를 건드리지 않는지
+  - RAW callback non-blocking / capture watchdog 회귀
+  - 모두 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `phone required`는 카메라 미발견이 아니라, helper async connect implementation이 self-check와 다른 thread 문맥으로 실행되던 회귀였다.
+2. 이번 패치로 helper runtime도 self-check와 같은 STA 문맥에서 connect/open을 시도하게 맞췄다.
+3. 반복된 재발처럼 보인 이유는 reserve path 주변에 숨어 있던 여러 경계가 순서대로 드러났고, 이번엔 그중 startup connect를 비동기로 분리하는 과정에서 thread 문맥 회귀가 새로 생겼기 때문이다.
+
+### 2026-04-20 15:21 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: 최신 session도 여전히 `camera-connect-timeout`이었으므로, 같은 detailCode helper는 supervisor가 자동 재기동하도록 바꿨다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에도 `phone required`가 발생했다고 제보했다.
+3. 실제로 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc5e0caa7cfc`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는 다시
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  였다.
+- 즉 latest field failure는 다른 종류의 새 고장이 아니라,
+  **같은 startup connect boundary가 고객 화면에서는 다시 `phone required`로 보인 것**이었다.
+
+이번 회차 해석:
+
+- 앞선 STA worker 보정이 connect/open 실행 문맥을 바로잡는 방향인 것은 맞지만,
+  latest field evidence는 현장에서 한 번 더 같은 `camera-connect-timeout`이 남을 수 있음을 보여 줬다.
+- 제품 관점에서 남은 문제는
+  - helper가 그 상태로 살아 있는 동안
+  - booth가 같은 failed helper를 계속 붙잡고
+  - customer-visible 상태가 `phone required`로 고정된다는 점이다.
+- 따라서 이번 시점의 직접 대응은 root cause 추가 축소와 별개로,
+  **같은 detailCode helper를 자동으로 갈아끼워 다음 readiness poll에서 다시 연결을 시도하게 만드는 것**이 더 맞다.
+
+이번 회차 수정:
+
+- Rust helper supervisor는 이제 같은 session helper가 살아 있어도,
+  최신 helper status가 `camera-connect-timeout`이면 그 helper를 정상 helper로 보지 않고 종료 후 다시 띄운다.
+- 즉 connect timeout helper를 resident failed process로 남겨두지 않는다.
+- 기존
+  - built exe 우선 launch
+  - startup seed 기록
+  - stale startup guard
+  - session-open 전 SDK event pump 차단
+  - STA connect worker
+  는 그대로 유지한다.
+
+검증:
+
+- Rust helper supervisor regression
+  - `camera-connect-timeout` status가 restart 조건으로 읽히는지
+  - built helper exe 우선 launch 회귀
+  - 모두 통과
+- helper targeted tests
+  - async connect loop non-blocking
+  - connect timeout handling
+  - STA worker
+  - pre-session-open event pump 차단
+  - RAW callback non-blocking / capture watchdog
+  - 모두 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `phone required`는 새로운 failure가 아니라, 같은 `camera-connect-timeout` helper가 고객 흐름에 그대로 남아 있던 문제였다.
+2. 이번 패치로 booth는 connect-timeout helper를 자동으로 다시 띄워 재시도를 할 수 있게 됐다.
+3. 즉 지금 단계의 제품 목표는 "왜 한 번 timeout이 났는지"만 보는 것이 아니라, 그 timeout이 곧바로 customer-visible terminal state로 굳지 않게 만드는 쪽까지 함께 닫는 것이다.
+
+### 2026-04-20 15:29 +09:00 앱 재실행 뒤 최신 현장 실패 세션 기록: 이번엔 `phone required`가 아니라 fresh `session-opening`이 계속 남아 booth가 `Preparing`에 머물렀다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행한 뒤 하드웨어 테스트를 마쳤으니 최신 파일을 확인하고 기록하라고 요청했다.
+2. 이번에는 화면이 `Preparing`이라고 제보했다.
+3. 같은 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fcd1f65b2f7c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `camera-helper-status.json` 최종 상태는
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `cameraModel = Canon EOS 700D`
+  - `detailCode = session-opening`
+  - `sequence = 5`
+  였다.
+- 즉 이번 회차는 error 상태가 아니라, helper가 fresh한 `session-opening` truth를 계속 쓰고 있어
+  host가 이를 정상 `Preparing`으로 해석한 케이스였다.
+
+이번 회차 해석:
+
+- 앞선 패치로 `camera-connect-timeout` helper는 자동 재시작되게 했지만,
+  그 다음 경계에서는 helper가 에러로 닫히지 않고 `session-opening`을 계속 fresh하게 쓰면
+  booth가 그것을 stuck state가 아니라 계속 진행 중으로 읽게 된다.
+- 그래서 고객 입장에서는 `phone required` 대신 `Preparing`으로만 보이지만,
+  제품 관점의 본질은 동일하다.
+  - connect/open 경계가 정상적으로 닫히지 않았고
+  - failed/stuck helper가 customer flow를 붙잡고 있다.
+
+이번 회차 수정:
+
+- Rust helper supervisor는 이제
+  - `camera-connect-timeout`
+  뿐 아니라
+  - `cameraState=connecting`
+  - `helperState=connecting`
+  - `detailCode=session-opening`
+  상태가 일정 시간 이상 계속되면
+  그 helper도 stuck으로 보고 종료 후 다시 띄운다.
+- 즉 `Preparing`으로 보이는 startup hang도 resident 상태로 남겨두지 않는다.
+
+검증:
+
+- Rust helper supervisor regression
+  - `camera-connect-timeout` status restart
+  - prolonged `session-opening` status restart
+  - 모두 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `Preparing`은 새로운 종류의 문제라기보다, 같은 connect/open stall이 error 대신 fresh `session-opening`으로 보였던 변형이다.
+2. 이번 패치로 booth는 `phone required`뿐 아니라 stuck `Preparing` helper도 자동으로 갈아끼워 다시 연결을 시도한다.
+3. 즉 지금 단계의 목표는 현장에서는 어떤 형태로 보이든, connect/open stall helper가 고객 흐름을 계속 붙잡지 못하게 만드는 것이다.
+
+### 2026-04-20 15:38 +09:00 최신 재확인: 이번엔 stuck helper가 아니라 `camera-connect-timeout -> 자동 재기동 -> session-opening`이 반복되며 제품 상태가 `Preparing`과 error 사이를 흔들었다
+
+사용자 최신 요청:
+
+1. 앱 실행 뒤 카메라 상태 에러와 `preparing` 발생을 다시 확인하고, 파일을 기록한 뒤 실제로 해결하라고 요청했다.
+2. 단순 원인 설명이 아니라 제품적으로 닫히는 수정까지 하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fd1be0ffc418`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `activePresetId = preset_new-draft-2`
+  - `activePresetVersion = 2026.04.10`
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json`은 처음에는
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  으로 계속 갱신됐다.
+- 같은 파일을 1초 간격으로 재확인했더니 아래 패턴이 반복됐다.
+  - `2026-04-20 15:37:55 ~ 15:37:57 +09:00`: `session-opening`
+  - `2026-04-20 15:37:58 +09:00`: `camera-connect-timeout`
+  - `2026-04-20 15:38:00 +09:00`: sequence가 다시 `2`로 리셋되며 새 helper의 `session-opening`
+  - `2026-04-20 15:38:05 +09:00`: 다시 `camera-connect-timeout`
+- 즉 latest failure는
+  - helper가 한 번 timeout 나는 것 자체보다
+  - **supervisor가 그 failed helper를 즉시 다시 띄워 booth를 다시 `Preparing`으로 열어 버리는 재기동 루프**
+  로 보는 편이 맞다.
+
+이번 회차 해석:
+
+- 앞선 수정은 startup hang을 resident stuck helper로 남기지 않게 하는 데는 맞았지만,
+  hardware/open boundary가 계속 실패하는 경우에는 자동 재기동이 오히려 customer-visible 상태를 흔들었다.
+- 그래서 최신 현장에서는
+  - 어떤 순간에는 `Preparing`
+  - 어떤 순간에는 `camera-connect-timeout`
+  이 보였고,
+  제품은 안정된 failure state로 닫히지 못했다.
+- 이 단계에서 필요한 것은 restart 자체를 없애는 것이 아니라,
+  **자동 재기동을 bounded retry로 제한하고 반복 실패는 안정된 보호 상태로 남기는 것**이었다.
+
+이번 회차 수정:
+
+- Rust helper supervisor에 startup restart budget을 추가했다.
+- 같은 세션의 startup failure(`camera-connect-timeout`, prolonged `session-opening`)에 대해서는
+  자동 재기동을 한 번만 허용한다.
+- 같은 budget window 안에서 다시 같은 종류의 startup failure가 나오면,
+  더 이상 helper를 자동 재기동하지 않고 기존 error status를 유지한다.
+- 따라서 latest 같은 hardware/open failure가 계속되더라도 booth는
+  무한 `Preparing` 재진입 대신 안정된 error/운영자 개입 상태로 닫힌다.
+
+검증:
+
+- 새 regression
+  - 첫 startup retry는 허용되는지
+  - budget window 안 반복 retry는 막히는지
+  - budget window 밖에서는 다시 허용되는지
+  - 모두 통과
+- Rust helper supervisor regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+    - 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+    - 통과
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `Preparing` 재발은 새 startup 상태가 아니라, `camera-connect-timeout` 뒤 auto-restart가 바로 다시 `session-opening`을 열던 loop였다.
+2. 이번 패치로 booth는 transient startup glitch에는 한 번 재시도하되, 반복 실패를 더 이상 customer-visible `Preparing`으로 흔들지 않는다.
+3. 따라서 다음 현장 확인 포인트는 "카메라 open 자체가 회복됐는가"와 별개로, **반복 실패 시에도 제품이 안정된 보호 상태로 남는가**다.
+
+### 2026-04-20 15:45 +09:00 최신 재확인: restart loop는 닫혔지만 latest startup connect failure가 그대로 `Phone Required`로 번역돼, customer-safe blocked state로 다시 낮췄다
+
+사용자 최신 요청:
+
+1. 앱 실행 뒤 이번에는 `Phone Required`가 발생했다고 제보했다.
+2. 최신 파일을 다시 확인하고 기록한 뒤 실제로 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fdb535d59960`였다.
+- 직전 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fda8249bf6c4`였다.
+- 직전 세션의 `camera-helper-status.json`은
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `cameraModel = Canon EOS 700D`
+  - `detailCode = session-opening`
+  으로 남아 있었다.
+- 최신 세션의 `camera-helper-status.json`은
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  으로 남아 있었다.
+- 두 세션 모두
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - `activePresetId = preset_new-draft-2`
+  였다.
+- 즉 latest failure는 더 이상 customer-visible state가 `Preparing <-> timeout`으로 흔들리는 loop가 아니라,
+  startup connect가 끝내 열리지 못한 세션이 **안정된 `camera-connect-timeout` 상태로 닫힌 뒤 host가 이를 곧바로 `Phone Required`로 번역한 케이스**였다.
+
+이번 회차 해석:
+
+- 이전 회차 수정으로 restart loop 자체는 줄었다.
+- 하지만 이번 evidence는 startup connect failure와 capture/persist failure를 제품이 같은 `Phone Required`로 다루고 있음을 보여 줬다.
+- latest session에는
+  - 촬영 요청 자체가 없었고
+  - capture/file-arrived/render failure도 없었으며
+  - startup connect/open boundary만 실패했다.
+- 따라서 이번 `Phone Required`는 customer protection이 필요한 완료/저장 실패라기보다,
+  **startup connect boundary를 customer terminal state로 과번역한 것**으로 읽는 편이 맞다.
+
+이번 회차 수정:
+
+- host readiness normalization은 이제
+  - `captures = []`
+  - active preset 존재
+  - fresh/matched helper truth
+  - `detailCode = camera-connect-timeout | camera-open-failed | session-open-failed`
+  인 startup connect failure를
+  customer-facing `Phone Required`가 아니라 customer-safe blocked `Preparing`으로 투영한다.
+- 즉 booth는 여전히 촬영을 막지만,
+  startup connect failure를 즉시 고객 보호 전환으로 노출하지 않는다.
+- 실제 live truth의 `cameraState = error`, `helperState = error`, `detailCode`는 그대로 유지되므로
+  operator/diagnostics에서는 failure 근거를 계속 볼 수 있다.
+
+검증:
+
+- 새 regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_stays_customer_safe_while_capture_remains_blocked -- --exact`
+    - red에서 `Phone Required` 재현 후 green 통과
+- host regression
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_helper_startup_status_stays_stale -- --exact`
+    - 통과
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_preparing_and_phone_required_states_block_capture_with_customer_safe_guidance -- --exact`
+    - 통과
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_surfaces_camera_connecting_guidance_when_helper_detects_powered_device -- --exact`
+    - 통과
+
+이번 시점 제품 판단:
+
+1. latest `Phone Required`는 새 capture failure가 아니라, stable `camera-connect-timeout` startup failure를 host가 terminal customer state로 번역한 결과였다.
+2. 이번 패치로 booth는 startup connect/open failure를 계속 막되, 고객 화면은 `Phone Required` 대신 customer-safe blocked state로 유지한다.
+3. 다음 현장 확인 포인트는 두 가지다.
+   - latest 같은 startup connect failure가 다시 나도 customer 화면이 `Phone Required`로 튀지 않는지
+   - 실제 helper/open failure 자체는 여전히 남는지
+
+### 2026-04-20 16:12 +09:00 최신 재확인: `Preparing` 고정의 실제 원인은 카메라 상태 미기록이 아니라, 기록된 startup error를 host가 customer-safe state로 다시 낮추는 정책이었다
+
+사용자 최신 요청:
+
+1. 앱 실행 뒤 여전히 `Preparing`이 계속 보인다고 제보했다.
+2. 최신 파일을 확인하고 기록한 뒤, 카메라 상태가 실제로 반영되도록 다시 고치라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fe66c1b2e418`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - `activePresetId = preset_new-draft-2`
+  였다.
+- 하지만 같은 세션의 `diagnostics/camera-helper-status.json`은 실제로 존재했고,
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  - `observedAt = 2026-04-20T06:59:21.9856960+00:00`
+  를 남기고 있었다.
+- 즉 이번 회차는 helper가 카메라 상태를 못 쓴 것이 아니라,
+  **이미 기록된 startup connect failure를 host readiness normalization이 customer-facing `Preparing`으로 다시 낮추고 있던 케이스**로 보는 것이 맞다.
+
+이번 회차 수정:
+
+- host readiness normalization은 더 이상 fresh startup
+  - `camera-connect-timeout`
+  - `camera-open-failed`
+  - `session-open-failed`
+  를 customer-safe `Preparing`으로 낮추지 않는다.
+- 따라서 booth는 startup 카메라 error를 고객 화면에도 그대로 반영해,
+  더 이상 `Preparing`에 고정되지 않고 `Phone Required` 계열 차단 상태로 닫힌다.
+- operator/diagnostics에는 기존처럼 `cameraState`, `helperState`, `detailCode`가 그대로 남아 recovery 근거를 계속 제공한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+  - red에서 `Preparing` 재현 후 green 통과
+- 이어서 startup stale escalation, helper blocked guidance, helper supervisor regression, `cargo build --manifest-path src-tauri/Cargo.toml`까지 확인
+
+이번 시점 제품 판단:
+
+1. latest `Preparing` 재발은 새 missing-status bug가 아니라, startup camera error를 과하게 완화한 readiness 정책의 결과였다.
+2. 이번 패치로 booth는 startup connect failure를 더 이상 `Preparing`으로 숨기지 않고, 실제 카메라 상태를 고객 화면에도 반영한다.
+3. 다음 현장 확인 포인트는 같은 startup failure에서 화면이 `Preparing`이 아니라 즉시 차단 상태로 보이는지다.
+
+### 2026-04-20 16:15 +09:00 최신 재확인: 이번엔 `Preparing -> Phone Required` 번역 문제가 아니라 helper startup connect/open이 실제로 `camera-connect-timeout`으로 닫히는 경계가 남아 있었다
+
+사용자 최신 요청:
+
+1. 앱 실행 뒤 `Preparing` 다음 `Phone Required`가 발생하고 카메라 연결이 안 된다고 제보했다.
+2. 최신 파일을 확인하고 기록한 뒤 실제 연결 실패 경계를 다시 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7ff58f1724b60`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - `activePresetId = preset_new-draft-2`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json`은
+  - `cameraState = error`
+  - `helperState = error`
+  - `detailCode = camera-connect-timeout`
+  - `observedAt = 2026-04-20T07:16:24.1232798+00:00`
+  를 남기고 있었다.
+- 즉 latest failure는 더 이상 화면 번역만의 문제가 아니라,
+  **helper startup connect/open 경계가 실제로 timeout으로 닫히는 상태**였다.
+
+이번 회차 해석:
+
+- booth는 startup failure를 이제 customer 화면에도 반영하고 있었지만,
+  helper 기본 connect budget은 여전히 `5초`라 slow startup/open을 false timeout으로 읽을 가능성이 컸다.
+- operator 진단도 이 케이스를 `최근 촬영을 세션에 저장하지 못했어요`처럼 읽어,
+  실제로는 startup connect failure인데 capture 저장 실패처럼 보일 수 있었다.
+- 따라서 이번 시점의 직접 과제는
+  - startup connect budget을 실제 현장 속도에 맞게 늘리고
+  - timeout이 어느 단계에서 났는지 detail code를 나눠 기록하며
+  - operator가 이를 capture failure가 아닌 startup camera failure로 읽게 만드는 것이었다.
+
+이번 회차 수정:
+
+- Canon helper startup connect 기본 timeout을 `5초 -> 15초`로 늘렸다.
+- startup timeout은 이제 마지막 진행 단계에 따라
+  - `sdk-init-timeout`
+  - `session-open-timeout`
+  - fallback `camera-connect-timeout`
+  으로 나눠 기록한다.
+- 같은 timeout family는 supervisor가 기존 `camera-connect-timeout`과 같은 startup failure로 보고 bounded auto-restart 대상으로 다룬다.
+- helper는 startup terminal failure가 나면 `camera-helper-events.jsonl`에도 `helper-error`를 남겨,
+  status 파일만이 아니라 event 근거도 같이 확인할 수 있게 했다.
+- 그리고 startup 단계 전환 자체를 더 추적하기 쉽도록
+  `diagnostics/camera-helper-startup.log`에
+  `helper-starting -> sdk-initializing/scanning -> session-opening -> timeout/failure`
+  progression을 순서대로 append하도록 보강했다.
+- operator diagnostics는 no-capture startup timeout family를 더 이상 RAW handoff 저장 실패처럼 설명하지 않고,
+  `카메라 연결 시작이 실패했어요` 계열로 분리해 보여 준다.
+
+검증:
+
+- Rust
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test operator_diagnostics operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- C#
+  - `BOOTHY_CANON_SDK_ROOT=C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU`
+  - `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "FullyQualifiedName~TimeoutPolicyTests"`
+
+이번 시점 제품 판단:
+
+1. latest `Preparing -> Phone Required`는 startup camera failure를 다시 반영한 결과였고, 근본 원인은 helper startup connect/open이 실제로 timeout으로 닫히는 경계였다.
+2. 이번 패치로 booth는 startup false timeout 가능성을 줄이고, 같은 failure가 나도 어느 단계에서 막혔는지 더 정확히 남긴다.
+3. 다음 현장 확인 포인트는 앱 재실행 뒤 같은 조건에서 `camera-connect-timeout` 대신 실제 연결 성공으로 넘어가는지, 실패하더라도 `sdk-init-timeout` / `session-open-timeout`처럼 더 구체적인 이유가 남는지다.
+
+### 2026-04-20 16:48 +09:00 최신 재확인: 이번 `Preparing` 재발은 무기록이 아니라 fresh `session-opening` 반복이라 stale-only 감시로는 끊기지 않았다
+
+사용자 최신 요청:
+
+1. 앱 실행 뒤 다시 `Preparing`이 보이고 카메라 연결이 안 된다고 제보했다.
+2. 파일을 확인하고 기록한 뒤, 원인 추적이 어려우면 debug 로그를 더 추가해서라도 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a80090cacc84ec`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - `activePresetId = preset_new-draft-2`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json`은
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  - `cameraModel = Canon EOS 700D`
+  - `observedAt = 2026-04-20T07:39:59.8875911+00:00`
+  를 남기고 있었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는
+  - `2026-04-20T07:37:59Z sequence=2 session-opening`
+  - `2026-04-20T07:38:25Z sequence=1 sdk-initializing`
+  - `2026-04-20T07:38:25Z sequence=2 session-opening`
+  - `2026-04-20T07:38:52Z sequence=1 sdk-initializing`
+  - `2026-04-20T07:38:52Z sequence=2 session-opening`
+  - `2026-04-20T07:39:18Z sequence=1 sdk-initializing`
+  - `2026-04-20T07:39:18Z sequence=2 session-opening`
+  - `2026-04-20T07:39:45Z sequence=1 sdk-initializing`
+  - `2026-04-20T07:39:45Z sequence=2 session-opening`
+  패턴을 반복하고 있었다.
+- 즉 이번 회차는 helper status가 stale해진 것이 아니라,
+  **fresh한 `session-opening`이 반복 재기동되면서 booth가 계속 `Preparing`으로 남는 케이스**였다.
+
+이번 회차 수정:
+
+- helper supervisor는 더 이상 `observedAt` stale 여부만으로 startup stall을 판단하지 않는다.
+- 같은 startup phase가 fresh하게 갱신되더라도
+  - `helper-starting`
+  - `sdk-initializing`
+  - `scanning`
+  - `session-opening`
+  이 일정 시간 이상 지속되면 phase duration으로 stall을 판정한다.
+- `session-opening`이 20초 이상 이어지면 `session-open-timeout`으로,
+  초기 SDK 단계가 20초 이상 이어지면 `sdk-init-timeout`으로 승격한다.
+- 자동 재기동은 기존 정책대로 20초 창에서 1회만 허용하고,
+  그 뒤에도 같은 stall이 반복되면 더 이상 `Preparing` 루프를 만들지 않고 안정된 error 상태로 닫힌다.
+- 덕분에 최신처럼 status가 계속 신선하게 갱신되는 경우에도 booth가 카메라 연결 정체를 실제 오류로 반영할 수 있다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test operator_diagnostics operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest `Preparing` 재발의 직접 원인은 상태 미반영이 아니라, fresh `session-opening` 반복을 stale-only 규칙이 놓치고 있던 점이다.
+2. 이번 패치로 booth는 startup 정체를 더 이상 무한 `Preparing`으로 두지 않고, bounded retry 뒤 실제 연결 실패 상태로 전환한다.
+3. 이미 추가한 `camera-helper-startup.log` 덕분에 다음 재발 시에도 startup phase가 어디서 반복되는지 즉시 읽을 수 있다.
+
+### 2026-04-21 10:35 +09:00 최신 재확인: startup 전체가 막혀도 phase 전환마다 예산을 다시 잡아 `Preparing`이 이어지고 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했고 여전히 연결 문제가 남아 있다고 보고했다.
+2. 최신 로그를 보고 원인을 기록하고, 실제 제품에서 같은 루프가 끝나도록 고쳐 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 재현 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83b084a6e28c0`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계로 가지 못했다.
+- 같은 세션의 `camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = healthy`
+  - `detailCode = windows-device-detected`
+  - `cameraModel = Canon EOS 700D`
+  였다.
+- 같은 세션의 `camera-helper-startup.log`는 약 4초 동안 아래 startup family를 반복했다.
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  - `windows-device-detected`
+
+직접 원인:
+
+- 이전 수정으로 `session-opening <-> windows-device-detected` 반복은 같은 stall로 보게 했지만,
+  이번 최신 로그에서는 그 사이에 `sdk-initializing`도 다시 끼고 있었다.
+- supervisor는 startup phase가 바뀔 때마다 stall 시작 시각을 새로 잡고 있었기 때문에,
+  전체로는 오래 준비 완료에 도달하지 못해도 phase 전환만 계속되면 예산이 계속 초기화됐다.
+- 즉 이번 회차의 직접 결함은
+  **camera startup 전체가 막힌 것을 보지 못하고, 각 phase를 독립 시도로 잘못 쪼개 본 것**이다.
+
+이번 회차 수정:
+
+- helper supervisor는 이제 `sdk-initializing`, `session-opening`, `windows-device-detected`를 startup family 하나로 묶어 본다.
+- startup family 안에서 phase가 바뀌어도 최초 stall 시작 시각은 유지한다.
+- 따라서 연결이 실제로 준비 완료에 도달하지 못한 채 startup family 안에서만 맴돌면,
+  booth는 더 이상 `Preparing`을 계속 유지하지 않고 timeout failure로 승격한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml alternating_startup_phases_keep_the_original_stall_budget`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test operator_diagnostics operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved -- --exact`
+
+이번 시점 제품 판단:
+
+1. 최신 재현의 직접 원인은 카메라 자체의 새 실패보다, startup 전체 정체를 단일 budget으로 보지 못한 supervisor 판정 결손이었다.
+2. 이번 보강으로 booth는 startup phase가 섞여 반복돼도 `Preparing`에 갇히지 않고 실패 상태로 닫힌다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 `Preparing`이 오래 지속되지 않고 `Phone Required` 계열 실패로 승격되는지다.
+
+### 2026-04-21 10:20 +09:00 최신 재확인: `windows-device-detected`가 stall 타이머를 지워 무한 `Preparing`을 다시 만들고 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했지만 여전히 `Preparing`에서 카메라 연결이 끝나지 않는다고 보고했다.
+2. 앱 로그를 근거로 원인을 기록하고, 실제 제품에서 같은 루프가 다시 나지 않게 고쳐 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 재현 세션은 아래 두 개였다.
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a838c7b6218f3c`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83a1522f88a68`
+- 두 세션 모두 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계로 진입하지 못했다.
+- 최신 `camera-helper-status.json`은
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  - `cameraModel = Canon EOS 700D`
+  로 끝나 있었다.
+- 같은 세션의 `camera-helper-startup.log`는 20초 넘게 아래 두 신호를 반복했다.
+  - `detailCode = session-opening`
+  - `detailCode = windows-device-detected`
+
+직접 원인:
+
+- helper 자체는 실제로 정상 연결에 도달하지 못하고 있었지만,
+  supervisor는 중간에 끼는 `windows-device-detected`를 startup stall의 연속 구간으로 보지 않았다.
+- 그 결과 `session-opening`에서 쌓이던 stall 타이머가 매번 초기화됐고,
+  booth는 실패로 승격하지 못한 채 다시 `Preparing` 루프에 머물렀다.
+- 즉 이번 회차의 핵심 결함은 "camera stall이 없다"가 아니라,
+  **stall은 있었지만 supervisor가 bridge status를 정상 전환처럼 처리해 정체 감시를 스스로 해제한 것**이었다.
+
+이번 회차 수정:
+
+- helper supervisor는 이제 `windows-device-detected`를 startup stall 사이에 끼는 bridge status로 취급한다.
+- 따라서 `session-opening -> windows-device-detected -> session-opening`처럼 교차해도 같은 startup stall로 이어서 계산한다.
+- 이 반복이 budget을 넘기면 booth는 더 이상 무한 `Preparing`으로 남지 않고 `session-open-timeout` 계열의 실패 상태로 승격한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml windows_device_detected_between_session_opening_updates_does_not_reset_stall_tracking`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test operator_diagnostics operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved -- --exact`
+
+이번 시점 제품 판단:
+
+1. 오늘 재현의 직접 원인은 helper 연결 실패 자체보다, 그 실패를 `Preparing`에서 끊어 주어야 할 supervisor 판정 결손이었다.
+2. 이번 보강으로 booth는 `session-opening`과 `windows-device-detected`가 섞여도 정체를 실제 실패로 승격해 운영자가 루프에 갇히지 않게 한다.
+3. 다시 같은 증상이 나오면 `camera-helper-startup.log`에서 두 detail code가 교차하는지만 봐도 동일 계열인지 즉시 판별할 수 있다.
+
+### 2026-04-21 10:42 +09:00 최신 런 디렉토리 재확인: 마지막 stale startup 상태가 `windows-device-detected`면 booth가 다시 `Preparing`에 남고 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 로그를 확인하라고 요청했다.
+2. 현재 실행 중인 프로세스는 보지 말고, 이번 런 디렉토리 로그만 분석하라고 제한했다.
+3. 원인을 기록하고 같은 증상을 제품에서 다시 막히지 않게 고쳐 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83b62d3102e6c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계까지 가지 못했다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = healthy`
+  - `detailCode = windows-device-detected`
+  로 끝나 있었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`에는
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  - `windows-device-detected`
+  가 교차한 뒤 더 진행하지 못한 기록이 남아 있었다.
+
+직접 원인:
+
+- 이전 수정으로 supervisor의 startup stall budget은 유지되도록 보강됐지만,
+  readiness 정규화 계층은 마지막 stale startup 상태가 `windows-device-detected`일 때 이를 startup stall로 인정하지 않았다.
+- 그 결과 실제로는 연결 준비가 오래 멈춘 상태여도,
+  booth는 최신 stale truth를 `camera-preparing`으로 해석해 다시 `Preparing`에 남았다.
+- 즉 이번 회차의 직접 결함은
+  **startup stall 자체를 못 찾은 것이 아니라, 마지막 stale detail code가 `windows-device-detected`일 때만 failure 승격 규칙이 비어 있었던 것**이다.
+
+이번 회차 수정:
+
+- readiness 정규화는 이제 stale startup detail code로 `windows-device-detected`도 함께 본다.
+- 따라서 최신 런처럼 연결이 `connecting`에 머문 채 마지막 상태가 `windows-device-detected`로 끝나도,
+  booth는 더 이상 `Preparing`에 남지 않고 `Phone Required` 계열 실패로 승격한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_windows_device_detected_is_the_last_stale_startup_status`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_helper_startup_status_stays_stale`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+
+이번 시점 제품 판단:
+
+1. 최신 런 디렉토리 기준 직접 원인은 카메라 연결 시도 자체보다, 마지막 stale status를 failure로 넘기지 못한 readiness 판정 누락이었다.
+2. 이번 보강으로 booth는 startup 단계가 `windows-device-detected`에서 멈춰도 `Preparing`에 갇히지 않는다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 더 이상 장시간 `Preparing`이 유지되지 않고 실패 상태로 전환되는지다.
+
+### 2026-04-21 10:55 +09:00 최신 런 디렉토리 재확인: startup loop가 조용히 끊겨도 supervisor가 재시도 루프에만 남을 수 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 로그를 확인하라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, 이번 런 디렉토리 로그만 분석하라고 다시 제한했다.
+3. 원인을 기록하고 같은 증상이 다시 `Preparing`으로 남지 않게 고쳐 달라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83c6eed6b7a84`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계로 넘어가지 못했다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = healthy`
+  - `detailCode = windows-device-detected`
+  - `sequence = 21`
+  로 끝나 있었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는 약 5초 동안
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 교차 반복된 뒤 더 이상 후속 상태를 남기지 않았다.
+- 같은 런 디렉토리 안에는
+  - `camera-helper-events.jsonl`
+  - `timing-events.log`
+  같은 후속 진행 증거가 없었다.
+
+직접 원인:
+
+- 최신 런 디렉토리만 보면 helper는 startup 연결 루프를 쓰다가 중간에 조용히 멈춘 것으로 읽힌다.
+- 현재 supervisor 코드는 살아 있는 helper의 startup stall은 timeout으로 승격하지만,
+  startup 중 helper가 먼저 종료되는 경계는 restart budget으로 세지 않아 재시도 루프에만 남을 수 있었다.
+- 즉 이번 회차의 직접 결함은
+  **startup stall을 못 보는 것이 아니라, startup loop가 조기 종료로 끊기는 경우를 bounded failure로 승격하지 못한 것**이다.
+
+이번 회차 수정:
+
+- helper supervisor는 이제 startup phase 도중 helper가 종료되면 그 역시 startup restart budget으로 계산한다.
+- 같은 창 안에서 다시 startup 중 종료되면 더 이상 재시도 루프에만 머물지 않고
+  `session-open-timeout` 또는 같은 계열 failure로 승격한다.
+- 따라서 최신 런처럼 `windows-device-detected`를 남긴 채 startup loop가 조용히 끊겨도,
+  booth는 무한 재시도/무한 `Preparing`로 남지 않는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml startup_exit_during_windows_device_detected_consumes_restart_budget_then_escalates`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts -- --exact`
+
+이번 시점 제품 판단:
+
+1. 최신 런 디렉토리 기준 추가 원인은 startup phase 반복 그 자체보다, 그 반복이 조기 종료로 끊길 때 supervisor가 failure로 닫지 못한 점이었다.
+2. 이번 보강으로 booth는 startup loop가 timeout이 아니라 exit로 끊겨도 bounded failure로 수렴한다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 `Preparing`이 길게 유지되기보다, 재시도 후 곧바로 실패 상태로 닫히는지다.
+
+### 2026-04-21 11:09 +09:00 최신 런 디렉토리 재확인: startup oscillation이 이미 반복 실패 패턴인데도 booth가 20초 budget까지 기다리고 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 런 디렉토리 로그를 보라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, 이번 런 디렉토리만 분석하라고 다시 제한했다.
+3. 원인을 기록하고 제품에서 같은 증상을 다시 줄이라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83d3aff931f10`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계로 넘어가지 못했다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  - `sequence = 15`
+  였다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는 약 4초 안에
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 15개 sequence까지 교차 반복된 뒤 끝났다.
+- 즉 이번 런은 긴 정체 이전에 이미 startup oscillation이 빠르게 누적된 패턴으로 읽는 것이 맞다.
+
+직접 원인:
+
+- 기존 보강으로 startup stall과 startup 중 조기 종료는 막았지만,
+  짧은 시간에 `windows-device-detected <-> session-opening`이 과도하게 반복되는 경우는 여전히
+  일반 stall처럼 20초 budget이 지나기 전까지 `Preparing`으로 남을 수 있었다.
+- 즉 이번 회차의 직접 결함은
+  **이미 deterministic startup failure pattern으로 보이는 빠른 oscillation을, 제품이 너무 늦게까지 “아직 연결 중”으로 취급한 것**이다.
+
+이번 회차 수정:
+
+- helper supervisor는 이제 startup phase에 들어간 뒤 status sequence가 짧은 시간 안에 과도하게 누적되면,
+  20초 stall budget을 기다리지 않고 startup timeout failure로 바로 승격한다.
+- 따라서 최신 런처럼 약 4초 안에 startup oscillation이 15개 sequence까지 반복되면,
+  booth는 더 이상 장시간 `Preparing`에 남지 않고 더 빠르게 실패 상태로 전환된다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml repeated_startup_status_updates_fast_fail_before_the_twenty_second_budget`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts -- --exact`
+
+이번 시점 제품 판단:
+
+1. 최신 런 디렉토리 기준 직접 원인은 단순 stall보다, startup oscillation을 실패로 너무 늦게 간주한 판정 기준이었다.
+2. 이번 보강으로 booth는 같은 연결 루프를 더 빠르게 끊고 실패 상태로 승격한다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 `Preparing`이 20초 가까이 남지 않고 훨씬 빨리 실패 상태로 바뀌는지다.
+
+### 2026-04-21 11:25 +09:00 최신 런 디렉토리 재확인: fresh startup oscillation이면 readiness 자체가 계속 `Preparing`으로 남을 수 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 런 디렉토리 로그를 기준으로 원인을 찾으라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, 이번 런 디렉토리 로그만 분석하라고 다시 제한했다.
+3. 원인을 기록하고 문제를 실제로 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83e1ef6f74400`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고, 촬영 단계로 넘어가지 못했다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = starting`
+  - `detailCode = sdk-initializing`
+  - `sequence = 36`
+  이었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는 약 9초 동안
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 계속 교차했고, 마지막까지 fresh startup status가 유지됐다.
+
+직접 원인:
+
+- 지금까지의 보강은 supervisor가 timeout/error status를 써 주거나,
+  마지막 startup status가 stale로 굳는 경우를 주로 막았다.
+- 하지만 최신 런처럼 helper가 fresh startup status를 계속 쓰면,
+  readiness 정규화 계층은 이를 여전히 `camera-preparing`/`Preparing`으로 해석할 수 있었다.
+- 즉 이번 회차의 직접 결함은
+  **startup oscillation이 이미 반복 실패 패턴이어도, 마지막 status가 fresh라는 이유만으로 readiness가 계속 연결 진행 중으로 본 것**이다.
+
+이번 회차 수정:
+
+- readiness는 이제 startup family status가 fresh하더라도,
+  세션이 이미 충분히 진행됐고 sequence가 과도하게 누적된 경우 이를 startup oscillation failure로 본다.
+- 따라서 최신 런처럼 `sdk-initializing / windows-device-detected / session-opening`이 오래 반복돼 `sequence=36`까지 간 경우,
+  booth는 더 이상 `Preparing`에 남지 않고 `Phone Required` 계열 실패로 승격한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_fresh_startup_oscillation_repeats_far_past_session_start`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_windows_device_detected_is_the_last_stale_startup_status`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_helper_startup_status_stays_stale`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts -- --exact`
+
+이번 시점 제품 판단:
+
+1. 최신 런 디렉토리 기준 직접 원인은 helper process lifecycle만이 아니라, readiness가 fresh startup oscillation을 실패로 승격하지 못한 점이었다.
+2. 이번 보강으로 booth는 fresh status가 계속 찍히더라도 반복 startup loop를 `Preparing`으로 오래 유지하지 않는다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 마지막 status가 fresh여도 화면이 `Preparing`에 남지 않고 실패 상태로 전환되는지다.
+
+### 2026-04-21 11:33 +09:00 최신 런 디렉토리 재확인: latest failure는 low-sequence fresh startup family라 기존 oscillation 기준 아래에 숨어 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 런 디렉토리 로그를 확인하라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, 이번 런 디렉토리 로그만 분석하라고 다시 제한했다.
+3. 원인을 기록하고 실제 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83e83e5b372f8`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  - `sequence = 7`
+  이었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 짧게 반복된 뒤 끝났다.
+- 즉 latest failure는 이전처럼 `sequence=15+`까지 간 큰 oscillation이 아니라,
+  **세션은 이미 충분히 오래 startup family에 있었지만 마지막 fresh sequence가 7에서 멈춘 케이스**였다.
+
+직접 원인:
+
+- 기존 fresh startup oscillation 승격 기준은 high-sequence case에는 반응했지만,
+  latest run처럼 low-sequence fresh startup family에는 아직 너무 관대했다.
+- 그 결과 실제로는 startup family에 오래 묶인 같은 실패여도,
+  booth는 마지막 fresh status가 `session-opening` / `sdk-initializing`이면 다시 `Preparing`으로 남을 수 있었다.
+
+이번 회차 수정:
+
+- readiness의 fresh startup oscillation 승격 기준을 latest run 수준까지 낮췄다.
+- 따라서 세션이 이미 startup budget을 오래 소모했고 fresh startup family가 계속 남아 있으면,
+  `sequence=7` 수준이어도 booth는 더 이상 `Preparing`에 머물지 않고 실패 상태로 승격한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_fresh_startup_family_persists_past_session_budget_even_with_low_sequence`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_fresh_startup_oscillation_repeats_far_past_session_start`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_windows_device_detected_is_the_last_stale_startup_status`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_helper_startup_status_stays_stale`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest run 기준 직접 원인은 fresh startup oscillation heuristic이 실제 field pattern보다 늦게 동작한 점이었다.
+2. 이번 보강으로 booth는 low-sequence fresh startup family도 오래 지속되면 실패로 닫는다.
+3. 다음 실기기 확인 포인트는 latest 같은 `sequence=7` 수준의 짧은 startup burst 뒤에도 화면이 `Preparing`에 오래 남지 않는지다.
+
+### 2026-04-21 11:39 +09:00 최신 런 디렉토리 재확인: latest run은 `sequence=20`이어도 startup family fail threshold가 여전히 field wait보다 늦었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 런 디렉토리 로그를 확인하라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, 이번 런 디렉토리 로그만 분석하라고 다시 제한했다.
+3. 원인을 기록하고 제품에서 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83ed75d7c78cc`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였다.
+- 같은 세션의 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = connecting`
+  - `helperState = healthy`
+  - `detailCode = windows-device-detected`
+  - `sequence = 20`
+  이었다.
+- 같은 세션의 `diagnostics/camera-helper-startup.log`는 약 5초 동안
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 20개 sequence까지 반복된 뒤 끝났다.
+- 즉 latest run은 startup family가 다시 반복 실패 패턴으로 들어갔지만,
+  제품은 아직 too-late threshold 때문에 `Preparing`으로 남을 여지가 있었다.
+
+직접 원인:
+
+- 기존 fresh startup family 승격 기준은 이전보다 개선됐지만,
+  latest run처럼 세션이 이미 오래 시작 구간에 묶인 상태에서는 여전히 field 체감보다 늦게 failure로 닫혔다.
+- 특히 latest run은 `updatedAt` 기준으로 8초 안팎에서 startup family loop가 반복되고 있었기 때문에,
+  이전 12초 기준은 실제 운영 화면에서 `Preparing` 체감을 너무 길게 남길 수 있었다.
+
+이번 회차 수정:
+
+- readiness의 fresh startup family fail age 기준을 `12초`에서 `8초`로 앞당겼다.
+- 따라서 latest run처럼 `windows-device-detected / session-opening / sdk-initializing`이 계속 교차하면,
+  booth는 더 빨리 `Phone Required` 계열 실패로 전환된다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_low_sequence_startup_family_is_already_over_eight_seconds_old`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_fresh_startup_family_persists_past_session_budget_even_with_low_sequence`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_fresh_startup_oscillation_repeats_far_past_session_start`
+- `cargo test --manifest-path src-tauri/Cargo.toml readiness_escalates_when_windows_device_detected_is_the_last_stale_startup_status`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest run 기준 직접 원인은 startup family failure를 너무 늦게 `Phone Required`로 넘기던 readiness 타이밍 기준이었다.
+2. 이번 보강으로 booth는 같은 증상에서 `Preparing` 체류 시간을 더 짧게 줄인다.
+3. 다음 실기기 확인 포인트는 latest와 같은 loop에서 약 8초 전후 안에 실패 상태로 전환되는지다.
+
+### 2026-04-21 12:18 +09:00 최신 런 디렉토리 재확인: 이번 재발은 age threshold보다 먼저 sequence burst가 비정상에 도달했는데 supervisor fast-fail이 너무 늦었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 런 디렉토리 로그만 다시 보라고 요청했다.
+2. 현재 실행 프로세스는 보지 말고, [startup-connect-triage-checklist.md](./startup-connect-triage-checklist.md)를 기준으로 원인을 분류하라고 요청했다.
+3. 원인을 기록하고 제품에서 문제를 해결하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 여전히 `startup/connect family`다.
+- 근거는
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - startup family detail code 반복
+  - 마지막 상태가 `windows-device-detected`
+  이 함께 보였기 때문이다.
+- 즉 이번 런도 새 detail code bug가 아니라, 같은 startup/connect failure의 또 다른 표면형이다.
+
+실제 확인 근거:
+
+- 최신 런 디렉토리 세션은 계속 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a83ed75d7c78cc`였다.
+- `session.json`은
+  - `createdAt = 2026-04-21T02:39:07Z`
+  - `updatedAt = 2026-04-21T02:39:10Z`
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  였다.
+- `camera-helper-startup.log`는 약 5초 동안
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  이 `sequence=20`까지 빠르게 반복됐다.
+- 마지막 `camera-helper-status.json`도
+  - `cameraState = connecting`
+  - `helperState = healthy`
+  - `detailCode = windows-device-detected`
+  - `sequence = 20`
+  으로 끝났다.
+
+직접 원인:
+
+- latest run은 이미 짧은 시간 안에 startup family sequence가 과도하게 누적된 dense burst였다.
+- 그런데 supervisor의 fast-fail 기준은 아직 이 밀도를 field 체감보다 늦게 timeout으로 닫고 있었다.
+- 그래서 제품은 age threshold를 기다리는 동안 customer-visible `Preparing`에 더 오래 머무를 수 있었다.
+
+이번 회차 수정:
+
+- startup burst fast-fail 기준을 더 앞당겼다.
+- 이제 startup family가 약 3초 안에 10 step 이상 누적되면,
+  supervisor는 이를 정상 진행이 아니라 dense startup failure로 보고 더 빨리 timeout failure로 닫는다.
+- 따라서 latest run처럼 `sequence=20`까지 몰아치는 loop는 더 이상 `Preparing`에 오래 남지 않고 빠르게 실패 상태로 전환된다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml dense_startup_burst_fast_fails_after_ten_repeated_transitions`
+- `cargo test --manifest-path src-tauri/Cargo.toml repeated_startup_status_updates_fast_fail_before_the_twenty_second_budget`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest run의 직접 원인은 새 startup family 종류가 아니라, dense burst를 너무 늦게 끊던 supervisor fast-fail 기준이었다.
+2. 이번 보강으로 booth는 같은 로그 패턴에서 `Preparing` 체류 시간을 더 줄이고 더 빨리 실패 상태로 닫는다.
+3. 다음 실기기 확인 포인트는 latest와 비슷한 5초 안쪽 burst에서도 화면이 더 빨리 `Phone Required` 계열로 전환되는지다.
+
+### 2026-04-21 12:32 +09:00 최신 런 디렉토리 재확인: stale startup failure가 앱 재기동 시 `helper-starting`으로 덮여 다시 `Preparing`으로 낮아질 수 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 앱 로그와 최신 세션 로그를 같이 보라고 요청했다.
+2. [startup-connect-triage-checklist.md](./startup-connect-triage-checklist.md)와 [camera-helper-troubleshooting-history.md](./camera-helper-troubleshooting-history.md)를 참조해 비슷한 과거 해법도 함께 반영하라고 요청했다.
+3. 원인을 기록하고 문제를 해결하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 여전히 `startup/connect family`다.
+- `session.json`은
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  상태였고,
+- `camera-helper-status.json`과 `camera-helper-startup.log`는 startup 초반 `sdk-initializing`에서 멈춘 흔적만 남겼다.
+- 따라서 이번 건도 helper ready 이후 프런트 fallback 문제가 아니라, startup failure가 안정적으로 닫히지 않는 같은 문제군으로 분류하는 것이 맞다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84082e2726120`였다.
+- 같은 세션의 `session.json`은
+  - `createdAt = 2026-04-21T03:09:43Z`
+  - `updatedAt = 2026-04-21T03:09:45Z`
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  였다.
+- 같은 세션의 `camera-helper-startup.log`는
+  - `sequence=1`
+  - `cameraState = connecting`
+  - `helperState = starting`
+  - `detailCode = sdk-initializing`
+  한 줄만 남았다.
+- 마지막 `camera-helper-status.json`도
+  - `sequence = 2`
+  - `cameraState = connecting`
+  - `helperState = starting`
+  - `detailCode = sdk-initializing`
+  으로 끝났다.
+- 반면 최신 앱 로그 후보였던 `com.boothy.desktop\\logs\\Boothy.log`, `com.tauri.dev\\logs\\Boothy.log`에는 이번 세션 ID가 직접 남지 않아,
+  latest 증거는 세션 런 디렉토리와 코드 경계 재현으로 확정하는 편이 더 정확했다.
+
+직접 원인:
+
+- 현재 구조에서는 readiness를 읽기 전에 supervisor가 새 helper launch를 준비하면서 `helper-starting` status를 먼저 쓴다.
+- 이때 이전 런이 남긴 stale startup family status나 recorded startup timeout도 fresh `helper-starting`으로 덮일 수 있었다.
+- 그래서 실제로는 이미 실패로 닫혀야 하는 startup/connect failure가 앱 재기동 또는 helper 재bootstrap 순간마다 다시 `Preparing`으로 낮아질 여지가 있었다.
+- 이 패턴은 `camera-helper-troubleshooting-history.md`의 "host truth가 맞더라도 마지막 적용 경계에서 `Preparing`으로 다시 낮아질 수 있다"는 경고와도 맞는다.
+
+이번 회차 수정:
+
+- supervisor는 이제 새 helper를 띄우기 직전에,
+  기존 status가 이미 startup timeout이거나 stale startup family면 이를 `helper-starting`으로 덮어쓰지 않는다.
+- 따라서 이전 런이 남긴 startup failure truth는 다음 bootstrap 시도 전까지 유지되고,
+  booth는 이를 다시 fresh `Preparing`으로 오인하지 않는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml starting_helper_status_does_not_overwrite_a_stale_startup_failure_status`
+- `cargo test --manifest-path src-tauri/Cargo.toml starting_helper_status_does_not_overwrite_a_recorded_startup_timeout`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest run의 직접 원인은 새 startup 코드가 아니라, 이미 실패로 봐야 할 startup truth를 bootstrap이 다시 `Preparing` 쪽으로 덮던 supervisor 경계였다.
+2. 이번 보강으로 booth는 앱 재기동이나 helper 재bootstrap이 있어도 같은 startup failure를 다시 `Preparing`으로 숨기지 않는다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 앱을 다시 띄워도 화면이 오래 `Preparing`으로 돌아가지 않고 failure 상태를 유지하거나 더 빠르게 닫히는지다.
+
+### 2026-04-21 12:44 +09:00 최신 런 디렉토리 재확인: `sequence=31` dense startup loop는 기존 8초 기준 아래에서 여전히 `Preparing`으로 남을 수 있었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 앱 로그와 세션 로그를 다시 보라고 요청했다.
+2. [startup-connect-triage-checklist.md](./startup-connect-triage-checklist.md)와 [camera-helper-troubleshooting-history.md](./camera-helper-troubleshooting-history.md)를 참조해 같은 문제군 해법을 적용하라고 요청했다.
+3. 원인을 기록하고 문제를 해결하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 다시 `startup/connect family`다.
+- 근거는
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  - startup family detail code 반복
+  - 마지막 상태가 `session-opening`
+  이 함께 보였기 때문이다.
+- helper가 `ready/healthy`인 상태는 아니므로, 이번 건은 frontend fallback보다 startup family bounded failure 문제로 보는 편이 맞다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8410dd4b9fc4c`였다.
+- 같은 세션의 `session.json` 기준으로
+  - `createdAt = 2026-04-21T03:19:40Z`
+  - `updatedAt = 2026-04-21T03:19:42Z`
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  였다.
+- 같은 세션의 `camera-helper-startup.log`는 약 8초 동안
+  - `sdk-initializing`
+  - `windows-device-detected`
+  - `session-opening`
+  을 반복했고, 마지막은 `sequence = 31`, `detailCode = session-opening`이었다.
+- 같은 세션의 `camera-helper-status.json` 마지막 상태도
+  - `cameraState = connecting`
+  - `helperState = connecting`
+  - `detailCode = session-opening`
+  - `sequence = 31`
+  이었다.
+- 현재 저장된 최신 글로벌 앱 로그 후보에서는 이번 세션 ID가 직접 확인되지 않아,
+  latest failure는 세션 런 디렉토리와 host readiness 재현 테스트로 확정하는 편이 더 정확했다.
+
+직접 원인:
+
+- readiness는 fresh startup family를 실패로 승격할 때
+  저밀도 loop와 고밀도 loop에 같은 age 기준을 사용하고 있었다.
+- 그 결과 latest처럼 `sequence=31`까지 빠르게 누적된 dense startup loop도,
+  readiness 기준상 일정 시점 전까지는 여전히 `Preparing`으로 남을 수 있었다.
+- 즉 이번 재발은 새 detail code 문제가 아니라,
+  **고밀도 startup oscillation을 더 빨리 닫아야 하는 product rule이 readiness 쪽에 아직 부족했던 케이스**다.
+
+이번 회차 수정:
+
+- readiness는 이제 dense startup family를 별도로 본다.
+- `sequence`가 충분히 높게 누적된 startup family는,
+  기존 저밀도 loop보다 더 짧은 age 기준에서 `Phone Required` 계열 실패로 승격한다.
+- 따라서 latest 같은 `sequence=31` loop는 8초를 다 쓰기 전에도 더 빨리 `Preparing`을 벗어난다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_dense_startup_family_is_already_over_five_seconds_old -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_low_sequence_startup_family_is_already_over_eight_seconds_old -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness startup_connect_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness session_open_timeout_routes_to_phone_required_before_first_capture -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml helper_supervisor -- --nocapture`
+
+이번 시점 제품 판단:
+
+1. latest run의 직접 원인은 startup family 자체가 아니라, dense loop를 저밀도 loop와 같은 시간 예산으로 보던 readiness 최종 승격 기준이었다.
+2. 이번 보강으로 booth는 `sequence=31` 같은 고밀도 startup loop에서 더 빨리 `Preparing`을 벗어나 failure 상태로 닫힌다.
+3. 다음 실기기 확인 포인트는 latest 같은 반복 패턴에서 약 5초 전후부터 더 이상 장시간 `Preparing`이 유지되지 않는지다.
+
+### 2026-04-21 14:35 +09:00 최신 앱 재검증: 이번 `Phone Required`는 startup/connect family가 아니라 retryable 셔터 실패 `capture-trigger-failed(0x00000002)` 과승격이었다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 로그를 기준으로 원인을 다시 확인하라고 요청했다.
+2. [startup-connect-triage-checklist.md](./startup-connect-triage-checklist.md)와 [camera-helper-troubleshooting-history.md](./camera-helper-troubleshooting-history.md)를 참조해, 과거 유효했던 해법과 같은 축으로 해결하라고 요청했다.
+3. 결과를 기록하고 실제 재발 경로를 차단하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 `startup/connect family`가 아니다.
+- 근거는 같은 세션에서 helper가 최종적으로 `ready/healthy`로 회복했기 때문이다.
+- 문서 기준으로 이 경우는 startup bounded failure보다, **retryable capture failure를 host가 `phone-required`로 과승격한 경로**로 분리해 보는 편이 맞다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84612e5fc2804`였다.
+- 같은 세션 `session.json`은
+  - `lifecycle.stage = phone-required`
+  - `captures = []`
+  로 닫혀 있었다.
+- 하지만 같은 세션 `diagnostics/camera-helper-status.json` 마지막 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `detailCode = camera-ready`
+  였다.
+- 같은 세션 `diagnostics/camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `recovery-status(detailCode=capture-trigger-failed)`
+  - `helper-error(detailCode=capture-trigger-failed, message=셔터 명령을 보낼 수 없었어요: 0x00000002)`
+  가 순서대로 남아 있었다.
+
+직접 원인:
+
+- helper가 `0x00000002` 셔터 실패를 recovery가 필요한 치명 오류로 올리고 있었다.
+- 그러면 host는 `recovery-status`를 먼저 보고 즉시 `phone-required`로 세션을 잠근다.
+- 이후 helper가 다시 `camera-ready`로 회복해도, 이번 코드값은 기존 retryable legacy 목록에 없어서 세션이 자동으로 풀리지 않았다.
+
+이번 회차 수정:
+
+- helper는 이제 `capture-trigger-failed(0x00000002)`를 recovery-required가 아닌 retryable 셔터 실패로 기록한다.
+- host도 legacy `capture-trigger-failed + 0x00000002` 흔적을 재시도 가능 오류로 취급한다.
+- 따라서 같은 실패가 다시 나도 즉시 `Phone Required`로 잠그지 않고, 고객 화면은 재시도 가능한 촬영 상태로 남는다.
+- 이전 버전이 남긴 같은 유형의 `phone-required`도 helper truth가 `ready/healthy`이면 `capture-ready`로 풀린다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|EnsureConnectedAsync_keeps_the_helper_loop_live_while_connect_attempt_runs|EnsureConnectedAsync_escalates_to_an_explicit_error_after_connect_timeout|EnsureConnectedAsync_runs_the_connect_attempt_on_an_sta_thread|PumpEvents_does_not_touch_the_sdk_before_the_camera_session_is_open|ForceCaptureTimeoutIfStuck_fails_an_orphaned_active_capture|HandleObjectEvent_queues_raw_download_without_blocking_the_helper_loop"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_focus_is_not_locked -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_focus_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest `Phone Required`의 직접 원인은 카메라 연결 실패가 아니라, 회복 가능한 셔터 실패를 치명 오류로 저장하던 경계였다.
+2. 이번 보강으로 booth는 같은 `0x00000002` 실패에서 세션을 즉시 잠그지 않고 재시도 가능한 상태를 유지한다.
+3. 다음 실기기 확인 포인트는 같은 조건에서 실패가 나더라도 바로 `Phone Required`로 굳지 않고, 다시 촬영 가능한 상태로 남는지다.
+
+### 2026-04-21 15:10 +09:00 최신 앱 재검증: 이번 재발은 세션 잠금이 아니라 retryable 셔터 실패 뒤 helper status가 `camera-ready`로 복귀하지 않던 잔여 상태였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 로그와 과거 troubleshooting 문서를 다시 보라고 요청했다.
+2. 이번에도 같은 문제군인지 먼저 분류하고, 실제 재발 축에 맞는 해법으로 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 startup/connect family가 아니다.
+- startup은 정상으로 닫혔고, capture 직후 retryable 셔터 실패가 난 뒤 helper가 `ready/healthy`로 남아 있었다.
+- 따라서 이번 건은 startup bounded failure가 아니라, **retryable capture failure 이후 helper status truth 정리 문제**로 보는 편이 맞다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a07a464f044`였다.
+- 같은 세션 `session.json`은
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  로 남아 있었다.
+- 같은 세션 `camera-helper-startup.log`는
+  - `sdk-initializing`
+  - `session-opening`
+  - `session-opened`
+  - `camera-ready`
+  뒤에
+  - `capture-trigger-failed`
+  를 남겼다.
+- 같은 세션 `camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=0x00000002)`
+  만 있었고, `recovery-status`는 없었다.
+- 그런데 같은 세션 `camera-helper-status.json` 마지막 상태는
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `detailCode = capture-trigger-failed`
+  였다.
+
+직접 원인:
+
+- 지난 회차 수정으로 이 실패는 더 이상 세션을 `phone-required`로 잠그지 않게 됐다.
+- 하지만 helper snapshot 정리 단계가 retryable 실패 뒤에도 마지막 실패 detail code를 그대로 남겨,
+  최신 status와 startup log가 실제 회복 상태를 정확히 반영하지 못했다.
+- 그래서 제품은 재시도 가능 상태인데도, 최신 진단 증거만 보면 아직 실패가 계속 유지되는 것처럼 읽히는 잔여 inconsistency가 남아 있었다.
+
+이번 회차 수정:
+
+- retryable capture failure가 끝난 뒤 helper가 `ready/healthy`로 복귀하면,
+  helper status detail code도 `camera-ready`로 되돌리도록 맞췄다.
+- 실제 실패 원인은 `helper-error` event에 그대로 남기고,
+  live status는 현재 카메라가 다시 촬영 가능한 상태라는 truth를 우선 반영한다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "ClearCaptureContext_restores_camera_ready_after_retryable_failure|BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|EnsureConnectedAsync_keeps_the_helper_loop_live_while_connect_attempt_runs|EnsureConnectedAsync_escalates_to_an_explicit_error_after_connect_timeout|EnsureConnectedAsync_runs_the_connect_attempt_on_an_sta_thread|PumpEvents_does_not_touch_the_sdk_before_the_camera_session_is_open|ForceCaptureTimeoutIfStuck_fails_an_orphaned_active_capture|HandleObjectEvent_queues_raw_download_without_blocking_the_helper_loop"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest 재발의 핵심은 startup 실패가 아니라, retryable 셔터 실패 뒤 helper status truth가 덜 정리되던 잔여 문제였다.
+2. 이번 보강으로 최신 helper status는 회복 후 다시 `camera-ready`를 기록한다.
+3. 다음 실기기 확인 포인트는 같은 실패가 나더라도, operator/customer 쪽 진단이 계속 실패 코드에 머물지 않고 다시 촬영 가능 상태로 복귀하는지다.
+
+### 2026-04-21 15:25 +09:00 최신 앱 재검증: latest는 startup/connect 재발이 아니라 `camera-ready` 직후 첫 촬영 허용이 너무 빨랐던 경계였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 최신 세션과 지정 문서를 다시 보고 해결하라고 요청했다.
+2. 같은 문제군이면 기존 해법을 참고하되, 실제 latest evidence에 맞는 축으로 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 startup/connect family가 아니다.
+- startup은 정상으로 `camera-ready`까지 닫혔고, helper status 최종 상태도 `camera-ready`였다.
+- 따라서 이번 건은 startup failure가 아니라, **startup 직후 첫 촬영 허용 시점이 너무 빨라 생긴 retryable first-shot trigger failure**로 분리하는 편이 맞다.
+
+실제 확인 근거:
+
+- 최신 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a6d28af1130`였다.
+- 같은 세션 `camera-helper-startup.log`는
+  - `sdk-initializing`
+  - `session-opening`
+  - `camera-ready`
+  로 빠르게 정상 복귀했다.
+- 같은 세션 `camera-helper-status.json` 마지막 상태도
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `detailCode = camera-ready`
+  였다.
+- 그런데 같은 세션 `camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=0x00000002)`
+  가 바로 뒤따랐다.
+- 직전 재현 세션 `session_000000000018a84a07a464f044`도 같은 `0x00000002`였고,
+  둘 다 `camera-ready` 직후 거의 바로 첫 셔터가 들어간 패턴이었다.
+
+직접 원인:
+
+- 세션은 startup 직후 낮은 sequence의 첫 `camera-ready`를 곧바로 촬영 가능으로 열고 있었다.
+- 실장비에서는 이 very-early ready 구간에서 첫 셔터가 아직 불안정하게 실패할 수 있었고,
+  latest `0x00000002`는 그 표면형으로 보는 편이 가장 잘 맞았다.
+- 즉 이번 남은 문제는 helper truth나 `phone-required` 잠금이 아니라,
+  **첫 ready를 너무 빨리 믿고 첫 촬영을 허용한 readiness timing 경계**였다.
+
+이번 회차 수정:
+
+- host readiness는 이제 startup 직후의 낮은 sequence `camera-ready`를 아주 짧은 안정화 창 동안은 `Preparing`으로 유지한다.
+- 안정화 창이 지나면 정상 `Ready`로 풀린다.
+- retryable trigger failure 자체는 계속 `phone-required`가 아닌 재시도 경로로 남긴다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_holds_the_first_camera_ready_for_a_brief_startup_stabilization_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_the_first_camera_ready_after_the_startup_stabilization_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest 재발의 핵심은 startup failure가 아니라, startup 직후 첫 capture enable이 너무 빨랐던 경계였다.
+2. 이번 보강으로 booth는 첫 `camera-ready` 직후 아주 짧은 구간을 `Preparing`으로 유지해, 같은 first-shot `0x00000002` 가능성을 줄인다.
+3. 다음 실기기 확인 포인트는 preset 선택 직후 첫 촬영 버튼이 아주 짧게만 준비 중에 머문 뒤 열리고, 바로 누를 때 같은 `0x00000002`가 줄어드는지다.
+
+### 2026-04-21 15:35 +09:00 최신 앱 재검증: latest는 same first-shot 경계였고, 기존 안정화 창이 `sequence` 가정 때문에 너무 좁았다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest session과 과거 troubleshooting 문서를 다시 참조해 해결하라고 요청했다.
+2. 이번 latest가 방금 수정의 연장선인지 실제 evidence로 다시 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run도 startup/connect family는 아니다.
+- startup은 정상으로 닫혔고, helper 최종 status도 `camera-ready`였다.
+- 즉 이번 건도 **startup 직후 first-shot trigger failure 축**으로 보는 편이 맞다.
+
+실제 확인 근거:
+
+- latest 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b21e1691d9c`였다.
+- 같은 세션 `camera-helper-startup.log`는
+  - `sequence=3 camera-ready`
+  - `sequence=8 camera-ready`
+  로 빠르게 안정화되는 것처럼 보였다.
+- 그런데 같은 세션 `camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=0x00000002)`
+  가 남았다.
+- `session.json`은 여전히 `preset-selected`, `captures=[]`였고
+  helper 최종 `camera-helper-status.json`은 다시 `camera-ready`로 회복했다.
+
+직접 원인:
+
+- 직전 회차의 안정화 창은 startup 직후 낮은 `sequence` ready만 잠깐 막는 가정에 묶여 있었다.
+- 실제 latest에서는 첫 촬영 시점에 helper `sequence`가 이미 `8`까지 올라가 있었지만,
+  여전히 preset 선택 직후 very-early first shot 구간이었다.
+- 따라서 same bug family인데도 `sequence` 기준이 너무 좁아 latest를 놓쳤다.
+
+이번 회차 수정:
+
+- first-shot stabilization은 이제 helper `sequence`가 아니라,
+  `preset-selected` 직후 세션 age 기준으로 짧게 유지한다.
+- 즉 preset 선택 뒤 처음 몇 초 동안은 helper가 `camera-ready`여도 고객 화면은 잠깐 `Preparing`을 유지하고,
+  그 창이 지나면 정상 `Ready`로 풀린다.
+- retryable trigger failure는 계속 `phone-required`로 잠그지 않는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_holds_the_first_camera_ready_for_a_brief_preset_selection_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_the_first_camera_ready_after_the_preset_selection_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest 재발은 새 문제군이 아니라, same first-shot timing bug를 `sequence` 기준이 좁아 놓친 케이스였다.
+2. 이번 보강으로 first-shot holdoff는 preset 선택 직후 세션 age 기준으로 동작한다.
+3. 다음 실기기 확인 포인트는 preset 선택 직후 약간 더 안정화 시간이 보이더라도, 바로 누를 때 같은 `0x00000002` first-shot failure가 줄어드는지다.
+
+### 2026-04-21 15:45 +09:00 최신 앱 재검증: latest도 same first-shot failure였고, 3초 창은 실제 하드웨어에서 아직 짧았다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest session과 과거 문서를 다시 보고 해결하라고 요청했다.
+2. latest가 방금 넣은 preset-selection holdoff 밖에서 재발한 것인지 확인하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run 역시 startup/connect family는 아니다.
+- helper는 정상으로 `camera-ready`에 도달했고 최종 상태도 healthy/ready였다.
+- 이번 latest도 **same first-shot trigger failure family**로 묶는 편이 맞다.
+
+실제 확인 근거:
+
+- latest 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac`였다.
+- 같은 세션 `camera-helper-startup.log`는
+  - `06:33:07 camera-ready`
+  - `06:33:09 camera-ready`
+  로 보였다.
+- 같은 세션 `camera-helper-events.jsonl`에는
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=0x00000002)`
+  가 남았다.
+- `session.json`은 `preset-selected`, `captures=[]`였고
+  helper 최종 `camera-helper-status.json`은 다시 `camera-ready`로 회복했다.
+- 즉 세션이 잠기거나 startup에서 멈춘 게 아니라, first-shot failure만 반복된 latest였다.
+
+직접 원인:
+
+- 직전 회차 보강으로 first-shot holdoff를 preset selection 직후 세션 age 기준으로 바꿨지만,
+  실제 latest는 약 3초 부근에서도 여전히 같은 `0x00000002`가 날 수 있었다.
+- 즉 문제군 분류는 맞았지만, **3초 창 자체가 실장비 기준으로 아직 짧았다.**
+
+이번 회차 수정:
+
+- first-shot stabilization window를 `3초 -> 5초`로 늘렸다.
+- 그래서 preset 선택 직후 첫 촬영 버튼은 조금 더 늦게 열리지만,
+  same first-shot failure가 반복되는 범위를 더 많이 흡수한다.
+- retryable trigger failure를 `phone-required`로 잠그지 않는 동작은 유지한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_holds_the_first_camera_ready_for_a_brief_preset_selection_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_the_first_camera_ready_after_the_preset_selection_window -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest는 새 bug family가 아니라, same first-shot failure가 3초 부근까지 살아 있음을 보여 준 증거였다.
+2. 이번 보강으로 first-shot holdoff는 5초 창으로 넓어졌다.
+3. 다음 실기기 확인 포인트는 preset 선택 직후 첫 촬영 버튼이 더 늦게 열리더라도, 같은 `0x00000002` first-shot failure가 실제로 사라지는지다.
+
+### 2026-04-21 16:06 +09:00 최신 앱 로그 재검토: latest는 여전히 same first-shot `0x00000002`였고, holdoff만으로는 부족해 bounded auto-retry를 넓혔다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 과거 startup/connect troubleshooting 문서를 다시 보고 해결하라고 요청했다.
+2. 같은 문제가 왜 계속 반복되는지도 제품 관점에서 설명 가능한 형태로 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run 둘 다 startup/connect family는 아니다.
+- helper는 정상으로 `camera-ready`에 도달했고, 세션도 `preset-selected`에서 첫 촬영 직전까지 정상으로 유지됐다.
+- 따라서 이번 latest도 **same first-shot internal trigger failure family**로 분류하는 편이 맞다.
+
+실제 확인 근거:
+
+- latest 세션은
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84c7a2e26fe70`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84ca0e1e4dd6c`
+  였다.
+- 두 세션 모두 `session.json`은
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  였다.
+- 두 세션 모두 `camera-helper-startup.log`는 빠르게 `camera-ready`로 닫혔고,
+  마지막 `camera-helper-status.json`도 `ready / healthy / camera-ready`였다.
+- 그런데 `camera-helper-events.jsonl`에는 공통으로
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=셔터 명령을 보낼 수 없었어요: 0x00000002)`
+  만 남았다.
+- 즉 startup이 아니라, 첫 셔터 순간의 same internal trigger failure만 남아 있는 latest였다.
+
+직접 원인:
+
+- 직전까지의 해법은 `camera-ready`를 너무 빨리 열지 않게 하는 holdoff 쪽에 치우쳐 있었다.
+- 하지만 latest evidence는 **holdoff를 지나도 여전히 same first-shot `0x00000002`가 날 수 있다**는 쪽으로 읽혔다.
+- 그래서 같은 문제가 계속 다른 것처럼 보인 이유는 startup/connect bug가 되살아난 게 아니라,
+  **startup truth 문제를 정리할수록 그 뒤에 숨어 있던 첫 셔터 internal trigger 경계가 계속 표면으로 드러난 것**이었다.
+
+이번 회차 수정:
+
+- first-shot `capture-trigger-failed(0x00000002)`는 이제 host가 `1회`가 아니라 `최대 2회`까지 bounded auto-retry 한다.
+- 각 retry 사이에는 짧은 안정화 간격을 두고, 그래도 닫히지 않으면 다시 retryable 상태로만 남기도록 유지한다.
+- 즉 제품은 같은 first-shot 흔들림을 더 넓게 흡수하되, 무한 재시도나 즉시 `Phone Required`로는 가지 않는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest 재발은 startup/connect 재발이 아니라, same first-shot `0x00000002` family가 아직 남아 있다는 증거였다.
+2. 이번 보강으로 booth는 첫 셔터 internal trigger failure를 한 번 더 넓게 흡수하고, bounded auto-retry 범위도 `2회`까지 가진다.
+3. 다음 실기기 확인 포인트는 preset 선택 직후 첫 촬영에서 같은 오류가 나더라도, 고객 화면이 바로 실패로 끝나지 않고 그대로 촬영이 이어지는지다.
+
+### 2026-04-21 16:16 +09:00 최신 앱 재검토: latest는 auto-retry 재발이 아니라 같은 helper session 위에서 `0x00000002`가 세 번 반복된 케이스였고, 다음 해법은 retry 사이 helper reconnect였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 과거 troubleshooting 문서를 다시 보고 해결하라고 요청했다.
+2. 이번에도 같은 문제군인지 실제 evidence로 분리해 달라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest run은 startup/connect family가 아니다.
+- helper는 빠르게 `camera-ready`까지 올라왔고, startup log도 그 뒤로 healthy ready를 계속 남겼다.
+- 따라서 이번 latest도 **same first-shot internal trigger failure family**로 묶는 편이 맞다.
+
+실제 확인 근거:
+
+- latest 세션은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84d8f5e25a0fc`였다.
+- 같은 세션 `session.json`은
+  - `lifecycle.stage = preset-selected`
+  - `captures = []`
+  였다.
+- 같은 세션 `camera-helper-startup.log`는
+  - `07:08:55 camera-ready`
+  - `07:08:58 camera-ready`
+  - `07:09:00 camera-ready`
+  - `07:09:03 camera-ready`
+  로 이어졌다.
+- 같은 세션 `camera-helper-events.jsonl`에는
+  - 첫 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  - 두 번째 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  - 세 번째 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  가 연속으로 남았다.
+- 같은 세션 `timing-events.log`에도
+  - `request-capture`
+  - `request-capture-auto-retry attempt=1`
+  - `request-capture`
+  - `request-capture-auto-retry attempt=2`
+  - `request-capture`
+  가 남아 있었다.
+
+직접 원인:
+
+- 이전 회차 보강으로 host auto-retry 자체는 실제로 동작했다.
+- 하지만 latest evidence는 **세 번의 셔터 시도가 모두 같은 helper session 위에서 반복된 것**으로 읽혔다.
+- 즉 남아 있던 문제는 retry count가 아니라, `0x00000002` 뒤 helper가 같은 세션을 그대로 유지해 다음 retry가 실질적으로 같은 실패 조건에서 다시 실행된 점이었다.
+
+이번 회차 수정:
+
+- helper는 이제 `capture-trigger-failed(0x00000002)` 뒤 즉시 `camera-ready`를 유지하지 않고,
+  내부 카메라 세션을 한 번 정리한 뒤 `reconnect-pending`으로 복귀하게 했다.
+- host는 다음 auto-retry를 보내기 전에 helper가 다시 `ready / healthy`로 돌아왔는지 짧게 기다린다.
+- 제품 기준으로는 “같은 실패를 같은 세션에 세 번 반복”하던 경계를 끊고, retry가 실제로 새 카메라 세션에서 일어나게 맞춘 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest는 startup/connect 재발이 아니라, same helper session에 남아 있던 first-shot `0x00000002` 반복 문제였다.
+2. 이번 보강으로 auto-retry는 이제 같은 세션 재반복이 아니라 helper reconnect 뒤에만 이어진다.
+3. 다음 실기기 확인 포인트는 첫 촬영에서 같은 흔들림이 나더라도, helper가 다시 준비 상태로 돌아온 뒤 실제 저장까지 닫히는지다.
+
+### 2026-04-21 16:31 +09:00 최신 앱 재검토: reconnect 뒤 same first-shot 실패는 여전히 보였고, 그 다음 latest는 helper가 request 자체를 소비하지 못한 stall로 좁혀졌다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 기존 startup/connect troubleshooting 문서를 다시 참조해 해결하라고 요청했다.
+2. 같은 family인지, 아니면 다른 축으로 옮겨졌는지 실제 증거로 다시 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest 두 세션 중 `session_000000000018a84e23aa4303f0`은 startup/connect family가 아니다.
+- 가장 최신 `session_000000000018a84e63c502b0d8`도 startup status 자체는 정상 ready였고, 핵심은 request 이후 helper progress가 없었다.
+- 따라서 이번 latest는 startup bounded failure라기보다, **capture request consumption stall**로 보는 편이 맞다.
+
+실제 확인 근거:
+
+- 세션 `session_000000000018a84e23aa4303f0`에서는
+  - `capture-accepted -> capture-trigger-failed(0x00000002)`가 3번 반복됐다.
+  - `camera-helper-startup.log`는 각 retry 사이에 다시 `sdk-initializing -> session-opening -> camera-ready`를 남겼다.
+  - 즉 helper reconnect 자체는 실제로 동작했다.
+- 가장 최신 세션 `session_000000000018a84e63c502b0d8`에서는
+  - `session.json` 최종 stage가 `phone-required`
+  - `timing-events.log`에는 `request-capture` 1건만 존재
+  - `camera-helper-events.jsonl` 자체가 없었고
+  - `camera-helper-processed-request-ids.txt`도 없었다.
+  - 반면 마지막 `camera-helper-status.json`은 직전 시점의 `ready / healthy / camera-ready`였다.
+- 즉 latest는 helper가 요청을 거절한 게 아니라, **요청을 읽었다는 흔적 자체가 없이 50초 뒤 timeout으로 phone-required에 떨어진 케이스**였다.
+
+직접 원인:
+
+- 직전 회차 보강으로 internal trigger failure 뒤 helper reconnect는 실제로 붙었다.
+- 하지만 latest evidence는 그 다음 경계가 남아 있음을 보여 줬다.
+- helper가 준비 상태를 마지막으로 남긴 뒤 request 소비 loop가 멎으면, host는 기존에는 그 사실을 복구하지 못하고 capture timeout으로만 닫았다.
+
+이번 회차 수정:
+
+- host는 이제 capture timeout 전에, 해당 request가 helper에 한 번도 소비되지 않았고 helper status도 fresh하지 않으면
+  helper stall로 보고 한 번 강제로 재기동을 건다.
+- 그 뒤 helper가 다시 fresh ready로 돌아오면 **같은 request를 다시 기다려** 저장 경계를 닫을 기회를 한 번 더 준다.
+- 기존 first-shot internal trigger auto-retry와 reconnect 보강은 그대로 유지한다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_restarts_helper_once_when_the_request_was_never_consumed -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_shutter_trigger_internal_error_occurs -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_after_retryable_internal_trigger_failure_recovers -- --exact`
+
+이번 시점 제품 판단:
+
+1. reconnect 보강 뒤 same first-shot failure는 여전히 남아 있었지만, 그 다음 latest는 더 이상 같은 세션 재반복이 아니라 request-consumption stall로 축이 옮겨졌다.
+2. 이번 보강으로 booth는 helper가 request를 읽지 못한 채 멎어도, 즉시 timeout으로 세션을 잠그기 전에 한 번 더 복구를 시도한다.
+3. 다음 실기기 확인 포인트는 request 직후 멈춘 것처럼 보여도, 잠깐 뒤 실제로 capture-accepted/file-arrived까지 이어지는지다.
+
+### 2026-04-21 16:39 +09:00 최신 앱 재검토: 이번 `session-open-failed` 재발은 카메라 startup/connect family였지만, 직접 오염원은 직전 Rust 검증이 남긴 실제 helper 프로세스였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 기존 startup/connect troubleshooting 문서를 다시 참조해 해결하라고 요청했다.
+2. 왜 잘 되던 기능에서 같은 종류의 문제가 계속 반복돼 보이는지 이유까지 설명해 달라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest `session_000000000018a84ef48af5416c`는 startup/connect family가 맞다.
+- `captures = []`, `lifecycle.stage = preset-selected`, latest helper truth가 `session-opening`에 머문 채 반복됐고,
+  hardware validation snapshot은 이미 `reasonCode = phone-required`로 묶여 있었다.
+- 따라서 이번 런은 새로운 capture-after-startup 문제가 아니라,
+  **startup/connect family의 또 다른 표면형**으로 분류하는 편이 맞다.
+
+실제 확인 근거:
+
+- latest session `camera-helper-startup.log`는
+  `sdk-initializing -> session-opening -> session-open-failed`를 약 3초 간격으로 3번 반복했다.
+- `failure-diagnostics.json`은 같은 시각
+  - `customerState = Phone Required`
+  - `reasonCode = phone-required`
+  - `liveCaptureTruth.detailCode = session-opening`
+  - latest helper error `detailCode = session-open-failed`
+  를 함께 남겼다.
+- 동시에 머신의 실행 중 프로세스를 확인하면,
+  **앱 세션이 아니라 임시 test runtime root(`boothy-capture-capture-request-unconsumed-helper-stall-...`)에 묶인 `canon-helper.exe`**가 살아 있었다.
+- 즉 latest 앱 helper는 카메라 startup을 반복했지만,
+  직전 검증이 남긴 실제 helper가 카메라 세션을 계속 잡고 있어 `EdsOpenSession(...)` 충돌성 `session-open-failed`를 유발한 것으로 보는 편이 증거와 가장 잘 맞는다.
+
+직접 원인:
+
+- 이번 회차의 현장 재발은 제품 로직이 같은 경계를 다시 잘못 번역한 것이 아니라,
+  **직전 Rust 회귀 테스트가 실제 helper 프로세스를 clean shutdown 없이 남긴 운영 오염**이었다.
+- 이 stray helper는 temp runtime root에 묶여 있어 session 파일만 보면 보이지 않았고,
+  그 결과 현장에서는 마치 startup/connect 버그가 다시 되살아난 것처럼 보였다.
+
+이번 회차 수정:
+
+- 해당 회귀 테스트는 이제 시작 전에도 helper supervisor를 비우고,
+  종료 시점에는 `Drop` guard로 항상 `shutdown_helper_process()`를 호출한다.
+- 즉 테스트가 끝난 뒤 실제 `canon-helper.exe`가 카메라를 계속 붙잡지 않게 해,
+  다음 앱 실행이 이전 검증 때문에 오염되지 않도록 막았다.
+- 현재 남아 있던 stray helper 프로세스도 즉시 종료해 현장 런을 정리했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_restarts_helper_once_when_the_request_was_never_consumed -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_escalates_when_dense_startup_family_is_already_over_five_seconds_old -- --exact`
+- 추가 확인:
+  - test 종료 뒤 `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'canon-helper.exe' }`
+  - 결과: lingering `canon-helper.exe` 없음
+
+이번 시점 제품 판단:
+
+1. latest `session-open-failed`는 startup/connect family가 맞지만, 카메라 본체나 readiness 정책보다 먼저 **직전 검증이 남긴 stray helper**가 직접 원인이었다.
+2. 그래서 같은 기능이 계속 흔들려 보인 이유는 하나의 미해결 기능 버그가 아니라, 최근 수정 검증 과정에서 남은 runtime 오염이 현장 앱 실행을 다시 망쳤기 때문이다.
+3. 이번 보강으로 이후 회귀 테스트는 다음 실장비 런을 같은 방식으로 오염시키지 않아야 한다.
+
+### 2026-04-21 16:47 +09:00 최신 앱 재검토: stray helper 오염은 사라졌고, latest는 reconnect 뒤 first-shot auto-retry가 너무 빨랐던 경계로 더 좁혀졌다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 기존 startup/connect troubleshooting 문서를 다시 참조해 해결하라고 요청했다.
+2. 최신 런이 다시 startup/connect family인지, 아니면 다른 축으로 옮겨졌는지 증거로 정리하라고 요청했다.
+
+체크리스트 기준 분류:
+
+- latest `session_000000000018a84f5c52118bb8`는 startup/connect family가 아니다.
+- helper는 시작 직후 `camera-ready`까지 올라왔고, 각 auto-retry 사이에도 다시 `camera-ready`로 회복했다.
+- 따라서 이번 latest는 **same first-shot `capture-trigger-failed(0x00000002)` family**가 reconnect 이후에도 남아 있던 케이스로 보는 편이 맞다.
+
+실제 확인 근거:
+
+- same session `camera-helper-startup.log`는
+  - `07:41:54 camera-ready`
+  - `07:41:58 camera-ready`
+  - `07:41:59 camera-ready`
+  - `07:42:00 connected-idle -> camera-ready`
+  를 남겼다.
+- same session `camera-helper-requests.jsonl`에는 첫 촬영 요청이 총 3번 기록됐다.
+- same session `camera-helper-events.jsonl`에는
+  - 첫 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  - 두 번째 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  - 세 번째 요청 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  가 연속으로 남았다.
+- `timing-events.log`에도
+  - `request-capture`
+  - `request-capture-auto-retry attempt=1`
+  - `request-capture`
+  - `request-capture-auto-retry attempt=2`
+  - `request-capture`
+  만 남았고, 저장으로 닫히는 `file-arrived`는 없었다.
+- 동시에 현재 머신의 `canon-helper.exe` lingering count는 `0`이었다.
+  즉 직전 회차의 stray helper 오염은 이번 latest 재현에는 개입하지 않았다.
+
+직접 원인:
+
+- reconnect 자체는 이미 실제로 되고 있었다.
+- 하지만 latest evidence는 **reconnect 뒤 helper가 `camera-ready`를 찍자마자 host가 다음 auto-retry를 너무 빨리 다시 보내고 있었다**는 쪽으로 더 잘 맞는다.
+- 그 결과 새 세션에서 retry하더라도 카메라 안정화 이전에 다시 첫 셔터가 들어가, 같은 `0x00000002`가 반복된 것으로 보는 편이 가장 일관된다.
+
+이번 회차 수정:
+
+- host는 internal trigger failure auto-retry 전에 helper가 `ready / healthy / camera-ready`로 돌아왔는지만 보는 데서 멈추지 않고,
+  그 상태가 짧게 안정된 뒤에만 다음 retry를 보내도록 보강했다.
+- 제품 기준으로는 reconnect 자체뿐 아니라, **reconnect 뒤 첫 셔터 재시도 타이밍**까지 묶어 안정화한 것이다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_waits_for_helper_ready_to_stabilize_before_internal_auto_retry -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_restarts_helper_once_when_the_request_was_never_consumed -- --exact`
+- 추가 확인:
+  - test 종료 뒤 `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'canon-helper.exe' }`
+  - 결과: lingering `canon-helper.exe` 없음
+
+이번 시점 제품 판단:
+
+1. stray helper 오염은 이번 latest에서 재발하지 않았다.
+2. 남은 latest failure는 startup이나 request-consumption stall이 아니라, reconnect 뒤 first-shot retry 타이밍이 아직 너무 빠르던 경계였다.
+3. 이번 보강으로 다음 현장 확인 포인트는 첫 촬영이 흔들려도 retry가 너무 급하게 다시 들어가지 않고 실제 저장으로 닫히는지다.

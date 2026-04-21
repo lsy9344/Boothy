@@ -28,6 +28,8 @@ const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 const MAX_IN_FLIGHT_RENDER_JOBS: usize = if cfg!(test) { 64 } else { 2 };
 const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
+const PRESET_APPLIED_PREVIEW_KIND: &str = "preset-applied-preview";
+const RAW_ORIGINAL_PREVIEW_KIND: &str = "raw-original";
 // The truthful recent-session rail preview does not need the old 512px cap.
 // Keep the render-backed close accurate, but shrink the booth-safe preview
 // artifact so preset-applied replacement lands materially sooner.
@@ -67,6 +69,7 @@ pub enum RenderIntent {
 pub struct RenderedCaptureAsset {
     pub asset_path: String,
     pub ready_at_ms: u64,
+    pub preview_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,8 +250,9 @@ fn render_capture_asset_with_forced_source_in_dir(
             RenderIntent::Preview => "preview-ready",
             RenderIntent::Final => "final-ready",
         }),
-        Some(&format!(
-            "presetId={};publishedVersion={};binary={};source={};elapsedMs={};detail={};args={};status={}",
+        Some(&render_ready_event_detail(
+            intent,
+            invocation.render_source_kind,
             bundle.preset_id,
             bundle.published_version,
             invocation.binary,
@@ -256,13 +260,14 @@ fn render_capture_asset_with_forced_source_in_dir(
             render_elapsed_ms,
             render_invocation_detail_with_source(intent, Some(invocation.render_source_kind)),
             invocation.arguments.join(" "),
-            invocation_result.exit_code
+            invocation_result.exit_code,
         )),
     );
 
     Ok(RenderedCaptureAsset {
         asset_path: output_path.to_string_lossy().into_owned(),
         ready_at_ms,
+        preview_kind: preview_kind_for_render_source(intent, invocation.render_source_kind),
     })
 }
 
@@ -600,6 +605,45 @@ fn render_invocation_detail_with_source(
         RenderIntent::Final => {
             "widthCap=full;heightCap=full;hq=true;sourceAsset=raw-original".into()
         }
+    }
+}
+
+fn render_ready_event_detail(
+    intent: RenderIntent,
+    source_kind: PreviewRenderSourceKind,
+    preset_id: String,
+    published_version: String,
+    binary: String,
+    binary_source: &'static str,
+    render_elapsed_ms: u128,
+    render_detail: String,
+    arguments: String,
+    exit_code: i32,
+) -> String {
+    let normalized_detail = match (intent, source_kind) {
+        (RenderIntent::Preview, PreviewRenderSourceKind::FastPreviewRaster) => render_detail
+            .replace(
+                "sourceAsset=fast-preview-raster",
+                "inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview",
+            ),
+        _ => render_detail,
+    };
+
+    format!(
+        "presetId={preset_id};publishedVersion={published_version};binary={binary};source={binary_source};elapsedMs={render_elapsed_ms};detail={normalized_detail};args={arguments};status={exit_code}"
+    )
+}
+
+fn preview_kind_for_render_source(
+    intent: RenderIntent,
+    source_kind: PreviewRenderSourceKind,
+) -> Option<String> {
+    match intent {
+        RenderIntent::Preview => Some(match source_kind {
+            PreviewRenderSourceKind::RawOriginal => RAW_ORIGINAL_PREVIEW_KIND.into(),
+            PreviewRenderSourceKind::FastPreviewRaster => PRESET_APPLIED_PREVIEW_KIND.into(),
+        }),
+        RenderIntent::Final => None,
     }
 }
 
@@ -1845,6 +1889,7 @@ mod tests {
                     asset_path: None,
                     enqueued_at_ms: Some(100),
                     ready_at_ms: None,
+                    kind: None,
                 },
                 final_asset: crate::session::session_manifest::FinalCaptureAsset {
                     asset_path: None,
@@ -1923,6 +1968,7 @@ mod tests {
                     asset_path: None,
                     enqueued_at_ms: Some(100),
                     ready_at_ms: None,
+                    kind: None,
                 },
                 final_asset: crate::session::session_manifest::FinalCaptureAsset {
                     asset_path: None,
@@ -2030,6 +2076,7 @@ mod tests {
                     asset_path: Some(fast_preview_path.to_string_lossy().into_owned()),
                     enqueued_at_ms: Some(100),
                     ready_at_ms: None,
+                    kind: None,
                 },
                 final_asset: crate::session::session_manifest::FinalCaptureAsset {
                     asset_path: None,
@@ -2115,6 +2162,7 @@ mod tests {
                     asset_path: None,
                     enqueued_at_ms: Some(100),
                     ready_at_ms: None,
+                    kind: None,
                 },
                 final_asset: crate::session::session_manifest::FinalCaptureAsset {
                     asset_path: None,
@@ -2167,8 +2215,14 @@ mod tests {
     #[test]
     fn fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview() {
         let temp_dir = unique_temp_dir("fast-preview-raster-cap");
-        let output_path = temp_dir.join("renders").join("previews").join("capture_test.jpg");
-        let source_path = temp_dir.join("renders").join("previews").join("capture_test.source.jpg");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.source.jpg");
 
         fs::create_dir_all(
             output_path

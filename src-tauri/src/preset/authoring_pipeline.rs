@@ -1681,9 +1681,9 @@ fn run_render_validation_probe(
         .arg(VALIDATION_RENDER_PROBE_MAX_HEIGHT_PX.to_string())
         .arg("--core");
 
-    let output = command
-        .output()
-        .map_err(|error| format!("darktable-cli proof를 시작하지 못했어요: binary={binary} error={error}"))?;
+    let output = command.output().map_err(|error| {
+        format!("darktable-cli proof를 시작하지 못했어요: binary={binary} error={error}")
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1709,10 +1709,7 @@ fn resolve_darktable_cli_binary_for_validation() -> String {
         .unwrap_or_else(|| "darktable-cli".into())
 }
 
-fn compare_render_probe_outputs(
-    baseline_output: &Path,
-    xmp_output: &Path,
-) -> Result<bool, String> {
+fn compare_render_probe_outputs(baseline_output: &Path, xmp_output: &Path) -> Result<bool, String> {
     let baseline = load_render_probe_pixels(baseline_output)?;
     let xmp = load_render_probe_pixels(xmp_output)?;
 
@@ -1721,9 +1718,19 @@ fn compare_render_probe_outputs(
 
 fn load_render_probe_pixels(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let image = ImageReader::open(path)
-        .map_err(|error| format!("render proof output을 열지 못했어요: path={} error={error}", path.display()))?
+        .map_err(|error| {
+            format!(
+                "render proof output을 열지 못했어요: path={} error={error}",
+                path.display()
+            )
+        })?
         .decode()
-        .map_err(|error| format!("render proof output을 decode하지 못했어요: path={} error={error}", path.display()))?
+        .map_err(|error| {
+            format!(
+                "render proof output을 decode하지 못했어요: path={} error={error}",
+                path.display()
+            )
+        })?
         .to_rgba8();
 
     let (width, height) = image.dimensions();

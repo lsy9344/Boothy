@@ -268,10 +268,9 @@ fn emit_refined_preview_readiness_when_available(
         let refined_ready_at_ms = refinement_ready
             .and_then(|capture| capture.preview.ready_at_ms)
             .filter(|ready_at_ms| {
-                baseline_ready_at_ms.map_or(
-                    *ready_at_ms >= first_visible_at_ms,
-                    |baseline| *ready_at_ms > baseline,
-                )
+                baseline_ready_at_ms.map_or(*ready_at_ms >= first_visible_at_ms, |baseline| {
+                    *ready_at_ms > baseline
+                })
             });
 
         if let Some(refined_ready_at_ms) = refined_ready_at_ms {

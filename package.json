@@ -9,6 +9,7 @@
     "dev:desktop:stable": "pnpm tauri dev --no-watch",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm build && pnpm tauri build --debug",
+    "hardware:validate": "cargo run --manifest-path src-tauri/Cargo.toml --bin hardware-validation-runner --",
     "lint": "eslint .",
     "preview": "vite preview",
     "release:desktop": "pnpm build && pnpm tauri build",

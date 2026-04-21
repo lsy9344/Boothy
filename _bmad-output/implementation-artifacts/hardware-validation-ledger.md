@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-04-20 10:58 +09:00
+Last Updated: 2026-04-21 16:47 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -30,7 +30,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 | --- | --- | --- | --- | --- |
 | newer `actual-primary-lane` | Story `1.30` bounded evidence lane | `bounded No-Go` | repeated approved-hardware reruns failed the official `preset-applied visible <= 3000ms` gate; further open-ended tuning is paused | `docs/runbooks/preview-track-route-decision-20260418.md` |
 | older `resident first-visible` line | Story `1.10` closed baseline | `closed No-Go baseline` | latest one-session rerun closed the baseline evidence package, but still failed the official `preset-applied visible <= 3000ms` gate; keep it as comparison evidence only | `docs/runbooks/current-actual-lane-handoff-20260419.md`; `_bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574\` |
-| reserve path | Story `1.26` active reserve path | `opened / ready-for-dev` | current official next route, scoped to `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` | `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`; `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md` |
+| reserve path | Story `1.26` active reserve path | `opened / hardware No-Go` | the earlier approved-hardware rerun improved owner attribution on shots 2-4 but still missed the official gate, and the latest field failures now span false first-shot truthful close, live RAW handoff stall, startup stale preparing, and dev-booth `phone required` caused by a slow helper launch path; route remains active only as the current debugging target | `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`; `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9b49261d518\` |
 | success-side default / rollback gate | Story `1.31` | `unopened` | kept closed unless a success-side fallback or rollback decision is explicitly reopened | `docs/runbooks/preview-track-route-decision-20260418.md` |
 | GPU-enabled acceleration on old lane | optional comparison evidence | `unproven` | may still be tested for side evidence, but does not change the release gate or the fact that Story `1.26` is the active route | `docs/runbooks/current-actual-lane-handoff-20260419.md` |
 
@@ -61,7 +61,7 @@ Supporting regression / follow-up notes:
 | 1.6 | Pass | Partial helper/readiness proof | No-Go | Reconnect-safe `HV-10` package and canonical helper metadata were not normalized into one close row. | Noah Lee | `history/camera-helper-troubleshooting-history.md` |
 | 1.8 | Pass | User field observation recorded; canonical package still missing | No-Go | 2026-04-03 최신 재현 세션에서 `Preview Waiting`은 즉시 보였지만 fast preview는 여전히 비어 있었고, 약 `3.3초 ~ 3.4초` 뒤 render-backed preset preview만 나타났다. `file-arrived`는 fast thumbnail 시도보다 먼저 닫혔으나 helper가 `fast-thumbnail-download-failed` 뒤 customer-visible fast preview를 만들지 못했다. `HV-05/HV-07/HV-08/HV-11/HV-12` canonical evidence는 아직 한 회차로 묶이지 않았다. | Noah Lee | `_bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md` |
 | 1.10 | Pass | Pass | No-Go for release judgment | Latest one-session rerun package closed helper correlation, same-session replacement, and `capture-ready` recovery on approved hardware, but official `preset-applied visible <= 3000ms` timing still landed at `8972ms`, `7942ms`, and `7967ms`. `sameCaptureFullScreenVisibleMs` (`4685ms`, `3587ms`, `3270ms`) remains comparison evidence only. Official `Go / No-Go` ownership remains in this ledger. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574\` |
-| 1.26 | Not run | Not run | Open reserve path | Story created and officially opened. Scope is narrowed to `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact`. Hardware verdict not yet recorded. | Noah Lee | `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md` |
+| 1.26 | Pass | Pass package collected; verdict No-Go | No-Go | Latest field evidence now narrows the remaining blocker again. The stray helper contamination behind startup/connect session `session_000000000018a84ef48af5416c` was removed and did not recur in the newer session `session_000000000018a84f5c52118bb8`; that latest run reached `camera-ready`, consumed three capture requests, and still repeated `capture-trigger-failed(0x00000002)` on capture 1. Current software therefore keeps the prior startup/request-consumption fixes and now adds a short post-reconnect ready stabilization window before bounded first-shot auto-retry. An approved-hardware rerun is still required to confirm capture 1 now closes to save instead of repeating the trigger failure. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84f5c52118bb8\` |
 | 3.2 | Pass | Missing | No-Go | `HV-08/HV-11` execution and evidence package are not yet recorded. | Noah Lee | `TBD` |
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
@@ -196,22 +196,66 @@ Supporting regression / follow-up notes:
 - story key: `1-26-host-owned-local-native-gpu-resident-preview-lane-검증`
 - HV checklist ID: `preview-track official gate package`
 - evidence package path: `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md ; docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
-- executedAt: `Opened 2026-04-20 10:58 +09:00`
+- executedAt: `Opened 2026-04-20 10:58 +09:00; software scope advanced 2026-04-20 11:37 +09:00; hardware package collected 2026-04-20 11:54 +09:00; owner-attribution rerun collected 2026-04-20 12:46 +09:00; field failures captured 2026-04-20 13:27 +09:00, 14:02 +09:00, 14:17 +09:00, 14:31~14:32 +09:00, 14:41 +09:00, 14:59 +09:00, 15:17 +09:00, 15:21 +09:00, and 15:29 +09:00; corrective software patch verified 2026-04-20 afternoon`
 - validator: `Noah Lee`
-- booth PC: `TBD`
-- camera model: `TBD`
+- booth PC: `NOAHLEE`
+- camera model: `Canon EOS 700D`
 - darktable pin: `darktable remains parity/fallback/final-export boundary; active hot-path owner TBD by implementation`
 - helper identifier: `TBD`
-- Go / No-Go result: `Open`
-- release blocker: `Reserve path is opened but no approved-hardware evidence package exists yet.`
+- Go / No-Go result: `No-Go`
+- release blocker: `Latest field evidence now spans nine adjacent failures. Session session_000000000018a7f61aa8bc153c showed that the first saved shot was still not a truthful reserve close: host timing-events.log labeled it as preset-applied-preview, but helper fast-preview-ready identified the asset as windows-shell-thumbnail; that same session then left the second request in capture-in-flight without file-arrived, recovery-status, or helper-error. Session session_000000000018a7f7ff7a8886b4 then showed the problem even earlier after an app relaunch: capture-accepted and camera-thumbnail attempted were written, but RAW handoff never closed, helper status stayed at capture-in-flight, and only a zero-byte .downloading.CR2 remained. Session session_000000000018a7f8e4828da598 then failed before any capture boundary with no live diagnostics beyond missing startup truth. The follow-up sessions session_000000000018a7f9acaf600638 and session_000000000018a7f9b49261d518 proved the stale-startup guard was working, but also showed the remaining dev-booth blocker at that point: only seeded helper-starting status was written, then the booth escalated to phone required because launcher selection still preferred a slow dotnet run path over the already-built helper executable. The next session session_000000000018a7fa2f55d79a94 narrowed the blocker one step further: launch selection was already fixed and canon-helper.exe was alive, but helper-internal camera connect/session-open work still never produced a fresh live status. Session session_000000000018a7fb29e752039c then showed that the first async-connect fix itself introduced another startup boundary: `camera-connect-timeout` fired even though the same helper binary `--self-check` still saw `camera-ready`, which pointed to SDK contention between background connect and session-open-preceding event pumping. Session session_000000000018a7fc2aba129e1c narrowed that startup blocker again: event-pump gating alone was not enough, and the remaining difference between booth helper runtime and `--self-check` was that async connect had been moved from the STA main thread onto a generic threadpool worker. Session session_000000000018a7fc5e0caa7cfc then proved that the same `camera-connect-timeout` can still surface in field use even after those startup fixes, so the booth also needs product-side resilience: a helper already alive with that detailCode must not stay resident and pin the customer flow in terminal failure. The latest session session_000000000018a7fcd1f65b2f7c showed the sibling pattern: not `camera-connect-timeout`, but a fresh `session-opening` truth kept being written with `cameraState=connecting` and `helperState=connecting`, so the booth stayed in `Preparing` instead of failing hard. Story 1.26 is therefore blocked on truthful first-shot ownership, a live RAW handoff stall, and a helper connect/open boundary that must keep reporting bounded progress and close via ready truth or explicit failure instead of hanging silently. The current software patch keeps canonical same-capture scans in legacy-canonical-scan pending state, moves RAW download work off the SDK callback loop, disables live camera-thumbnail extraction on the hot path, seeds a startup status before helper launch, escalates stale startup truth out of endless preparing, prefers the built helper exe over dotnet run, blocks SDK event pumping until the camera session is actually open, runs camera connect/open on a dedicated STA worker thread instead of Task.Run, forces supervisor restart when the active helper is alive but stuck at `camera-connect-timeout`, and now also recycles helpers that remain in fresh `session-opening` too long, but no post-fix hardware rerun has been collected yet.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Implement the reserve topology, then collect one approved-hardware session package and record official gate timing in this ledger.`
-- target rerun date: `TBD`
+- rerun prerequisite: `Run one approved-hardware session on the post-fix build and confirm ten things in the same package: the first shot must not claim preset-applied-preview unless helper truth is actually preset-applied, a live capture must not stop at capture-accepted plus camera-thumbnail attempted with only .downloading.CR2 left behind, helper startup must write fresh live status quickly enough that the booth does not jump from startup seed to phone required on dev-booth cold start, launcher selection must prefer the built helper executable when it exists, helper camera connect/session-open progress must emit live bounded statuses instead of leaving only the launch seed behind, SDK event pumping must not race session-open before the session is actually live, connect/open must run on the same STA-style context that `--self-check` uses, an active helper stuck at `camera-connect-timeout` must be recycled instead of kept resident, an active helper stuck in fresh `session-opening` must also be recycled instead of leaving the booth in `Preparing`, and any stalled boundary must close via ready truth or an explicit failure state instead of hanging silently.`
+- target rerun date: `After the post-fix approved-hardware rerun is collected`
 - core evidence paths:
   - `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`
   - `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
-  - `TBD/session.json`
-  - `TBD/diagnostics/timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f61aa8bc153c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f61aa8bc153c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f61aa8bc153c\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f61aa8bc153c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f7ff7a8886b4\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f7ff7a8886b4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f7ff7a8886b4\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f7ff7a8886b4\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f8e4828da598\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9acaf600638\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9acaf600638\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9b49261d518\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f9b49261d518\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fa2f55d79a94\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fa2f55d79a94\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fb29e752039c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fb29e752039c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc2aba129e1c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc2aba129e1c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc5e0caa7cfc\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fc5e0caa7cfc\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fcd1f65b2f7c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7fcd1f65b2f7c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84612e5fc2804\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84612e5fc2804\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84612e5fc2804\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a07a464f044\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a07a464f044\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a07a464f044\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a6d28af1130\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a6d28af1130\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84a6d28af1130\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b21e1691d9c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b21e1691d9c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b21e1691d9c\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\diagnostics\camera-helper-events.jsonl`
 
 ### Story 3.2
 

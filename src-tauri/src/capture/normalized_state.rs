@@ -2,17 +2,20 @@ use std::{
     fs,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
     capture::{
+        helper_supervisor::{shutdown_helper_process, try_ensure_helper_running},
         ingest_pipeline::{
             complete_preview_render_in_dir, persist_capture_in_dir,
             promote_pending_fast_preview_in_dir,
         },
         sidecar_client::{
-            is_retryable_capture_helper_error, map_capture_round_trip_error,
+            is_retryable_capture_helper_error, latest_helper_status_is_fresh,
+            map_capture_round_trip_error,
             read_capture_event_count, read_capture_request_messages,
             read_latest_helper_error_message, read_latest_status_message,
             read_processed_capture_request_ids, wait_for_capture_round_trip,
@@ -46,6 +49,18 @@ use crate::{
 };
 
 const CAMERA_HELPER_STATUS_MAX_AGE_SECONDS: u64 = 5;
+const STARTUP_OSCILLATION_SESSION_AGE_SECONDS: u64 = 8;
+const STARTUP_OSCILLATION_SEQUENCE_THRESHOLD: u64 = 7;
+const DENSE_STARTUP_OSCILLATION_SESSION_AGE_SECONDS: u64 = 5;
+const DENSE_STARTUP_OSCILLATION_SEQUENCE_THRESHOLD: u64 = 20;
+const INITIAL_CAPTURE_READY_AFTER_PRESET_SELECTION_SECONDS: u64 = 5;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_DELAY_MS: u64 = 2000;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_MAX_RETRIES: u8 = 2;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_TIMEOUT_MS: u64 = 4000;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_POLL_MS: u64 = 50;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS: u64 = 1500;
+const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_TIMEOUT_MS: u64 = 4000;
+const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_POLL_MS: u64 = 50;
 static CAPTURE_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,98 +130,158 @@ where
     let active_preset = manifest.active_preset.clone().ok_or_else(|| {
         HostErrorEnvelope::preset_not_available("촬영 전에 룩을 다시 골라 주세요.")
     })?;
-    let request_id = input
-        .request_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(generate_capture_request_id);
-    ensure_capture_request_id_is_fresh(base_dir, &input.session_id, &request_id, &readiness)?;
-    let requested_at = current_timestamp(SystemTime::now())?;
-    let request_message = CanonHelperCaptureRequestMessage {
-        schema_version: CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION.into(),
-        message_type: "request-capture".into(),
-        session_id: input.session_id.clone(),
-        request_id: request_id.clone(),
-        requested_at,
-        active_preset_id: active_preset.preset_id.clone(),
-        active_preset_version: active_preset.published_version.clone(),
-    };
-    let starting_event_count = read_capture_event_count(base_dir, &input.session_id)
-        .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
     let fast_preview_base_dir = base_dir.to_path_buf();
     let fast_preview_session_id = input.session_id.clone();
-    let fast_preview_request_id = request_id.clone();
     let mut early_fast_preview_update = None;
+    let allows_internal_retry = allows_internal_first_capture_retry(&manifest);
+    let mut internal_retry_attempts: u8 = 0;
+    let (request_id, round_trip) = 'request_flow: loop {
+        let request_id = input
+            .request_id
+            .as_deref()
+            .filter(|_| internal_retry_attempts == 0)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(generate_capture_request_id);
+        ensure_capture_request_id_is_fresh(base_dir, &input.session_id, &request_id, &readiness)?;
+        let requested_at = current_timestamp(SystemTime::now())?;
+        let request_message = CanonHelperCaptureRequestMessage {
+            schema_version: CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION.into(),
+            message_type: "request-capture".into(),
+            session_id: input.session_id.clone(),
+            request_id: request_id.clone(),
+            requested_at,
+            active_preset_id: active_preset.preset_id.clone(),
+            active_preset_version: active_preset.published_version.clone(),
+        };
+        let starting_event_count = read_capture_event_count(base_dir, &input.session_id)
+            .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
+        let fast_preview_request_id = request_id.clone();
+        let mut request_consumption_recovery_used = false;
 
-    write_capture_request_message(base_dir, &request_message)
-        .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
-    let _ = append_session_timing_event_in_dir(
-        base_dir,
-        SessionTimingEventInput {
-            session_id: &input.session_id,
-            event: "request-capture",
-            capture_id: None,
-            request_id: Some(&request_id),
-            detail: Some(&format!(
-                "activePresetId={};activePresetVersion={}",
-                active_preset.preset_id, active_preset.published_version
-            )),
-        },
-    );
+        write_capture_request_message(base_dir, &request_message)
+            .map_err(|error| map_capture_round_trip_error(&input.session_id, error))?;
+        let _ = append_session_timing_event_in_dir(
+            base_dir,
+            SessionTimingEventInput {
+                session_id: &input.session_id,
+                event: "request-capture",
+                capture_id: None,
+                request_id: Some(&request_id),
+                detail: Some(&format!(
+                    "activePresetId={};activePresetVersion={}",
+                    active_preset.preset_id, active_preset.published_version
+                )),
+            },
+        );
 
-    let round_trip = match wait_for_capture_round_trip(
-        base_dir,
-        &input.session_id,
-        &request_id,
-        starting_event_count,
-        |fast_preview| {
-            if early_fast_preview_update.is_none() {
-                if let Some(update) = promote_pending_fast_preview_in_dir(
-                    &fast_preview_base_dir,
-                    &fast_preview_session_id,
-                    &fast_preview_request_id,
-                    &fast_preview.capture_id,
-                    &fast_preview.fast_preview_path,
-                    fast_preview.fast_preview_kind.as_deref(),
-                ) {
-                    on_fast_preview_ready(update.clone());
-                    early_fast_preview_update = Some(update);
-                }
-            }
-        },
-    ) {
-        Ok(round_trip) => round_trip,
-        Err(error) => {
-            if should_persist_capture_round_trip_failure(&error) {
-                persist_capture_round_trip_failure(base_dir, &input.session_id, &error)?;
-            }
-
-            drop(in_flight_guard);
-
-            let readiness = get_capture_readiness_in_dir(
+        let round_trip = loop {
+            match wait_for_capture_round_trip(
                 base_dir,
-                CaptureReadinessInputDto {
-                    session_id: input.session_id.clone(),
+                &input.session_id,
+                &request_id,
+                starting_event_count,
+                |fast_preview| {
+                    if early_fast_preview_update.is_none() {
+                        if let Some(update) = promote_pending_fast_preview_in_dir(
+                            &fast_preview_base_dir,
+                            &fast_preview_session_id,
+                            &fast_preview_request_id,
+                            &fast_preview.capture_id,
+                            &fast_preview.fast_preview_path,
+                            fast_preview.fast_preview_kind.as_deref(),
+                        ) {
+                            on_fast_preview_ready(update.clone());
+                            early_fast_preview_update = Some(update);
+                        }
+                    }
                 },
-            )
-            .ok()
-            .map(|readiness| {
-                capture_round_trip_failure_readiness(base_dir, &manifest, &error, readiness)
-            })
-            .unwrap_or_else(|| match error {
-                SidecarClientError::CaptureTriggerRetryRequired => {
-                    build_capture_retry_readiness(base_dir, &manifest)
+            ) {
+                Ok(round_trip) => break round_trip,
+                Err(SidecarClientError::CaptureTriggerRetryRequiredInternal)
+                    if allows_internal_retry
+                        && internal_retry_attempts
+                            < FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_MAX_RETRIES =>
+                {
+                    internal_retry_attempts += 1;
+                    let _ = append_session_timing_event_in_dir(
+                        base_dir,
+                        SessionTimingEventInput {
+                            session_id: &input.session_id,
+                            event: "request-capture-auto-retry",
+                            capture_id: None,
+                            request_id: Some(&request_id),
+                            detail: Some(&format!(
+                                "reasonCode=capture-trigger-failed-0x00000002;attempt={};maxRetries={}",
+                                internal_retry_attempts,
+                                FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_MAX_RETRIES
+                            )),
+                        },
+                    );
+                    wait_for_internal_trigger_retry_helper_ready(base_dir, &input.session_id);
+                    continue 'request_flow;
                 }
-                _ => CaptureReadinessDto::phone_required(input.session_id.clone()),
-            });
+                Err(SidecarClientError::CaptureTimedOut)
+                    if !request_consumption_recovery_used
+                        && should_retry_capture_timeout_after_helper_restart(
+                            base_dir,
+                            &input.session_id,
+                            &request_id,
+                        ) =>
+                {
+                    request_consumption_recovery_used = true;
+                    let _ = append_session_timing_event_in_dir(
+                        base_dir,
+                        SessionTimingEventInput {
+                            session_id: &input.session_id,
+                            event: "request-capture-helper-restart",
+                            capture_id: None,
+                            request_id: Some(&request_id),
+                            detail: Some("reasonCode=request-unconsumed-helper-stall"),
+                        },
+                    );
+                    shutdown_helper_process();
+                    try_ensure_helper_running(base_dir, &input.session_id);
+                    wait_for_capture_request_consumption_recovery_ready(
+                        base_dir,
+                        &input.session_id,
+                    );
+                }
+                Err(error) => {
+                    if should_persist_capture_round_trip_failure(&error) {
+                        persist_capture_round_trip_failure(base_dir, &input.session_id, &error)?;
+                    }
 
-            return Err(HostErrorEnvelope::capture_not_ready(
-                capture_round_trip_failure_message(&error),
-                readiness,
-            ));
-        }
+                    drop(in_flight_guard);
+
+                    let readiness = get_capture_readiness_in_dir(
+                        base_dir,
+                        CaptureReadinessInputDto {
+                            session_id: input.session_id.clone(),
+                        },
+                    )
+                    .ok()
+                    .map(|readiness| {
+                        capture_round_trip_failure_readiness(base_dir, &manifest, &error, readiness)
+                    })
+                    .unwrap_or_else(|| match error {
+                        SidecarClientError::CaptureTriggerRetryRequired
+                        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
+                            build_capture_retry_readiness(base_dir, &manifest)
+                        }
+                        _ => CaptureReadinessDto::phone_required(input.session_id.clone()),
+                    });
+
+                    return Err(HostErrorEnvelope::capture_not_ready(
+                        capture_round_trip_failure_message(&error),
+                        readiness,
+                    ));
+                }
+            }
+        };
+
+        break 'request_flow (request_id, round_trip);
     };
     let file_arrived_detail = format!(
         "rawPath={};persistedAtMs={};fastPreview={};fastPreviewKind={}",
@@ -298,6 +373,105 @@ fn should_persist_capture_round_trip_failure(error: &SidecarClientError) -> bool
     )
 }
 
+fn allows_internal_first_capture_retry(manifest: &SessionManifest) -> bool {
+    manifest.captures.is_empty() && manifest.lifecycle.stage == "preset-selected"
+}
+
+fn wait_for_internal_trigger_retry_helper_ready(base_dir: &Path, session_id: &str) {
+    let deadline = SystemTime::now()
+        .checked_add(Duration::from_millis(
+            FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_TIMEOUT_MS
+                + FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS,
+        ))
+        .unwrap_or(SystemTime::now());
+    let mut ready_started_at = None;
+
+    loop {
+        let ready_now = read_latest_status_message(base_dir, session_id)
+            .ok()
+            .flatten()
+            .is_some_and(|status| {
+                status.session_id == session_id
+                    && status.camera_state == "ready"
+                    && status.helper_state == "healthy"
+                    && status
+                        .detail_code
+                        .as_deref()
+                        .map(|detail_code| detail_code == "camera-ready")
+                        .unwrap_or(true)
+            });
+        let now = SystemTime::now();
+
+        if ready_now {
+            let ready_started = ready_started_at.get_or_insert(now);
+            if now
+                .duration_since(*ready_started)
+                .unwrap_or_default()
+                .as_millis()
+                >= u128::from(FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS)
+            {
+                return;
+            }
+        } else {
+            ready_started_at = None;
+        }
+
+        if now >= deadline {
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(
+            FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_POLL_MS,
+        ));
+    }
+
+    thread::sleep(Duration::from_millis(
+        FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_DELAY_MS,
+    ));
+}
+
+fn should_retry_capture_timeout_after_helper_restart(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+) -> bool {
+    let processed_request_ids = match read_processed_capture_request_ids(base_dir, session_id) {
+        Ok(processed_request_ids) => processed_request_ids,
+        Err(_) => return false,
+    };
+
+    if processed_request_ids
+        .iter()
+        .any(|processed_request_id| processed_request_id == request_id)
+    {
+        return false;
+    }
+
+    !latest_helper_status_is_fresh(base_dir, session_id).unwrap_or(false)
+}
+
+fn wait_for_capture_request_consumption_recovery_ready(base_dir: &Path, session_id: &str) {
+    let deadline = SystemTime::now()
+        .checked_add(Duration::from_millis(
+            CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_TIMEOUT_MS,
+        ))
+        .unwrap_or(SystemTime::now());
+
+    loop {
+        if latest_helper_status_is_fresh(base_dir, session_id).unwrap_or(false) {
+            return;
+        }
+
+        if SystemTime::now() >= deadline {
+            return;
+        }
+
+        thread::sleep(Duration::from_millis(
+            CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_POLL_MS,
+        ));
+    }
+}
+
 fn ensure_capture_request_id_is_fresh(
     base_dir: &Path,
     session_id: &str,
@@ -334,7 +508,8 @@ fn ensure_capture_request_id_is_fresh(
 
 fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static str {
     match error {
-        SidecarClientError::CaptureTriggerRetryRequired => {
+        SidecarClientError::CaptureTriggerRetryRequired
+        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
             "사진을 아직 찍지 못했어요. 초점을 다시 맞춘 뒤 한 번 더 시도해 주세요."
         }
         SidecarClientError::CaptureTimedOut => {
@@ -361,7 +536,10 @@ fn capture_round_trip_failure_message(error: &SidecarClientError) -> &'static st
 
 fn capture_round_trip_failure_reason_code(error: &SidecarClientError) -> &'static str {
     match error {
-        SidecarClientError::CaptureTriggerRetryRequired => "capture-trigger-retry-required",
+        SidecarClientError::CaptureTriggerRetryRequired
+        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
+            "capture-trigger-retry-required"
+        }
         SidecarClientError::CaptureTimedOut => "capture-timeout",
         SidecarClientError::CaptureRejected => "capture-rejected",
         SidecarClientError::RecoveryRequired => "capture-recovery-required",
@@ -380,7 +558,8 @@ fn capture_round_trip_failure_reason_code(error: &SidecarClientError) -> &'stati
 
 fn capture_round_trip_failure_detail(error: &SidecarClientError) -> &'static str {
     match error {
-        SidecarClientError::CaptureTriggerRetryRequired => {
+        SidecarClientError::CaptureTriggerRetryRequired
+        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
             "초점 또는 셔터 준비 단계에서 촬영이 시작되지 않아 현재 촬영을 재시도 대기 상태로 되돌렸어요."
         }
         SidecarClientError::CaptureTimedOut => {
@@ -460,7 +639,8 @@ fn capture_round_trip_failure_readiness(
     fallback: CaptureReadinessDto,
 ) -> CaptureReadinessDto {
     match error {
-        SidecarClientError::CaptureTriggerRetryRequired => {
+        SidecarClientError::CaptureTriggerRetryRequired
+        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
             build_capture_retry_readiness(base_dir, manifest)
         }
         _ => fallback,
@@ -673,7 +853,8 @@ pub fn normalize_capture_readiness(
     let latest_capture = manifest.captures.last().cloned();
     let timing_phase = timing_phase(timing.as_ref());
     let live_capture_truth = project_live_capture_truth(base_dir, manifest);
-    let live_camera_gate = live_capture_truth.gate;
+    let live_camera_gate =
+        apply_initial_capture_ready_stabilization(manifest, &live_capture_truth);
     let post_end = if timing_phase == TimingPhase::Ended
         && matches!(
             manifest.lifecycle.stage.as_str(),
@@ -990,6 +1171,46 @@ fn project_live_capture_truth(
     }
 }
 
+fn apply_initial_capture_ready_stabilization(
+    manifest: &SessionManifest,
+    live_capture_truth: &ProjectedLiveCaptureTruth,
+) -> LiveCameraGate {
+    if live_capture_truth.gate != LiveCameraGate::Ready {
+        return live_capture_truth.gate;
+    }
+
+    if should_hold_initial_capture_ready(manifest, &live_capture_truth.dto) {
+        return LiveCameraGate::CameraPreparing;
+    }
+
+    live_capture_truth.gate
+}
+
+fn should_hold_initial_capture_ready(
+    manifest: &SessionManifest,
+    live_capture_truth: &LiveCaptureTruthDto,
+) -> bool {
+    if manifest.active_preset.is_none()
+        || !manifest.captures.is_empty()
+        || manifest.lifecycle.stage != "preset-selected"
+    {
+        return false;
+    }
+
+    if live_capture_truth.freshness != "fresh"
+        || live_capture_truth.session_match != "matched"
+        || live_capture_truth.camera_state != "ready"
+        || live_capture_truth.helper_state != "healthy"
+        || live_capture_truth.detail_code.as_deref() != Some("camera-ready")
+    {
+        return false;
+    }
+
+    session_age_seconds_since(&manifest.updated_at)
+        .or_else(|| session_age_seconds_since(&manifest.created_at))
+        .is_some_and(|age| age < INITIAL_CAPTURE_READY_AFTER_PRESET_SELECTION_SECONDS)
+}
+
 fn project_live_capture_truth_from_status(
     manifest: &SessionManifest,
     status: CanonHelperStatusMessage,
@@ -1006,7 +1227,19 @@ fn project_live_capture_truth_from_status(
     };
     let camera_state = normalize_live_camera_state(&status.camera_state);
     let helper_state = normalize_live_helper_state(&status.helper_state);
-    let gate = if freshness != "fresh" || session_match != "matched" {
+    let startup_oscillation_failure = session_match == "matched"
+        && is_fresh_startup_oscillation_failure(
+            manifest,
+            &status,
+            camera_state,
+            helper_state,
+        );
+    let stale_startup_failure = freshness != "fresh"
+        && session_match == "matched"
+        && is_stale_startup_status(camera_state, helper_state, status.detail_code.as_deref());
+    let gate = if startup_oscillation_failure || stale_startup_failure {
+        LiveCameraGate::PhoneRequired
+    } else if freshness != "fresh" || session_match != "matched" {
         LiveCameraGate::CameraPreparing
     } else {
         derive_live_camera_gate(camera_state, helper_state)
@@ -1027,16 +1260,82 @@ fn project_live_capture_truth_from_status(
     }
 }
 
-fn is_fresh_helper_status(status: &CanonHelperStatusMessage) -> bool {
-    let Ok(observed_at_seconds) = rfc3339_to_unix_seconds(&status.observed_at) else {
+fn is_stale_startup_status(
+    camera_state: &str,
+    helper_state: &str,
+    detail_code: Option<&str>,
+) -> bool {
+    is_startup_family_status(camera_state, helper_state, detail_code)
+}
+
+fn is_fresh_startup_oscillation_failure(
+    manifest: &SessionManifest,
+    status: &CanonHelperStatusMessage,
+    camera_state: &str,
+    helper_state: &str,
+) -> bool {
+    if !is_startup_family_status(camera_state, helper_state, status.detail_code.as_deref()) {
         return false;
+    }
+
+    if manifest.active_preset.is_none() || !manifest.captures.is_empty() {
+        return false;
+    }
+
+    let Some(sequence) = status.sequence else {
+        return false;
+    };
+    if sequence < STARTUP_OSCILLATION_SEQUENCE_THRESHOLD {
+        return false;
+    }
+
+    session_age_seconds_since(&manifest.updated_at)
+        .or_else(|| session_age_seconds_since(&manifest.created_at))
+        .is_some_and(|age| {
+            age >= STARTUP_OSCILLATION_SESSION_AGE_SECONDS
+                || (sequence >= DENSE_STARTUP_OSCILLATION_SEQUENCE_THRESHOLD
+                    && age >= DENSE_STARTUP_OSCILLATION_SESSION_AGE_SECONDS)
+        })
+}
+
+fn is_startup_family_status(
+    camera_state: &str,
+    helper_state: &str,
+    detail_code: Option<&str>,
+) -> bool {
+    matches!(
+        detail_code,
+        Some(
+            "helper-starting"
+                | "sdk-initializing"
+                | "session-opening"
+                | "windows-device-detected"
+        )
+    ) || (helper_state == "starting" && camera_state == "connecting")
+}
+
+fn session_age_seconds_since(timestamp: &str) -> Option<u64> {
+    let observed_at_seconds = rfc3339_to_unix_seconds(timestamp).ok()?;
+    let now_duration = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+
+    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
+}
+
+fn is_fresh_helper_status(status: &CanonHelperStatusMessage) -> bool {
+    helper_status_age_seconds(Some(&status.observed_at))
+        .is_some_and(|age| age <= CAMERA_HELPER_STATUS_MAX_AGE_SECONDS)
+}
+
+fn helper_status_age_seconds(observed_at: Option<&str>) -> Option<u64> {
+    let observed_at = observed_at?;
+    let Ok(observed_at_seconds) = rfc3339_to_unix_seconds(observed_at) else {
+        return None;
     };
     let Ok(now_duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-        return false;
+        return None;
     };
 
-    now_duration.as_secs().saturating_sub(observed_at_seconds)
-        <= CAMERA_HELPER_STATUS_MAX_AGE_SECONDS
+    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
 }
 
 fn normalize_live_camera_state(camera_state: &str) -> &'static str {

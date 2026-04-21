@@ -36,6 +36,7 @@ function mergePendingFastPreview(
           captureId: string
           requestId: string
           assetPath: string
+          kind?: string | null
         }
       | null
     presetDisplayName: string | null
@@ -60,6 +61,7 @@ function mergePendingFastPreview(
     captureId: input.pendingFastPreview.captureId,
     requestId: input.pendingFastPreview.requestId,
     assetPath: input.pendingFastPreview.assetPath,
+    previewKind: input.pendingFastPreview.kind ?? null,
     activePresetId: pendingPreviewActivePresetId,
     activePresetVersion: pendingPreviewActivePresetVersion,
     presetDisplayName:
@@ -240,6 +242,7 @@ export function CaptureScreen() {
               captureId: sessionDraft.pendingFastPreview.captureId,
               requestId: sessionDraft.pendingFastPreview.requestId,
               assetPath: sessionDraft.pendingFastPreview.assetPath,
+              kind: sessionDraft.pendingFastPreview.kind ?? null,
             },
       presetDisplayName: selectedPresetName,
     },

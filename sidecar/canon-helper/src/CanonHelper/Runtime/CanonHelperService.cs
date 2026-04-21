@@ -1,3 +1,4 @@
+using System.Text;
 using CanonHelper.Protocol;
 
 namespace CanonHelper.Runtime;
@@ -14,6 +15,8 @@ internal sealed class CanonHelperService : IDisposable
     private Task<CaptureDownloadResult>? _activeCaptureTask;
     private CaptureRequestMessage? _activeRequest;
     private CameraSnapshot? _lastWrittenSnapshot;
+    private string? _lastReportedStartupFailureCode;
+    private string? _lastStartupDebugSnapshotKey;
 
     public CanonHelperService(CanonHelperOptions options)
     {
@@ -52,6 +55,7 @@ internal sealed class CanonHelperService : IDisposable
 
             _camera.PumpEvents();
             await _camera.EnsureConnectedAsync(cancellationToken);
+            _camera.ForceCaptureTimeoutIfStuck(_paths.RuntimeRoot!, DateTimeOffset.UtcNow);
             await CompleteCaptureIfFinishedAsync();
             _camera.TryCompletePendingFastPreviewDownload();
             _camera.TryBackfillPreviewAssets(_paths);
@@ -255,6 +259,8 @@ internal sealed class CanonHelperService : IDisposable
                 snapshot.DetailCode
             )
         );
+        MaybeAppendStartupFailureEvent(snapshot);
+        MaybeAppendStartupDebugLine(snapshot);
     }
 
     private bool ShouldWriteStatus(DateTimeOffset nextStatusAt)
@@ -268,5 +274,79 @@ internal sealed class CanonHelperService : IDisposable
     private static string UtcNow()
     {
         return DateTimeOffset.UtcNow.ToString("O");
+    }
+
+    private void MaybeAppendStartupFailureEvent(CameraSnapshot snapshot)
+    {
+        if (
+            _activeCaptureTask is not null
+            || _activeRequest is not null
+            || snapshot.CameraState != "error"
+            || snapshot.HelperState != "error"
+            || !CanonSdkCamera.IsStartupConnectFailureDetailCode(snapshot.DetailCode)
+        )
+        {
+            _lastReportedStartupFailureCode = null;
+            return;
+        }
+
+        if (_lastReportedStartupFailureCode == snapshot.DetailCode)
+        {
+            return;
+        }
+
+        _protocol.AppendEvent(
+            new HelperErrorMessage(
+                CanonHelperSchemas.HelperError,
+                "helper-error",
+                _paths.SessionId,
+                UtcNow(),
+                snapshot.DetailCode ?? "camera-connect-timeout",
+                BuildStartupFailureMessage(snapshot.DetailCode)
+            )
+        );
+        _lastReportedStartupFailureCode = snapshot.DetailCode;
+    }
+
+    private static string BuildStartupFailureMessage(string? detailCode)
+    {
+        return detailCode switch
+        {
+            "sdk-init-timeout" => "Canon SDK 초기화가 startup timeout 안에 닫히지 않았어요.",
+            "session-open-timeout" => "카메라 세션 열기가 startup timeout 안에 닫히지 않았어요.",
+            "camera-open-failed" => "카메라를 열지 못했어요.",
+            "session-open-failed" => "카메라 세션을 열지 못했어요.",
+            "sdk-init-failed" => "Canon SDK를 초기화하지 못했어요.",
+            _ => "카메라 연결 시작이 timeout 안에 완료되지 않았어요.",
+        };
+    }
+
+    private void MaybeAppendStartupDebugLine(CameraSnapshot snapshot)
+    {
+        if (_activeCaptureTask is not null || _activeRequest is not null)
+        {
+            _lastStartupDebugSnapshotKey = null;
+            return;
+        }
+
+        var snapshotKey = string.Join(
+            "|",
+            snapshot.CameraState,
+            snapshot.HelperState,
+            snapshot.DetailCode ?? string.Empty,
+            snapshot.CameraModel ?? string.Empty
+        );
+        if (_lastStartupDebugSnapshotKey == snapshotKey)
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(_paths.DiagnosticsDir);
+        File.AppendAllText(
+            _paths.StartupLogPath,
+            $"{UtcNow()}\tsequence={_statusSequence}\tcameraState={snapshot.CameraState}\thelperState={snapshot.HelperState}\tdetailCode={snapshot.DetailCode ?? ""}\tcameraModel={snapshot.CameraModel ?? ""}{Environment.NewLine}",
+            Encoding.UTF8
+        );
+        _lastStartupDebugSnapshotKey = snapshotKey;
     }
 }

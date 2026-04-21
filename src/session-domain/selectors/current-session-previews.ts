@@ -5,6 +5,7 @@ export type CurrentSessionPreview = {
   captureId: string
   requestId: string
   assetPath: string
+  previewKind?: string | null
   activePresetId: string | null
   activePresetVersion: string
   presetDisplayName: string | null
@@ -128,6 +129,9 @@ export function selectCurrentSessionPreviews(
       captureId: capture.captureId,
       requestId: capture.requestId,
       assetPath: capture.preview.assetPath!,
+      ...(capture.preview.kind !== null && capture.preview.kind !== undefined
+        ? { previewKind: capture.preview.kind }
+        : {}),
       activePresetId: capture.activePresetId ?? null,
       activePresetVersion: capture.activePresetVersion,
       presetDisplayName:

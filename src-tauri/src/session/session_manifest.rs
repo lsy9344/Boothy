@@ -205,6 +205,8 @@ pub struct PreviewCaptureAsset {
     pub asset_path: Option<String>,
     pub enqueued_at_ms: Option<u64>,
     pub ready_at_ms: Option<u64>,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

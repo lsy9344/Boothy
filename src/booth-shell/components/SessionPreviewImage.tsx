@@ -9,6 +9,7 @@ type SessionPreviewImageProps = {
   captureId: string
   requestId?: string
   readyAtMs: number | null
+  previewKind?: string | null
   isLatest: boolean
   prioritizeLoading?: boolean
   visibilityLabelBase?: string
@@ -46,6 +47,7 @@ export function SessionPreviewImage({
   captureId,
   requestId,
   readyAtMs,
+  previewKind = null,
   isLatest,
   prioritizeLoading = false,
   visibilityLabelBase = 'current-session-preview',
@@ -117,9 +119,9 @@ export function SessionPreviewImage({
 
         setHasReportedVisible(true)
         const isPendingPreview = readyAtMs === null
-        const previewKind = isPendingPreview
-          ? 'pending-fast-preview'
-          : 'preset-applied-preview'
+        const visiblePreviewKind = isPendingPreview
+          ? (previewKind ?? 'pending-fast-preview')
+          : (previewKind ?? 'preview-ready-unknown')
         const uiLagMs = isPendingPreview ? null : Math.max(0, Date.now() - readyAtMs)
         const sessionId =
           assetPath.match(/sessions[\\/](session_[^\\/]+)/i)?.[1] ?? undefined
@@ -141,7 +143,7 @@ export function SessionPreviewImage({
         void logCaptureClientState({
           label: visibilityLabel,
           sessionId,
-          message: `captureId=${captureId};requestId=${requestId ?? 'unknown'};previewKind=${previewKind};surface=${visibilityLabelBase};uiLagMs=${uiLagMs ?? 'pending'};readyAtMs=${readyAtMs ?? 'pending'};latest=${isLatest}`,
+          message: `captureId=${captureId};requestId=${requestId ?? 'unknown'};previewKind=${visiblePreviewKind};surface=${visibilityLabelBase};uiLagMs=${uiLagMs ?? 'pending'};readyAtMs=${readyAtMs ?? 'pending'};latest=${isLatest}`,
         })
       }}
       onError={() => {

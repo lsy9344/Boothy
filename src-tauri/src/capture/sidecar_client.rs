@@ -8,7 +8,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts::dto::HostErrorEnvelope, session::session_paths::SessionPaths};
+use crate::{
+    contracts::dto::HostErrorEnvelope,
+    session::{session_manifest::rfc3339_to_unix_seconds, session_paths::SessionPaths},
+};
 
 pub const CANON_HELPER_BUNDLE_DIR: &str = "sidecar/canon-helper";
 pub const CAMERA_HELPER_STATUS_FILE_NAME: &str = "camera-helper-status.json";
@@ -222,6 +225,7 @@ pub enum SidecarClientError {
     EventsUnreadable,
     InvalidEvents,
     CaptureTriggerRetryRequired,
+    CaptureTriggerRetryRequiredInternal,
     CaptureTimedOut,
     CaptureRejected,
     RecoveryRequired,
@@ -276,6 +280,23 @@ pub fn read_latest_status_message(
         .map_err(|_| SidecarClientError::InvalidStatus)?;
 
     Ok(Some(message))
+}
+
+pub fn latest_helper_status_is_fresh(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<bool, SidecarClientError> {
+    let Some(status) = read_latest_status_message(base_dir, session_id)? else {
+        return Ok(false);
+    };
+    let Ok(observed_at_seconds) = rfc3339_to_unix_seconds(&status.observed_at) else {
+        return Ok(false);
+    };
+    let Ok(now_duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return Ok(false);
+    };
+
+    Ok(now_duration.as_secs().saturating_sub(observed_at_seconds) <= 5)
 }
 
 pub fn write_capture_request_message(
@@ -470,7 +491,11 @@ where
                     }
 
                     return if is_retryable_capture_helper_error(message) {
-                        Err(SidecarClientError::CaptureTriggerRetryRequired)
+                        Err(if is_internal_retryable_trigger_failure(message) {
+                            SidecarClientError::CaptureTriggerRetryRequiredInternal
+                        } else {
+                            SidecarClientError::CaptureTriggerRetryRequired
+                        })
                     } else {
                         Err(SidecarClientError::CaptureRejected)
                     };
@@ -498,13 +523,16 @@ pub fn map_capture_round_trip_error(
         crate::contracts::dto::CaptureReadinessDto::phone_required(session_id.to_string());
 
     match error {
-        SidecarClientError::CaptureTriggerRetryRequired => HostErrorEnvelope::capture_not_ready(
-            "사진을 아직 찍지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
-            crate::contracts::dto::CaptureReadinessDto::capture_retry_required(
-                session_id.to_string(),
-                None,
-            ),
-        ),
+        SidecarClientError::CaptureTriggerRetryRequired
+        | SidecarClientError::CaptureTriggerRetryRequiredInternal => {
+            HostErrorEnvelope::capture_not_ready(
+                "사진을 아직 찍지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
+                crate::contracts::dto::CaptureReadinessDto::capture_retry_required(
+                    session_id.to_string(),
+                    None,
+                ),
+            )
+        }
         SidecarClientError::CaptureTimedOut => HostErrorEnvelope::capture_not_ready(
             "사진 저장을 끝내지 못했어요. 가까운 직원에게 알려 주세요.",
             readiness,
@@ -538,14 +566,28 @@ pub fn is_retryable_capture_helper_error(message: &CanonHelperErrorMessage) -> b
         "capture-trigger-failed" => message
             .message
             .as_deref()
-            .map(is_legacy_focus_failure_message)
+            .map(is_legacy_retryable_trigger_failure_message)
             .unwrap_or(false),
         _ => false,
     }
 }
 
-fn is_legacy_focus_failure_message(message: &str) -> bool {
-    message.to_ascii_lowercase().contains("0x00008d01")
+pub fn is_internal_retryable_trigger_failure(message: &CanonHelperErrorMessage) -> bool {
+    message.detail_code == "capture-trigger-failed"
+        && message
+            .message
+            .as_deref()
+            .map(is_internal_retryable_trigger_failure_message)
+            .unwrap_or(false)
+}
+
+fn is_legacy_retryable_trigger_failure_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("0x00008d01") || normalized.contains("0x00000002")
+}
+
+fn is_internal_retryable_trigger_failure_message(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("0x00000002")
 }
 
 fn read_capture_event_messages(

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using CanonHelper.Protocol;
 using EDSDKLib;
 
@@ -9,6 +10,11 @@ internal sealed class CanonSdkCamera : IDisposable
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
     private const uint DefaultPreviewJpegQuality = 8;
+    // Live camera-thumbnail extraction can stall the RAW handoff on EOS 700D
+    // hardware. Prefer the post-download raw fallback so capture correctness
+    // wins over speculative first-visible speed.
+    private const bool EnableImmediateCameraThumbnailFastPreview = false;
+    private const string ConnectionAttemptTimeoutEnvVar = "BOOTHY_HELPER_CONNECT_TIMEOUT_MS";
     private static readonly string[] DisplayablePreviewExtensions =
     [
         ".jpg",
@@ -26,6 +32,7 @@ internal sealed class CanonSdkCamera : IDisposable
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
         45000
     );
+    private static readonly TimeSpan DefaultConnectionAttemptTimeout = TimeSpan.FromSeconds(15);
 
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;
@@ -39,6 +46,11 @@ internal sealed class CanonSdkCamera : IDisposable
     private CameraSnapshot _snapshot =
         new("connecting", "starting", "helper-starting", null, null);
     private CurrentCaptureContext? _currentCapture;
+    private Task? _connectTask;
+    private DateTimeOffset _connectAttemptStartedAt = DateTimeOffset.MinValue;
+    private Action<CurrentCaptureContext, IntPtr>? _downloadCaptureOverride;
+    private Func<bool>? _connectAttemptOverride;
+    private Func<uint>? _pumpEventsOverride;
     private readonly Queue<PendingFastPreviewDownload> _pendingFastPreviewDownloads = new();
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
@@ -73,15 +85,64 @@ internal sealed class CanonSdkCamera : IDisposable
         }
     }
 
+    public bool ForceCaptureTimeoutIfStuck(string runtimeRoot, DateTimeOffset now)
+    {
+        CurrentCaptureContext? activeCapture;
+        lock (_sync)
+        {
+            activeCapture = _currentCapture;
+        }
+
+        if (
+            activeCapture is null
+            || activeCapture.Completion.Task.IsCompleted
+            || now - activeCapture.StartedAt < ResolveCaptureCompletionTimeout(runtimeRoot)
+        )
+        {
+            return false;
+        }
+
+        FailActiveCapture(
+            new CanonCaptureException(
+                "capture-download-timeout",
+                "RAW handoff를 기다리다 시간이 초과되었어요.",
+                recoveryRequired: true
+            )
+        );
+        return true;
+    }
+
+    internal void SetDownloadCaptureOverrideForTests(
+        Action<CurrentCaptureContext, IntPtr>? downloadCaptureOverride
+    )
+    {
+        _downloadCaptureOverride = downloadCaptureOverride;
+    }
+
+    internal void SetConnectAttemptOverrideForTests(Func<bool>? connectAttemptOverride)
+    {
+        _connectAttemptOverride = connectAttemptOverride;
+    }
+
+    internal void SetPumpEventsOverrideForTests(Func<uint>? pumpEventsOverride)
+    {
+        _pumpEventsOverride = pumpEventsOverride;
+    }
+
     public void PumpEvents()
     {
         bool sdkInitialized;
+        bool sessionOpen;
         lock (_sync)
         {
             sdkInitialized = _sdkInitialized;
+            sessionOpen = _sessionOpen;
         }
 
-        if (!sdkInitialized)
+        // Event pumping is only valid after the camera session is fully open.
+        // Calling into EDSDK while the connect/open path is still running can
+        // race the session-open work and stall startup on booth hardware.
+        if (!sdkInitialized || !sessionOpen)
         {
             return;
         }
@@ -89,7 +150,7 @@ internal sealed class CanonSdkCamera : IDisposable
         uint result;
         try
         {
-            result = CanonSdkNative.EdsGetEvent();
+            result = _pumpEventsOverride?.Invoke() ?? CanonSdkNative.EdsGetEvent();
         }
         catch (DllNotFoundException)
         {
@@ -125,13 +186,52 @@ internal sealed class CanonSdkCamera : IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (_sessionOpen)
+        Task? connectTask;
+        DateTimeOffset connectAttemptStartedAt;
+        bool sessionOpen;
+
+        lock (_sync)
+        {
+            sessionOpen = _sessionOpen;
+
+            if (sessionOpen)
+            {
+                _connectTask = null;
+                _connectAttemptStartedAt = DateTimeOffset.MinValue;
+                return;
+            }
+
+            if (_connectTask is null)
+            {
+                _connectAttemptStartedAt = DateTimeOffset.UtcNow;
+                _connectTask = StartConnectTask();
+            }
+
+            connectTask = _connectTask;
+            connectAttemptStartedAt = _connectAttemptStartedAt;
+        }
+
+        if (sessionOpen)
         {
             KeepCameraAwakeIfNeeded();
             return;
         }
 
-        await Task.Run(TryOpenCamera, cancellationToken);
+        if (connectTask is null)
+        {
+            return;
+        }
+
+        if (connectTask.IsCompleted)
+        {
+            await ObserveCompletedConnectAttemptAsync(connectTask);
+            return;
+        }
+
+        if (DateTimeOffset.UtcNow - connectAttemptStartedAt >= ResolveConnectionAttemptTimeout())
+        {
+            FailConnectAttemptAsTimedOut();
+        }
     }
 
     public async Task<CaptureDownloadResult> CaptureAsync(
@@ -204,7 +304,8 @@ internal sealed class CanonSdkCamera : IDisposable
                 captureContext,
                 captureTriggerException.DetailCode,
                 captureTriggerException.RecoveryRequired ? "recovering" : "ready",
-                captureTriggerException.RecoveryRequired
+                captureTriggerException.RecoveryRequired,
+                captureTriggerException.SessionResetRequired
             );
 
             throw captureTriggerException;
@@ -425,6 +526,40 @@ internal sealed class CanonSdkCamera : IDisposable
             : DefaultCaptureCompletionTimeout;
     }
 
+    private static TimeSpan ResolveConnectionAttemptTimeout()
+    {
+        var configured = Environment.GetEnvironmentVariable(ConnectionAttemptTimeoutEnvVar);
+        return long.TryParse(configured, out var configuredTimeoutMs) && configuredTimeoutMs > 0
+            ? TimeSpan.FromMilliseconds(configuredTimeoutMs)
+            : DefaultConnectionAttemptTimeout;
+    }
+
+    private void FailConnectAttemptAsTimedOut()
+    {
+        var detailCode = ResolveConnectTimeoutDetailCode();
+
+        lock (_sync)
+        {
+            _connectTask = null;
+            _connectAttemptStartedAt = DateTimeOffset.MinValue;
+        }
+
+        RecycleSdkIfNeeded();
+        UpdateFailure("error", "error", detailCode);
+    }
+
+    private string ResolveConnectTimeoutDetailCode()
+    {
+        var snapshot = Snapshot;
+
+        return snapshot.DetailCode switch
+        {
+            "sdk-initializing" or "scanning" => "sdk-init-timeout",
+            "session-opening" => "session-open-timeout",
+            _ => "camera-connect-timeout",
+        };
+    }
+
     private static CanonCaptureException BuildCaptureTriggerException(uint err)
     {
         return err switch
@@ -438,6 +573,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 "capture-focus-not-locked",
                 "카메라가 초점을 아직 잡지 못했어요. 대상을 다시 맞춘 뒤 한 번 더 시도해 주세요.",
                 recoveryRequired: false
+            ),
+            EDSDK.EDS_ERR_INTERNAL_ERROR => new CanonCaptureException(
+                "capture-trigger-failed",
+                $"셔터 명령을 보낼 수 없었어요: 0x{err:x8}",
+                recoveryRequired: false,
+                sessionResetRequired: true
             ),
             _ => new CanonCaptureException(
                 "capture-trigger-failed",
@@ -544,6 +685,11 @@ internal sealed class CanonSdkCamera : IDisposable
 
         try
         {
+            if (_connectAttemptOverride?.Invoke() == true)
+            {
+                return;
+            }
+
             if (!_sdkInitialized)
             {
                 var initializeResult = EDSDK.EdsInitializeSDK();
@@ -554,6 +700,7 @@ internal sealed class CanonSdkCamera : IDisposable
                 }
 
                 _sdkInitialized = true;
+                UpdateFailure("connecting", "connecting", "scanning");
             }
 
             IntPtr cameraList = IntPtr.Zero;
@@ -612,6 +759,13 @@ internal sealed class CanonSdkCamera : IDisposable
                 EDSDK.EdsSetObjectEventHandler(camera, EDSDK.ObjectEvent_All, _objectHandler, context);
                 EDSDK.EdsSetCameraStateEventHandler(camera, EDSDK.StateEvent_All, _stateHandler, context);
 
+                UpdateFailure(
+                    "connecting",
+                    "connecting",
+                    "session-opening",
+                    deviceInfo.szDeviceDescription
+                );
+
                 var openResult = EDSDK.EdsOpenSession(camera);
                 if (openResult != EDSDK.EDS_ERR_OK)
                 {
@@ -621,6 +775,12 @@ internal sealed class CanonSdkCamera : IDisposable
                     return;
                 }
 
+                UpdateFailure(
+                    "connected-idle",
+                    "healthy",
+                    "session-opened",
+                    deviceInfo.szDeviceDescription
+                );
                 ConfigureSaveToHost(camera);
 
                 lock (_sync)
@@ -654,6 +814,67 @@ internal sealed class CanonSdkCamera : IDisposable
             RecycleSdkIfNeeded();
             UpdateFailure("error", "error", "camera-open-failed");
         }
+    }
+
+    private async Task ObserveCompletedConnectAttemptAsync(Task connectTask)
+    {
+        try
+        {
+            await connectTask;
+        }
+        catch (Exception)
+        {
+            RecycleSdkIfNeeded();
+            UpdateFailure("error", "error", "camera-open-failed");
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                if (ReferenceEquals(_connectTask, connectTask))
+                {
+                    _connectTask = null;
+                    _connectAttemptStartedAt = DateTimeOffset.MinValue;
+                }
+            }
+        }
+    }
+
+    private Task StartConnectTask()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connectThread = new Thread(() =>
+        {
+            try
+            {
+                TryOpenCamera();
+                completion.TrySetResult();
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "canon-helper-connect",
+        };
+
+        connectThread.SetApartmentState(ApartmentState.STA);
+        connectThread.Start();
+
+        return completion.Task;
+    }
+
+    internal static bool IsStartupConnectFailureDetailCode(string? detailCode)
+    {
+        return detailCode is
+            "camera-connect-timeout"
+            or "sdk-init-timeout"
+            or "session-open-timeout"
+            or "camera-open-failed"
+            or "session-open-failed"
+            or "sdk-init-failed";
     }
 
     private void ConfigureSaveToHost(IntPtr camera)
@@ -748,9 +969,7 @@ internal sealed class CanonSdkCamera : IDisposable
             return EDSDK.EDS_ERR_OK;
         }
 
-        // Keep RAW transfer on the SDK callback path instead of hopping to an
-        // arbitrary threadpool thread, which can destabilize follow-up captures.
-        DownloadCapture(captureContext, inRef);
+        QueueCaptureDownload(captureContext, inRef);
         return EDSDK.EDS_ERR_OK;
     }
 
@@ -767,6 +986,17 @@ internal sealed class CanonSdkCamera : IDisposable
         }
 
         return EDSDK.EDS_ERR_OK;
+    }
+
+    private void QueueCaptureDownload(CurrentCaptureContext context, IntPtr directoryItem)
+    {
+        var downloadCapture = _downloadCaptureOverride ?? DownloadCapture;
+        _ = Task.Factory.StartNew(
+            () => downloadCapture(context, directoryItem),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default
+        );
     }
 
     private void DownloadCapture(CurrentCaptureContext context, IntPtr directoryItem)
@@ -806,11 +1036,9 @@ internal sealed class CanonSdkCamera : IDisposable
             // If the SDK can provide it here, the host can overlap preview work
             // with the still-in-flight RAW download instead of waiting for RAW
             // persistence to finish first.
-            var immediateFastPreview = TryCaptureImmediateFastPreview(
-                context,
-                directoryItem,
-                captureId
-            );
+            var immediateFastPreview = EnableImmediateCameraThumbnailFastPreview
+                ? TryCaptureImmediateFastPreview(context, directoryItem, captureId)
+                : new CaptureFastPreviewDownloadResult(null, null, null);
 
             var streamResult = EDSDK.EdsCreateFileStream(
                 tempPath,
@@ -898,7 +1126,8 @@ internal sealed class CanonSdkCamera : IDisposable
                     context,
                     captureException.DetailCode,
                     captureException.RecoveryRequired ? "recovering" : "ready",
-                    captureException.RecoveryRequired
+                    captureException.RecoveryRequired,
+                    captureException.SessionResetRequired
                 );
                 context.Completion.TrySetException(captureException);
             }
@@ -1309,25 +1538,33 @@ internal sealed class CanonSdkCamera : IDisposable
         CurrentCaptureContext context,
         string detailCode,
         string nextCameraState,
-        bool recoveryRequired
+        bool recoveryRequired,
+        bool sessionResetRequired = false
     )
     {
+        var shouldReconnectSession = recoveryRequired || sessionResetRequired;
+
         lock (_sync)
         {
             if (_currentCapture == context)
             {
+                var nextDetailCode = shouldReconnectSession
+                    ? "reconnect-pending"
+                    : nextCameraState == "ready"
+                        ? "camera-ready"
+                        : detailCode;
                 _currentCapture = null;
                 _snapshot = _snapshot with
                 {
-                    CameraState = nextCameraState,
-                    HelperState = recoveryRequired ? "recovering" : "healthy",
-                    DetailCode = detailCode,
+                    CameraState = shouldReconnectSession ? "recovering" : nextCameraState,
+                    HelperState = shouldReconnectSession ? "recovering" : "healthy",
+                    DetailCode = nextDetailCode,
                     RequestId = null,
                 };
             }
         }
 
-        if (recoveryRequired)
+        if (shouldReconnectSession)
         {
             RecycleSdkIfNeeded();
             ReleaseCamera();
@@ -1541,15 +1778,22 @@ internal sealed record PendingFastPreviewDownload(
 
 internal sealed class CanonCaptureException : Exception
 {
-    public CanonCaptureException(string detailCode, string message, bool recoveryRequired)
+    public CanonCaptureException(
+        string detailCode,
+        string message,
+        bool recoveryRequired,
+        bool sessionResetRequired = false
+    )
         : base(message)
     {
         DetailCode = detailCode;
         RecoveryRequired = recoveryRequired;
+        SessionResetRequired = sessionResetRequired;
     }
 
     public string DetailCode { get; }
     public bool RecoveryRequired { get; }
+    public bool SessionResetRequired { get; }
 }
 
 internal sealed class SelfCheckResult
@@ -1578,6 +1822,7 @@ internal sealed class CurrentCaptureContext
         OnFastPreviewAttempted = onFastPreviewAttempted;
         OnFastPreviewReady = onFastPreviewReady;
         OnFastPreviewFailed = onFastPreviewFailed;
+        StartedAt = DateTimeOffset.UtcNow;
         Completion = new TaskCompletionSource<CaptureDownloadResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -1588,6 +1833,7 @@ internal sealed class CurrentCaptureContext
     public Action<CaptureFastPreviewAttemptedResult>? OnFastPreviewAttempted { get; }
     public Action<CaptureFastPreviewReadyResult>? OnFastPreviewReady { get; }
     public Action<CaptureFastPreviewFailedResult>? OnFastPreviewFailed { get; }
+    public DateTimeOffset StartedAt { get; }
     public TaskCompletionSource<CaptureDownloadResult> Completion { get; }
     public int DownloadStarted;
 }

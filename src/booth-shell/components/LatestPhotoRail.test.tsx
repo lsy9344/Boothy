@@ -16,6 +16,7 @@ function buildPreview(
     captureId: 'capture_01',
     requestId: 'request_01',
     assetPath: 'C:/boothy/sessions/session_01/renders/previews/capture.jpg',
+    previewKind: null,
     activePresetId: 'preset_soft-glow',
     activePresetVersion: '2026.03.31',
     presetDisplayName: '현재 룩',
@@ -61,7 +62,12 @@ describe('LatestPhotoRail', () => {
 
     rerender(
       <LatestPhotoRail
-        previews={[buildPreview({ readyAtMs: Date.now() - 25 })]}
+        previews={[
+          buildPreview({
+            readyAtMs: Date.now() - 25,
+            previewKind: 'preset-applied-preview',
+          }),
+        ]}
         isPreviewWaiting
         isExplicitPostEnd={false}
         deletingCaptureId={null}

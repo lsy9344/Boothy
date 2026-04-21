@@ -123,6 +123,7 @@ export function LatestPhotoRail({
                 captureId={preview.captureId}
                 requestId={preview.requestId}
                 readyAtMs={preview.readyAtMs}
+                previewKind={preview.previewKind ?? null}
                 isLatest={preview.isLatest}
                 prioritizeLoading={preview.isLatest || preview.readyAtMs === null}
                 visibilityLabelBase="recent-session"

@@ -374,6 +374,51 @@ fn operator_diagnostics_projects_recovery_required_camera_connection_state() {
 }
 
 #[test]
+fn operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved() {
+    let base_dir = unique_test_root("startup-connect-timeout-diagnostics");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1y";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "phone-required".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "error",
+        "error",
+        Some("session-open-timeout"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("startup timeout summary should load");
+
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+    assert_eq!(
+        summary
+            .recent_failure
+            .as_ref()
+            .map(|failure| failure.title.as_str()),
+        Some("카메라 연결 시작이 실패했어요.")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn operator_diagnostics_camera_connection_observed_at_uses_only_live_capture_truth() {
     let base_dir = unique_test_root("camera-connection-observed-at-source");
     let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
@@ -677,6 +722,7 @@ fn preview_waiting_capture(session_id: &str) -> SessionCaptureRecord {
             asset_path: None,
             enqueued_at_ms: Some(100),
             ready_at_ms: None,
+            kind: None,
         },
         final_asset: FinalCaptureAsset {
             asset_path: None,

@@ -1,5 +1,6 @@
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
+pub mod automation;
 pub mod branch_config;
 pub mod capture;
 pub mod commands;

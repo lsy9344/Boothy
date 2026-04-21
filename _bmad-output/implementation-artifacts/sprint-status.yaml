@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-20 10:58:00 +09:00
+# last_updated: 2026-04-20 11:54:11 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-20 10:58:00 +09:00"
+last_updated: "2026-04-20 12:46:22 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -61,8 +61,10 @@ preview_route_status:
     gpu_direction_note: "{project-root}/docs/runbooks/current-preview-gpu-direction-20260419.md"
   next_validation_sequence:
     - "freeze Story 1.10 as the closed No-Go baseline package"
-    - "implement Story 1.26 in the host-owned local native/GPU resident reserve-path scope"
-    - "collect a one-session approved-hardware package against the official preset-applied-visible gate"
+    - "treat owner-attribution mismatch as reduced: shots 2-4 now show preset-applied-preview as the field close owner"
+    - "reduce Story 1.26 first-shot fallback to raw-original and close the reserve-path coverage gap"
+    - "reduce preset-applied close latency from the current 7-8s range down to the official gate"
+    - "rerun one approved-hardware session against the official preset-applied-visible gate"
     - "record ledger Go / No-Go before considering any 1.31 action"
 
 development_status:
@@ -77,7 +79,7 @@ development_status:
   1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
   1-9-fast-preview-handoff와-xmp-preview-교체: review
   1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
-  1-26-host-owned-local-native-gpu-resident-preview-lane-검증: ready-for-dev
+  1-26-host-owned-local-native-gpu-resident-preview-lane-검증: review
   epic-1-retrospective: optional
 
   epic-2: in-progress

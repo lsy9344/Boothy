@@ -68,6 +68,7 @@ export const previewCaptureAssetSchema = z.object({
   assetPath: z.string().trim().min(1).nullable(),
   enqueuedAtMs: captureEventTimeMsSchema.nullable(),
   readyAtMs: captureEventTimeMsSchema.nullable(),
+  kind: z.string().trim().min(1).nullable().optional(),
 })
 
 export const finalCaptureAssetSchema = z.object({

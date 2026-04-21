@@ -1,5 +1,6 @@
 [package]
 name = "boothy"
+default-run = "boothy"
 version = "0.1.0"
 description = "Boothy desktop runtime"
 authors = ["Noah Lee"]

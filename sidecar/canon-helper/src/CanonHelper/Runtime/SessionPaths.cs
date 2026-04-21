@@ -17,6 +17,7 @@ internal sealed class SessionPaths
         );
         EventsLogPath = Path.Combine(DiagnosticsDir, "camera-helper-events.jsonl");
         StatusPath = Path.Combine(DiagnosticsDir, "camera-helper-status.json");
+        StartupLogPath = Path.Combine(DiagnosticsDir, "camera-helper-startup.log");
     }
 
     public string RuntimeRoot { get; }
@@ -29,6 +30,7 @@ internal sealed class SessionPaths
     public string ProcessedRequestsPath { get; }
     public string EventsLogPath { get; }
     public string StatusPath { get; }
+    public string StartupLogPath { get; }
 
     public void EnsureExists()
     {
