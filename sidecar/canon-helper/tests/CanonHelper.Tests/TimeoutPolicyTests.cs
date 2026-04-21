@@ -367,6 +367,7 @@ public sealed class TimeoutPolicyTests
         Assert.Equal("healthy", snapshot.HelperState);
         Assert.Equal("camera-ready", snapshot.DetailCode);
         Assert.Null(snapshot.RequestId);
+        Assert.False(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
     }
 
     [Fact]
@@ -415,6 +416,198 @@ public sealed class TimeoutPolicyTests
         Assert.Equal("reconnect-pending", snapshot.DetailCode);
         Assert.Null(snapshot.RequestId);
         Assert.False(GetField<bool>(camera, "_sessionOpen"));
+        Assert.True(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
+    }
+
+    [Fact]
+    public void Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires()
+    {
+        var camera = new CanonSdkCamera();
+        var readyAt = DateTimeOffset.UtcNow.AddMilliseconds(50);
+
+        SetField(camera, "_camera", new IntPtr(1));
+        SetField(camera, "_sessionOpen", true);
+        SetField(camera, "_delayedReadyNotBeforeAt", readyAt);
+        SetField(
+            camera,
+            "_snapshot",
+            new CameraSnapshot("connected-idle", "healthy", "session-opened", "Canon EOS 700D", null)
+        );
+
+        var warmingUpSnapshot = camera.Snapshot;
+        Assert.Equal("connected-idle", warmingUpSnapshot.CameraState);
+        Assert.Equal("session-opened", warmingUpSnapshot.DetailCode);
+        Assert.False(camera.IsReady);
+
+        Thread.Sleep(80);
+
+        var readySnapshot = camera.Snapshot;
+        Assert.Equal("ready", readySnapshot.CameraState);
+        Assert.Equal("camera-ready", readySnapshot.DetailCode);
+        Assert.True(camera.IsReady);
+    }
+
+    [Fact]
+    public void ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect()
+    {
+        var camera = new CanonSdkCamera();
+        SetField(camera, "_useNonAfShutterOnNextCapture", true);
+
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "ResolveShutterPlanForNextCaptureLocked",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+
+        Assert.NotNull(method);
+
+        var firstPlan = method!.Invoke(camera, Array.Empty<object>());
+        Assert.NotNull(firstPlan);
+        var releaseCommandProperty = firstPlan!.GetType().GetProperty("ReleaseCommand");
+        var primeWithHalfwayProperty = firstPlan.GetType().GetProperty("PrimeWithHalfway");
+        Assert.NotNull(releaseCommandProperty);
+        Assert.NotNull(primeWithHalfwayProperty);
+        var secondPlan = method.Invoke(camera, Array.Empty<object>());
+        Assert.NotNull(secondPlan);
+        var secondReleaseCommandProperty = secondPlan!.GetType().GetProperty("ReleaseCommand");
+        var secondPrimeWithHalfwayProperty = secondPlan.GetType().GetProperty("PrimeWithHalfway");
+        Assert.NotNull(secondReleaseCommandProperty);
+        Assert.NotNull(secondPrimeWithHalfwayProperty);
+
+        var firstCommand = Assert.IsType<EDSDK.EdsShutterButton>(
+            releaseCommandProperty!.GetValue(firstPlan)
+        );
+        var firstPrimeWithHalfway = Assert.IsType<bool>(
+            primeWithHalfwayProperty!.GetValue(firstPlan)
+        );
+        var secondCommand = Assert.IsType<EDSDK.EdsShutterButton>(
+            secondReleaseCommandProperty!.GetValue(secondPlan)
+        );
+        var secondPrimeWithHalfway = Assert.IsType<bool>(
+            secondPrimeWithHalfwayProperty!.GetValue(secondPlan)
+        );
+
+        Assert.Equal(
+            EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF,
+            firstCommand
+        );
+        Assert.True(firstPrimeWithHalfway);
+        Assert.Equal(EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely, secondCommand);
+        Assert.False(secondPrimeWithHalfway);
+        Assert.False(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
+    }
+
+    [Fact]
+    public void ExecuteCaptureShutterPlan_retries_internal_trigger_failure_once_with_half_press_non_af_plan()
+    {
+        var camera = new CanonSdkCamera();
+        var commands = new List<int>();
+        var releaseAttemptCount = 0;
+
+        camera.SetSendCommandOverrideForTests(
+            (_, command, parameter) =>
+            {
+                Assert.Equal(EDSDK.CameraCommand_PressShutterButton, command);
+                commands.Add(parameter);
+                if (
+                    parameter
+                    == (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
+                    && releaseAttemptCount++ == 0
+                )
+                {
+                    return EDSDK.EDS_ERR_INTERNAL_ERROR;
+                }
+
+                return EDSDK.EDS_ERR_OK;
+            }
+        );
+
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "ExecuteCaptureShutterPlan",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        var result = Assert.IsType<uint>(
+            method!.Invoke(
+            camera,
+            [
+                new IntPtr(1),
+                EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely,
+                false,
+                true,
+            ]
+        )
+        );
+
+        Assert.Equal(EDSDK.EDS_ERR_OK, result);
+        Assert.Equal(
+            [
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Halfway,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF,
+            ],
+            commands
+        );
+    }
+
+    [Fact]
+    public async Task RunOnSdkStaThreadAsync_runs_capture_work_on_sta_thread()
+    {
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "RunOnSdkStaThreadAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        var camera = new CanonSdkCamera();
+        var generic = method!.MakeGenericMethod(typeof(ApartmentState));
+        var task = Assert.IsAssignableFrom<Task<ApartmentState>>(
+            generic.Invoke(
+                camera,
+                [
+                    new Func<ApartmentState>(() => Thread.CurrentThread.GetApartmentState()),
+                ]
+            )
+        );
+
+        var apartment = await task;
+        Assert.Equal(ApartmentState.STA, apartment);
+    }
+
+    [Fact]
+    public async Task RunOnSdkStaThreadAsync_reuses_the_same_sta_thread_across_calls()
+    {
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "RunOnSdkStaThreadAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        var camera = new CanonSdkCamera();
+        var generic = method!.MakeGenericMethod(typeof(int));
+        var firstTask = Assert.IsAssignableFrom<Task<int>>(
+            generic.Invoke(
+                camera,
+                [
+                    new Func<int>(() => Thread.CurrentThread.ManagedThreadId),
+                ]
+            )
+        );
+        var secondTask = Assert.IsAssignableFrom<Task<int>>(
+            generic.Invoke(
+                camera,
+                [
+                    new Func<int>(() => Thread.CurrentThread.ManagedThreadId),
+                ]
+            )
+        );
+
+        var firstThreadId = await firstTask;
+        var secondThreadId = await secondTask;
+
+        Assert.Equal(firstThreadId, secondThreadId);
     }
 
     private static TimeSpan ResolveCaptureCompletionTimeout(string runtimeRoot)

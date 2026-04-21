@@ -1626,7 +1626,7 @@ fn capture_saved_keeps_a_fast_same_capture_thumbnail_visible_while_preview_rende
             &helper_session_id,
             existing_request_count,
         );
-        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let capture_id = format!("capture_force-process-fail_{}", &request.request_id[8..]);
         let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
         let raw_path = session_paths
             .captures_originals_dir
@@ -3178,6 +3178,166 @@ fn complete_preview_render_direct_close_reuses_existing_same_capture_preview_as_
 }
 
 #[test]
+fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_refinement_fails() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("direct-close-on-raw-refinement-failure");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let canonical_preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            canonical_preview_path
+                .parent()
+                .expect("preview path should have a parent directory"),
+        )
+        .expect("preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&canonical_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            None,
+            None,
+        );
+    });
+
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |_| {},
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let speculative_lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let _ = fs::remove_file(&speculative_output_path);
+    let _ = fs::remove_file(&speculative_detail_path);
+    let _ = fs::remove_file(&speculative_lock_path);
+    let failing_darktable_cli = base_dir.join("always-fail-darktable-cli.cmd");
+    fs::write(&failing_darktable_cli, "@echo off\r\nexit /b 17\r\n")
+        .expect("failing darktable cli should be writable");
+    let previous_darktable_cli = std::env::var("BOOTHY_DARKTABLE_CLI_BIN").ok();
+    std::env::set_var(
+        "BOOTHY_DARKTABLE_CLI_BIN",
+        failing_darktable_cli.to_string_lossy().into_owned(),
+    );
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("existing same-capture preview should close the product flow when raw refinement fails");
+
+    match previous_darktable_cli {
+        Some(previous_darktable_cli) => {
+            std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", previous_darktable_cli);
+        }
+        None => std::env::remove_var("BOOTHY_DARKTABLE_CLI_BIN"),
+    }
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.kind.as_deref(),
+        Some("legacy-canonical-scan")
+    );
+    assert!(completed_capture.preview.ready_at_ms.is_some());
+    assert_eq!(completed_capture.timing.xmp_preview_ready_at_ms, None);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should stay product-ready on fallback close");
+    assert_eq!(readiness.surface_state, "previewReady");
+    assert_eq!(readiness.reason_code, "ready");
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=preview-render-failed"));
+    assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("sourceAsset=legacy-canonical-scan"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_ready() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
@@ -3254,6 +3414,102 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("sourceAsset=preset-applied-preview"));
     assert!(timing_events.contains("inputSourceAsset=fast-preview-raster"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_waits_for_speculative_detail_before_promoting_output() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("wait-for-speculative-detail");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let speculative_lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    fs::write(&speculative_lock_path, &result.capture.request_id)
+        .expect("speculative lock should be writable");
+
+    let delayed_output_path = speculative_output_path.clone();
+    let delayed_detail_path = speculative_detail_path.clone();
+    let delayed_lock_path = speculative_lock_path.clone();
+    let delayed_writer = thread::spawn(move || {
+        write_test_jpeg(&delayed_output_path);
+        thread::sleep(Duration::from_millis(400));
+        fs::write(
+            &delayed_detail_path,
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=120;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        )
+        .expect("speculative render detail should be writable");
+        fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
+    });
+
+    let initial_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("speculative output should wait for detail before promotion");
+
+    delayed_writer
+        .join()
+        .expect("delayed speculative writer should complete");
+
+    assert_eq!(initial_capture.render_status, "previewReady");
+    assert_eq!(
+        initial_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        initial_capture.preview.kind.as_deref(),
+        Some("preset-applied-preview")
+    );
+    assert_eq!(
+        initial_capture.preview.ready_at_ms,
+        initial_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("event=preview-render-ready"));
+    assert!(timing_events.contains("publishedVersion=2026.03.20"));
+    assert!(!timing_events.contains("publishedVersion=unknown"));
+    assert!(!timing_events.contains("event=preview-render-failed"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -4916,7 +5172,8 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_once() {
     let helper_base_dir = base_dir.clone();
     let helper_session_id = session.session_id.clone();
     let helper_thread = thread::spawn(move || {
-        let first_request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 0);
+        let first_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 0);
         append_helper_event(
             &helper_base_dir,
             &helper_session_id,
@@ -4939,9 +5196,28 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_once() {
               "message": "셔터 명령을 보낼 수 없었어요: 0x00000002",
             }),
         );
-        write_ready_helper_status(&helper_base_dir, &helper_session_id);
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            2,
+            "connecting",
+            "connecting",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("session-opening"),
+        );
+        thread::sleep(Duration::from_millis(1100));
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            3,
+            "ready",
+            "healthy",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("camera-ready"),
+        );
 
-        let second_request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 1);
+        let second_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 1);
         let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
             .captures_originals_dir
             .join("capture_auto_retry.jpg");
@@ -4988,7 +5264,10 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_once() {
 
     assert_eq!(result.status, "capture-saved");
     assert_eq!(result.readiness.reason_code, "preview-waiting");
-    assert_eq!(read_manifest(&base_dir, &session.session_id).captures.len(), 1);
+    assert_eq!(
+        read_manifest(&base_dir, &session.session_id).captures.len(),
+        1
+    );
     let requests = read_capture_request_messages(&base_dir, &session.session_id)
         .expect("capture requests should be readable");
     assert_eq!(requests.len(), 2);
@@ -5034,8 +5313,11 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_esc
     let helper_session_id = session.session_id.clone();
     let helper_thread = thread::spawn(move || {
         for request_index in 0..2 {
-            let request =
-                wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, request_index);
+            let request = wait_for_latest_capture_request(
+                &helper_base_dir,
+                &helper_session_id,
+                request_index,
+            );
             append_helper_event(
                 &helper_base_dir,
                 &helper_session_id,
@@ -5058,10 +5340,30 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_esc
                   "message": "셔터 명령을 보낼 수 없었어요: 0x00000002",
                 }),
             );
-            write_ready_helper_status(&helper_base_dir, &helper_session_id);
+            let connecting_sequence = 2 + (request_index as u64 * 2);
+            write_helper_status_with_sequence_and_detail(
+                &helper_base_dir,
+                &helper_session_id,
+                connecting_sequence,
+                "connecting",
+                "connecting",
+                &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+                Some("session-opening"),
+            );
+            thread::sleep(Duration::from_millis(1100));
+            write_helper_status_with_sequence_and_detail(
+                &helper_base_dir,
+                &helper_session_id,
+                connecting_sequence + 1,
+                "ready",
+                "healthy",
+                &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+                Some("camera-ready"),
+            );
         }
 
-        let third_request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 2);
+        let third_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 2);
         let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
             .captures_originals_dir
             .join("capture_auto_retry_twice.jpg");
@@ -5108,7 +5410,10 @@ fn capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_esc
 
     assert_eq!(result.status, "capture-saved");
     assert_eq!(result.readiness.reason_code, "preview-waiting");
-    assert_eq!(read_manifest(&base_dir, &session.session_id).captures.len(), 1);
+    assert_eq!(
+        read_manifest(&base_dir, &session.session_id).captures.len(),
+        1
+    );
     let requests = read_capture_request_messages(&base_dir, &session.session_id)
         .expect("capture requests should be readable");
     assert_eq!(requests.len(), 3);
@@ -5155,7 +5460,8 @@ fn capture_flow_waits_for_helper_ready_to_stabilize_before_internal_auto_retry()
     let helper_base_dir = base_dir.clone();
     let helper_session_id = session.session_id.clone();
     let helper_thread = thread::spawn(move || {
-        let first_request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 0);
+        let first_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 0);
         append_helper_event(
             &helper_base_dir,
             &helper_session_id,
@@ -5178,10 +5484,29 @@ fn capture_flow_waits_for_helper_ready_to_stabilize_before_internal_auto_retry()
               "message": "셔터 명령을 보낼 수 없었어요: 0x00000002",
             }),
         );
-        write_ready_helper_status(&helper_base_dir, &helper_session_id);
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            2,
+            "connecting",
+            "connecting",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("session-opening"),
+        );
+        thread::sleep(Duration::from_millis(1100));
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            3,
+            "ready",
+            "healthy",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("camera-ready"),
+        );
         let ready_written_at = Instant::now();
 
-        let second_request = wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 1);
+        let second_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 1);
         let elapsed_since_ready = ready_written_at.elapsed();
         let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
             .captures_originals_dir
@@ -5232,8 +5557,144 @@ fn capture_flow_waits_for_helper_ready_to_stabilize_before_internal_auto_retry()
     assert_eq!(result.status, "capture-saved");
     assert_eq!(result.readiness.reason_code, "preview-waiting");
     assert!(
-        elapsed_since_ready >= Duration::from_millis(1000),
+        elapsed_since_ready >= Duration::from_millis(4500),
         "retry should wait for helper readiness to stabilize, elapsed={elapsed_since_ready:?}"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn capture_flow_ignores_stale_ready_status_before_reconnect_ready_stabilizes() {
+    let base_dir = unique_test_root("capture-trigger-internal-error-auto-retry-fresh-ready-only");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let first_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 0);
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": first_request.session_id,
+              "requestId": first_request.request_id,
+            }),
+        );
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+              "type": "helper-error",
+              "sessionId": first_request.session_id,
+              "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+              "detailCode": "capture-trigger-failed",
+              "message": "셔터 명령을 보낼 수 없었어요: 0x00000002",
+            }),
+        );
+
+        thread::sleep(Duration::from_millis(1800));
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            2,
+            "connecting",
+            "connecting",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("session-opening"),
+        );
+
+        thread::sleep(Duration::from_millis(1100));
+        write_helper_status_with_sequence_and_detail(
+            &helper_base_dir,
+            &helper_session_id,
+            3,
+            "ready",
+            "healthy",
+            &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+            Some("camera-ready"),
+        );
+        let fresh_ready_written_at = Instant::now();
+
+        let second_request =
+            wait_for_latest_capture_request(&helper_base_dir, &helper_session_id, 1);
+        let elapsed_since_fresh_ready = fresh_ready_written_at.elapsed();
+        let raw_path = SessionPaths::new(&helper_base_dir, &helper_session_id)
+            .captures_originals_dir
+            .join("capture_auto_retry_fresh_ready_only.jpg");
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        write_test_jpeg(&raw_path);
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": second_request.session_id,
+              "requestId": second_request.request_id,
+            }),
+        );
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &second_request,
+            "capture_auto_retry_fresh_ready_only",
+            &raw_path,
+            None,
+            None,
+        );
+
+        elapsed_since_fresh_ready
+    });
+
+    let result = request_capture_in_dir(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+    )
+    .expect("internal trigger failure should wait for a fresh reconnect-ready status");
+
+    let elapsed_since_fresh_ready = helper_thread
+        .join()
+        .expect("helper fresh ready retry thread should complete");
+
+    assert_eq!(result.status, "capture-saved");
+    assert_eq!(result.readiness.reason_code, "preview-waiting");
+    assert!(
+        elapsed_since_fresh_ready >= Duration::from_millis(4500),
+        "retry should wait for a fresh reconnect-ready status to stabilize, elapsed={elapsed_since_fresh_ready:?}"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -7591,7 +8052,7 @@ fn wait_for_latest_capture_request(
     session_id: &str,
     existing_request_count: usize,
 ) -> CanonHelperCaptureRequestMessage {
-    for _ in 0..200 {
+    for _ in 0..1000 {
         let requests = read_capture_request_messages(base_dir, session_id)
             .expect("capture request log should be readable");
 
@@ -7617,7 +8078,7 @@ fn wait_for_any_capture_request(
     base_dir: &PathBuf,
     session_id: &str,
 ) -> CanonHelperCaptureRequestMessage {
-    for _ in 0..200 {
+    for _ in 0..1000 {
         let requests = read_capture_request_messages(base_dir, session_id)
             .expect("capture request log should be readable");
 

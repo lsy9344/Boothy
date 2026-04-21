@@ -586,6 +586,13 @@ pub fn complete_preview_render_in_dir(
                 RenderIntent::Preview,
                 error.reason_code,
             );
+            if let Some(fallback_capture) = try_close_existing_preview_after_render_failure_in_dir(
+                base_dir,
+                &paths,
+                capture_id,
+            )? {
+                return Ok(fallback_capture);
+            }
             return Err(HostErrorEnvelope::persistence(error.customer_message));
         }
     };
@@ -652,6 +659,7 @@ fn wait_for_speculative_preview_completion_for_request_in_dir(
     request_id: &str,
 ) {
     let speculative_output_path = speculative_preview_output_path(paths, capture_id);
+    let speculative_detail_path = speculative_preview_detail_path(paths, capture_id, request_id);
     let speculative_lock_path = speculative_preview_lock_path(paths, capture_id, request_id);
 
     if !speculative_lock_path.exists() {
@@ -660,9 +668,11 @@ fn wait_for_speculative_preview_completion_for_request_in_dir(
 
     let wait_cycles = (SPECULATIVE_PREVIEW_WAIT_MS / SPECULATIVE_PREVIEW_POLL_MS).max(1);
     for attempt in 0..=wait_cycles {
-        if is_valid_render_preview_asset(&speculative_output_path)
-            || !speculative_lock_path.exists()
-        {
+        if speculative_preview_output_is_ready_to_promote(
+            &speculative_output_path,
+            &speculative_detail_path,
+            &speculative_lock_path,
+        ) {
             return;
         }
 
@@ -674,9 +684,11 @@ fn wait_for_speculative_preview_completion_for_request_in_dir(
     let drain_cycles =
         (SPECULATIVE_PREVIEW_DRAIN_WAIT_MS / SPECULATIVE_PREVIEW_DRAIN_POLL_MS).max(1);
     for attempt in 0..=drain_cycles {
-        if is_valid_render_preview_asset(&speculative_output_path)
-            || !speculative_lock_path.exists()
-        {
+        if speculative_preview_output_is_ready_to_promote(
+            &speculative_output_path,
+            &speculative_detail_path,
+            &speculative_lock_path,
+        ) {
             return;
         }
 
@@ -706,6 +718,7 @@ fn wait_for_active_speculative_preview_close_before_direct_render_in_dir(
     request_id: &str,
 ) {
     let speculative_output_path = speculative_preview_output_path(paths, capture_id);
+    let speculative_detail_path = speculative_preview_detail_path(paths, capture_id, request_id);
     let speculative_lock_path = speculative_preview_lock_path(paths, capture_id, request_id);
 
     if !speculative_lock_path.exists() {
@@ -714,9 +727,11 @@ fn wait_for_active_speculative_preview_close_before_direct_render_in_dir(
 
     let wait_cycles = (SPECULATIVE_PREVIEW_JOIN_WAIT_MS / SPECULATIVE_PREVIEW_JOIN_POLL_MS).max(1);
     for attempt in 0..=wait_cycles {
-        if is_valid_render_preview_asset(&speculative_output_path)
-            || !speculative_lock_path.exists()
-        {
+        if speculative_preview_output_is_ready_to_promote(
+            &speculative_output_path,
+            &speculative_detail_path,
+            &speculative_lock_path,
+        ) {
             return;
         }
 
@@ -752,6 +767,11 @@ fn try_complete_speculative_preview_render_in_dir(
 
     let speculative_output_path =
         speculative_preview_output_path(paths, &capture_snapshot.capture_id);
+    let speculative_detail_path = speculative_preview_detail_path(
+        paths,
+        &capture_snapshot.capture_id,
+        &capture_snapshot.request_id,
+    );
     let speculative_lock_path = speculative_preview_lock_path(
         paths,
         &capture_snapshot.capture_id,
@@ -762,7 +782,11 @@ fn try_complete_speculative_preview_render_in_dir(
         return Ok(None);
     }
 
-    if is_valid_render_preview_asset(&speculative_output_path) {
+    if speculative_preview_output_is_ready_to_promote(
+        &speculative_output_path,
+        &speculative_detail_path,
+        &speculative_lock_path,
+    ) {
         let canonical_preview_path = paths
             .renders_previews_dir
             .join(format!("{}.jpg", capture_snapshot.capture_id));
@@ -794,11 +818,7 @@ fn try_complete_speculative_preview_render_in_dir(
                 )
             })?
             .as_millis() as u64;
-        let render_detail = fs::read_to_string(speculative_preview_detail_path(
-            paths,
-            &capture_snapshot.capture_id,
-            &capture_snapshot.request_id,
-        ))
+        let render_detail = fs::read_to_string(&speculative_detail_path)
         .unwrap_or_else(|_| {
             "presetId=unknown;publishedVersion=unknown;binary=darktable-cli;source=unknown;elapsedMs=unknown;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=unknown;status=unknown"
                 .into()
@@ -854,16 +874,21 @@ fn try_complete_speculative_preview_render_in_dir(
             preview_visible_at_ms,
         );
 
-        let _ = fs::remove_file(speculative_preview_detail_path(
-            paths,
-            &capture_snapshot.capture_id,
-            &capture_snapshot.request_id,
-        ));
+        let _ = fs::remove_file(&speculative_detail_path);
 
         return Ok(Some(capture));
     }
 
     Ok(None)
+}
+
+fn speculative_preview_output_is_ready_to_promote(
+    speculative_output_path: &Path,
+    speculative_detail_path: &Path,
+    speculative_lock_path: &Path,
+) -> bool {
+    is_valid_render_preview_asset(speculative_output_path)
+        && (!speculative_lock_path.exists() || speculative_detail_path.is_file())
 }
 
 fn wait_for_capture_pipeline_idle(base_dir: &Path) {
@@ -968,6 +993,108 @@ fn should_close_existing_preview_without_render(capture: &SessionCaptureRecord) 
             .map(is_valid_render_preview_asset)
             .unwrap_or(false)
         && is_truthful_fast_preview_kind(capture.preview.kind.as_deref())
+}
+
+fn has_displayable_existing_preview(paths: &SessionPaths, capture: &SessionCaptureRecord) -> bool {
+    capture
+        .preview
+        .asset_path
+        .as_deref()
+        .map(Path::new)
+        .filter(|asset_path| is_valid_render_preview_asset(asset_path))
+        .and_then(|asset_path| {
+            is_session_scoped_asset_path(paths, asset_path)
+                .then(|| asset_path.to_string_lossy().into_owned())
+        })
+        .is_some()
+}
+
+fn existing_preview_render_failure_fallback_detail(
+    capture: &SessionCaptureRecord,
+    preview_ready_at_ms: u64,
+) -> String {
+    format!(
+        "presetId={};publishedVersion={};binary=existing-preview-fallback;source=existing-preview-fallback;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;sourceAsset={};truthOwner=existing-preview-fallback;args=none;status=render-failed-fallback",
+        capture.active_preset_id.as_deref().unwrap_or("unknown"),
+        capture.active_preset_version,
+        preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms),
+        capture
+            .preview
+            .kind
+            .as_deref()
+            .unwrap_or(LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND)
+    )
+}
+
+fn try_close_existing_preview_after_render_failure_in_dir(
+    base_dir: &Path,
+    paths: &SessionPaths,
+    capture_id: &str,
+) -> Result<Option<SessionCaptureRecord>, HostErrorEnvelope> {
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let Some(capture_index) = manifest
+        .captures
+        .iter()
+        .position(|capture| capture.capture_id == capture_id)
+    else {
+        return Ok(None);
+    };
+    let Some(capture) = manifest.captures.get(capture_index) else {
+        return Ok(None);
+    };
+    if capture.preview.ready_at_ms.is_some() || !has_displayable_existing_preview(paths, capture) {
+        return Ok(None);
+    }
+
+    let preview_ready_at_ms = capture
+        .timing
+        .fast_preview_visible_at_ms
+        .or(Some(capture.raw.persisted_at_ms))
+        .or_else(|| current_time_ms().ok())
+        .ok_or_else(|| {
+            HostErrorEnvelope::persistence(
+                "프리뷰 시각을 기록하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            )
+        })?;
+    let capture = {
+        let capture = manifest
+            .captures
+            .get_mut(capture_index)
+            .expect("capture index already resolved");
+        capture.preview.ready_at_ms = Some(preview_ready_at_ms);
+        capture.render_status = "previewReady".into();
+        capture.timing.preview_visible_at_ms = capture
+            .timing
+            .preview_visible_at_ms
+            .or(Some(preview_ready_at_ms));
+        capture.timing.preview_budget_state = if preview_ready_at_ms
+            .saturating_sub(capture.timing.capture_acknowledged_at_ms)
+            <= PREVIEW_BUDGET_MS
+        {
+            "withinBudget".into()
+        } else {
+            "exceededBudget".into()
+        };
+        capture.clone()
+    };
+
+    manifest.updated_at = current_timestamp(SystemTime::now())?;
+    manifest.lifecycle.stage = derive_capture_lifecycle_stage(&manifest);
+    write_session_manifest(&paths.manifest_path, &manifest)?;
+    log_render_ready_in_dir(
+        base_dir,
+        &capture.session_id,
+        &capture.capture_id,
+        &capture.request_id,
+        RenderIntent::Preview,
+        &existing_preview_render_failure_fallback_detail(&capture, preview_ready_at_ms),
+    );
+    append_capture_preview_ready_event(base_dir, &capture.session_id, &capture, preview_ready_at_ms);
+
+    Ok(Some(capture))
 }
 
 fn close_truthful_preview_in_manifest(

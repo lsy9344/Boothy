@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using CanonHelper.Protocol;
@@ -7,7 +8,14 @@ namespace CanonHelper.Runtime;
 
 internal sealed class CanonSdkCamera : IDisposable
 {
+    private readonly record struct CaptureShutterPlan(
+        EDSDK.EdsShutterButton ReleaseCommand,
+        bool PrimeWithHalfway
+    );
+
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan InternalTriggerReconnectReadyWarmup = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan InternalTriggerRetryHalfPressLead = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
     private const uint DefaultPreviewJpegQuality = 8;
     // Live camera-thumbnail extraction can stall the RAW handoff on EOS 700D
@@ -35,10 +43,12 @@ internal sealed class CanonSdkCamera : IDisposable
     private static readonly TimeSpan DefaultConnectionAttemptTimeout = TimeSpan.FromSeconds(15);
 
     private readonly object _sync = new();
+    private readonly BlockingCollection<Action> _sdkThreadQueue = new();
     private readonly GCHandle _selfHandle;
     private readonly EDSDK.EdsObjectEventHandler _objectHandler;
     private readonly EDSDK.EdsPropertyEventHandler _propertyHandler;
     private readonly EDSDK.EdsStateEventHandler _stateHandler;
+    private readonly Thread _sdkThread;
 
     private IntPtr _camera = IntPtr.Zero;
     private bool _sdkInitialized;
@@ -51,9 +61,13 @@ internal sealed class CanonSdkCamera : IDisposable
     private Action<CurrentCaptureContext, IntPtr>? _downloadCaptureOverride;
     private Func<bool>? _connectAttemptOverride;
     private Func<uint>? _pumpEventsOverride;
+    private Func<IntPtr, uint, int, uint>? _sendCommandOverride;
     private readonly Queue<PendingFastPreviewDownload> _pendingFastPreviewDownloads = new();
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _delayedReadyNotBeforeAt = DateTimeOffset.MinValue;
+    private bool _useNonAfShutterOnNextCapture;
+    private int _sdkThreadId;
 
     public CanonSdkCamera()
     {
@@ -61,6 +75,13 @@ internal sealed class CanonSdkCamera : IDisposable
         _objectHandler = HandleObjectEvent;
         _propertyHandler = HandlePropertyEvent;
         _stateHandler = HandleStateEvent;
+        _sdkThread = new Thread(SdkThreadLoop)
+        {
+            IsBackground = true,
+            Name = "canon-helper-sdk-sta",
+        };
+        _sdkThread.SetApartmentState(ApartmentState.STA);
+        _sdkThread.Start();
     }
 
     public CameraSnapshot Snapshot
@@ -69,6 +90,7 @@ internal sealed class CanonSdkCamera : IDisposable
         {
             lock (_sync)
             {
+                RefreshDelayedReadyLocked(DateTimeOffset.UtcNow);
                 return _snapshot;
             }
         }
@@ -80,6 +102,7 @@ internal sealed class CanonSdkCamera : IDisposable
         {
             lock (_sync)
             {
+                RefreshDelayedReadyLocked(DateTimeOffset.UtcNow);
                 return _sessionOpen && _snapshot.CameraState == "ready";
             }
         }
@@ -129,6 +152,11 @@ internal sealed class CanonSdkCamera : IDisposable
         _pumpEventsOverride = pumpEventsOverride;
     }
 
+    internal void SetSendCommandOverrideForTests(Func<IntPtr, uint, int, uint>? sendCommandOverride)
+    {
+        _sendCommandOverride = sendCommandOverride;
+    }
+
     public void PumpEvents()
     {
         bool sdkInitialized;
@@ -147,39 +175,44 @@ internal sealed class CanonSdkCamera : IDisposable
             return;
         }
 
-        uint result;
-        try
-        {
-            result = _pumpEventsOverride?.Invoke() ?? CanonSdkNative.EdsGetEvent();
-        }
-        catch (DllNotFoundException)
-        {
-            UpdateFailure("error", "error", "sdk-payload-missing");
-            return;
-        }
-        catch (Exception)
-        {
-            HandleConnectionLost("event-pump-failed", "recovering");
-            return;
-        }
+        RunOnSdkStaThreadAsync(() =>
+            {
+                uint result;
+                try
+                {
+                    result = _pumpEventsOverride?.Invoke() ?? CanonSdkNative.EdsGetEvent();
+                }
+                catch (DllNotFoundException)
+                {
+                    UpdateFailure("error", "error", "sdk-payload-missing");
+                    return 0;
+                }
+                catch (Exception)
+                {
+                    HandleConnectionLost("event-pump-failed", "recovering");
+                    return 0;
+                }
 
-        if (result == EDSDK.EDS_ERR_OK)
-        {
-            return;
-        }
+                if (result == EDSDK.EDS_ERR_OK)
+                {
+                    return 0;
+                }
 
-        switch (result)
-        {
-            case EDSDK.EDS_ERR_COMM_DISCONNECTED:
-            case EDSDK.EDS_ERR_DEVICE_NOT_FOUND:
-            case EDSDK.EDS_ERR_DEVICE_INVALID:
-            case EDSDK.EDS_ERR_SESSION_NOT_OPEN:
-                HandleConnectionLost("usb-disconnected", "recovering");
-                return;
-            default:
-                HandleConnectionLost("event-pump-failed", "recovering");
-                return;
-        }
+                switch (result)
+                {
+                    case EDSDK.EDS_ERR_COMM_DISCONNECTED:
+                    case EDSDK.EDS_ERR_DEVICE_NOT_FOUND:
+                    case EDSDK.EDS_ERR_DEVICE_INVALID:
+                    case EDSDK.EDS_ERR_SESSION_NOT_OPEN:
+                        HandleConnectionLost("usb-disconnected", "recovering");
+                        return 0;
+                    default:
+                        HandleConnectionLost("event-pump-failed", "recovering");
+                        return 0;
+                }
+            })
+            .GetAwaiter()
+            .GetResult();
     }
 
     public async Task EnsureConnectedAsync(CancellationToken cancellationToken)
@@ -244,6 +277,7 @@ internal sealed class CanonSdkCamera : IDisposable
     )
     {
         CurrentCaptureContext captureContext;
+        CaptureShutterPlan shutterPlan;
 
         lock (_sync)
         {
@@ -280,22 +314,18 @@ internal sealed class CanonSdkCamera : IDisposable
                 DetailCode = "capture-in-flight",
                 RequestId = request.RequestId,
             };
+            shutterPlan = ResolveShutterPlanForNextCaptureLocked();
         }
 
-        var err = EDSDK.EdsSendCommand(
-            _camera,
-            EDSDK.CameraCommand_PressShutterButton,
-            (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
+        var err = await RunOnSdkStaThreadAsync(
+            () =>
+                ExecuteCaptureShutterPlan(
+                    _camera,
+                    shutterPlan.ReleaseCommand,
+                    shutterPlan.PrimeWithHalfway,
+                    allowInternalErrorFallback: true
+                )
         );
-
-        if (err == EDSDK.EDS_ERR_OK)
-        {
-            err = EDSDK.EdsSendCommand(
-                _camera,
-                EDSDK.CameraCommand_PressShutterButton,
-                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF
-            );
-        }
 
         if (err != EDSDK.EDS_ERR_OK)
         {
@@ -498,6 +528,9 @@ internal sealed class CanonSdkCamera : IDisposable
             _sdkInitialized = false;
         }
 
+        _sdkThreadQueue.CompleteAdding();
+        _sdkThread.Join(TimeSpan.FromSeconds(2));
+
         if (_selfHandle.IsAllocated)
         {
             _selfHandle.Free();
@@ -532,6 +565,129 @@ internal sealed class CanonSdkCamera : IDisposable
         return long.TryParse(configured, out var configuredTimeoutMs) && configuredTimeoutMs > 0
             ? TimeSpan.FromMilliseconds(configuredTimeoutMs)
             : DefaultConnectionAttemptTimeout;
+    }
+
+    private uint ExecuteCaptureShutterPlan(
+        IntPtr camera,
+        EDSDK.EdsShutterButton releaseCommand,
+        bool primeWithHalfway,
+        bool allowInternalErrorFallback
+    )
+    {
+        var err = ExecuteCaptureShutterPlanOnce(camera, releaseCommand, primeWithHalfway);
+
+        if (
+            err == EDSDK.EDS_ERR_INTERNAL_ERROR
+            && allowInternalErrorFallback
+            && !(primeWithHalfway && releaseCommand == EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF)
+        )
+        {
+            Thread.Sleep(InternalTriggerRetryHalfPressLead);
+            err = ExecuteCaptureShutterPlanOnce(
+                camera,
+                EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF,
+                primeWithHalfway: true
+            );
+        }
+
+        return err;
+    }
+
+    private uint ExecuteCaptureShutterPlanOnce(
+        IntPtr camera,
+        EDSDK.EdsShutterButton releaseCommand,
+        bool primeWithHalfway
+    )
+    {
+        var issuedHalfwayPrime = false;
+        var attemptedRelease = false;
+        uint err;
+        if (primeWithHalfway)
+        {
+            err = SendCameraCommand(
+                camera,
+                EDSDK.CameraCommand_PressShutterButton,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Halfway
+            );
+            issuedHalfwayPrime = err == EDSDK.EDS_ERR_OK;
+            if (issuedHalfwayPrime)
+            {
+                Thread.Sleep(InternalTriggerRetryHalfPressLead);
+            }
+        }
+        else
+        {
+            err = EDSDK.EDS_ERR_OK;
+        }
+
+        if (err == EDSDK.EDS_ERR_OK)
+        {
+            attemptedRelease = true;
+            err = SendCameraCommand(
+                camera,
+                EDSDK.CameraCommand_PressShutterButton,
+                (int)releaseCommand
+            );
+        }
+
+        if (issuedHalfwayPrime || attemptedRelease)
+        {
+            var offErr = SendCameraCommand(
+                camera,
+                EDSDK.CameraCommand_PressShutterButton,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF
+            );
+            if (err == EDSDK.EDS_ERR_OK)
+            {
+                err = offErr;
+            }
+        }
+
+        return err;
+    }
+
+    private Task<T> RunOnSdkStaThreadAsync<T>(Func<T> work)
+    {
+        if (Thread.CurrentThread.ManagedThreadId == _sdkThreadId)
+        {
+            try
+            {
+                return Task.FromResult(work());
+            }
+            catch (Exception error)
+            {
+                return Task.FromException<T>(error);
+            }
+        }
+
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _sdkThreadQueue.Add(() =>
+        {
+            try
+            {
+                completion.TrySetResult(work());
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
+            }
+        });
+        return completion.Task;
+    }
+
+    private void SdkThreadLoop()
+    {
+        _sdkThreadId = Thread.CurrentThread.ManagedThreadId;
+        foreach (var work in _sdkThreadQueue.GetConsumingEnumerable())
+        {
+            work();
+        }
+    }
+
+    private uint SendCameraCommand(IntPtr camera, uint command, int parameter)
+    {
+        return _sendCommandOverride?.Invoke(camera, command, parameter)
+            ?? EDSDK.EdsSendCommand(camera, command, parameter);
     }
 
     private void FailConnectAttemptAsTimedOut()
@@ -788,12 +944,10 @@ internal sealed class CanonSdkCamera : IDisposable
                     _camera = camera;
                     _sessionOpen = true;
                     _lastKeepAlive = DateTimeOffset.UtcNow;
-                    _snapshot = new CameraSnapshot(
-                        "ready",
-                        "healthy",
-                        "camera-ready",
+                    _snapshot = BuildReadySnapshot(
                         deviceInfo.szDeviceDescription,
-                        _currentCapture?.Request.RequestId
+                        _currentCapture?.Request.RequestId,
+                        DateTimeOffset.UtcNow
                     );
                 }
             }
@@ -842,28 +996,11 @@ internal sealed class CanonSdkCamera : IDisposable
 
     private Task StartConnectTask()
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var connectThread = new Thread(() =>
+        return RunOnSdkStaThreadAsync(() =>
         {
-            try
-            {
-                TryOpenCamera();
-                completion.TrySetResult();
-            }
-            catch (Exception error)
-            {
-                completion.TrySetException(error);
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "canon-helper-connect",
-        };
-
-        connectThread.SetApartmentState(ApartmentState.STA);
-        connectThread.Start();
-
-        return completion.Task;
+            TryOpenCamera();
+            return true;
+        });
     }
 
     internal static bool IsStartupConnectFailureDetailCode(string? detailCode)
@@ -920,7 +1057,11 @@ internal sealed class CanonSdkCamera : IDisposable
             camera = _camera;
         }
 
-        var result = EDSDK.EdsSendCommand(camera, EDSDK.CameraCommand_ExtendShutDownTimer, 0);
+        var result = RunOnSdkStaThreadAsync(
+                () => SendCameraCommand(camera, EDSDK.CameraCommand_ExtendShutDownTimer, 0)
+            )
+            .GetAwaiter()
+            .GetResult();
         if (result == EDSDK.EDS_ERR_OK)
         {
             lock (_sync)
@@ -1566,6 +1707,15 @@ internal sealed class CanonSdkCamera : IDisposable
 
         if (shouldReconnectSession)
         {
+            if (sessionResetRequired)
+            {
+                lock (_sync)
+                {
+                    _delayedReadyNotBeforeAt =
+                        DateTimeOffset.UtcNow + InternalTriggerReconnectReadyWarmup;
+                    _useNonAfShutterOnNextCapture = true;
+                }
+            }
             RecycleSdkIfNeeded();
             ReleaseCamera();
         }
@@ -1640,6 +1790,55 @@ internal sealed class CanonSdkCamera : IDisposable
             _camera = IntPtr.Zero;
             _sessionOpen = false;
         }
+    }
+
+    private CameraSnapshot BuildReadySnapshot(
+        string? cameraModel,
+        string? requestId,
+        DateTimeOffset now
+    )
+    {
+        return now < _delayedReadyNotBeforeAt
+            ? new CameraSnapshot("connected-idle", "healthy", "session-opened", cameraModel, requestId)
+            : new CameraSnapshot("ready", "healthy", "camera-ready", cameraModel, requestId);
+    }
+
+    private CaptureShutterPlan ResolveShutterPlanForNextCaptureLocked()
+    {
+        var shutterPlan = _useNonAfShutterOnNextCapture
+            ? new CaptureShutterPlan(
+                EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF,
+                PrimeWithHalfway: true
+            )
+            : new CaptureShutterPlan(
+                EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely,
+                PrimeWithHalfway: false
+            );
+        _useNonAfShutterOnNextCapture = false;
+        return shutterPlan;
+    }
+
+    private void RefreshDelayedReadyLocked(DateTimeOffset now)
+    {
+        if (
+            !_sessionOpen
+            || _camera == IntPtr.Zero
+            || _snapshot.CameraState == "ready"
+            || _snapshot.DetailCode != "session-opened"
+            || now < _delayedReadyNotBeforeAt
+        )
+        {
+            return;
+        }
+
+        _delayedReadyNotBeforeAt = DateTimeOffset.MinValue;
+        _snapshot = new CameraSnapshot(
+            "ready",
+            "healthy",
+            "camera-ready",
+            _snapshot.CameraModel,
+            _snapshot.RequestId
+        );
     }
 
     private void RecycleSdkIfNeeded()

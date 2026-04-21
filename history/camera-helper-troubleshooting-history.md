@@ -917,3 +917,442 @@ dotnet publish sidecar/canon-helper/src/CanonHelper/CanonHelper.csproj -c Releas
 1. 같은 패턴이 다시 나오기 전까지는 이 조합을 기본 해법으로 유지한다.
 2. 재발 시에는 먼저 새 session evidence가 정말 `capture-download-timeout` 재발인지 확인하고,
    이전과 같은 경로가 아니면 helper completion 원인으로 바로 단정하지 않는다.
+
+## 2026-04-21 18:10 +09:00 추가 정정: latest 반복 실패는 helper readiness가 아니라 `0x00000002` 뒤 stale ready를 너무 빨리 다시 믿던 internal retry 경계였다
+
+- 최신 사용자 재현 세션은 아래 두 건이었다.
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8530ef620c2e0`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8534acda27d04`
+- 두 세션 모두 helper 최종 status는 정상으로 닫혔다.
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `detailCode = camera-ready`
+- 그런데 같은 세션 `camera-helper-events.jsonl`과 `timing-events.log`에는 공통으로 아래 패턴이 남았다.
+  - `capture-accepted`
+  - `helper-error(detailCode=capture-trigger-failed, message=셔터 명령을 보낼 수 없었어요: 0x00000002)`
+  - `request-capture-auto-retry attempt=1`
+  - `request-capture-auto-retry attempt=2`
+- 즉 이번 latest는 startup/connect, parser, render, save 문제군이 아니라,
+  **internal trigger failure 뒤 host auto-retry가 stale ready를 fresh reconnect ready처럼 다시 믿던 경계**로 보는 편이 가장 잘 맞았다.
+
+직접 원인:
+
+- helper는 `0x00000002`를 retryable failure로만 낮추고 있었지만,
+  retry 직전 readiness gate는 "지금 ready처럼 보이는 status"를 충분히 엄격하게 검증하지 못했다.
+- 그 결과 실패 직전 snapshot이나 reconnect 직후 너무 이른 ready를 다시 믿고,
+  실제로는 같은 helper session 조건에서 셔터를 다시 보내는 케이스가 남을 수 있었다.
+- latest 로그에서 약 9초 간격으로 같은 `0x00000002`가 세 번 반복된 패턴은 이 해석과 잘 맞는다.
+
+이번 회차 코드 보정:
+
+- helper는 `capture-trigger-failed(0x00000002)` 뒤 세션 reset이 필요하면 즉시 `camera-ready`를 유지하지 않고,
+  `reconnect-pending` warmup 뒤에만 `camera-ready`로 승격되게 맞췄다.
+- host auto-retry 대기 경계는 이제
+  - 실패 직전 stale ready snapshot을 재사용하지 않고,
+  - reconnect 뒤 실제로 바뀐 status를 먼저 확인하고,
+  - 그 fresh `camera-ready`가 짧게 안정화된 뒤에만 다음 retry를 보낸다.
+- 따라서 같은 latest family라도 retry가 실질적으로 새 helper reconnect 이후에만 이어진다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_waits_for_helper_ready_to_stabilize_before_internal_auto_retry -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_ignores_stale_ready_status_before_reconnect_ready_stabilizes -- --exact`
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj ...`
+  - 이 환경에서는 `sidecar/canon-helper/vendor/canon-edsdk` payload가 비어 있어 실행하지 못했다.
+
+다음 재발 때 판단 기준:
+
+1. latest session helper status가 `ready/healthy/camera-ready`로 닫힌다.
+2. 그런데 `camera-helper-events.jsonl`에는 `capture-trigger-failed(0x00000002)`만 반복된다.
+3. `timing-events.log`에는 `request-capture-auto-retry`가 반복되지만 `file-arrived`는 없다.
+
+이 세 조건이 함께 보이면 helper 연결 자체를 다시 파기보다,
+**retry 전 fresh reconnect ready 검증과 warmup 경계**부터 먼저 보는 편이 빠르다.
+
+## 2026-04-21 21:05 +09:00 추가 정정: latest는 reconnect/warmup 뒤에도 같은 `0x00000002`가 반복됐고, 남은 해법은 retry 첫 셔터를 `NonAF` 경로로 바꾸는 것이었다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85d42ef2ba9bc`
+  였다.
+- 같은 세션 증거는 아래처럼 닫혔다.
+  - `session.json`: `lifecycle.stage = preset-selected`, `captures = []`
+  - `camera-helper-status.json`: 마지막 status는 `ready / healthy / camera-ready`
+  - `camera-helper-events.jsonl`: `capture-accepted -> capture-trigger-failed(0x00000002)`가 3번 반복
+  - `timing-events.log`: `request-capture`, `request-capture-auto-retry attempt=1`, `request-capture-auto-retry attempt=2`, `request-capture`
+  - `camera-helper-startup.log`: 각 실패 뒤 `sdk-initializing -> session-opening -> camera-ready`가 다시 반복
+
+이번에 새로 분리된 사실:
+
+- helper reconnect 자체는 이미 실제로 되고 있었다.
+- host warmup 뒤 auto-retry도 이미 충분히 늦게 들어가고 있었다.
+- 그런데도 새 helper session의 첫 셔터가 계속 같은 `0x00000002`로 실패했다.
+- 따라서 이번 latest는 retry gate 부족이라기보다, **reconnect 뒤 첫 셔터를 보내는 helper의 실제 shutter command mode**를 먼저 보는 편이 맞았다.
+
+로컬 Canon SDK 근거:
+
+- 머신의 `C:\Code\cannon_sdk\...` Canon SDK sample을 확인했다.
+- 일반 `CameraControl` sample은 `Completely -> OFF`를 사용하지만,
+  `Windows\\Sample\\VC\\MultiCamCui`는 실제 Take Picture 경로에서
+  `kEdsCameraCommand_ShutterButton_Completely_NonAF`를 명시적으로 사용한다.
+- 즉 Canon sample 자체도 촬영 경로에서 `AF`와 `NonAF` 두 가지 셔터 command mode를 분리해 둔다.
+
+이번 회차 코드 보정:
+
+- helper는 평상시 첫 촬영은 기존처럼 일반 `Completely` 셔터 command를 유지한다.
+- 대신 `capture-trigger-failed(0x00000002)`로 세션 reset/reconnect가 필요했던 경우,
+  **다음 한 번의 capture만** `Completely_NonAF` shutter command로 보낸다.
+- 그 1회가 지나면 다시 기본 `Completely`로 되돌아간다.
+- 즉 제품 기준으로는 정상 촬영 UX는 유지하되,
+  `0x00000002` 뒤 reconnect된 retry 첫 셔터만 더 보수적인 Canon sample 계열 command로 우회하게 맞춘 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry|Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires|ResolveShutterCommandForNextCaptureLocked_uses_non_af_once_after_internal_trigger_reconnect"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. helper reconnect/warmup 로그가 이미 정상으로 반복된다.
+2. 그런데 reconnect 뒤 첫 셔터도 계속 `0x00000002`로 반복된다.
+3. `capture-accepted`는 남지만 `file-arrived`는 끝까지 없다.
+
+이 세 조건이 함께 보이면 host readiness보다 먼저
+**retry 첫 셔터 command mode(Completely vs Completely_NonAF)**를 보는 편이 빠르다.
+
+## 2026-04-21 21:18 +09:00 추가 정정: latest는 `NonAF`만으로도 부족했고, reconnect 뒤 첫 retry에는 half-press 프라이밍이 같이 필요했다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85dbe93ed1410`
+  였다.
+- 같은 세션 증거는 아래처럼 닫혔다.
+  - `camera-helper-events.jsonl`: `capture-accepted -> capture-trigger-failed(0x00000002)`가 다시 3번 반복
+  - `timing-events.log`: `request-capture`, `request-capture-auto-retry attempt=1`, `request-capture-auto-retry attempt=2`, `request-capture`
+  - `camera-helper-startup.log`: 각 retry 사이에 `session-opening -> connected-idle -> camera-ready`가 다시 반복
+  - 마지막 `camera-helper-status.json`: `ready / healthy / camera-ready`
+- 즉 reconnect, warmup, 그리고 `Completely_NonAF` 한 번 우회까지 들어간 뒤에도
+  **reconnect된 새 helper session의 첫 셔터 자체가 아직 불안정**한 latest였다.
+
+이번에 더 좁혀진 사실:
+
+- host retry gate가 너무 빠르거나 stale ready를 다시 믿는 문제는 이번 latest 핵심이 아니었다.
+- helper reconnect도 실제로 되고 있었다.
+- 남은 병목은 reconnect 직후 첫 retry를 보낼 때,
+  **셔터 command mode뿐 아니라 press sequence 자체에 짧은 프라이밍이 부족했던 경계**로 보는 편이 맞다.
+
+로컬 Canon SDK 근거 보강:
+
+- `C:\Code\cannon_sdk\...\\Windows\\Sample\\VC\\MultiCamCui`는
+  control menu에서 `Press Halfway`, `Press Completely`, `Press Off`를 분리해 둔다.
+- 같은 sample의 `TakePicture(...)`는 실제 release 전에 내부 `PressShutter(...)` 경로를 통해 셔터 상태 전환을 사용한다.
+- 따라서 reconnect 뒤 first retry를 더 안정화하려면
+  `release mode`만 바꾸는 것보다 **짧은 half-press priming + release** 조합이 더 맞는 해법으로 좁혀졌다.
+
+이번 회차 코드 보정:
+
+- helper는 평상시 일반 capture에는 기존처럼 바로 `Completely -> OFF`를 유지한다.
+- 대신 `capture-trigger-failed(0x00000002)` 뒤 reconnect된 **다음 한 번의 retry capture**에 한해
+  1. `Halfway`
+  2. 짧은 150ms priming delay
+  3. `Completely_NonAF`
+  4. `OFF`
+  순서로 셔터를 보낸다.
+- 그 1회가 지나면 다시 기본 capture sequence로 되돌아간다.
+- 제품 기준으로는 정상 촬영 UX를 바꾸지 않고,
+  reconnect 뒤 first retry만 더 보수적인 priming sequence로 보호한 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry|Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires|ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. reconnect/warmup은 정상으로 반복된다.
+2. `Completely_NonAF` 우회 뒤에도 same `0x00000002`가 반복된다.
+3. 마지막 helper status는 여전히 `camera-ready`로 닫힌다.
+
+이 세 조건이 함께 보이면 host 쪽보다 먼저
+**retry 첫 셔터의 priming sequence(half-press + delay + release)**를 보는 편이 빠르다.
+
+## 2026-04-21 21:24 +09:00 추가 정정: latest는 host retry 이전에 같은 request 안에서 local shutter fallback이 한 번 더 필요했다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85e07c63924b0`
+  였다.
+- 같은 세션 evidence는 아래처럼 닫혔다.
+  - `camera-helper-events.jsonl`: `capture-accepted -> capture-trigger-failed(0x00000002)`가 다시 3번 반복
+  - `camera-helper-requests.jsonl`: request 3건이 모두 helper에 정상 소비됨
+  - `camera-helper-startup.log`: 각 failure 뒤 `session-opening -> connected-idle -> camera-ready`가 다시 반복
+  - 마지막 `camera-helper-status.json`: `ready / healthy / camera-ready`
+- 즉 latest는
+  - request consumption stall 아님
+  - reconnect / warmup failure 아님
+  - final status stale 아님
+  이 모두가 다시 확인됐다.
+
+이번에 더 좁혀진 사실:
+
+- 이전 회차에서 넣은 `NonAF` retry 1회와 half-press priming도,
+  **host가 request를 새로 써서 다시 보내는 retry 레벨**에서는 충분하지 않았다.
+- latest evidence는 아예 같은 request 안쪽에서 첫 release command가 깨지고,
+  그 결과 매번 host-level retry까지 올라가는 쪽으로 읽는 편이 맞았다.
+- 따라서 이번 남은 해법은 host retry budget을 더 건드리는 것이 아니라,
+  **helper가 같은 request 안에서 local shutter fallback을 한 번 더 소화**하게 하는 것이었다.
+
+이번 회차 코드 보정:
+
+- helper capture path는 이제 shutter release가 `0x00000002`로 실패하면
+  세션 전체를 바로 실패로 넘기기 전에,
+  같은 request 안에서 한 번 더 아래 fallback을 시도한다.
+  1. `OFF`
+  2. `Halfway`
+  3. 짧은 priming delay
+  4. `Completely_NonAF`
+  5. `OFF`
+- 이 local fallback이 성공하면 host는 같은 request를 성공 경로로 계속 처리한다.
+- local fallback까지 실패한 경우에만 기존처럼 helper reconnect + host auto-retry로 넘어간다.
+- 제품 기준으로는 “같은 고장 request를 세션 재시도로만 넘기던 흐름”을 줄이고,
+  helper가 내부에서 한 번 더 흡수할 기회를 갖게 한 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry|Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires|ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect|ExecuteCaptureShutterPlanAsync_retries_internal_trigger_failure_once_with_half_press_non_af_plan"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. helper가 request는 정상 소비한다.
+2. reconnect/warmup도 정상으로 반복된다.
+3. 그런데 `capture-trigger-failed(0x00000002)`가 계속 host auto-retry까지 올라간다.
+
+이 세 조건이 함께 보이면 host gating보다 먼저
+**same-request local shutter fallback 실행 여부**를 보는 편이 빠르다.
+
+## 2026-04-21 21:36 +09:00 추가 정정: latest에서 남은 직접 원인은 capture command가 async loop 재개 thread(MTA)로 흘렀을 가능성이 더 높았다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85f2d0398c5ec`
+  였다.
+- 같은 세션 증거는 아래처럼 닫혔다.
+  - `camera-helper-requests.jsonl`: request 3건 모두 helper가 소비
+  - `camera-helper-events.jsonl`: 각 request마다 `capture-accepted -> capture-trigger-failed(0x00000002)`
+  - `camera-helper-startup.log`: 각 실패 뒤 `session-opening -> connected-idle -> camera-ready`가 다시 반복
+  - 마지막 `camera-helper-status.json`: `ready / healthy / camera-ready`
+  - `captures/originals`, `captures/preview`: 끝까지 비어 있음
+
+이번에 확정된 해석:
+
+- request consumption stall 아님
+- helper reconnect/warmup failure 아님
+- status stale / parser / render failure 아님
+- same-request local fallback도 product symptom을 닫지 못함
+
+여기서 남은 가장 직접적인 차이는 **capture command가 어떤 thread/apartment에서 실행되느냐**였다.
+
+근거:
+
+- 과거 `camera-connect-timeout` 회차에서도,
+  helper runtime이 self-check와 다른 thread 문맥으로 camera open을 실행할 때만 실패가 재현됐고
+  전용 STA worker로 옮기자 닫힌 이력이 있었다.
+- 현재 helper `Program.Main`은 `[STAThread]`지만,
+  `CanonHelperService.RunAsync`는 여러 `await` 뒤 threadpool thread에서 재개될 수 있다.
+- 따라서 connect/open은 별도 STA worker에서 성공해도,
+  capture request를 소비한 뒤 실제 `EdsSendCommand(PressShutterButton, ...)`는
+  async loop가 재개된 MTA 문맥에서 실행될 수 있다.
+- latest처럼 connect/open/readiness는 모두 정상인데
+  **셔터 명령만 매번 `0x00000002`로 반복**되는 증거와 가장 잘 맞는 해석은 이 capture thread 문맥 차이다.
+
+이번 회차 코드 보정:
+
+- helper capture shutter plan은 이제 async loop thread에서 직접 실행하지 않고,
+  **전용 STA background thread**에서만 실행한다.
+- same-request local fallback도 그 STA worker 안에서 함께 수행된다.
+- 따라서 제품 기준으로는
+  - startup connect/open은 기존처럼 STA,
+  - capture shutter command도 이제 STA
+  로 맞춰, 같은 Canon SDK command family가 서로 다른 apartment로 흩어지지 않게 했다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry|Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires|ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect|ExecuteCaptureShutterPlan_retries_internal_trigger_failure_once_with_half_press_non_af_plan|RunOnStaThreadAsync_runs_capture_work_on_sta_thread|EnsureConnectedAsync_runs_the_connect_attempt_on_an_sta_thread"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. connect/open과 helper reconnect는 정상으로 닫힌다.
+2. helper request consumption도 정상이다.
+3. 그런데 셔터 명령만 `0x00000002`로 반복된다.
+
+이 세 조건이 함께 보이면 shutter mode 조정보다 먼저
+**capture command apartment(STA/MTA) 경계**를 보는 편이 빠르다.
+
+## 2026-04-21 21:44 +09:00 추가 정정: latest는 capture가 STA여도 connect/open과 다른 STA thread면 충분하지 않았고, Canon SDK 호출을 단일 STA worker로 모아야 했다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85f79704ae9bc`
+  가 아니라, 방금 직전 latest로 확인한
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85f2d0398c5ec`
+  패턴과 동일 family를 이어서 봤다.
+- latest family 공통 증거는 아래처럼 유지됐다.
+  - request consumption 정상
+  - reconnect/warmup 정상
+  - 마지막 helper status는 `camera-ready`
+  - 그런데 셔터 명령만 `0x00000002` 반복
+
+이번에 더 좁혀진 사실:
+
+- 직전 회차 보강으로 capture shutter plan을 별도 STA thread로 보낸 방향 자체는 맞았다.
+- 하지만 latest evidence는 그것만으로는 부족했고,
+  **connect/open이 카메라 세션을 만든 STA thread와 capture가 실행되는 STA thread가 서로 달라질 수 있다는 점**이 남아 있었다.
+- Canon SDK가 session/open과 subsequent command의 thread affinity에 민감하다면,
+  “둘 다 STA”여도 “서로 다른 STA”면 latest symptom이 계속 남을 수 있다.
+
+이번 회차 코드 보정:
+
+- helper는 이제 Canon SDK 호출을
+  - connect/open
+  - capture shutter plan
+  - pump events
+  - keep-alive
+  에서 각각 임시 thread로 띄우지 않고,
+  **단일 전용 STA worker thread**를 공유하도록 맞췄다.
+- 따라서 connect/open과 capture command가 같은 apartment, 같은 worker 문맥에서 실행된다.
+- 제품 기준으로는 “카메라가 열리는 thread”와 “셔터를 누르는 thread”를 다시 하나로 맞춘 것이다.
+
+검증:
+
+- `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "BuildCaptureTriggerException_treats_internal_error_as_retryable_without_recovery|ClearCaptureContext_restores_camera_ready_after_retryable_failure|ClearCaptureContext_marks_internal_trigger_failure_for_reconnect_before_retry|Snapshot_delays_ready_promotion_until_internal_trigger_reconnect_warmup_expires|ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect|ExecuteCaptureShutterPlan_retries_internal_trigger_failure_once_with_half_press_non_af_plan|RunOnSdkStaThreadAsync_runs_capture_work_on_sta_thread|RunOnSdkStaThreadAsync_reuses_the_same_sta_thread_across_calls|EnsureConnectedAsync_runs_the_connect_attempt_on_an_sta_thread"`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_once -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_auto_retries_the_first_internal_trigger_failure_twice_before_escalating -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. connect/open은 STA로 정상
+2. capture도 STA로 보냈는데도 same `0x00000002`가 남는다
+3. session-open과 shutter command가 서로 다른 worker일 여지가 있다
+
+이 세 조건이 함께 보이면
+**“capture를 STA로 보냈다”는 사실만 보지 말고, connect/open과 capture가 같은 STA worker를 공유하는지**를 먼저 보는 편이 빠르다.
+
+## 2026-04-21 21:53 +09:00 추가 정정: latest는 더 이상 capture 실패 family가 아니었고, 저장 뒤 `preview-render-failed`가 나도 same-capture preview로 세션 close를 끝내야 했다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a85fc8034663c4`
+  였다.
+- 이번 latest는 이전 `0x00000002` family와 달리 capture 자체는 정상으로 닫혔다.
+  - `camera-helper-events.jsonl`: `capture-accepted -> file-arrived -> fast-preview-ready`
+  - `session.json`: `captures[0].raw.assetPath` 존재
+  - `renders\previews\capture_20260421124255823_efa88ef5f6.jpg` 실제 존재
+- 하지만 같은 세션 `diagnostics/timing-events.log`에는 아래가 남았다.
+  - `fast-preview-promoted kind=legacy-canonical-scan`
+  - `preview-render-start`
+  - `preview-render-start`
+  - `preview-render-failed reason=render-process-failed`
+  - `preview-render-failed reason=render-process-failed`
+- 즉 이번 latest의 직접 문제는
+  **카메라가 저장을 못 하는 것**이 아니라,
+  저장 뒤 preset refinement render가 실패했을 때 host가 이미 확보한 same-capture preview로 제품 close를 끝내지 못하고
+  `previewWaiting`에 남던 경계였다.
+
+이번 회차 코드 보정:
+
+- RAW refinement render가 실패하더라도,
+  현재 capture에 대해 이미 displayable same-capture preview가 확보돼 있으면
+  host는 그 preview를 그대로 ready close로 승격한다.
+- 이 fallback close는 preview kind를 거짓으로 `preset-applied-preview`라 주장하지 않고,
+  실제 확보된 kind(`legacy-canonical-scan`, `windows-shell-thumbnail` 등)를 유지한다.
+- 따라서 제품 기준으로는
+  capture 저장 성공 뒤 darktable refinement가 깨져도
+  고객 화면이 `Preview Waiting`에 고착되지 않고,
+  이미 확보된 같은 촬영 미리보기로 정상 close를 유지한다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_closes_with_existing_same_capture_preview_when_raw_refinement_fails -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_direct_close_reuses_existing_same_capture_preview_as_preset_applied_owner -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. `file-arrived`와 실제 RAW 저장은 정상으로 닫힌다.
+2. same-capture preview JPG도 이미 세션 폴더에 있다.
+3. 그런데 `preview-render-failed reason=render-process-failed` 뒤 세션이 계속 `previewWaiting`에 남는다.
+
+이 세 조건이 함께 보이면 camera/helper보다 먼저
+**render failure 뒤 existing same-capture preview를 ready close로 승격하는 fallback 경계**를 보는 편이 빠르다.
+
+## 2026-04-21 22:03 +09:00 추가 정정: latest는 5컷 모두 실제로 닫혔고, 남은 문제는 speculative output을 host가 너무 빨리 가져가며 생긴 늦은 `render-output-missing` 잡음이었다
+
+- 최신 사용자 재현 세션은
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8607f6a1662a4`
+  였다.
+- 이번 latest는 실제 제품 결과가 이전보다 더 좋아졌다.
+  - `session.json` 기준 5컷 모두 `renderStatus = previewReady`
+  - 5컷 모두 `preview.kind = preset-applied-preview`
+  - helper 최종 status도 `ready / healthy / camera-ready`
+- 즉 고객이 보게 되는 저장/preview close 자체는 이미 정상으로 닫혔다.
+
+하지만 같은 세션 `diagnostics/timing-events.log`에는 매 컷 뒤 아래 잡음이 남았다.
+
+- `preview-render-start`
+- `preview-render-ready`
+- 바로 다음 request 근처에서 같은 capture에 대해
+  `preview-render-failed reason=render-output-missing`
+
+이번에 더 좁혀진 사실:
+
+- 이 `render-output-missing`은 실제 고객 실패가 아니었다.
+- speculative first-visible output이 생성되자 host가 그것을 canonical preview로 너무 빨리 promote했고,
+  resident worker는 아직 detail 기록/마무리를 끝내기 전이라
+  자기 output path가 사라졌다고 보고 `render-output-missing`를 늦게 남길 수 있었다.
+- 같은 latest에서 `preview-render-ready` detail이
+  `presetId=unknown;publishedVersion=unknown`
+  으로 남은 것도, host가 detail file이 준비되기 전에 speculative output을 가져갔다는 증거와 잘 맞았다.
+
+이번 회차 코드 보정:
+
+- host는 이제 speculative preview output 파일이 보여도
+  worker lock이 아직 살아 있고 detail file도 아직 없으면,
+  그 output을 바로 promote하지 않고 잠깐 더 기다린다.
+- 즉 resident worker가 detail 기록과 마무리를 끝낸 뒤에만
+  speculative output을 canonical preview로 승격한다.
+- 제품 기준으로는
+  이미 정상 close된 컷에 대해 뒤늦은 `preview-render-failed` 잡음이 붙지 않게 하고,
+  `preview-render-ready` detail도 실제 preset-applied evidence로 더 정확하게 남기게 맞춘 것이다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_waits_for_speculative_detail_before_promoting_output -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_treats_a_finished_speculative_preview_as_preview_ready -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_still_avoids_a_duplicate_render_while_speculative_close_is_active -- --exact`
+
+다음 재발 때 판단 기준:
+
+1. `session.json`은 이미 `previewReady`로 정상 종료된다.
+2. 그런데 `timing-events.log`에는 같은 capture에 대해 `preview-render-ready` 뒤 `preview-render-failed reason=render-output-missing`가 늦게 붙는다.
+3. `preview-render-ready` detail이 `unknown` placeholder로 남는다.
+
+이 세 조건이 함께 보이면 실제 고객 실패로 보기보다 먼저
+**speculative output promote 시점이 worker detail/lock 정리보다 앞선 race**를 보는 편이 빠르다.
+
+## 2026-04-21 회차 압축 정리
+
+이번 회차 전체를 에이전트가 다시 빠르게 따라가야 하면
+chronology를 처음부터 읽기보다 아래 압축 문서를 먼저 연다.
+
+- [camera-status-troubleshooting-playbook.md](./camera-status-troubleshooting-playbook.md)
+
+이 문서는 이번 회차의
+
+- 문제 family 분리
+- 실제 원인
+- 좁혀 간 과정
+- 최종적으로 통했던 방법
+- 재발 시 분기 규칙
+
+만 압축해 둔 탐구 문서다.

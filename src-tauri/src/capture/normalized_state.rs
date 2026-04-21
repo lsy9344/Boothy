@@ -15,8 +15,7 @@ use crate::{
         },
         sidecar_client::{
             is_retryable_capture_helper_error, latest_helper_status_is_fresh,
-            map_capture_round_trip_error,
-            read_capture_event_count, read_capture_request_messages,
+            map_capture_round_trip_error, read_capture_event_count, read_capture_request_messages,
             read_latest_helper_error_message, read_latest_status_message,
             read_processed_capture_request_ids, wait_for_capture_round_trip,
             write_capture_request_message, CanonHelperCaptureRequestMessage,
@@ -58,7 +57,7 @@ const FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_DELAY_MS: u64 = 2000;
 const FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_MAX_RETRIES: u8 = 2;
 const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_TIMEOUT_MS: u64 = 4000;
 const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_WAIT_POLL_MS: u64 = 50;
-const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS: u64 = 1500;
+const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS: u64 = 8000;
 const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_TIMEOUT_MS: u64 = 4000;
 const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_POLL_MS: u64 = 50;
 static CAPTURE_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -384,36 +383,63 @@ fn wait_for_internal_trigger_retry_helper_ready(base_dir: &Path, session_id: &st
                 + FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS,
         ))
         .unwrap_or(SystemTime::now());
+    let baseline_status = read_latest_status_message(base_dir, session_id)
+        .ok()
+        .flatten();
+    let latest_helper_error_observed_at = read_latest_helper_error_message(base_dir, session_id)
+        .ok()
+        .flatten()
+        .and_then(|message| message.observed_at);
+    let mut observed_post_failure_status_change = false;
     let mut ready_started_at = None;
 
     loop {
-        let ready_now = read_latest_status_message(base_dir, session_id)
+        let latest_status = read_latest_status_message(base_dir, session_id)
             .ok()
-            .flatten()
-            .is_some_and(|status| {
-                status.session_id == session_id
-                    && status.camera_state == "ready"
-                    && status.helper_state == "healthy"
-                    && status
-                        .detail_code
-                        .as_deref()
-                        .map(|detail_code| detail_code == "camera-ready")
-                        .unwrap_or(true)
-            });
+            .flatten();
         let now = SystemTime::now();
 
-        if ready_now {
-            let ready_started = ready_started_at.get_or_insert(now);
-            if now
-                .duration_since(*ready_started)
-                .unwrap_or_default()
-                .as_millis()
-                >= u128::from(FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS)
-            {
-                return;
+        match latest_status {
+            Some(status) => {
+                let status_changed_since_failure =
+                    baseline_status.as_ref().map_or(true, |baseline| {
+                        helper_status_changed_since(baseline, &status)
+                    });
+                let ready_now = is_helper_camera_ready(&status);
+                let baseline_ready_is_after_failure = ready_now
+                    && !status_changed_since_failure
+                    && latest_helper_error_observed_at
+                        .as_deref()
+                        .is_some_and(|observed_at| {
+                            helper_timestamp_is_after(&status.observed_at, observed_at)
+                        });
+
+                if status_changed_since_failure && !ready_now {
+                    observed_post_failure_status_change = true;
+                    ready_started_at = None;
+                }
+
+                if ready_now
+                    && (observed_post_failure_status_change
+                        || status_changed_since_failure
+                        || baseline_ready_is_after_failure)
+                {
+                    let ready_started = ready_started_at.get_or_insert(now);
+                    if now
+                        .duration_since(*ready_started)
+                        .unwrap_or_default()
+                        .as_millis()
+                        >= u128::from(FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS)
+                    {
+                        return;
+                    }
+                } else if !ready_now {
+                    ready_started_at = None;
+                }
             }
-        } else {
-            ready_started_at = None;
+            None => {
+                ready_started_at = None;
+            }
         }
 
         if now >= deadline {
@@ -428,6 +454,40 @@ fn wait_for_internal_trigger_retry_helper_ready(base_dir: &Path, session_id: &st
     thread::sleep(Duration::from_millis(
         FIRST_CAPTURE_INTERNAL_TRIGGER_AUTO_RETRY_DELAY_MS,
     ));
+}
+
+fn helper_status_changed_since(
+    baseline: &CanonHelperStatusMessage,
+    latest: &CanonHelperStatusMessage,
+) -> bool {
+    baseline.sequence != latest.sequence
+        || baseline.observed_at != latest.observed_at
+        || baseline.camera_state != latest.camera_state
+        || baseline.helper_state != latest.helper_state
+        || baseline.detail_code != latest.detail_code
+        || baseline.request_id != latest.request_id
+}
+
+fn helper_timestamp_is_after(candidate: &str, baseline: &str) -> bool {
+    let Ok(candidate_seconds) = rfc3339_to_unix_seconds(candidate) else {
+        return candidate > baseline;
+    };
+    let Ok(baseline_seconds) = rfc3339_to_unix_seconds(baseline) else {
+        return candidate > baseline;
+    };
+
+    candidate_seconds > baseline_seconds
+        || (candidate_seconds == baseline_seconds && candidate > baseline)
+}
+
+fn is_helper_camera_ready(status: &CanonHelperStatusMessage) -> bool {
+    status.camera_state == "ready"
+        && status.helper_state == "healthy"
+        && status
+            .detail_code
+            .as_deref()
+            .map(|detail_code| detail_code == "camera-ready")
+            .unwrap_or(true)
 }
 
 fn should_retry_capture_timeout_after_helper_restart(
@@ -853,8 +913,7 @@ pub fn normalize_capture_readiness(
     let latest_capture = manifest.captures.last().cloned();
     let timing_phase = timing_phase(timing.as_ref());
     let live_capture_truth = project_live_capture_truth(base_dir, manifest);
-    let live_camera_gate =
-        apply_initial_capture_ready_stabilization(manifest, &live_capture_truth);
+    let live_camera_gate = apply_initial_capture_ready_stabilization(manifest, &live_capture_truth);
     let post_end = if timing_phase == TimingPhase::Ended
         && matches!(
             manifest.lifecycle.stage.as_str(),
@@ -1228,12 +1287,7 @@ fn project_live_capture_truth_from_status(
     let camera_state = normalize_live_camera_state(&status.camera_state);
     let helper_state = normalize_live_helper_state(&status.helper_state);
     let startup_oscillation_failure = session_match == "matched"
-        && is_fresh_startup_oscillation_failure(
-            manifest,
-            &status,
-            camera_state,
-            helper_state,
-        );
+        && is_fresh_startup_oscillation_failure(manifest, &status, camera_state, helper_state);
     let stale_startup_failure = freshness != "fresh"
         && session_match == "matched"
         && is_stale_startup_status(camera_state, helper_state, status.detail_code.as_deref());
@@ -1306,10 +1360,7 @@ fn is_startup_family_status(
     matches!(
         detail_code,
         Some(
-            "helper-starting"
-                | "sdk-initializing"
-                | "session-opening"
-                | "windows-device-detected"
+            "helper-starting" | "sdk-initializing" | "session-opening" | "windows-device-detected"
         )
     ) || (helper_state == "starting" && camera_state == "connecting")
 }
