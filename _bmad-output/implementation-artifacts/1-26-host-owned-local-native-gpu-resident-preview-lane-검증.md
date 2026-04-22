@@ -81,6 +81,12 @@ booth customer로서,
   - [x] official gate, correctness, truth ownership을 ledger에 기록한다.
   - [x] 결과에 따라 `Go` 또는 bounded `No-Go`를 선언한다.
 
+### Review Findings
+
+- [ ] [Review][Patch] `capture-in-flight` helper restart가 45초가 아니라 약 5초 stale 상태에서 readiness poll로 먼저 발동됨 [src-tauri/src/capture/normalized_state.rs:927]
+- [ ] [Review][Patch] 저장된 capture가 없는 `phone-required` 세션이 processed request evidence만으로 광범위하게 `capture-ready`로 복구될 수 있음 [src-tauri/src/capture/normalized_state.rs:891]
+- [ ] [Review][Patch] `fast-preview-ready` 이벤트가 파일보다 먼저 기록되면 첫 매칭 메시지에서 대기를 끝내 metadata handoff를 놓칠 수 있음 [src-tauri/src/capture/sidecar_client.rs:518]
+
 ## Dev Notes
 
 ### 스토리 범위와 목적

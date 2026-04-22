@@ -515,6 +515,36 @@ where
     }
 }
 
+pub fn wait_for_matching_fast_preview_ready_message(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    timeout_ms: u64,
+) -> Result<Option<CanonHelperFastPreviewReadyMessage>, SidecarClientError> {
+    let deadline = current_time_ms()
+        .map_err(|_| SidecarClientError::CaptureTimedOut)?
+        .saturating_add(timeout_ms);
+
+    loop {
+        if let Some(message) = find_matching_fast_preview_ready_message(
+            base_dir,
+            session_id,
+            request_id,
+            capture_id,
+        )? {
+            return Ok(Some(message));
+        }
+
+        let now_ms = current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
+        if now_ms >= deadline {
+            return Ok(None);
+        }
+
+        thread::sleep(Duration::from_millis(CAPTURE_EVENT_POLL_INTERVAL_MS));
+    }
+}
+
 pub fn map_capture_round_trip_error(
     session_id: &str,
     error: SidecarClientError,
@@ -650,6 +680,26 @@ fn parse_capture_event(line: &str) -> Result<CanonHelperEvent, SidecarClientErro
             .map_err(|_| SidecarClientError::InvalidEvents),
         _ => Err(SidecarClientError::InvalidEvents),
     }
+}
+
+fn find_matching_fast_preview_ready_message(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+) -> Result<Option<CanonHelperFastPreviewReadyMessage>, SidecarClientError> {
+    let events = read_capture_event_messages(base_dir, session_id)?;
+
+    Ok(events.into_iter().rev().find_map(|event| match event {
+        CanonHelperEvent::FastPreviewReady(message)
+            if message.session_id == session_id
+                && message.request_id == request_id
+                && message.capture_id == capture_id =>
+        {
+            Some(message)
+        }
+        _ => None,
+    }))
 }
 
 fn validate_arrived_raw_path(

@@ -186,6 +186,7 @@ canonical reading order:
 
 - date: `2026-04-22`
 - files updated:
+  - `src-tauri/src/capture/normalized_state.rs`
   - `src-tauri/src/commands/capture_commands.rs`
   - `src-tauri/src/render/mod.rs`
   - `src-tauri/src/capture/ingest_pipeline.rs`
@@ -204,6 +205,27 @@ canonical reading order:
   - latest relaunch capture session `session_000000000018a89961df9c18a0`에서도
     first shot direct metric은 `3820ms / 3877ms`로 latest reject family의 cold spike 없이 닫혔다.
   - 따라서 preview prime scheduling race 보강은 latest rerun에서도 계속 효과가 있었던 것으로 읽는 편이 맞다.
+  - latest session helper log는 `fast-preview-ready fastPreviewKind=windows-shell-thumbnail`를 남겼는데도,
+    persist 단계에서는 canonical preview를 다시 `legacy-canonical-scan`으로 읽어
+    host-owned early preview metadata를 잃고 있었다.
+  - current worktree는 helper `fast-preview-ready`가 먼저 도착한 경우
+    그 `kind`와 `visibleAtMs`를 manifest까지 그대로 보존하고,
+    `windows-shell-thumbnail` 같은 host-owned same-capture source에서는
+    `file-arrived` 이후 seed를 기다리지 않고 reserve close를 바로 시작하게 보강했다.
+  - targeted regression `early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_file_arrival_metadata`
+    와 full `capture_readiness` suite는 모두 통과했다.
+  - 그 뒤 latest 실행 세션 `session_000000000018a89b380d42939c`는 preview latency family가 아니었다.
+    `timing-events.log`는 `request-capture`까지만 남았고,
+    helper status는 오래된 `cameraState=capturing / helperState=healthy / detailCode=capture-in-flight`
+    에 멈췄으며,
+    `camera-helper-processed-request-ids.txt`에는 해당 request id가 남아 있었다.
+  - current worktree는 이 accepted-only stall을 별도 family로 취급해,
+    stale `capture-in-flight` helper status는 약 `45s` 이후 restart 대상에 포함하고,
+    저장된 capture가 없는 `phone-required` 세션도
+    processed request evidence가 있을 때만 helper ready 복구 뒤 `capture-ready`로 되돌리게 보강했다.
+  - targeted regression `readiness_releases_phone_required_without_saved_capture_once_helper_is_ready_again`,
+    helper unit `stale_capture_in_flight_status_requests_a_helper_restart`,
+    full `capture_readiness` suite는 모두 통과했다.
   - 반면 5컷 전체가 여전히 `preview-render-ready 3.4s ~ 3.9s`,
     `originalVisibleToPresetAppliedVisibleMs 3.4s ~ 3.9s`
     에 머물러 남은 blocker는 steady-state truthful-close latency다.

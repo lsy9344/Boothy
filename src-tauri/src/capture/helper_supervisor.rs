@@ -27,6 +27,7 @@ const HELPER_POLL_INTERVAL_MS: &str = "250";
 const HELPER_STATUS_INTERVAL_MS: &str = "250";
 const HELPER_STARTUP_PROBE_DELAY_MS: Duration = Duration::from_millis(200);
 const HELPER_CONNECT_STALL_RESTART_AFTER_SECONDS: u64 = 20;
+const HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS: u64 = 45;
 const HELPER_STARTUP_RESTART_WINDOW: Duration = Duration::from_secs(20);
 const HELPER_STARTUP_RESTART_LIMIT: usize = 1;
 const HELPER_STARTUP_REPEATED_STATUS_FAST_FAIL_AFTER: Duration = Duration::from_secs(3);
@@ -534,6 +535,15 @@ fn helper_status_requests_restart(base_dir: &Path, session_id: &str) -> bool {
 }
 
 fn helper_status_restart_detail_code(status: &CanonHelperStatusMessage) -> Option<&'static str> {
+    if status.camera_state == "capturing"
+        && status.helper_state == "healthy"
+        && status.detail_code.as_deref() == Some("capture-in-flight")
+        && helper_status_age_seconds(status)
+            .is_some_and(|age| age >= HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS)
+    {
+        return Some("capture-in-flight-timeout");
+    }
+
     if status.camera_state == "error" && status.helper_state == "error" {
         return match status.detail_code.as_deref() {
             Some("camera-connect-timeout") => Some("camera-connect-timeout"),
@@ -544,6 +554,13 @@ fn helper_status_restart_detail_code(status: &CanonHelperStatusMessage) -> Optio
     }
 
     None
+}
+
+fn helper_status_age_seconds(status: &CanonHelperStatusMessage) -> Option<u64> {
+    let observed_at_seconds = rfc3339_to_unix_seconds(&status.observed_at).ok()?;
+    let now_duration = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+
+    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
 }
 
 fn startup_phase_stall_detail_code(
@@ -994,6 +1011,43 @@ mod tests {
         assert!(!helper_status_requests_restart(&base_dir, session_id));
 
         let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn stale_capture_in_flight_status_requests_a_helper_restart() {
+        let session_id = "session_00000000000000000000000002";
+        let stale_status = CanonHelperStatusMessage {
+            schema_version: CANON_HELPER_STATUS_SCHEMA_VERSION.into(),
+            message_type: Some("camera-status".into()),
+            session_id: session_id.into(),
+            sequence: Some(24),
+            observed_at: current_timestamp(
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(
+                        HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS + 1,
+                    ))
+                    .expect("stale capture-in-flight timestamp should compute"),
+            )
+            .expect("helper timestamp should serialize"),
+            camera_state: "capturing".into(),
+            helper_state: "healthy".into(),
+            camera_model: Some("Canon EOS 700D".into()),
+            request_id: Some("request_stalled".into()),
+            detail_code: Some("capture-in-flight".into()),
+        };
+
+        assert_eq!(
+            helper_status_restart_detail_code(&stale_status),
+            Some("capture-in-flight-timeout")
+        );
+
+        let fresh_status = CanonHelperStatusMessage {
+            observed_at: current_timestamp(SystemTime::now())
+                .expect("fresh helper timestamp should serialize"),
+            ..stale_status
+        };
+
+        assert_eq!(helper_status_restart_detail_code(&fresh_status), None);
     }
 
     #[test]

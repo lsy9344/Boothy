@@ -78,6 +78,7 @@ pub fn persist_capture_in_dir(
     request_id: String,
     raw_asset_path: String,
     fast_preview: Option<CompletedCaptureFastPreview>,
+    early_fast_preview_update: Option<&FastPreviewReadyUpdate>,
     acknowledged_at_ms: u64,
     persisted_at_ms: u64,
 ) -> Result<
@@ -117,7 +118,17 @@ pub fn persist_capture_in_dir(
             handoff,
         )
     });
-    let seeded_fast_preview = if promoted_fast_preview.is_none() {
+    let reused_early_fast_preview = if promoted_fast_preview.is_none() {
+        reuse_early_fast_preview_update(
+            &paths,
+            &capture.capture_id,
+            &capture.request_id,
+            early_fast_preview_update,
+        )
+    } else {
+        None
+    };
+    let seeded_fast_preview = if promoted_fast_preview.is_none() && reused_early_fast_preview.is_none() {
         seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
     } else {
         None
@@ -127,6 +138,10 @@ pub fn persist_capture_in_dir(
         capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
         capture.preview.kind = promoted_fast_preview.kind.clone();
         capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
+    } else if let Some(ref early_fast_preview) = reused_early_fast_preview {
+        capture.preview.asset_path = Some(early_fast_preview.asset_path.clone());
+        capture.preview.kind = early_fast_preview.kind.clone();
+        capture.timing.fast_preview_visible_at_ms = early_fast_preview.visible_at_ms;
     } else if let Some(ref seed_result) = seeded_fast_preview {
         // If helper handoff metadata is missing or invalid but the same-capture
         // preview file already exists on disk, keep the fast-path alive.
@@ -137,10 +152,12 @@ pub fn persist_capture_in_dir(
 
     let promoted_fast_preview_kind = promoted_fast_preview
         .as_ref()
+        .or(reused_early_fast_preview.as_ref())
         .or(seeded_fast_preview.as_ref())
         .and_then(|promoted| promoted.kind.as_deref());
     let truthful_fast_preview_ready_at_ms = promoted_fast_preview
         .as_ref()
+        .or(reused_early_fast_preview.as_ref())
         .or(seeded_fast_preview.as_ref())
         .and_then(|promoted| promoted.visible_at_ms)
         .or(Some(persisted_at_ms))
@@ -406,6 +423,45 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
         }
         let _ = fs::remove_file(&speculative_lock_path);
     });
+}
+
+pub fn reconcile_saved_capture_fast_preview_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    update: &FastPreviewReadyUpdate,
+) -> Result<Option<SessionCaptureRecord>, HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, session_id)?;
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let Some(capture_index) = manifest
+        .captures
+        .iter_mut()
+        .position(|capture| capture.capture_id == capture_id && capture.request_id == update.request_id)
+    else {
+        return Ok(None);
+    };
+    let capture = manifest
+        .captures
+        .get_mut(capture_index)
+        .expect("capture index should stay valid");
+
+    if capture.preview.ready_at_ms.is_some()
+        || is_truthful_fast_preview_kind(capture.preview.kind.as_deref())
+    {
+        return Ok(Some(capture.clone()));
+    }
+
+    capture.preview.asset_path = Some(update.asset_path.clone());
+    capture.preview.kind = update.kind.clone();
+    capture.timing.fast_preview_visible_at_ms = Some(update.visible_at_ms);
+    manifest.updated_at = current_timestamp(SystemTime::now())?;
+    let capture_snapshot = capture.clone();
+    write_session_manifest(&paths.manifest_path, &manifest)?;
+
+    Ok(Some(capture_snapshot))
 }
 
 pub fn complete_preview_render_in_dir(
@@ -1544,6 +1600,32 @@ fn seed_pending_preview_asset_path(
     })
 }
 
+fn reuse_early_fast_preview_update(
+    paths: &SessionPaths,
+    capture_id: &str,
+    request_id: &str,
+    update: Option<&FastPreviewReadyUpdate>,
+) -> Option<FastPreviewPromotionResult> {
+    let update = update?;
+    if update.capture_id != capture_id || update.request_id != request_id {
+        return None;
+    }
+
+    let candidate_path = PathBuf::from(&update.asset_path);
+    if !candidate_path.is_file()
+        || !is_session_scoped_asset_path(paths, &candidate_path)
+        || !is_valid_render_preview_asset(&candidate_path)
+    {
+        return None;
+    }
+
+    Some(FastPreviewPromotionResult {
+        asset_path: update.asset_path.clone(),
+        kind: update.kind.clone(),
+        visible_at_ms: Some(update.visible_at_ms),
+    })
+}
+
 fn seed_truthful_fast_preview_asset_path(
     paths: &SessionPaths,
     capture_id: &str,
@@ -1720,7 +1802,7 @@ fn promote_fast_preview_asset(
     })
 }
 
-fn should_start_speculative_preview_render(fast_preview_kind: Option<&str>) -> bool {
+pub(crate) fn should_start_speculative_preview_render(fast_preview_kind: Option<&str>) -> bool {
     !matches!(
         fast_preview_kind,
         Some("camera-thumbnail" | TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND)

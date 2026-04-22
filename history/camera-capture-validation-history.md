@@ -4576,3 +4576,96 @@ latest numbers:
 1. latest rerun은 `256x256` 복귀 상태에서도 first-shot spike가 다시 나오지 않았다는 evidence다.
 2. 해상도 하향 경로를 되살릴 필요는 없고, 남은 blocker는 steady-state truthful-close latency다.
 3. 다음 reduction candidate는 해상도 인하가 아니라, `darktable-cli`가 소유한 booth-visible truthful close 비용 자체를 줄이는 방향에서 다시 찾아야 한다.
+
+### 2026-04-22 15:41 +09:00 latest helper fast preview metadata drift를 줄였고, `windows-shell-thumbnail` reserve close는 이제 file-arrived 전에 바로 시작된다
+
+사용자 최신 요청:
+
+1. 계획에 따라 다음 수정 단계를 진행하라고 요청했다.
+
+실제 확인 근거:
+
+- latest field evidence `session_000000000018a89961df9c18a0`를 다시 대조해 보니,
+  helper `camera-helper-events.jsonl`에는 5컷 모두
+  `fast-preview-ready fastPreviewKind=windows-shell-thumbnail`
+  가 직접 남아 있었다.
+- 반면 같은 session의 host `timing-events.log`는 같은 canonical preview를
+  `fast-preview-promoted kind=legacy-canonical-scan`
+  으로 다시 기록하고 있었다.
+- 즉 helper가 먼저 확보한 same-capture preview metadata가
+  capture persist 경계에서 manifest/timing 쪽으로 제대로 이어지지 않았고,
+  reserve close 시작도 그 early helper preview보다 뒤의 seed/fallback 판독에 더 기대고 있었다.
+
+이번 회차 조치:
+
+- host `request_capture` 경계는 helper `fast-preview-ready`를 canonical preview로 승격한 직후,
+  그 source가 `windows-shell-thumbnail` 같은 reserve-close 대상이면
+  `file-arrived`를 기다리지 않고 speculative truthful close를 바로 시작하게 보강했다.
+- capture persist 단계는 이미 앞에서 canonical path로 승격된 early fast preview update가 있으면,
+  이를 다시 `legacy-canonical-scan`으로 재분류하지 않고
+  원래 `kind`와 `visibleAtMs`를 그대로 manifest에 보존하게 보강했다.
+- 그래서 latest 현장 로그에서 보인
+  `helper는 windows-shell-thumbnail를 봤는데 host는 legacy-canonical-scan으로 기억하는 drift`
+  를 current code에서 줄였다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_file_arrival_metadata -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_render_reuses_it -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. current code는 helper가 더 일찍 확보한 same-capture preview metadata를 host truth까지 끌고 오도록 보강됐다.
+2. `windows-shell-thumbnail` reserve close는 이제 raw persist 이후 seed를 다시 읽기 전에 먼저 시작될 수 있다.
+3. 다만 아직 새 hardware rerun direct metric은 없으므로, 이 보강이 실제 `originalVisibleToPresetAppliedVisibleMs`를 얼마나 줄였는지는 다음 실장비 session에서 다시 판정해야 한다.
+
+### 2026-04-22 16:07 +09:00 latest 실행은 preview latency가 아니라 accepted-only `capture-in-flight` stall이었고, stale helper restart/recovery 경계를 추가했다
+
+사용자 최신 요청:
+
+1. 방금 앱을 실행했으니 latest 로그를 확인하고 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a89b380d42939c`였다.
+- 이 session의 `timing-events.log`에는 `request-capture`만 남았고,
+  `file-arrived`, `capture-persisted`, `preview-render-ready` 같은 후속 event는 없었다.
+- `camera-helper-events.jsonl`도 `capture-accepted`까지만 남았고,
+  helper는 요청을 거절하지 않았다.
+- 반면 `camera-helper-status.json` 마지막 상태는
+  `cameraState=capturing`,
+  `helperState=healthy`,
+  `detailCode=capture-in-flight`
+  였고,
+  `observedAt=2026-04-22T06:52:06.2677440+00:00` 기준 stale 상태로 멈춰 있었다.
+- `camera-helper-processed-request-ids.txt`에는 해당 request id
+  `request_000000000018a89b39b53e6048`
+  가 남아 있었고,
+  `session.json`은 `captures=[]`, `lifecycle.stage=phone-required`로 닫혔다.
+- 따라서 이번 latest 실행은 preview latency 문제가 아니라,
+  helper가 capture request를 소비한 뒤 `capture-in-flight`에서 멈춘 accepted-only stall family였다.
+
+이번 회차 조치:
+
+- helper supervisor는 stale `capture-in-flight` healthy status를
+  약 `45초` 이후 restart 대상에 포함하도록 보강했다.
+- readiness 복구는 `phone-required`가 곧바로 풀리도록 넓게 열지 않고,
+  저장된 capture가 없더라도
+  실제로 helper가 request를 소비했다는 `processed request id` evidence가 있을 때만
+  helper ready 복귀 뒤 `capture-ready`로 되돌리게 좁혔다.
+- 그래서 일반 `phone-required` timeout은 그대로 유지하면서,
+  이번 latest처럼 request consumption 이후 멈춘 session만 retryable하게 다시 열 수 있게 정리했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_times_out_when_helper_accepts_but_no_file_arrives -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_releases_phone_required_without_saved_capture_once_helper_is_ready_again -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml stale_capture_in_flight_status_requests_a_helper_restart`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. latest 현장 실행은 preview latency family가 아니라, accepted-only helper stall이었다.
+2. current code는 이 stall을 stale helper restart와 evidence-gated readiness recovery로 다시 시도 가능한 상태까지 끌어올리도록 보강됐다.
+3. 다만 이 최신 복구 보강 뒤 hardware rerun은 아직 없으므로, 다음 실제 실행에서 같은 family가 자동으로 해소되는지 다시 확인해야 한다.
