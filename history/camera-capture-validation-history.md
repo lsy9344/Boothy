@@ -3785,3 +3785,498 @@ render proof 재확인 결과:
 1. stray helper 오염은 이번 latest에서 재발하지 않았다.
 2. 남은 latest failure는 startup이나 request-consumption stall이 아니라, reconnect 뒤 first-shot retry 타이밍이 아직 너무 빠르던 경계였다.
 3. 이번 보강으로 다음 현장 확인 포인트는 첫 촬영이 흔들려도 retry가 너무 급하게 다시 들어가지 않고 실제 저장으로 닫히는지다.
+
+### 2026-04-22 00:00 +09:00 latest preview latency baseline 재고정: startup/save는 닫혔고, 남은 비용은 fast preview 이후 truthful close였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행했으니 최신 로그를 확인하고 문제를 해결하라고 요청했다.
+2. `docs/runbooks/preview-latency-next-steps-checklist-20260422.md` 순서대로 조치하고 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8673fd974df10`였다.
+- `C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`는 `2026-04-20 16:40:03 +09:00` 이후 갱신되지 않았고,
+  이번 회차의 canonical latest evidence는 session diagnostics 패키지 쪽이 맞았다.
+- 같은 session의 `session.json` 기준으로
+  - 총 5컷 모두 `renderStatus = previewReady`
+  - 5컷 모두 `preview.kind = preset-applied-preview`
+  - latest helper status는 `camera-ready`
+  로 닫혔다.
+- 같은 session의 `camera-helper-events.jsonl` 기준 helper correlation은 5컷 모두
+  `capture-accepted -> file-arrived -> fast-preview-ready`
+  로 닫혔고,
+  `fastPreviewKind = windows-shell-thumbnail`였다.
+- 같은 session의 `timing-events.log` 기준 reserve truthful close owner는 5컷 모두
+  `preview-render-ready ... truthOwner=display-sized-preset-applied`
+  로 남았지만,
+  per-capture render detail은 계속
+  `binary=C:\Program Files\darktable\bin\darktable-cli.exe`
+  였다.
+
+latest seam summary:
+
+- `capture acknowledged -> file arrived`
+  - `3258ms`, `3195ms`, `3272ms`, `2832ms`, `1963ms`
+- `file arrived -> fast preview visible`
+  - `377ms`, `297ms`, `302ms`, `256ms`, `254ms`
+- `fast preview visible -> preset-applied visible`
+  - `4404ms`, `4088ms`, `3765ms`, `3854ms`, `3439ms`
+- `preview-render-ready elapsedMs`
+  - `4342ms`, `4016ms`, `3718ms`, `3817ms`, `3416ms`
+
+이번 회차 해석:
+
+- startup/connect와 first-shot save는 latest baseline에서 더 이상 주 blocker가 아니었다.
+- remaining cost는 helper/file-arrived 이후 same-capture fast preview를 띄우는 경계가 아니라,
+  **fast preview 이후 per-capture truthful close를 다시 여는 `darktable-cli` hot path**
+  였다.
+- 특히 `fast preview visible -> preset-applied visible`가 `3.4s ~ 4.4s`로,
+  `preview-render-ready elapsedMs`와 거의 같은 크기로 겹쳤다.
+- 따라서 다음 software reduction target은 latest session 기준으로도
+  `capture/save`가 아니라 `truthful close hot path`로 읽는 편이 맞다.
+
+이번 회차 수정:
+
+- host는 이제 capture request가 시작되면 active preset용 preview renderer warm-up을 한 번 더 건다.
+- 목적은 warm-up 비용을 `capture acknowledged -> file arrived` 구간 아래에 숨겨,
+  같은 truthful close contract를 유지한 채 이후 `preview-render-ready` 비용을 줄일 기회를 만드는 것이다.
+- retryable capture error가 난 경우에는 세션 lifecycle stage도 다시 `capture-ready`로 복구해,
+  warm-up 보강이 retry readiness semantics를 흔들지 않게 같이 정리했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_restarts_preview_warmup_while_camera_save_is_in_flight`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness capture_flow_keeps_session_retryable_when_focus_is_not_locked -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. latest field evidence는 startup family가 아니라 latency family였고, target seam은 fast preview 이후 truthful close다.
+2. 이번 software change는 truth contract를 유지한 채 warm-up을 capture save seam 아래로 다시 숨기는 쪽이다.
+3. 아직 post-change approved hardware comparable run은 없으므로, official gate 판정과 ledger 갱신은 다음 one-session package 이후에 한다.
+
+### 2026-04-22 00:40 +09:00 latest rerun 재검토: capture 중 warm-up 시도는 first-shot truth를 깨서 reject했고, hot path는 다시 comparable rerun으로 확인해야 한다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행했으니 latest 로그를 확인하고 문제를 해결하라고 다시 요청했다.
+2. 같은 checklist 문서 순서대로 조치하고 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a868febfab83c0`였다.
+- 같은 session의 startup/connect는 정상으로 닫혔다.
+  - latest helper status: `ready / healthy / camera-ready`
+  - 5 requests 모두 `capture-accepted -> file-arrived -> fast-preview-ready`로 이어졌다.
+- 하지만 첫 컷 `capture_20260421153144380_13c7122f36`은 같은 session의 `session.json` 기준으로
+  - `preview.kind = legacy-canonical-scan`
+  - `renderStatus = previewReady`
+  - `xmpPreviewReadyAtMs = null`
+  이었다.
+- 같은 첫 컷의 `timing-events.log`에는
+  - `preview-render-start`
+  - 다시 한 번 `preview-render-start`
+  - `preview-render-queue-saturated`
+  - `preview-render-ready ... binary=existing-preview-fallback;sourceAsset=legacy-canonical-scan;truthOwner=existing-preview-fallback`
+  가 남았다.
+- 즉 이번 latest는 latency improvement attempt가 first-shot truthful close를 더 싸게 만든 것이 아니라,
+  **capture 중에 다시 건 warm-up이 render queue를 경쟁시키면서 first-shot을 fallback close로 밀어낸 회귀**
+  로 읽는 편이 맞다.
+
+latest numbers:
+
+- first shot:
+  - `capture_preview_ready = 2318ms`
+  - 하지만 `truth owner = existing-preview-fallback`
+  - `preview.kind = legacy-canonical-scan`
+  - `xmpPreviewReadyAtMs = null`
+- shots 2~5:
+  - `capture_preview_ready = 6556ms`, `5916ms`, `5764ms`, `5872ms`
+  - `preview-render-ready elapsedMs = 3717ms`, `3616ms`, `3614ms`, `3516ms`
+
+이번 회차 해석:
+
+- 숫자만 보면 2장~5장은 직전 baseline보다 조금 내려갔지만,
+  이번 patch는 first-shot truth contract를 깨뜨렸기 때문에 성공으로 셀 수 없다.
+- runbook guardrail 기준으로 보면,
+  `previewReady`를 truthful close asset만 소유하게 유지해야 한다는 조건이 latest session에서 깨졌다.
+- 따라서 capture-time warm-up 시도는 **latency optimization candidate가 아니라 rejected patch**로 정리하는 편이 맞다.
+
+이번 회차 수정:
+
+- capture request 시작 시 preview renderer warm-up을 다시 거는 경로를 제거했다.
+- retryable capture error 뒤 lifecycle stage를 `capture-ready`로 복구하는 보정은 유지했다.
+- 회귀 테스트는 `capture 요청 중에는 competing warm-up을 다시 열지 않는다`는 쪽으로 뒤집어 고정했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. latest 앱 세션은 startup/save failure가 아니라, 이전 hot-path reduction attempt가 first-shot truth를 깨뜨린 evidence였다.
+2. 그래서 이번 턴의 해결은 warm-up 경쟁 경로를 제거해 truth contract를 다시 우선시하는 쪽이었다.
+3. official gate와 comparable latency 판정은 이 rollback 뒤 approved hardware one-session rerun으로 다시 읽어야 한다.
+
+### 2026-04-22 00:40 +09:00 rollback 뒤 current-code rerun: first-shot truth는 복구됐지만 official gate는 여전히 No-Go였다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행했으니 latest 로그를 확인하고 문제를 해결하라고 요청했다.
+2. 같은 checklist 문서 순서대로 조치하고 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a86975cbe622b8`였다.
+- 같은 session의 `session.json` 기준으로
+  - lifecycle stage는 다시 `capture-ready`
+  - 5컷 모두 `renderStatus = previewReady`
+  - 5컷 모두 `preview.kind = preset-applied-preview`
+  - 5컷 모두 `xmpPreviewReadyAtMs != null`
+  로 닫혔다.
+- 같은 session의 `camera-helper-status.json` 최종 상태도
+  `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`였다.
+- 같은 session의 `camera-helper-events.jsonl` 기준 helper correlation은 5컷 모두
+  `capture-accepted -> file-arrived -> fast-preview-ready`
+  로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
+- 같은 session의 `timing-events.log` 기준 truthful close owner는 5컷 모두
+  `preview-render-ready ... truthOwner=display-sized-preset-applied`
+  로 남았고, rejected session에서 보였던
+  `preview-render-queue-saturated`나 `existing-preview-fallback` close는 더 이상 없었다.
+
+latest numbers:
+
+- `capture_preview_ready`
+  - `6021ms`, `6377ms`, `5931ms`, `6075ms`, `5773ms`
+- `preview-render-ready elapsedMs`
+  - `3616ms`, `4020ms`, `3618ms`, `4018ms`, `3717ms`
+
+이번 회차 해석:
+
+- current rollback code는 first-shot truth regression을 실제로 제거했다.
+- 즉 이번 latest는 더 이상 false-ready나 startup/save failure evidence가 아니라,
+  **truth는 복구됐지만 official gate는 아직 못 넘긴 current-code No-Go package**
+  로 읽는 편이 맞다.
+- baseline `session_000000000018a8673fd974df10`와 비교하면
+  `capture_preview_ready`는 전반적으로 내려왔지만,
+  `preview-render-ready elapsedMs`는 mixed result라 hot path reduction success로 닫을 수는 없다.
+
+이번 회차 조치:
+
+- software change는 추가하지 않았다.
+- 이번 턴에서는 rollback 뒤 current code의 approved-hardware one-session package를 canonical verdict로 확정하고,
+  checklist / history / hardware ledger를 같은 결론으로 갱신했다.
+
+검증:
+
+- latest field package:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a86975cbe622b8\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a86975cbe622b8\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a86975cbe622b8\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a86975cbe622b8\diagnostics\camera-helper-status.json`
+- automated regression status:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --nocapture`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. latest current-code rerun은 first-shot truthful close를 다시 복구했다.
+2. 하지만 reserve path의 공식 release gate인 `preset-applied visible <= 3000ms`는 여전히 실패했다.
+3. 다음 실질 과제는 startup/debugging 반복이 아니라, booth-visible truthful close hot path를 더 줄일 새 reduction candidate를 찾는 일이다.
+
+### 2026-04-22 11:10 +09:00 latest 앱 재실행 재점검: startup-only session은 새 blocker가 아니었고, 복구 경로에서도 fast-preview seam을 session log에 다시 남기게 보강했다
+
+사용자 최신 요청:
+
+1. 앱을 다시 실행해 테스트했으니 latest 로그와 `history/`를 함께 보고 문제를 해결하라고 요청했다.
+2. 조치 뒤에는 canonical 기록도 같이 남기라고 요청했다.
+
+실제 확인 근거:
+
+- latest startup-only session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88adfee94784c`였다.
+- 같은 session의 `session.json` 기준으로
+  - `captures = []`
+  - `lifecycle.stage = preset-selected`
+  였다.
+- 같은 session의 `diagnostics/camera-helper-startup.log`는
+  - `sdk-initializing`
+  - `session-opening`
+  - `camera-ready`
+  로 정상 진입을 보여 줬다.
+- 같은 session의 `camera-helper-status.json`도
+  - `cameraState = ready`
+  - `helperState = healthy`
+  - `detailCode = camera-ready`
+  - `sequence = 30`
+  로 닫혔다.
+- 즉 latest relaunch 자체는 startup/connect failure evidence가 아니라, 촬영 없는 short startup session으로 읽는 편이 맞았다.
+- 반면 current comparable No-Go package `session_000000000018a86975cbe622b8`를 다시 보면
+  `session.json`에는 `fastPreviewVisibleAtMs`가 있었지만,
+  `diagnostics/timing-events.log`에는 일부 컷의 `fast-preview-visible` seam이 비어 있었다.
+
+이번 회차 해석:
+
+- 이번 latest는 새 startup blocker가 아니었다.
+- current blocker는 여전히 reserve path truthful close latency였다.
+- 다만 same-capture preview를 host가 later recovery path로 다시 붙인 경우,
+  per-session timing log에 `fast-preview-visible`이 빠져 다음 회차 seam 판독이 불완전해지는 공백이 있었다.
+
+이번 회차 수정:
+
+- host `sync_better_preview_assets_in_manifest(...)`가 `captureSaved` / `previewWaiting` 상태에서
+  same-capture preview를 복구하며 `fastPreviewVisibleAtMs`를 다시 채우는 경우,
+  같은 시점의 `fast-preview-visible` timing event도 함께 남기도록 보강했다.
+- 따라서 이후 latest session은 request flow에서 fast preview가 직접 promote되지 않아도,
+  recovery path가 same-capture preview를 살린 사실을 session-local `timing-events.log`로 다시 읽을 수 있다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_allows_next_capture_once_same_capture_fast_preview_is_visible -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --nocapture`
+- `BOOTHY_CANON_SDK_ROOT=C:\Code\cannon_sdk\1745202892851_pAVdAAA7pU dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj --filter "ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_non_af_and_delay_once_after_internal_trigger_reconnect|ExecuteCaptureShutterPlan_retries_internal_trigger_failure_once_with_half_press_non_af_plan"`
+
+이번 시점 제품 판단:
+
+1. latest 재실행은 startup family 재발이 아니라 healthy startup-only session이었다.
+2. current product blocker는 계속 truthful close latency이며, 이번 회차에서 그 판단을 바꿀 새 field failure는 보이지 않았다.
+3. 대신 다음 latency 회차가 session-local evidence만으로 seam을 다시 읽을 수 있게, same-capture preview recovery path의 `fast-preview-visible` 계측 공백을 먼저 닫았다.
+
+### 2026-04-22 11:40 +09:00 latest 5-shot rerun은 first-shot duplicate render overlap reject였고, current code는 same-capture speculative close를 single-lane으로 다시 고정했다
+
+사용자 최신 요청:
+
+1. 방금 앱을 다시 실행했으니 latest 로그를 확인해 문제를 해결하라고 요청했다.
+2. 같은 checklist 순서대로 조치하고 canonical 기록도 남기라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88c71e9375868`였다.
+- 같은 session의 startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`
+- 5컷 모두 helper correlation은 `capture-accepted -> file-arrived -> fast-preview-ready`로 닫혔다.
+- 하지만 첫 컷 `capture_20260422022122471_c3d03c15e1`은 `session.json` 기준으로
+  - `preview.kind = legacy-canonical-scan`
+  - `renderStatus = previewReady`
+  - `xmpPreviewReadyAtMs = null`
+  로 끝났다.
+- 같은 첫 컷의 `diagnostics/timing-events.log`에는
+  - `file-arrived`
+  - `fast-preview-promoted kind=legacy-canonical-scan`
+  - `preview-render-start`
+  - 약 7초 뒤 다시 `preview-render-start`
+  - `preview-render-failed reason=render-process-failed`
+  - `preview-render-ready ... binary=existing-preview-fallback;sourceAsset=legacy-canonical-scan;truthOwner=existing-preview-fallback`
+  가 남았다.
+- 같은 시각 최신 `preview-stderr-*.log` 2개에는 모두
+  `Magick: caught exception 0xC0000005 "Access violation"...`
+  만 남았다.
+
+이번 회차 해석:
+
+- startup/save family는 아니었다.
+- 가장 그럴듯한 해석은, first-shot speculative close가 cold lane에서 7.2초 join budget 안에 끝나지 못한 상태로 살아 있는데 host가 direct raw refinement를 다시 열어
+  **같은 preview runtime/config/library에 두 개의 darktable render를 겹치게 만들었고**, 그 overlap이 두 lane 모두 `render-process-failed`로 무너지게 했다는 것이다.
+- 즉 latest는 latency candidate failure가 아니라,
+  **first-shot duplicate render overlap이 `existing-preview-fallback` close를 다시 만든 reject evidence**
+  로 읽는 편이 맞다.
+
+이번 회차 수정:
+
+- same-capture speculative close가 이미 in-flight이면,
+  direct raw refinement가 renderer timeout 경계 안에서 다시 같은 lane을 열지 않도록 join wait를 renderer timeout과 맞췄다.
+- 따라서 current code는 slow first-shot speculative close가 있어도 먼저 그 lane이 settle할 때까지 기다리고,
+  그 뒤에만 다음 판단을 하게 된다.
+- 회귀 테스트 `complete_preview_render_keeps_waiting_for_a_slow_speculative_close`를 추가해,
+  8초짜리 slow speculative close에서도 duplicate `preview-render-start`가 다시 열리지 않게 고정했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_keeps_waiting_for_a_slow_speculative_close -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_still_avoids_a_duplicate_render_while_speculative_close_is_active -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_closes_with_existing_same_capture_preview_when_raw_refinement_fails -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest rerun은 startup/connect regression이 아니라 first-shot duplicate render overlap regression이었다.
+2. current code는 그 overlap을 막는 single-lane guardrail까지는 다시 복구했다.
+3. 다음 제품 판정은 latency work 재개보다 먼저, 이 patch 뒤 approved hardware one-session rerun으로 first-shot truthful close가 실제로 복구됐는지 다시 확인하는 순서가 맞다.
+
+### 2026-04-22 11:38 +09:00 patch 뒤 approved rerun에서는 first-shot overlap family가 사라졌고, verdict는 다시 latency-only No-Go로 돌아갔다
+
+사용자 최신 요청:
+
+1. 방금 앱을 다시 실행했으니 latest 로그를 확인하고 문제를 해결하라고 요청했다.
+2. checklist 순서대로 조치하고 canonical 기록까지 남기라고 요청했다.
+
+실제 확인 근거:
+
+- latest approved one-session package는 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4`였다.
+- 같은 session의 startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: `cameraState=ready`, `helperState=healthy`, `detailCode=camera-ready`
+- 같은 session의 `session.json` 기준으로
+  - 5컷 모두 `renderStatus = previewReady`
+  - 5컷 모두 `preview.kind = preset-applied-preview`
+  - 5컷 모두 `xmpPreviewReadyAtMs != null`
+  - lifecycle stage는 다시 `capture-ready`
+  로 닫혔다.
+- 같은 session의 `camera-helper-events.jsonl` 기준 helper correlation도 5컷 모두
+  `capture-accepted -> file-arrived -> fast-preview-ready`
+  로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
+- 같은 session의 `timing-events.log`에는 첫 컷 포함 전 컷이
+  - `fast-preview-promoted kind=legacy-canonical-scan`
+  - `preview-render-start`
+  - `preview-render-ready ... truthOwner=display-sized-preset-applied`
+  순서로만 닫혔다.
+- 직전 reject session `session_000000000018a88c71e9375868`에서 보였던
+  - 두 번째 `preview-render-start`
+  - `preview-render-failed reason=render-process-failed`
+  - `existing-preview-fallback`
+  증거는 latest rerun에서 더 이상 보이지 않았다.
+
+latest numbers:
+
+- `capture_preview_ready`
+  - `5905ms`, `5982ms`, `5763ms`, `5864ms`, `5803ms`
+- `preview-render-ready elapsedMs`
+  - `3717ms`, `3617ms`, `3615ms`, `3618ms`, `3715ms`
+
+이번 회차 해석:
+
+- single-lane guardrail patch는 latest approved rerun에서 first-shot duplicate render overlap family를 실제로 제거했다.
+- 따라서 current product blocker는 다시 startup/save나 false-ready가 아니라,
+  **truth는 유지되지만 `preset-applied visible <= 3000ms`를 못 넘는 truthful-close latency**
+  하나로 다시 좁혀졌다.
+
+이번 회차 조치:
+
+- software change는 추가하지 않았다.
+- 이번 턴에서는 latest approved hardware rerun `session_000000000018a88d53fa8f00c4`를 canonical verdict로 반영하고,
+  checklist / history / ledger를 같은 판정으로 갱신했다.
+
+검증:
+
+- latest field package:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\diagnostics\camera-helper-status.json`
+
+이번 시점 제품 판단:
+
+1. current code는 latest approved rerun에서 first-shot overlap reject family를 실제로 제거했다.
+2. 하지만 official reserve-path gate `preset-applied visible <= 3000ms`는 여전히 실패했다.
+3. 다음 실질 과제는 overlap debugging 반복이 아니라, booth-visible truthful close hot path를 더 줄이는 새 reduction candidate를 찾는 일이다.
+
+### 2026-04-22 12:00 +09:00 latest session에는 official gate 구간이 직접 안 남아 있었고, 이제 `capture_preview_ready` detail에 first-visible -> preset-applied visible 숫자를 같이 남긴다
+
+사용자 최신 요청:
+
+1. 로그에 `원본/first-visible이 먼저 보인 뒤, 프리셋 적용 preview가 보여질 때까지`의 구간이 직접 기록되는지 확인하라고 요청했다.
+2. 없다면 session-local 로그에 이 숫자도 기록하게 수정하라고 요청했다.
+
+실제 확인 근거:
+
+- latest approved rerun `session_000000000018a88d53fa8f00c4`의 `diagnostics/timing-events.log`를 다시 보면,
+  같은 capture마다 아래는 있었다.
+  - `fast-preview-promoted`
+  - `preview-render-ready`
+  - `capture_preview_ready elapsedMs=...`
+- 하지만 `capture_preview_ready` detail에는 아직
+  `originalVisibleToPresetAppliedVisibleMs`
+  가 직접 없었다.
+- 즉 current session-local log만으로도 계산은 가능했지만,
+  여전히
+  - first-visible 시점
+  - preset-applied visible 시점
+  - 그 사이 official gate 구간
+  을 한 줄에서 바로 읽지는 못하는 상태였다.
+
+이번 회차 수정:
+
+- `capture_preview_ready` timing event detail에 아래를 같이 남기도록 보강했다.
+  - `originalVisibleToPresetAppliedVisibleMs`
+  - `firstVisibleAtMs`
+  - `presetAppliedVisibleAtMs`
+- `fastPreviewVisibleAtMs`가 없을 때는
+  `originalVisibleToPresetAppliedVisibleMs=unavailable`
+  로 명시한다.
+- 글로벌 앱 로그의 `capture_preview_ready`도
+  `original_visible_to_preset_applied_visible_ms`
+  를 같이 남기도록 맞췄다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_render_reuses_it -- --exact`
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_closes_with_existing_same_capture_preview_when_raw_refinement_fails -- --exact`
+
+이번 시점 제품 판단:
+
+1. latest session에는 official gate 구간이 direct metric으로는 아직 찍히지 않았다.
+2. current code는 다음 session부터 `capture_preview_ready` detail 한 줄로
+   first-visible -> preset-applied visible 구간을 바로 읽을 수 있게 됐다.
+3. 제품 blocker 자체는 여전히 truthful-close latency이며, 새 hardware rerun에서 이 direct metric이 실제로 찍히는지만 다시 확인하면 된다.
+
+### 2026-04-22 12:20 +09:00 latest 로그 재확인: 새 capture package는 없었고, current worktree는 direct metric guardrail을 자동 검증으로 다시 닫았다
+
+사용자 최신 요청:
+
+1. 방금 앱을 실행했으니 로그파일을 확인해 문제를 해결하고 checklist 순서대로 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- `C:\Users\KimYS\Pictures\dabi_shoot\sessions`를 다시 확인한 결과,
+  latest capture package는 여전히
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4`
+  였다.
+- 따라서 이번 latest app relaunch는 더 새로운 capture evidence를 만들지 않았고,
+  current field verdict owner는 계속 위 approved `No-Go` package로 읽는 편이 맞았다.
+- 같은 session의 `diagnostics/timing-events.log`를 다시 확인하면
+  `capture_preview_ready` detail은 여전히
+  `elapsedMs`, `budgetState`, `renderStatus`
+  만 남아 있었다.
+- 반면 current worktree 기준 `src-tauri/src/capture/ingest_pipeline.rs`는
+  `capture_preview_ready` detail에
+  `originalVisibleToPresetAppliedVisibleMs`,
+  `firstVisibleAtMs`,
+  `presetAppliedVisibleAtMs`
+  를 같이 남기도록 이미 보강돼 있었다.
+- same-capture recovery path의 `fast-preview-visible` seam 복구도 current worktree에 남아 있었고,
+  아래 targeted tests를 다시 통과했다.
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_render_reuses_it -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness client_recent_session_visibility_events_are_mirrored_into_session_timing_logs -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness readiness_allows_next_capture_once_same_capture_fast_preview_is_visible -- --exact`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness complete_preview_render_keeps_waiting_for_a_slow_speculative_close -- --exact`
+
+이번 회차 해석:
+
+- latest approved hardware package에서 direct metric이 비어 있는 것은
+  이번 latest relaunch로 새로 생긴 blocker가 아니라,
+  **아직 logging guardrail이 실제 hardware rerun으로 다시 수집되지 않은 상태**
+  로 읽는 편이 맞다.
+- 즉 이번 턴의 실질 조치는 새로운 startup/debugging으로 범위를 넓히는 일이 아니라,
+  current worktree의 direct metric guardrail이 살아 있는지 다시 검증하고
+  next rerun 해석 기준을 고정하는 일이었다.
+- 제품 blocker 자체는 계속 truthful-close latency이며,
+  startup/save나 false-ready family로 되돌아간 것은 아니다.
+
+이번 회차 조치:
+
+- 추가 software logic은 새로 얹지 않았다.
+- current worktree에 이미 들어 있던
+  - `capture_preview_ready` direct metric logging
+  - same-capture recovery seam logging
+  - slow speculative close single-lane guardrail
+  을 latest 로그 기준으로 다시 대조하고 targeted automated coverage로 확인했다.
+- checklist와 history wording을 같이 갱신해,
+  next agent가 latest session의 direct metric 부재를 새 runtime regression으로 오해하지 않게 맞췄다.
+
+이번 시점 제품 판단:
+
+1. latest app relaunch는 `session_000000000018a88d53fa8f00c4`보다 새로운 capture evidence를 만들지 않았다.
+2. current worktree는 next hardware rerun에서 official gate direct metric을 바로 읽을 준비가 돼 있다.
+3. 다음 실질 작업은 여전히 booth-visible truthful close hot path를 더 줄이는 후보를 찾고,
+   그 직후 rerun에서 `originalVisibleToPresetAppliedVisibleMs`가 실제로 찍히는지 확인하는 순서다.

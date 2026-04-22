@@ -4,10 +4,14 @@
 
 ## 먼저 읽을 runbook
 
-1. [Story 1.26 Reserve Path Opening](./story-1-26-reserve-path-opening-20260420.md)
-2. [Current Preview GPU Direction](./current-preview-gpu-direction-20260419.md)
-3. [Current Actual-Lane Handoff](./current-actual-lane-handoff-20260419.md)
-4. [Preview Track Route Decision](./preview-track-route-decision-20260418.md)
+1. [Preview Latency Next Steps Checklist](./preview-latency-next-steps-checklist-20260422.md)
+2. [Story 1.26 Reserve Path Opening](./story-1-26-reserve-path-opening-20260420.md)
+3. [Current Preview GPU Direction](./current-preview-gpu-direction-20260419.md)
+4. [Current Actual-Lane Handoff](./current-actual-lane-handoff-20260419.md)
+5. [Preview Track Route Decision](./preview-track-route-decision-20260418.md)
+
+- [Preview Latency Next Steps Checklist](./preview-latency-next-steps-checklist-20260422.md)
+  - latest field session 이후 무엇이 이미 닫혔고, 지금 어떤 순서로 다음 시도를 진행해야 하는지 적어 둔 current execution checklist
 
 ## supporting runbook
 

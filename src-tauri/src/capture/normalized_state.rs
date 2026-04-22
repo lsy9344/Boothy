@@ -253,6 +253,13 @@ where
                     }
 
                     drop(in_flight_guard);
+                    if matches!(
+                        error,
+                        SidecarClientError::CaptureTriggerRetryRequired
+                            | SidecarClientError::CaptureTriggerRetryRequiredInternal
+                    ) {
+                        let _ = persist_retryable_capture_ready_stage_in_dir(base_dir, &manifest);
+                    }
 
                     let readiness = get_capture_readiness_in_dir(
                         base_dir,
@@ -720,6 +727,22 @@ fn build_capture_retry_readiness(
             .with_timing(timing),
         &projected_live_capture_truth,
     )
+}
+
+fn persist_retryable_capture_ready_stage_in_dir(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+) -> Result<(), HostErrorEnvelope> {
+    let next_stage = derive_capture_lifecycle_stage(manifest);
+    if next_stage == manifest.lifecycle.stage {
+        return Ok(());
+    }
+
+    let mut updated_manifest = manifest.clone();
+    let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
+    updated_manifest.lifecycle.stage = next_stage;
+    updated_manifest.updated_at = current_timestamp(SystemTime::now())?;
+    write_session_manifest(&paths.manifest_path, &updated_manifest)
 }
 
 fn sync_retryable_capture_failure_recovery_in_manifest(
@@ -1655,6 +1678,7 @@ fn sync_better_preview_assets_in_manifest(
 ) -> Result<(), HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, &manifest.session_id)?;
     let mut updated = false;
+    let mut recovered_fast_preview_events = Vec::new();
 
     for capture in &mut manifest.captures {
         let Some(better_preview_path) =
@@ -1696,6 +1720,12 @@ fn sync_better_preview_assets_in_manifest(
                     capture.timing.fast_preview_visible_at_ms =
                         preview_asset_visible_at_ms(Path::new(&better_preview_path))
                             .or_else(|| system_time_to_ms(SystemTime::now()));
+                    recovered_fast_preview_events.push((
+                        capture.capture_id.clone(),
+                        capture.request_id.clone(),
+                        better_preview_path.clone(),
+                        capture.timing.fast_preview_visible_at_ms,
+                    ));
                 }
                 updated = true;
             }
@@ -1706,9 +1736,46 @@ fn sync_better_preview_assets_in_manifest(
     if updated {
         manifest.updated_at = current_timestamp(SystemTime::now())?;
         write_session_manifest(&paths.manifest_path, manifest)?;
+        for (capture_id, request_id, asset_path, visible_at_ms) in recovered_fast_preview_events {
+            append_recovered_fast_preview_visible_event(
+                base_dir,
+                &manifest.session_id,
+                &capture_id,
+                &request_id,
+                &asset_path,
+                visible_at_ms,
+            );
+        }
     }
 
     Ok(())
+}
+
+fn append_recovered_fast_preview_visible_event(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+    asset_path: &str,
+    visible_at_ms: Option<u64>,
+) {
+    let detail = visible_at_ms
+        .map(|visible_at_ms| {
+            format!(
+                "assetPath={asset_path};visibleAtMs={visible_at_ms};source=recovered-session-preview"
+            )
+        })
+        .unwrap_or_else(|| format!("assetPath={asset_path};source=recovered-session-preview"));
+    let _ = append_session_timing_event_in_dir(
+        base_dir,
+        SessionTimingEventInput {
+            session_id,
+            event: "fast-preview-visible",
+            capture_id: Some(capture_id),
+            request_id: Some(request_id),
+            detail: Some(&detail),
+        },
+    );
 }
 
 fn find_better_session_preview_asset(paths: &SessionPaths, capture_id: &str) -> Option<String> {

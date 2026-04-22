@@ -49,9 +49,11 @@ const SPECULATIVE_PREVIEW_POLL_MS: u64 = 40;
 const SPECULATIVE_PREVIEW_DRAIN_WAIT_MS: u64 = 400;
 const SPECULATIVE_PREVIEW_DRAIN_POLL_MS: u64 = 80;
 // If a speculative close is still actively rendering after the initial wait,
-// prefer joining that in-flight work over starting a second preview render that
-// competes for the same preview worker/runtime.
-const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 5000;
+// keep serializing behind that in-flight work for the full renderer timeout.
+// Recent first-shot field evidence showed that opening a second darktable lane
+// around the 7s mark can crash both renders and force `existing-preview-fallback`
+// instead of a truthful close.
+const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 45000;
 const SPECULATIVE_PREVIEW_JOIN_POLL_MS: u64 = 80;
 const PREVIEW_REFINEMENT_IDLE_WAIT_MS: u64 = 5000;
 const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
@@ -587,9 +589,7 @@ pub fn complete_preview_render_in_dir(
                 error.reason_code,
             );
             if let Some(fallback_capture) = try_close_existing_preview_after_render_failure_in_dir(
-                base_dir,
-                &paths,
-                capture_id,
+                base_dir, &paths, capture_id,
             )? {
                 return Ok(fallback_capture);
             }
@@ -1092,7 +1092,12 @@ fn try_close_existing_preview_after_render_failure_in_dir(
         RenderIntent::Preview,
         &existing_preview_render_failure_fallback_detail(&capture, preview_ready_at_ms),
     );
-    append_capture_preview_ready_event(base_dir, &capture.session_id, &capture, preview_ready_at_ms);
+    append_capture_preview_ready_event(
+        base_dir,
+        &capture.session_id,
+        &capture,
+        preview_ready_at_ms,
+    );
 
     Ok(Some(capture))
 }
@@ -2068,12 +2073,25 @@ fn append_capture_preview_ready_event(
     capture: &SessionCaptureRecord,
     preview_ready_at_ms: u64,
 ) {
-    let detail = format!(
-        "elapsedMs={};budgetState={};renderStatus={}",
-        preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms),
-        capture.timing.preview_budget_state,
-        capture.render_status
-    );
+    let total_elapsed_ms = preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms);
+    let detail = if let Some(first_visible_at_ms) = capture.timing.fast_preview_visible_at_ms {
+        format!(
+            "elapsedMs={};originalVisibleToPresetAppliedVisibleMs={};firstVisibleAtMs={};presetAppliedVisibleAtMs={};budgetState={};renderStatus={}",
+            total_elapsed_ms,
+            preview_ready_at_ms.saturating_sub(first_visible_at_ms),
+            first_visible_at_ms,
+            preview_ready_at_ms,
+            capture.timing.preview_budget_state,
+            capture.render_status
+        )
+    } else {
+        format!(
+            "elapsedMs={};originalVisibleToPresetAppliedVisibleMs=unavailable;budgetState={};renderStatus={}",
+            total_elapsed_ms,
+            capture.timing.preview_budget_state,
+            capture.render_status
+        )
+    };
     let _ = append_session_timing_event_in_dir(
         base_dir,
         SessionTimingEventInput {

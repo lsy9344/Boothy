@@ -1931,6 +1931,8 @@ fn helper_fast_preview_handoff_promotes_to_the_canonical_preview_path_and_later_
     assert!(timing_events.contains("event=preview-render-start"));
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("event=capture_preview_ready"));
+    assert!(timing_events.contains("originalVisibleToPresetAppliedVisibleMs="));
+    assert!(timing_events.contains("presetAppliedVisibleAtMs="));
     assert!(timing_events.contains("event=recent-session-visible"));
     assert!(timing_events.contains(&format!("request={}", result.capture.request_id)));
 
@@ -3301,7 +3303,9 @@ fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_re
 
     let completed_capture =
         complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect("existing same-capture preview should close the product flow when raw refinement fails");
+            .expect(
+            "existing same-capture preview should close the product flow when raw refinement fails",
+        );
 
     match previous_darktable_cli {
         Some(previous_darktable_cli) => {
@@ -3709,6 +3713,105 @@ fn complete_preview_render_still_avoids_a_duplicate_render_while_speculative_clo
 }
 
 #[test]
+fn complete_preview_render_keeps_waiting_for_a_slow_speculative_close() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("wait-for-slow-speculative-close");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let lock_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.lock",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&canonical_preview_path);
+    fs::write(&lock_path, &result.capture.request_id).expect("speculative lock should be writable");
+
+    let delayed_output_path = output_path.clone();
+    let delayed_detail_path = detail_path.clone();
+    let delayed_lock_path = lock_path.clone();
+    let delayed_writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(8000));
+        write_test_jpeg(&delayed_output_path);
+        fs::write(
+            &delayed_detail_path,
+            "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fake-darktable-cli;source=test;elapsedMs=8000;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=fake;status=0",
+        )
+        .expect("speculative detail should be writable");
+        fs::remove_file(&delayed_lock_path).expect("speculative lock should be removable");
+    });
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("a slow speculative close should still win without a duplicate render");
+
+    delayed_writer
+        .join()
+        .expect("delayed speculative writer should complete");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        completed_capture.preview.ready_at_ms,
+        completed_capture.timing.xmp_preview_ready_at_ms
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert_eq!(
+        timing_events.matches("event=preview-render-start").count(),
+        0,
+        "even a slow speculative close should stay single-lane until it settles"
+    );
+    assert!(timing_events.contains("sourceAsset=preset-applied-preview"));
+    assert!(timing_events.contains("inputSourceAsset=fast-preview-raster"));
+    assert!(
+        !timing_events.contains("sourceAsset=raw-original"),
+        "direct raw refinement should not compete with an in-flight slow speculative close"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn speculative_preview_wait_does_not_hold_the_capture_pipeline_lock() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
@@ -3839,6 +3942,15 @@ fn readiness_allows_next_capture_once_same_capture_fast_preview_is_visible() {
     assert!(
         latest_capture.timing.fast_preview_visible_at_ms.is_some(),
         "fast-preview timing should remain populated"
+    );
+    let timing_log_path = SessionPaths::new(&base_dir, &session.session_id)
+        .diagnostics_dir
+        .join("timing-events.log");
+    let timing_events =
+        fs::read_to_string(timing_log_path).expect("timing-events.log should be readable");
+    assert!(
+        timing_events.contains("event=fast-preview-visible"),
+        "recovered same-capture previews should restore the missing first-visible seam in timing-events.log"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -4170,6 +4282,49 @@ fn foreign_session_thumbnail_telemetry_is_ignored_without_breaking_capture_succe
     assert_eq!(result.status, "capture-saved");
     assert_eq!(result.capture.render_status, "previewWaiting");
     assert!(std::path::Path::new(&result.capture.raw.asset_path).is_file());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight() {
+    let base_dir = unique_test_root("capture-request-does-not-reprime-preview-warmup");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let warmup_source_path = base_dir
+        .join(".boothy-darktable")
+        .join("preview")
+        .join("warmup")
+        .join("preview-renderer-warmup-source.png");
+    let _ = fs::remove_file(&warmup_source_path);
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+
+    assert_eq!(result.status, "capture-saved");
+    assert!(
+        !warmup_source_path.is_file(),
+        "capture request should not start a competing warm-up while the same capture still owns the truthful close path"
+    );
 
     let _ = fs::remove_dir_all(base_dir);
 }

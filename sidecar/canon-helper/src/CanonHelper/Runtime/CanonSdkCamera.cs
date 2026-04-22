@@ -10,11 +10,12 @@ internal sealed class CanonSdkCamera : IDisposable
 {
     private readonly record struct CaptureShutterPlan(
         EDSDK.EdsShutterButton ReleaseCommand,
-        bool PrimeWithHalfway
+        bool PrimeWithHalfway,
+        TimeSpan DelayBeforeRelease
     );
 
     private static readonly TimeSpan MinimumSdkRecycleInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan InternalTriggerReconnectReadyWarmup = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan InternalTriggerReconnectReadyWarmup = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan InternalTriggerRetryHalfPressLead = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
     private const uint DefaultPreviewJpegQuality = 8;
@@ -66,7 +67,8 @@ internal sealed class CanonSdkCamera : IDisposable
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
     private DateTimeOffset _delayedReadyNotBeforeAt = DateTimeOffset.MinValue;
-    private bool _useNonAfShutterOnNextCapture;
+    private DateTimeOffset _internalTriggerRetryGuardNotBeforeAt = DateTimeOffset.MinValue;
+    private bool _useProtectedRetryShutterPlanOnNextCapture;
     private int _sdkThreadId;
 
     public CanonSdkCamera()
@@ -319,12 +321,19 @@ internal sealed class CanonSdkCamera : IDisposable
 
         var err = await RunOnSdkStaThreadAsync(
             () =>
-                ExecuteCaptureShutterPlan(
+            {
+                if (shutterPlan.DelayBeforeRelease > TimeSpan.Zero)
+                {
+                    Thread.Sleep(shutterPlan.DelayBeforeRelease);
+                }
+
+                return ExecuteCaptureShutterPlan(
                     _camera,
                     shutterPlan.ReleaseCommand,
                     shutterPlan.PrimeWithHalfway,
                     allowInternalErrorFallback: true
-                )
+                );
+            }
         );
 
         if (err != EDSDK.EDS_ERR_OK)
@@ -1707,13 +1716,20 @@ internal sealed class CanonSdkCamera : IDisposable
 
         if (shouldReconnectSession)
         {
-            if (sessionResetRequired)
+            lock (_sync)
             {
-                lock (_sync)
+                if (sessionResetRequired)
                 {
-                    _delayedReadyNotBeforeAt =
+                    var protectedRetryNotBeforeAt =
                         DateTimeOffset.UtcNow + InternalTriggerReconnectReadyWarmup;
-                    _useNonAfShutterOnNextCapture = true;
+                    _delayedReadyNotBeforeAt = protectedRetryNotBeforeAt;
+                    _internalTriggerRetryGuardNotBeforeAt = protectedRetryNotBeforeAt;
+                    _useProtectedRetryShutterPlanOnNextCapture = true;
+                }
+                else
+                {
+                    _internalTriggerRetryGuardNotBeforeAt = DateTimeOffset.MinValue;
+                    _useProtectedRetryShutterPlanOnNextCapture = false;
                 }
             }
             RecycleSdkIfNeeded();
@@ -1805,16 +1821,28 @@ internal sealed class CanonSdkCamera : IDisposable
 
     private CaptureShutterPlan ResolveShutterPlanForNextCaptureLocked()
     {
-        var shutterPlan = _useNonAfShutterOnNextCapture
+        var retryGuardDelay = TimeSpan.Zero;
+        if (
+            _useProtectedRetryShutterPlanOnNextCapture
+            && _internalTriggerRetryGuardNotBeforeAt > DateTimeOffset.UtcNow
+        )
+        {
+            retryGuardDelay = _internalTriggerRetryGuardNotBeforeAt - DateTimeOffset.UtcNow;
+        }
+
+        var shutterPlan = _useProtectedRetryShutterPlanOnNextCapture
             ? new CaptureShutterPlan(
                 EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely_NonAF,
-                PrimeWithHalfway: true
+                PrimeWithHalfway: true,
+                DelayBeforeRelease: retryGuardDelay
             )
             : new CaptureShutterPlan(
                 EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely,
-                PrimeWithHalfway: false
+                PrimeWithHalfway: false,
+                DelayBeforeRelease: TimeSpan.Zero
             );
-        _useNonAfShutterOnNextCapture = false;
+        _useProtectedRetryShutterPlanOnNextCapture = false;
+        _internalTriggerRetryGuardNotBeforeAt = DateTimeOffset.MinValue;
         return shutterPlan;
     }
 

@@ -11,17 +11,20 @@
 
 ## 지금 가장 먼저 읽을 문서
 
-1. [Story 1.26 Reserve Path Opening](./runbooks/story-1-26-reserve-path-opening-20260420.md)
-2. [GPU Direction](./runbooks/current-preview-gpu-direction-20260419.md)
-3. [Current Actual-Lane Handoff](./runbooks/current-actual-lane-handoff-20260419.md)
-4. [Preview Track Route Decision](./runbooks/preview-track-route-decision-20260418.md)
-5. [Preview Architecture History And Agent Guide](./preview-architecture-history-and-agent-guide.md)
-6. [Release Baseline](./release-baseline.md)
+1. [Preview Latency Next Steps Checklist](./runbooks/preview-latency-next-steps-checklist-20260422.md)
+2. [Story 1.26 Reserve Path Opening](./runbooks/story-1-26-reserve-path-opening-20260420.md)
+3. [GPU Direction](./runbooks/current-preview-gpu-direction-20260419.md)
+4. [Current Actual-Lane Handoff](./runbooks/current-actual-lane-handoff-20260419.md)
+5. [Preview Track Route Decision](./runbooks/preview-track-route-decision-20260418.md)
+6. [Preview Architecture History And Agent Guide](./preview-architecture-history-and-agent-guide.md)
+7. [Release Baseline](./release-baseline.md)
 
 ## 문서 역할 맵
 
 ### 1. 현재 방향
 
+- [Preview Latency Next Steps Checklist](./runbooks/preview-latency-next-steps-checklist-20260422.md)
+  - latest field session 기준으로 무엇이 이미 닫혔고, 지금 어떤 순서로 다음 시도를 진행해야 하는지 정리한 current execution checklist
 - [Story 1.26 Reserve Path Opening](./runbooks/story-1-26-reserve-path-opening-20260420.md)
   - `1.10` old line을 closed `No-Go` baseline으로 확정하고, `1.26` reserve path를 어떤 범위로 공식 오픈했는지 정리한 현재 실행 기준
 - [GPU Direction](./runbooks/current-preview-gpu-direction-20260419.md)
@@ -71,15 +74,16 @@
 ## 에이전트용 최소 읽기 순서
 
 1. 이 문서
-2. `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
-3. `docs/runbooks/current-preview-gpu-direction-20260419.md`
-4. `docs/runbooks/current-actual-lane-handoff-20260419.md`
-5. `docs/runbooks/preview-track-route-decision-20260418.md`
-6. `docs/release-baseline.md`
-7. `docs/preview-architecture-history-and-agent-guide.md`
-8. `docs/runbooks/README.md`
-9. `docs/contracts/README.md`
-10. `history/README.md`
+2. `docs/runbooks/preview-latency-next-steps-checklist-20260422.md`
+3. `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
+4. `docs/runbooks/current-preview-gpu-direction-20260419.md`
+5. `docs/runbooks/current-actual-lane-handoff-20260419.md`
+6. `docs/runbooks/preview-track-route-decision-20260418.md`
+7. `docs/release-baseline.md`
+8. `docs/preview-architecture-history-and-agent-guide.md`
+9. `docs/runbooks/README.md`
+10. `docs/contracts/README.md`
+11. `history/README.md`
 
 ## 제외 규칙
 

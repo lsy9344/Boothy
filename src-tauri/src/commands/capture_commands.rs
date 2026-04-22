@@ -147,11 +147,20 @@ pub fn request_capture(
                 if let Some(preview_ready_at_ms) = capture.timing.xmp_preview_ready_at_ms {
                     let preview_elapsed_ms = preview_ready_at_ms
                         .saturating_sub(capture.timing.capture_acknowledged_at_ms);
+                    let official_gate_elapsed_ms = capture
+                        .timing
+                        .fast_preview_visible_at_ms
+                        .map(|first_visible_at_ms| {
+                            preview_ready_at_ms.saturating_sub(first_visible_at_ms)
+                        });
                     log::info!(
-                        "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={}",
+                        "capture_preview_ready session={} capture_id={} elapsed_ms={} original_visible_to_preset_applied_visible_ms={} budget_state={}",
                         preview_session_id,
                         preview_capture_id,
                         preview_elapsed_ms,
+                        official_gate_elapsed_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "unavailable".into()),
                         capture.timing.preview_budget_state
                     );
                 } else {

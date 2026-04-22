@@ -367,7 +367,11 @@ public sealed class TimeoutPolicyTests
         Assert.Equal("healthy", snapshot.HelperState);
         Assert.Equal("camera-ready", snapshot.DetailCode);
         Assert.Null(snapshot.RequestId);
-        Assert.False(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
+        Assert.False(GetField<bool>(camera, "_useProtectedRetryShutterPlanOnNextCapture"));
+        Assert.Equal(
+            DateTimeOffset.MinValue,
+            GetField<DateTimeOffset>(camera, "_internalTriggerRetryGuardNotBeforeAt")
+        );
     }
 
     [Fact]
@@ -416,7 +420,11 @@ public sealed class TimeoutPolicyTests
         Assert.Equal("reconnect-pending", snapshot.DetailCode);
         Assert.Null(snapshot.RequestId);
         Assert.False(GetField<bool>(camera, "_sessionOpen"));
-        Assert.True(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
+        Assert.True(GetField<bool>(camera, "_useProtectedRetryShutterPlanOnNextCapture"));
+        Assert.True(
+            GetField<DateTimeOffset>(camera, "_internalTriggerRetryGuardNotBeforeAt")
+                > DateTimeOffset.UtcNow
+        );
     }
 
     [Fact]
@@ -448,10 +456,15 @@ public sealed class TimeoutPolicyTests
     }
 
     [Fact]
-    public void ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_and_non_af_once_after_internal_trigger_reconnect()
+    public void ResolveShutterPlanForNextCaptureLocked_uses_halfway_prime_non_af_and_delay_once_after_internal_trigger_reconnect()
     {
         var camera = new CanonSdkCamera();
-        SetField(camera, "_useNonAfShutterOnNextCapture", true);
+        SetField(camera, "_useProtectedRetryShutterPlanOnNextCapture", true);
+        SetField(
+            camera,
+            "_internalTriggerRetryGuardNotBeforeAt",
+            DateTimeOffset.UtcNow.AddMilliseconds(150)
+        );
 
         var method = typeof(CanonSdkCamera).GetMethod(
             "ResolveShutterPlanForNextCaptureLocked",
@@ -464,14 +477,18 @@ public sealed class TimeoutPolicyTests
         Assert.NotNull(firstPlan);
         var releaseCommandProperty = firstPlan!.GetType().GetProperty("ReleaseCommand");
         var primeWithHalfwayProperty = firstPlan.GetType().GetProperty("PrimeWithHalfway");
+        var delayBeforeReleaseProperty = firstPlan.GetType().GetProperty("DelayBeforeRelease");
         Assert.NotNull(releaseCommandProperty);
         Assert.NotNull(primeWithHalfwayProperty);
+        Assert.NotNull(delayBeforeReleaseProperty);
         var secondPlan = method.Invoke(camera, Array.Empty<object>());
         Assert.NotNull(secondPlan);
         var secondReleaseCommandProperty = secondPlan!.GetType().GetProperty("ReleaseCommand");
         var secondPrimeWithHalfwayProperty = secondPlan.GetType().GetProperty("PrimeWithHalfway");
+        var secondDelayBeforeReleaseProperty = secondPlan.GetType().GetProperty("DelayBeforeRelease");
         Assert.NotNull(secondReleaseCommandProperty);
         Assert.NotNull(secondPrimeWithHalfwayProperty);
+        Assert.NotNull(secondDelayBeforeReleaseProperty);
 
         var firstCommand = Assert.IsType<EDSDK.EdsShutterButton>(
             releaseCommandProperty!.GetValue(firstPlan)
@@ -479,11 +496,17 @@ public sealed class TimeoutPolicyTests
         var firstPrimeWithHalfway = Assert.IsType<bool>(
             primeWithHalfwayProperty!.GetValue(firstPlan)
         );
+        var firstDelayBeforeRelease = Assert.IsType<TimeSpan>(
+            delayBeforeReleaseProperty!.GetValue(firstPlan)
+        );
         var secondCommand = Assert.IsType<EDSDK.EdsShutterButton>(
             secondReleaseCommandProperty!.GetValue(secondPlan)
         );
         var secondPrimeWithHalfway = Assert.IsType<bool>(
             secondPrimeWithHalfwayProperty!.GetValue(secondPlan)
+        );
+        var secondDelayBeforeRelease = Assert.IsType<TimeSpan>(
+            secondDelayBeforeReleaseProperty!.GetValue(secondPlan)
         );
 
         Assert.Equal(
@@ -491,9 +514,15 @@ public sealed class TimeoutPolicyTests
             firstCommand
         );
         Assert.True(firstPrimeWithHalfway);
+        Assert.True(firstDelayBeforeRelease > TimeSpan.Zero);
         Assert.Equal(EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely, secondCommand);
         Assert.False(secondPrimeWithHalfway);
-        Assert.False(GetField<bool>(camera, "_useNonAfShutterOnNextCapture"));
+        Assert.Equal(TimeSpan.Zero, secondDelayBeforeRelease);
+        Assert.False(GetField<bool>(camera, "_useProtectedRetryShutterPlanOnNextCapture"));
+        Assert.Equal(
+            DateTimeOffset.MinValue,
+            GetField<DateTimeOffset>(camera, "_internalTriggerRetryGuardNotBeforeAt")
+        );
     }
 
     [Fact]
