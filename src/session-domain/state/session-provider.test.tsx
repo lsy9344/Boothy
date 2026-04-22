@@ -233,6 +233,345 @@ function SessionStateProbe({
 }
 
 describe('SessionProvider', () => {
+  it('primes the preview runtime when an active-preset session enters capture flow', async () => {
+    let latestState: SessionStateContextValue | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const primePreviewRuntime = vi
+      .fn<NonNullable<CaptureRuntimeService['primePreviewRuntime']>>()
+      .mockResolvedValue(undefined)
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+              },
+            }),
+          },
+        })}
+        presetCatalogService={createPresetCatalogService({
+          gateway: {
+            loadPresetCatalog: vi
+              .fn<PresetCatalogGateway['loadPresetCatalog']>()
+              .mockResolvedValue(createPresetCatalogResult(sessionId)),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          primePreviewRuntime,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockResolvedValue(() => undefined),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.flowStep).toBe('capture')
+      expect(primePreviewRuntime).toHaveBeenCalledWith({
+        sessionId,
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      })
+    })
+  })
+
+  it('waits for an in-flight preview runtime prime before sending the first capture request', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let resolvePrime: (() => void) | null = null
+    let captureRequest:
+      | ReturnType<SessionStateContextValue['requestCapture']>
+      | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const primePreviewRuntime = vi
+      .fn<NonNullable<CaptureRuntimeService['primePreviewRuntime']>>()
+      .mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePrime = resolve
+          }),
+      )
+    const requestCapture = vi
+      .fn<CaptureRuntimeService['requestCapture']>()
+      .mockResolvedValue(
+        createCaptureRequestResult({
+          sessionId,
+          capture: createCaptureRecord({
+            sessionId,
+          }),
+          readiness: createReadinessSnapshot({
+            sessionId,
+            surfaceState: 'captureSaved',
+            customerState: 'Preview Waiting',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '사진이 안전하게 저장되었어요.',
+            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+            reasonCode: 'preview-waiting',
+            latestCapture: createCaptureRecord({
+              sessionId,
+            }),
+          }),
+        }),
+      )
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+              },
+            }),
+          },
+        })}
+        presetCatalogService={createPresetCatalogService({
+          gateway: {
+            loadPresetCatalog: vi
+              .fn<PresetCatalogGateway['loadPresetCatalog']>()
+              .mockResolvedValue(createPresetCatalogResult(sessionId)),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture,
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          primePreviewRuntime,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockResolvedValue(() => undefined),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.flowStep).toBe('capture')
+      expect(primePreviewRuntime).toHaveBeenCalledWith({
+        sessionId,
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      })
+    })
+
+    await act(async () => {
+      captureRequest = latestState!.requestCapture({
+        sessionId,
+      })
+      await Promise.resolve()
+    })
+
+    expect(requestCapture).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolvePrime?.()
+      await captureRequest
+    })
+
+    await expect(captureRequest).resolves.toMatchObject({
+      sessionId,
+      status: 'capture-saved',
+    })
+    expect(requestCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId,
+        requestId: expect.any(String),
+      }),
+    )
+  })
+
+  it('starts the preview runtime prime before the capture-flow effect can race ahead of the first request', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let resolvePrime: (() => void) | null = null
+    let captureRequest:
+      | ReturnType<SessionStateContextValue['requestCapture']>
+      | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const primePreviewRuntime = vi
+      .fn<NonNullable<CaptureRuntimeService['primePreviewRuntime']>>()
+      .mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePrime = resolve
+          }),
+      )
+    const requestCapture = vi
+      .fn<CaptureRuntimeService['requestCapture']>()
+      .mockResolvedValue(
+        createCaptureRequestResult({
+          sessionId,
+          capture: createCaptureRecord({
+            sessionId,
+          }),
+          readiness: createReadinessSnapshot({
+            sessionId,
+            surfaceState: 'captureSaved',
+            customerState: 'Preview Waiting',
+            canCapture: false,
+            primaryAction: 'wait',
+            customerMessage: '사진이 안전하게 저장되었어요.',
+            supportMessage: '확인용 사진을 준비하고 있어요. 잠시만 기다려 주세요.',
+            reasonCode: 'preview-waiting',
+            latestCapture: createCaptureRecord({
+              sessionId,
+            }),
+          }),
+        }),
+      )
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+              },
+            }),
+          },
+        })}
+        presetCatalogService={createPresetCatalogService({
+          gateway: {
+            loadPresetCatalog: vi
+              .fn<PresetCatalogGateway['loadPresetCatalog']>()
+              .mockResolvedValue(createPresetCatalogResult(sessionId)),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture,
+          deleteCapture: vi.fn<
+            NonNullable<CaptureRuntimeService['deleteCapture']>
+          >(),
+          primePreviewRuntime,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockResolvedValue(() => undefined),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+      captureRequest = latestState!.requestCapture({
+        sessionId,
+      })
+      await Promise.resolve()
+    })
+
+    expect(primePreviewRuntime).toHaveBeenCalledTimes(1)
+    expect(primePreviewRuntime).toHaveBeenCalledWith({
+      sessionId,
+      presetId: 'preset_soft-glow',
+      publishedVersion: '2026.03.20',
+    })
+    expect(requestCapture).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolvePrime?.()
+      await captureRequest
+    })
+
+    await expect(captureRequest).resolves.toMatchObject({
+      sessionId,
+      status: 'capture-saved',
+    })
+  })
+
   it('ignores stale preset catalog failures after the active session changes', async () => {
     let resolveCatalog!: (value: PresetCatalogResult) => void
     let latestState: SessionStateContextValue | null = null

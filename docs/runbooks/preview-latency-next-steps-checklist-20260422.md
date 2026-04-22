@@ -30,6 +30,18 @@ scope: preview-track
 - current worktree는 이제 `capture_preview_ready` detail에
   `originalVisibleToPresetAppliedVisibleMs`, `firstVisibleAtMs`, `presetAppliedVisibleAtMs`
   를 같이 남기고, 관련 자동 검증도 통과했다.
+- latest relaunch field evidence `session_000000000018a89961df9c18a0`는
+  `256x256` 복귀 상태에서 first shot도
+  `preview-render-ready elapsedMs=3820`,
+  `originalVisibleToPresetAppliedVisibleMs=3877`
+  로 latest reject family의 cold spike는 보이지 않았다.
+- 따라서 latest rerun 기준으로 `effect-based preview prime race`는 다시 완화된 것으로 읽고,
+  current immediate blocker는 다시 전 컷에 남는
+  `display-sized-preset-applied truthful close`의 steady-state `3.4s ~ 3.9s`
+  로 읽는 편이 맞다.
+- 사용자가 해상도 하향 경로를 더 쓰지 말라고 명시했으므로,
+  current worktree는 same-capture truthful close cap을 `256x256`으로 유지하고
+  더 낮은 해상도 실험은 중단한다.
 
 canonical reading order:
 
@@ -42,8 +54,16 @@ canonical reading order:
 ## 최신 출발점
 
 - latest session:
-  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a89961df9c18a0`
 - latest accepted current-code evidence:
+  - startup은 다시 `camera-ready`까지 정상 진입했다.
+  - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
+  - helper status도 session 끝까지 `cameraState=ready`, `helperState=healthy`로 유지됐다.
+  - direct metric은 `256x256` 상태에서 first shot 포함 5컷 모두 relaunch latency band에 머물렀다.
+    - `preview-render-ready elapsedMs`: `3820`, `3816`, `3417`, `3517`, `3524`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3877`, `3855`, `3441`, `3606`, `3606`
+- latest approved hardware package:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4`
   - startup은 다시 `camera-ready`까지 정상 진입했다.
   - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
   - helper correlation도 5컷 모두 `capture-accepted -> file-arrived -> fast-preview-ready`로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
@@ -58,9 +78,9 @@ canonical reading order:
     만 남아 있었다.
   - current code는 same-capture speculative close가 renderer timeout 안에 살아 있는 동안
     second darktable render를 다시 열지 않도록 single-lane wait로 보강했다.
-- latest official gate reading:
-  - `capture_preview_ready`: `5905ms`, `5982ms`, `5763ms`, `5864ms`, `5803ms`
-  - `preview-render-ready elapsedMs`: `3717ms`, `3617ms`, `3615ms`, `3618ms`, `3715ms`
+- latest official gate reading from relaunch session:
+  - `capture_preview_ready`: `6054ms`, `5949ms`, `5489ms`, `5635ms`, `5617ms`
+  - `preview-render-ready elapsedMs`: `3820ms`, `3816ms`, `3417ms`, `3517ms`, `3524ms`
 - current code logging guardrail:
   - latest approved hardware package는 아직 pre-direct-metric evidence로 남아 있다.
   - current worktree는 next session의 `capture_preview_ready` detail에
@@ -108,10 +128,10 @@ canonical reading order:
 - files updated:
   - `history/camera-capture-validation-history.md`
   - `docs/runbooks/preview-latency-next-steps-checklist-20260422.md`
-- session: `session_000000000018a8673fd974df10`
+- session: `session_000000000018a89961df9c18a0`
 - result: `Pass`
 - note:
-  - latest canonical evidence를 `history/`에 남겨 current blocker가 latency라는 점을 다시 고정했다.
+  - latest canonical evidence를 `history/`에 남겨 current blocker가 다시 steady-state truthful-close latency라는 점을 고정했다.
   - post-change approved hardware rerun은 아직 없어서 ledger는 이번 턴에 갱신하지 않았다.
 
 완료 기준:
@@ -166,16 +186,33 @@ canonical reading order:
 
 - date: `2026-04-22`
 - files updated:
-  - `src-tauri/src/capture/normalized_state.rs`
+  - `src-tauri/src/commands/capture_commands.rs`
+  - `src-tauri/src/render/mod.rs`
+  - `src-tauri/src/capture/ingest_pipeline.rs`
   - `src-tauri/tests/capture_readiness.rs`
-- result: `Comparable rerun collected, but completion criteria not met`
+  - `src/capture-adapter/services/capture-runtime.ts`
+  - `src/session-domain/state/session-provider.tsx`
+  - `src/capture-adapter/services/capture-runtime.test.ts`
+  - `src/session-domain/state/session-provider.test.tsx`
+- tests:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+  - `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+  - `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime when an active-preset session enters capture flow"`
+  - `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime|waits for an in-flight preview runtime prime|starts the preview runtime prime before the capture-flow effect can race ahead of the first request"`
+- result: `Prime race fix still held in latest rerun, but completion criteria not met`
 - note:
-  - rejected session `session_000000000018a868febfab83c0`에서 보였던
-    `existing-preview-fallback` first-shot false-ready는 current-code rerun `session_000000000018a86975cbe622b8`에서 사라졌다.
-  - 하지만 latest comparable rerun의 `preview-render-ready elapsedMs`는
-    `3616ms`, `4020ms`, `3618ms`, `4018ms`, `3717ms`로 mixed result였고,
-    `capture_preview_ready`도 `6021ms`, `6377ms`, `5931ms`, `6075ms`, `5773ms`로 official gate를 계속 넘겼다.
-  - 따라서 current rollback patch는 truth contract 복구까지는 닫았지만,
+  - latest relaunch capture session `session_000000000018a89961df9c18a0`에서도
+    first shot direct metric은 `3820ms / 3877ms`로 latest reject family의 cold spike 없이 닫혔다.
+  - 따라서 preview prime scheduling race 보강은 latest rerun에서도 계속 효과가 있었던 것으로 읽는 편이 맞다.
+  - 반면 5컷 전체가 여전히 `preview-render-ready 3.4s ~ 3.9s`,
+    `originalVisibleToPresetAppliedVisibleMs 3.4s ~ 3.9s`
+    에 머물러 남은 blocker는 steady-state truthful-close latency다.
+  - current worktree는 사용자 요청에 맞춰 same-capture `fast-preview-raster` truthful close cap을
+    `256x256`으로 유지한다.
+  - 이번 latest 세션은 그 `256x256` 복귀 상태에서 수집된 evidence다.
+  - capture request path에서 새 warm-up을 시작하지는 않으므로,
+    previous reject 원인이었던 capture-time overlap family는 되살리지 않게 유지했다.
+  - 아직 comparable hardware rerun은 다시 수집하지 않았으므로,
     hot path reduction success로는 아직 셀 수 없다.
 
 완료 기준:
@@ -278,9 +315,27 @@ canonical reading order:
   booth-visible truthful close hot path를 더 줄일 새 reduction candidate를 다시 찾는 순서가 맞다.
 - 단, 다음 hardware rerun에서는
   `capture_preview_ready detail`에 `originalVisibleToPresetAppliedVisibleMs`가 실제로 찍히는지부터 먼저 확인한다.
-- 이번 latest app relaunch에서도 `session_000000000018a88d53fa8f00c4`보다 새로운 capture session은 생기지 않았으므로,
-  direct metric 부재를 새 blocker로 재해석하지 말고 다음 approved rerun에서 다시 확인한다.
+- latest relaunch capture sessions
+  `session_000000000018a88f5792a50534`,
+  `session_000000000018a88fa09dcbdca0`,
+  `session_000000000018a89441063a0c54`,
+  `session_000000000018a895d248f89000`,
+  `session_000000000018a8975f5f4f0b34`,
+  `session_000000000018a8986df67c7e38`,
+  `session_000000000018a89961df9c18a0`
+  에서는 direct metric이 실제로 찍혔고,
+  latest session 기준으로는 `256x256` 복귀 상태에서도 first-shot cold spike가 보이지 않아
+  blocker가 steady-state truthful-close latency로 유지된다.
 - 참고:
-  - latest relaunch session `session_000000000018a88adfee94784c`는 `camera-ready`까지 정상 진입한 startup-only session이었다.
-  - 이번 턴에서는 same-capture preview recovery path도 `timing-events.log`에 `fast-preview-visible` seam을 남기도록 보강해,
-    다음 candidate 검증이 session-local evidence만으로도 닫히게 맞췄다.
+  - latest startup-only relaunch session `session_000000000018a88adfee94784c`는 `camera-ready`까지 정상 진입했다.
+  - 이번 턴에서는 app re-entry가 existing active preset capture flow로 돌아올 때도
+    reserve lane을 다시 warm state로 데우고,
+    그 in-flight prime이 first capture 전에 먼저 settle되도록 보강했다.
+  - latest evidence를 반영해,
+    preview prime 자체를 `useEffect`보다 앞선 session/preset 전이 시점에도 즉시 시작하도록 보강했다.
+  - 사용자가 요청한 대로 same-capture `fast-preview-raster` truthful close cap은
+    `256x256`으로 유지하고, 더 낮은 해상도 실험은 중단한다.
+  - 다음 판단은 hardware rerun에서 relaunch 이후 first shot의
+    `preview-render-ready elapsedMs`와
+    `originalVisibleToPresetAppliedVisibleMs`
+    가 함께 내려오는지로 닫는다.

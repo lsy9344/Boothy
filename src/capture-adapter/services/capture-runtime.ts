@@ -86,11 +86,17 @@ function logCaptureRuntimeDebug(
 }
 
 export type CaptureRuntimeMode = 'browser' | 'tauri'
+export type PrimePreviewRuntimeInput = {
+  sessionId: string
+  presetId: string
+  publishedVersion: string
+}
 
 export interface CaptureRuntimeGateway {
   getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
   deleteCapture?(input: CaptureDeleteInput): Promise<unknown>
   requestCapture(input: CaptureRequestInput): Promise<unknown>
+  primePreviewRuntime?(input: PrimePreviewRuntimeInput): Promise<unknown>
   subscribeToCaptureReadiness(
     onEvent: (payload: unknown) => void,
   ): Promise<() => void>
@@ -105,6 +111,7 @@ export interface CaptureRuntimeService {
   ): Promise<CaptureReadinessSnapshot>
   deleteCapture?(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
+  primePreviewRuntime?(input: PrimePreviewRuntimeInput): Promise<void>
   subscribeToCaptureReadiness(input: {
     sessionId: string
     onReadiness(readiness: CaptureReadinessSnapshot): void
@@ -363,6 +370,16 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
     }
 
     return parsedResponse
+  }
+
+  async primePreviewRuntime(input: PrimePreviewRuntimeInput) {
+    const primePreviewRuntime = this.gateway.primePreviewRuntime
+
+    if (primePreviewRuntime === undefined) {
+      return
+    }
+
+    await primePreviewRuntime(input)
   }
 
   async subscribeToCaptureReadiness(input: {
@@ -699,6 +716,9 @@ export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
     },
     async requestCapture(input) {
       return invoke<unknown>('request_capture', { input })
+    },
+    async primePreviewRuntime(input) {
+      return invoke<unknown>('prime_preview_runtime', { input })
     },
     async subscribeToCaptureReadiness(onEvent) {
       try {

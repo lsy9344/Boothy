@@ -40,6 +40,7 @@ const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const PREVIEW_RENDER_WARMUP_SETTLE_POLL_MS: u64 = 50;
 const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
@@ -482,6 +483,30 @@ pub fn schedule_preview_renderer_warmup_in_dir(
     });
 }
 
+pub fn wait_for_preview_renderer_warmup_to_settle(
+    session_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    timeout: Duration,
+) -> bool {
+    let warmup_key = build_preview_render_warmup_key(session_id, preset_id, preset_version);
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(Instant::now);
+
+    loop {
+        if !preview_renderer_warmup_is_in_flight(&warmup_key) {
+            return true;
+        }
+
+        if Instant::now() >= deadline {
+            return false;
+        }
+
+        thread::sleep(Duration::from_millis(PREVIEW_RENDER_WARMUP_SETTLE_POLL_MS));
+    }
+}
+
 pub fn log_render_failure_in_dir(
     base_dir: &Path,
     session_id: &str,
@@ -675,6 +700,13 @@ fn clear_preview_render_warmup_in_flight(key: &str) {
     if let Ok(mut in_flight) = PREVIEW_RENDER_WARMUP_IN_FLIGHT.lock() {
         in_flight.remove(key);
     }
+}
+
+fn preview_renderer_warmup_is_in_flight(key: &str) -> bool {
+    PREVIEW_RENDER_WARMUP_IN_FLIGHT
+        .lock()
+        .map(|in_flight| in_flight.contains(key))
+        .unwrap_or(false)
 }
 
 fn enqueue_resident_preview_worker_job(

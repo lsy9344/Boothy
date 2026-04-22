@@ -80,6 +80,7 @@ pub fn run() {
             commands::capture_commands::get_capture_readiness,
             commands::capture_commands::delete_capture,
             commands::capture_commands::request_capture,
+            commands::capture_commands::prime_preview_runtime,
             commands::operator_commands::load_operator_session_summary,
             commands::operator_commands::load_operator_recovery_summary,
             commands::operator_commands::load_operator_audit_history,

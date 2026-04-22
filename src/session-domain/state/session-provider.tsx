@@ -721,6 +721,8 @@ export function SessionProvider({
   const activeCaptureIdRef = useRef<string | null>(null)
   const capturePresetCatalogRetryKeyRef = useRef<string | null>(null)
   const capturePresetCatalogRetryCountRef = useRef(0)
+  const capturePreviewRuntimePrimeKeyRef = useRef<string | null>(null)
+  const capturePreviewRuntimePrimePromiseRef = useRef<Promise<void> | null>(null)
   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(DEFAULT_SESSION_DRAFT)
   const [isStarting, setIsStarting] = useState(false)
   const [isLoadingPresetCatalog, setIsLoadingPresetCatalog] = useState(false)
@@ -759,6 +761,51 @@ export function SessionProvider({
     setIsRequestingCapture(false)
   }
 
+  function clearCapturePreviewRuntimePrime() {
+    capturePreviewRuntimePrimeKeyRef.current = null
+    capturePreviewRuntimePrimePromiseRef.current = null
+  }
+
+  function ensureCapturePreviewRuntimePrime(input: {
+    sessionId: string | null
+    preset: { presetId: string; publishedVersion: string } | null
+  }) {
+    if (input.sessionId === null || input.preset === null) {
+      return capturePreviewRuntimePrimePromiseRef.current
+    }
+
+    const primeKey = `${input.sessionId}:${input.preset.presetId}:${input.preset.publishedVersion}`
+
+    if (capturePreviewRuntimePrimeKeyRef.current === primeKey) {
+      return capturePreviewRuntimePrimePromiseRef.current ?? Promise.resolve()
+    }
+
+    capturePreviewRuntimePrimeKeyRef.current = primeKey
+
+    const primePromise =
+      captureRuntimeServiceRef.current
+        .primePreviewRuntime?.({
+          sessionId: input.sessionId,
+          presetId: input.preset.presetId,
+          publishedVersion: input.preset.publishedVersion,
+        })
+        .catch(() => undefined)
+
+    if (primePromise === undefined) {
+      capturePreviewRuntimePrimePromiseRef.current = null
+      return null
+    }
+
+    capturePreviewRuntimePrimePromiseRef.current = primePromise
+    void primePromise.finally(() => {
+      if (capturePreviewRuntimePrimePromiseRef.current === primePromise) {
+        capturePreviewRuntimePrimePromiseRef.current = null
+      }
+    })
+
+    return primePromise
+  }
+
   function prunePendingFastPreview(
     sessionId: string | null,
     pendingFastPreview: SessionDraft['pendingFastPreview'],
@@ -793,6 +840,7 @@ export function SessionProvider({
   function clearTransientSessionActivity() {
     invalidatePresetCatalogRequests()
     invalidateCaptureRequests()
+    clearCapturePreviewRuntimePrime()
     deletedCaptureIdsRef.current.clear()
     activePresetSelectionVersionRef.current += 1
     activePresetSelectionRequestVersionRef.current = null
@@ -1019,6 +1067,12 @@ export function SessionProvider({
       const hasPreset = result.manifest.activePreset !== null
 
       clearTransientSessionActivity()
+      if (hasPreset) {
+        ensureCapturePreviewRuntimePrime({
+          sessionId: result.sessionId,
+          preset: result.manifest.activePreset,
+        })
+      }
       setSessionDraft({
         flowStep: hasPreset ? 'capture' : 'preset-selection',
         sessionId: result.sessionId,
@@ -1152,6 +1206,11 @@ export function SessionProvider({
           '이미 취소했거나 이전 상태의 룩 변경 응답이 늦게 도착했어요. 현재 룩을 유지할게요.',
         )
       }
+
+      ensureCapturePreviewRuntimePrime({
+        sessionId: input.sessionId,
+        preset: result.activePreset,
+      })
 
       setSessionDraft((current) => ({
         ...current,
@@ -1332,6 +1391,19 @@ export function SessionProvider({
     }))
 
     try {
+      const activePreset =
+        sessionDraftRef.current.selectedPreset ??
+        sessionDraftRef.current.manifest?.activePreset ??
+        null
+      await ensureCapturePreviewRuntimePrime({
+        sessionId: input.sessionId,
+        preset:
+          activePreset !== null &&
+          sessionDraftRef.current.sessionId === input.sessionId
+            ? activePreset
+            : null,
+      })
+
       const result = await captureRuntimeServiceRef.current.requestCapture({
         ...input,
         requestId,
@@ -1789,6 +1861,30 @@ export function SessionProvider({
     sessionDraft.flowStep,
     sessionDraft.sessionId,
     sessionDraft.selectedPreset,
+  ])
+
+  useEffect(() => {
+    const activePreset =
+      sessionDraft.selectedPreset ?? sessionDraft.manifest?.activePreset ?? null
+
+    if (
+      sessionDraft.flowStep !== 'capture' ||
+      sessionDraft.sessionId === null ||
+      activePreset === null
+    ) {
+      clearCapturePreviewRuntimePrime()
+      return
+    }
+
+    ensureCapturePreviewRuntimePrime({
+      sessionId: sessionDraft.sessionId,
+      preset: activePreset,
+    })
+  }, [
+    sessionDraft.flowStep,
+    sessionDraft.sessionId,
+    sessionDraft.selectedPreset,
+    sessionDraft.manifest?.activePreset,
   ])
 
   useEffect(() => {

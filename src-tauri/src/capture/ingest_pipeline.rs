@@ -2073,7 +2073,8 @@ fn append_capture_preview_ready_event(
     capture: &SessionCaptureRecord,
     preview_ready_at_ms: u64,
 ) {
-    let total_elapsed_ms = preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms);
+    let total_elapsed_ms =
+        preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms);
     let detail = if let Some(first_visible_at_ms) = capture.timing.fast_preview_visible_at_ms {
         format!(
             "elapsedMs={};originalVisibleToPresetAppliedVisibleMs={};firstVisibleAtMs={};presetAppliedVisibleAtMs={};budgetState={};renderStatus={}",

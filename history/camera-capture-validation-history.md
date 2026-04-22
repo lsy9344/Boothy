@@ -4280,3 +4280,299 @@ latest numbers:
 2. current worktree는 next hardware rerun에서 official gate direct metric을 바로 읽을 준비가 돼 있다.
 3. 다음 실질 작업은 여전히 booth-visible truthful close hot path를 더 줄이는 후보를 찾고,
    그 직후 rerun에서 `originalVisibleToPresetAppliedVisibleMs`가 실제로 찍히는지 확인하는 순서다.
+
+### 2026-04-22 12:35 +09:00 latest relaunch capture sessions도 latency blocker를 그대로 보여 줬고, current code는 capture flow re-entry에서 reserve lane을 다시 prime한다
+
+사용자 최신 요청:
+
+1. 앱을 방금 다시 실행했으니 latest 로그를 확인하고, checklist 순서에 맞춰 문제를 해결한 뒤 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88f5792a50534`
+  와
+  `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88fa09dcbdca0`
+  는 app relaunch 뒤 새로 생긴 5-shot capture sessions였다.
+- 두 session의 `diagnostics/timing-events.log`를 보면:
+  - 5컷 모두 `fast-preview-promoted kind=legacy-canonical-scan`
+  - 5컷 모두 `preview-render-ready ... truthOwner=display-sized-preset-applied`
+  - 5컷 모두 `capture_preview_ready detail`에
+    `originalVisibleToPresetAppliedVisibleMs`
+    가 직접 남아 있었다.
+- latest two-session direct metric은 아래 범위였다.
+  - `session_000000000018a88f5792a50534`
+    - `preview-render-ready elapsedMs`: `3721ms`, `3517ms`, `3614ms`, `3620ms`, `3517ms`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3766ms`, `3600ms`, `3686ms`, `3692ms`, `3603ms`
+  - `session_000000000018a88fa09dcbdca0`
+    - `preview-render-ready elapsedMs`: `3823ms`, `3416ms`, `3819ms`, `3816ms`, `3415ms`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3860ms`, `3439ms`, `3848ms`, `3839ms`, `3443ms`
+- 즉 latest relaunch에서도 새 blocker는 없었고,
+  reserve truthful close hot path가 그대로 남아 있는 쪽으로 읽는 편이 맞았다.
+- 코드 확인 결과 current warm-up 예약은
+  `start_session` / `select_active_preset`
+  경계에만 있었다.
+  그래서 앱을 다시 열어 이미 active preset이 잡힌 capture flow로 복귀하는 경우,
+  reserve lane이 explicit re-prime 없이 cold state로 다시 시작될 수 있었다.
+
+이번 회차 조치:
+
+- host에 `prime_preview_runtime` command를 추가해
+  existing active preset capture flow가 다시 열릴 때
+  preview worker runtime prime + preview renderer warm-up을 명시적으로 다시 예약하게 했다.
+- client capture runtime service와 session provider는
+  capture flow 진입 시 current preset binding으로 위 command를 1회 호출하도록 연결했다.
+- 이 재-prime은 capture request path에 넣지 않았기 때문에,
+  이전 reject 원인이었던 capture-time warm-up overlap family는 다시 열지 않도록 유지했다.
+- 관련 자동 검증:
+  - `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --exact`
+  - `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+  - `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime when an active-preset session enters capture flow"`
+
+이번 시점 제품 판단:
+
+1. latest relaunch capture sessions도 startup/save failure가 아니라 truthful-close latency blocker를 다시 보여 줬다.
+2. current code는 app re-entry가 existing active preset capture flow로 돌아올 때 reserve lane을 다시 warm state로 데우도록 보강됐다.
+3. 하지만 comparable hardware rerun은 아직 다시 수집하지 않았으므로, latency reduction success는 아직 선언할 수 없다.
+4. 다음 판정은 이 patch 뒤 hardware rerun에서 first shot 포함 `preview-render-ready elapsedMs`와 `originalVisibleToPresetAppliedVisibleMs`가 함께 내려오는지로 닫는 순서가 맞다.
+
+### 2026-04-22 13:56 +09:00 latest relaunch 5-shot run은 first shot만 다시 cold spike였고, current code는 in-flight re-entry prime이 끝날 때까지 첫 capture를 기다리게 보강했다
+
+사용자 최신 요청:
+
+1. 방금 앱을 실행했으니 latest 로그를 확인하고, checklist 순서대로 문제를 해결한 뒤 기록하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a89441063a0c54`였다.
+- startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> session-opened -> camera-ready`
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- 같은 session의 `timing-events.log`를 보면 5컷 모두 `previewReady` truthful close로 닫혔지만,
+  first shot만 direct metric이 다시 크게 튀었다.
+  - `preview-render-ready elapsedMs`: `15174`, `3314`, `3718`, `3319`, `3215`
+  - `originalVisibleToPresetAppliedVisibleMs`: `15265`, `3357`, `3780`, `3381`, `3273`
+- 즉 startup/save/correctness가 무너진 것은 아니고,
+  relaunch 뒤 first shot만 reserve lane warm-up보다 먼저 capture가 들어간 흔적으로 읽는 편이 맞았다.
+
+이번 회차 해석:
+
+- 직전 relaunch patch는 capture flow re-entry에서 `prime_preview_runtime`을 다시 호출하게 했지만,
+  latest session은 그 re-prime이 **시작만 되고 settle되기 전에 first capture request가 먼저 들어갈 수 있다**는 점을 보여 줬다.
+- 숫자가 첫 컷 이후 바로 다시 `3.2s ~ 3.8s`대로 돌아온 것도,
+  current blocker가 일반 steady-state latency보다 `first-shot cold prime settle` 쪽에 더 가깝다는 해석을 뒷받침했다.
+
+이번 회차 조치:
+
+- host `prime_preview_runtime` command가 preview renderer warm-up settle까지 bounded wait를 유지하게 보강했다.
+- client `SessionProvider`는 capture flow 진입 때 시작한 in-flight preview prime promise를 첫 capture request 전에 기다리도록 연결했다.
+- capture request path에서 새 warm-up을 다시 시작하지는 않게 유지했다.
+  그래서 이전 reject 원인이었던 capture-time overlap family를 다시 열지는 않는다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --exact`
+- `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+- `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime|waits for an in-flight preview runtime prime"`
+
+이번 시점 제품 판단:
+
+1. latest app run은 새 correctness regression이 아니라 first-shot cold spike evidence였다.
+2. current code는 capture flow re-entry warm-up이 끝나기 전에 first shot이 먼저 들어가던 틈을 메웠다.
+3. 하지만 hardware rerun으로 direct metric이 실제로 내려오는지 아직 확인하지 않았으므로, 공식 verdict는 여전히 보류다.
+
+### 2026-04-22 14:18 +09:00 latest rerun에서는 first-shot cold spike가 완화됐고, current code는 steady-state truthful-close cap을 192로 더 낮췄다
+
+사용자 최신 요청:
+
+1. 앱을 방금 실행했으니 latest 로그를 확인하고 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a895d248f89000`였다.
+- startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- 같은 session의 `session.json`과 `timing-events.log`를 보면 5컷 모두
+  `renderStatus=previewReady`,
+  `preview.kind=preset-applied-preview`,
+  `xmpPreviewReadyAtMs != null`
+  로 닫혔다.
+- direct metric은 아래처럼 읽혔다.
+  - `preview-render-ready elapsedMs`: `3831`, `3417`, `3415`, `3715`, `3413`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3963`, `3438`, `3449`, `3767`, `3435`
+  - `capture_preview_ready`: `6106`, `5576`, `5536`, `5820`, `5514`
+
+이번 회차 해석:
+
+- 직전 latest `session_000000000018a89441063a0c54`에서 보였던 first-shot cold spike
+  `15174 / 15265`
+  는 latest rerun에서 사라졌다.
+- 즉 capture flow re-entry prime join은 first shot을 다시 steady-state band로 되돌리는 데에는 효과가 있었다.
+- 하지만 5컷 전체가 여전히 `3.4s ~ 4.0s`대에 남아 있으므로,
+  current blocker는 다시 `fast preview -> display-sized preset-applied truthful close`
+  자체의 steady-state darktable 비용으로 읽는 편이 맞다.
+
+이번 회차 조치:
+
+- existing re-entry prime join 보강은 유지했다.
+- 추가로 same-capture `fast-preview-raster` truthful close cap을
+  `256x256 -> 192x192`
+  로 더 낮춰 darktable hot path 자체를 한 단계 더 가볍게 보강했다.
+- truth owner, same-session correctness, capture-time overlap guardrail은 바꾸지 않았다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+
+이번 시점 제품 판단:
+
+1. latest rerun은 first-shot cold spike가 현재 code에서 완화됐다는 evidence다.
+2. 남은 blocker는 다시 steady-state truthful-close latency다.
+3. 이번 cap reduction이 실제로 먹히는지는 다음 hardware rerun에서 direct metric을 다시 봐야 한다.
+
+### 2026-04-22 14:55 +09:00 latest rerun에서는 192 cap 아래에서도 first-shot cold spike가 재발했고, current code는 preview prime을 effect 이전 전이 시점에도 시작하게 보강했다
+
+사용자 최신 요청:
+
+1. 방금 앱을 실행했으니 latest 로그파일을 확인해 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8975f5f4f0b34`였다.
+- startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- 같은 session의 `timing-events.log`를 보면 same-capture truthful close cap `192x192`가 실제로 적용돼 있었다.
+  - first shot `preview-render-ready elapsedMs=15174`
+  - first shot `originalVisibleToPresetAppliedVisibleMs=15270`
+  - 이후 4컷은 `preview-render-ready 3323ms ~ 3716ms`, `originalVisibleToPresetAppliedVisibleMs 3354ms ~ 3767ms`
+- 즉 startup/save/correctness regression은 아니었고,
+  latest previous rerun에서 잠시 완화됐던 first-shot cold spike가 다시 재발한 쪽으로 읽는 편이 맞았다.
+
+이번 회차 해석:
+
+- same-capture `192x192` cap 자체는 적용됐지만,
+  first shot만 다시 `15초`대로 튄 점을 보면 current blocker는 steady-state cap보다도
+  **capture flow 진입 직후 사용자가 너무 빨리 누르면 effect 기반 preview prime 시작보다 first request가 먼저 지나갈 수 있는 race**
+  에 더 가깝다.
+- 기존 code는 in-flight prime promise를 기다리게는 했지만,
+  그 promise 생성 자체가 `useEffect`에만 묶여 있어
+  아주 빠른 첫 request에서는 아직 늦을 수 있었다.
+
+이번 회차 조치:
+
+- preview prime을 `useEffect`에만 두지 않고
+  `startSession` / `selectActivePreset` 시점에도 즉시 시작하도록 보강했다.
+- 너무 빠른 첫 request가 아직 반영 전 state를 읽더라도,
+  이미 시작한 in-flight preview prime promise를 지우지 않고 그대로 기다리게 보강했다.
+- same-capture `192x192` truthful close cap은 유지했다.
+
+검증:
+
+- `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime|waits for an in-flight preview runtime prime|starts the preview runtime prime before the capture-flow effect can race ahead of the first request"`
+- `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+
+이번 시점 제품 판단:
+
+1. latest rerun은 `192x192` cap만으로는 first-shot cold spike를 막지 못했다.
+2. current code는 그 spike의 더 직접적인 원인으로 보이는 preview-prime scheduling race를 줄이는 쪽으로 보강됐다.
+3. 다만 hardware rerun이 아직 없으므로, 실제 효과 판정은 다음 latest session의 first shot direct metric으로 다시 닫아야 한다.
+
+### 2026-04-22 15:08 +09:00 latest rerun에서는 first-shot race spike가 다시 사라졌고, current code는 사용자 요청에 따라 truthful close cap을 256으로 복귀시켰다
+
+사용자 최신 요청:
+
+1. 해상도를 낮추는 방법은 더 이상 쓰지 말라고 요청했다.
+2. 더 낮은 해상도는 체감 개선도 없고 이질감만 만든다고 보고, 자연스러운 해상도로 다시 세팅하라고 요청했다.
+3. 방금 앱 실행 테스트를 했으니 latest 로그를 확인하고 기록 후 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8986df67c7e38`였다.
+- startup/connect는 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- 같은 session의 `timing-events.log`를 보면 same-capture truthful close cap `192x192` 상태에서도
+  first shot direct metric이 다시 steady-state band로 내려와 있었다.
+  - `preview-render-ready elapsedMs`: `3318`, `3414`, `3515`, `3414`, `3726`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3360`, `3439`, `3532`, `3437`, `3762`
+  - `capture_preview_ready`: `5462`, `5447`, `5534`, `5454`, `5800`
+- 즉 직전 latest `session_000000000018a8975f5f4f0b34`에서 보였던 first-shot cold spike는
+  이번 rerun에서는 다시 보이지 않았다.
+
+이번 회차 해석:
+
+- latest session 기준으로는 preview-prime scheduling race 보강이 실제로 먹힌 쪽으로 읽는 편이 맞다.
+- 남은 문제는 다시 first-shot race가 아니라,
+  5컷 전체에 남는 `3.3s ~ 3.8s`대 steady-state truthful-close latency다.
+- 동시에 사용자는 낮은 해상도 자체를 제품적으로 거부했으므로,
+  `192x192` 경로는 더 이상 유지할 가치가 없다.
+
+이번 회차 조치:
+
+- preview-prime scheduling race 보강은 유지했다.
+- same-capture `fast-preview-raster` truthful close cap은
+  `192x192 -> 256x256`
+  으로 복귀시켰다.
+- 즉 latest field evidence는 `192x192` 상태에서 읽되,
+  current worktree는 이질감이 덜한 해상도로 다시 돌아온 상태다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+- `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime|waits for an in-flight preview runtime prime|starts the preview runtime prime before the capture-flow effect can race ahead of the first request"`
+- `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+
+이번 시점 제품 판단:
+
+1. latest rerun은 first-shot race spike가 current code에서 다시 사라졌다는 evidence다.
+2. 남은 blocker는 다시 steady-state truthful-close latency다.
+3. 해상도 하향 경로는 사용자 요청에 따라 종료했고, 다음 판단은 `256x256` 복귀 상태의 새 hardware rerun에서 다시 닫아야 한다.
+
+### 2026-04-22 15:18 +09:00 `256x256` 복귀 뒤 latest rerun에서도 first-shot spike는 다시 보이지 않았고, 남은 문제는 steady-state truthful-close latency로 고정됐다
+
+사용자 최신 요청:
+
+1. 방금 앱을 실행했으니 latest 로그를 확인하고 문제를 해결하라고 요청했다.
+
+실제 확인 근거:
+
+- latest session은 `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a89961df9c18a0`였다.
+- startup/connect는 정상으로 닫혔다.
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- 같은 session의 `timing-events.log`를 보면 5컷 모두
+  `renderStatus=previewReady`,
+  `preview.kind=preset-applied-preview`,
+  `xmpPreviewReadyAtMs != null`
+  로 닫혔다.
+- direct metric은 `256x256` 복귀 상태에서 아래처럼 읽혔다.
+  - `preview-render-ready elapsedMs`: `3820`, `3816`, `3417`, `3517`, `3524`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3877`, `3855`, `3441`, `3606`, `3606`
+  - `capture_preview_ready`: `6054`, `5949`, `5489`, `5635`, `5617`
+
+이번 회차 해석:
+
+- 직전 latest `session_000000000018a8986df67c7e38`에서 보였던
+  first-shot race spike 완화는 `256x256` 복귀 뒤 latest rerun에서도 유지됐다.
+- 즉 current code 기준으로 first-shot cold/race family는 다시 immediate blocker가 아니었다.
+- 반면 5컷 전체가 여전히 `3.4s ~ 3.9s`대에 머물렀으므로,
+  남은 제품 문제는 다시 `fast preview -> display-sized preset-applied truthful close`
+  steady-state latency로 고정하는 편이 맞다.
+
+이번 회차 조치:
+
+- preview-prime scheduling race 보강과 `256x256` truthful close cap 유지는 그대로 뒀다.
+- latest `256x256` field evidence를 canonical history에 추가해,
+  current blocker가 다시 steady-state truthful-close latency라는 점을 기록으로 고정했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness -- --test-threads=1`
+- `pnpm test:run src/session-domain/state/session-provider.test.tsx --testNamePattern "primes the preview runtime|waits for an in-flight preview runtime prime|starts the preview runtime prime before the capture-flow effect can race ahead of the first request"`
+- `pnpm test:run src/capture-adapter/services/capture-runtime.test.ts --testNamePattern "primes the preview runtime"`
+
+이번 시점 제품 판단:
+
+1. latest rerun은 `256x256` 복귀 상태에서도 first-shot spike가 다시 나오지 않았다는 evidence다.
+2. 해상도 하향 경로를 되살릴 필요는 없고, 남은 blocker는 steady-state truthful-close latency다.
+3. 다음 reduction candidate는 해상도 인하가 아니라, `darktable-cli`가 소유한 booth-visible truthful close 비용 자체를 줄이는 방향에서 다시 찾아야 한다.

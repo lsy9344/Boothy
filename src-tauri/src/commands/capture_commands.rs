@@ -15,6 +15,11 @@ use crate::{
         CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureFastPreviewUpdateDto,
         CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
         CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
+        PresetSelectionInputDto,
+    },
+    render::{
+        prime_preview_worker_runtime_in_dir, schedule_preview_renderer_warmup_in_dir,
+        wait_for_preview_renderer_warmup_to_settle,
     },
     session::session_repository::resolve_app_session_base_dir,
 };
@@ -23,6 +28,7 @@ const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
 const CAPTURE_FAST_PREVIEW_UPDATE_EVENT: &str = "capture-fast-preview-update";
 const PREVIEW_REFINEMENT_WAIT_MS: u64 = 2000;
 const PREVIEW_REFINEMENT_POLL_MS: u64 = 40;
+const PREVIEW_RUNTIME_PRIME_SETTLE_TIMEOUT_MS: u64 = 20_000;
 
 #[tauri::command]
 pub fn get_capture_readiness(
@@ -147,12 +153,13 @@ pub fn request_capture(
                 if let Some(preview_ready_at_ms) = capture.timing.xmp_preview_ready_at_ms {
                     let preview_elapsed_ms = preview_ready_at_ms
                         .saturating_sub(capture.timing.capture_acknowledged_at_ms);
-                    let official_gate_elapsed_ms = capture
-                        .timing
-                        .fast_preview_visible_at_ms
-                        .map(|first_visible_at_ms| {
-                            preview_ready_at_ms.saturating_sub(first_visible_at_ms)
-                        });
+                    let official_gate_elapsed_ms =
+                        capture
+                            .timing
+                            .fast_preview_visible_at_ms
+                            .map(|first_visible_at_ms| {
+                                preview_ready_at_ms.saturating_sub(first_visible_at_ms)
+                            });
                     log::info!(
                         "capture_preview_ready session={} capture_id={} elapsed_ms={} original_visible_to_preset_applied_visible_ms={} budget_state={}",
                         preview_session_id,
@@ -239,6 +246,49 @@ pub fn request_capture(
     });
 
     Ok(result)
+}
+
+#[tauri::command]
+pub fn prime_preview_runtime(
+    app: tauri::AppHandle,
+    input: PresetSelectionInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+
+    prime_preview_worker_runtime_in_dir(&base_dir, &input.session_id);
+    schedule_preview_renderer_warmup_in_dir(
+        &base_dir,
+        &input.session_id,
+        &input.preset_id,
+        &input.published_version,
+    );
+    let warmup_settled = wait_for_preview_renderer_warmup_to_settle(
+        &input.session_id,
+        &input.preset_id,
+        &input.published_version,
+        Duration::from_millis(PREVIEW_RUNTIME_PRIME_SETTLE_TIMEOUT_MS),
+    );
+    if !warmup_settled {
+        log::warn!(
+            "preview_runtime_prime_wait_timed_out session={} preset_id={} published_version={} timeout_ms={}",
+            input.session_id,
+            input.preset_id,
+            input.published_version,
+            PREVIEW_RUNTIME_PRIME_SETTLE_TIMEOUT_MS
+        );
+    }
+    log::info!(
+        "preview_runtime_primed session={} preset_id={} published_version={} warmup_settled={}",
+        input.session_id,
+        input.preset_id,
+        input.published_version,
+        warmup_settled
+    );
+
+    Ok(())
 }
 
 fn read_current_capture_readiness(

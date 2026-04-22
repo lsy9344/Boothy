@@ -249,6 +249,36 @@ describe('capture runtime adapter', () => {
     })
   })
 
+  it('primes the preview runtime through tauri IPC with the active preset binding', async () => {
+    mockIPC((cmd, payload) => {
+      if (cmd === 'prime_preview_runtime') {
+        expect(payload).toEqual({
+          input: {
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        })
+
+        return null
+      }
+
+      return undefined
+    })
+
+    const service = createCaptureRuntimeService({
+      gateway: createTauriCaptureRuntimeGateway(),
+    })
+
+    await expect(
+      service.primePreviewRuntime?.({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      }),
+    ).resolves.toBeUndefined()
+  })
+
   it('normalizes a blocked capture response with customer-safe next action', async () => {
     mockIPC((cmd) => {
       if (cmd === 'request_capture') {
