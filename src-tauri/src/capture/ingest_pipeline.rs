@@ -38,23 +38,23 @@ const FAST_PREVIEW_ALLOWED_EXTENSIONS: [&str; 2] = ["jpg", "jpeg"];
 // lands ~0.6-0.7s after RAW persistence. Keep the wait under 1s so fallback
 // still stays bounded, but leave enough budget to actually catch that path.
 const HELPER_FAST_PREVIEW_WAIT_MS: u64 = 900;
-const HELPER_FAST_PREVIEW_POLL_MS: u64 = 40;
+const HELPER_FAST_PREVIEW_POLL_MS: u64 = 20;
 // Speculative render is only worth adopting when it is already about to finish.
 // Give the lighter raster lane enough room to close before we spend another
 // darktable process on the same capture.
 const SPECULATIVE_PREVIEW_WAIT_MS: u64 = 1800;
-const SPECULATIVE_PREVIEW_POLL_MS: u64 = 40;
+const SPECULATIVE_PREVIEW_POLL_MS: u64 = 10;
 // Once the same-capture image is already visible, the booth should fall through
 // to the fallback close quickly instead of draining indefinitely.
 const SPECULATIVE_PREVIEW_DRAIN_WAIT_MS: u64 = 400;
-const SPECULATIVE_PREVIEW_DRAIN_POLL_MS: u64 = 80;
+const SPECULATIVE_PREVIEW_DRAIN_POLL_MS: u64 = 20;
 // If a speculative close is still actively rendering after the initial wait,
 // keep serializing behind that in-flight work for the full renderer timeout.
 // Recent first-shot field evidence showed that opening a second darktable lane
 // around the 7s mark can crash both renders and force `existing-preview-fallback`
 // instead of a truthful close.
 const SPECULATIVE_PREVIEW_JOIN_WAIT_MS: u64 = 45000;
-const SPECULATIVE_PREVIEW_JOIN_POLL_MS: u64 = 80;
+const SPECULATIVE_PREVIEW_JOIN_POLL_MS: u64 = 20;
 const PREVIEW_REFINEMENT_IDLE_WAIT_MS: u64 = 5000;
 const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
 const LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND: &str = "legacy-canonical-scan";
@@ -1063,23 +1063,6 @@ fn has_displayable_existing_preview(paths: &SessionPaths, capture: &SessionCaptu
         .is_some()
 }
 
-fn existing_preview_render_failure_fallback_detail(
-    capture: &SessionCaptureRecord,
-    preview_ready_at_ms: u64,
-) -> String {
-    format!(
-        "presetId={};publishedVersion={};binary=existing-preview-fallback;source=existing-preview-fallback;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;sourceAsset={};truthOwner=existing-preview-fallback;args=none;status=render-failed-fallback",
-        capture.active_preset_id.as_deref().unwrap_or("unknown"),
-        capture.active_preset_version,
-        preview_ready_at_ms.saturating_sub(capture.timing.capture_acknowledged_at_ms),
-        capture
-            .preview
-            .kind
-            .as_deref()
-            .unwrap_or(LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND)
-    )
-}
-
 fn try_close_existing_preview_after_render_failure_in_dir(
     base_dir: &Path,
     paths: &SessionPaths,
@@ -1099,61 +1082,33 @@ fn try_close_existing_preview_after_render_failure_in_dir(
     let Some(capture) = manifest.captures.get(capture_index) else {
         return Ok(None);
     };
-    if capture.preview.ready_at_ms.is_some() || !has_displayable_existing_preview(paths, capture) {
+    if !should_close_existing_preview_without_render(capture)
+        || !has_displayable_existing_preview(paths, capture)
+    {
         return Ok(None);
     }
-
-    let preview_ready_at_ms = capture
-        .timing
-        .fast_preview_visible_at_ms
-        .or(Some(capture.raw.persisted_at_ms))
-        .or_else(|| current_time_ms().ok())
-        .ok_or_else(|| {
-            HostErrorEnvelope::persistence(
-                "프리뷰 시각을 기록하지 못했어요. 잠시 후 다시 시도해 주세요.",
-            )
-        })?;
-    let capture = {
-        let capture = manifest
-            .captures
-            .get_mut(capture_index)
-            .expect("capture index already resolved");
-        capture.preview.ready_at_ms = Some(preview_ready_at_ms);
-        capture.render_status = "previewReady".into();
-        capture.timing.preview_visible_at_ms = capture
+    let promoted_fast_preview = FastPreviewPromotionResult {
+        asset_path: capture
+            .preview
+            .asset_path
+            .clone()
+            .expect("truthful fallback close requires an asset path"),
+        kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+        visible_at_ms: capture
             .timing
-            .preview_visible_at_ms
-            .or(Some(preview_ready_at_ms));
-        capture.timing.preview_budget_state = if preview_ready_at_ms
-            .saturating_sub(capture.timing.capture_acknowledged_at_ms)
-            <= PREVIEW_BUDGET_MS
-        {
-            "withinBudget".into()
-        } else {
-            "exceededBudget".into()
-        };
-        capture.clone()
+            .fast_preview_visible_at_ms
+            .or(capture.preview.ready_at_ms)
+            .or(Some(capture.raw.persisted_at_ms)),
     };
 
-    manifest.updated_at = current_timestamp(SystemTime::now())?;
-    manifest.lifecycle.stage = derive_capture_lifecycle_stage(&manifest);
-    write_session_manifest(&paths.manifest_path, &manifest)?;
-    log_render_ready_in_dir(
+    close_truthful_preview_in_manifest(
         base_dir,
-        &capture.session_id,
-        &capture.capture_id,
-        &capture.request_id,
-        RenderIntent::Preview,
-        &existing_preview_render_failure_fallback_detail(&capture, preview_ready_at_ms),
-    );
-    append_capture_preview_ready_event(
-        base_dir,
-        &capture.session_id,
-        &capture,
-        preview_ready_at_ms,
-    );
-
-    Ok(Some(capture))
+        paths,
+        &mut manifest,
+        capture_index,
+        promoted_fast_preview,
+    )
+    .map(Some)
 }
 
 fn close_truthful_preview_in_manifest(
@@ -2375,6 +2330,26 @@ mod tests {
             "emitted readiness update should inherit the resolved truthful owner"
         );
         assert_eq!(update.visible_at_ms, 1_500);
+    }
+
+    #[test]
+    fn speculative_preview_polling_is_tight_enough_for_three_second_gate() {
+        assert!(
+            HELPER_FAST_PREVIEW_POLL_MS <= 20,
+            "helper preview polling should not add a visible tail near the official gate"
+        );
+        assert!(
+            SPECULATIVE_PREVIEW_POLL_MS <= 10,
+            "speculative preview completion polling should catch the truthful close quickly"
+        );
+        assert!(
+            SPECULATIVE_PREVIEW_DRAIN_POLL_MS <= 20,
+            "drain polling should not add a material tail when a close is already visible"
+        );
+        assert!(
+            SPECULATIVE_PREVIEW_JOIN_POLL_MS <= 20,
+            "join polling should not delay adopting an already-finished truthful close"
+        );
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {

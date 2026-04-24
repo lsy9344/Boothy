@@ -31,14 +31,17 @@ use crate::{
         audit_log::load_operator_audit_history_in_dir, load_operator_session_summary_in_dir,
     },
     preset::preset_catalog::load_preset_catalog_in_dir,
+    render::{schedule_preview_renderer_warmup_in_dir, wait_for_preview_renderer_warmup_to_settle},
     session::{
-        session_manifest::{current_timestamp, normalize_customer_name},
+        session_manifest::{current_timestamp, normalize_customer_name, SessionCaptureRecord},
         session_paths::SessionPaths,
         session_repository::{
             resolve_app_session_base_dir, select_active_preset_in_dir, start_session_in_dir,
         },
     },
 };
+
+const PREVIEW_RUNTIME_WARMUP_SETTLE_TIMEOUT_MS: u64 = 20_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppLaunchMode {
@@ -438,6 +441,52 @@ fn execute_validation_run(
         )
         .map_err(internal_run_failure)?;
 
+    schedule_preview_renderer_warmup_in_dir(
+        base_dir,
+        &session.session_id,
+        &selection.active_preset.preset_id,
+        &selection.active_preset.published_version,
+    );
+    let warmup_settled = wait_for_preview_renderer_warmup_to_settle(
+        &session.session_id,
+        &selection.active_preset.preset_id,
+        &selection.active_preset.published_version,
+        Duration::from_millis(PREVIEW_RUNTIME_WARMUP_SETTLE_TIMEOUT_MS),
+    );
+    let warmup_step_status = preview_runtime_warmup_step_status(warmup_settled);
+    context
+        .append_step(
+            "preview-runtime-warmed",
+            warmup_step_status,
+            if warmup_settled {
+                "Preview runtime warm-up completed before the first validation capture."
+            } else {
+                "Preview runtime warm-up did not complete before the first validation capture."
+            },
+            None,
+            None,
+            None,
+            json!({
+                "sessionId": session.session_id,
+                "presetId": selection.active_preset.preset_id,
+                "publishedVersion": selection.active_preset.published_version,
+                "warmupSettled": warmup_settled,
+                "timeoutMs": PREVIEW_RUNTIME_WARMUP_SETTLE_TIMEOUT_MS,
+            }),
+        )
+        .map_err(internal_run_failure)?;
+    if !warmup_settled {
+        return Err(run_failure(
+            "preview-runtime-warmup-failed",
+            "preview runtime warm-up이 첫 촬영 전에 완료되지 않았어요.",
+            "검증 세션이 cold preview path로 시작했거나 warm-up render가 실패했습니다.",
+            vec![
+                "run-steps.jsonl의 preview-runtime-warmed detail을 확인하세요.",
+                "preview warm-up stderr log와 render queue 상태를 확인하세요.",
+            ],
+        ));
+    }
+
     for capture_index in 1..=input.capture_count.max(1) {
         let ready_readiness = wait_for_ready_capture_gate(base_dir, &session.session_id)?;
         context
@@ -535,6 +584,7 @@ fn execute_validation_run(
                 ],
             ));
         }
+        validate_preview_truth_gate(&preview_capture, capture_index)?;
 
         context.captures_passed += 1;
         context
@@ -573,6 +623,68 @@ fn execute_validation_run(
     }
 
     Ok(())
+}
+
+fn validate_preview_truth_gate(
+    capture: &SessionCaptureRecord,
+    capture_index: u32,
+) -> Result<(), RunFailure> {
+    let preview_kind = capture.preview.kind.as_deref().unwrap_or("unknown");
+    if preview_kind != "preset-applied-preview" {
+        return Err(preview_truth_gate_failure(
+            format!(
+                "capture {capture_index} preview kind가 `preset-applied-preview`가 아니라 `{preview_kind}`로 닫혔어요."
+            ),
+        ));
+    }
+
+    let Some(preset_applied_visible_at_ms) = capture.timing.xmp_preview_ready_at_ms else {
+        return Err(preview_truth_gate_failure(format!(
+            "capture {capture_index}에 preset-applied visible 시각이 기록되지 않았어요."
+        )));
+    };
+    let Some(first_visible_at_ms) = capture.timing.fast_preview_visible_at_ms else {
+        return Err(preview_truth_gate_failure(format!(
+            "capture {capture_index}에 first-visible 기준 시각이 기록되지 않았어요."
+        )));
+    };
+
+    if preset_applied_visible_at_ms < first_visible_at_ms {
+        return Err(preview_truth_gate_failure(format!(
+            "capture {capture_index}의 preset-applied visible 시각이 first-visible보다 앞서는 역전 evidence예요."
+        )));
+    }
+
+    let official_gate_elapsed_ms = preset_applied_visible_at_ms.saturating_sub(first_visible_at_ms);
+    if official_gate_elapsed_ms > 3_000 {
+        return Err(preview_truth_gate_failure(
+            format!(
+                "capture {capture_index} official gate가 {official_gate_elapsed_ms}ms로 3000ms를 넘었어요."
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn preview_truth_gate_failure(problem: String) -> RunFailure {
+    run_failure(
+        "preview-truth-gate-failed",
+        problem,
+        "preview가 preset-applied truthful close로 닫히지 않았거나 official gate를 넘었습니다.",
+        vec![
+            "session.json의 latest capture preview.kind와 timing.xmpPreviewReadyAtMs를 확인하세요.",
+            "timing-events.log의 capture_preview_ready detail에서 originalVisibleToPresetAppliedVisibleMs를 확인하세요.",
+        ],
+    )
+}
+
+fn preview_runtime_warmup_step_status(warmup_settled: bool) -> &'static str {
+    if warmup_settled {
+        "passed"
+    } else {
+        "failed"
+    }
 }
 
 fn finalize_run(
@@ -1217,6 +1329,69 @@ mod tests {
         let readiness = CaptureReadinessDto::warning("session_000000000000000000000001", None);
 
         assert!(readiness_satisfies_capture_gate(&readiness));
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_inverted_timing_evidence() {
+        let capture = truth_gate_capture(
+            "preset-applied-preview",
+            Some(2_000),
+            Some(1_500),
+        );
+
+        let failure = validate_preview_truth_gate(&capture, 1)
+            .expect_err("inverted timing evidence should fail the official gate");
+
+        assert_eq!(failure.diagnostic.code, "preview-truth-gate-failed");
+        assert!(failure.diagnostic.problem.contains("역전"));
+    }
+
+    #[test]
+    fn preview_runtime_warmup_step_status_marks_unsettled_as_failed() {
+        assert_eq!(preview_runtime_warmup_step_status(true), "passed");
+        assert_eq!(preview_runtime_warmup_step_status(false), "failed");
+    }
+
+    fn truth_gate_capture(
+        preview_kind: &str,
+        first_visible_at_ms: Option<u64>,
+        preset_applied_visible_at_ms: Option<u64>,
+    ) -> SessionCaptureRecord {
+        SessionCaptureRecord {
+            schema_version: "session-capture/v1".into(),
+            session_id: "session_000000000000000000000001".into(),
+            booth_alias: "Kim 4821".into(),
+            active_preset_id: Some("preset_test".into()),
+            active_preset_version: "2026.04.10".into(),
+            active_preset_display_name: Some("look2".into()),
+            capture_id: "capture_01".into(),
+            request_id: "request_01".into(),
+            raw: crate::session::session_manifest::RawCaptureAsset {
+                asset_path: "captures/originals/capture_01.CR2".into(),
+                persisted_at_ms: 1_000,
+            },
+            preview: crate::session::session_manifest::PreviewCaptureAsset {
+                asset_path: Some("renders/previews/capture_01.jpg".into()),
+                enqueued_at_ms: Some(1_000),
+                ready_at_ms: preset_applied_visible_at_ms,
+                kind: Some(preview_kind.into()),
+            },
+            final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                asset_path: None,
+                ready_at_ms: None,
+            },
+            render_status: "previewReady".into(),
+            post_end_state: "activeSession".into(),
+            timing: crate::session::session_manifest::CaptureTimingMetrics {
+                capture_acknowledged_at_ms: 900,
+                preview_visible_at_ms: preset_applied_visible_at_ms,
+                fast_preview_visible_at_ms: first_visible_at_ms,
+                xmp_preview_ready_at_ms: preset_applied_visible_at_ms,
+                capture_budget_ms: 5_000,
+                preview_budget_ms: 15_000,
+                preview_budget_state: "withinBudget".into(),
+            },
+        }
     }
 }
 

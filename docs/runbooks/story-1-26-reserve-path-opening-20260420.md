@@ -112,5 +112,12 @@ Story `1.26`의 목표는 old line을 더 깎는 것이 아니다.
 
 - Latest fast-preview cached XMP `iop_order_list` trimming produced a stable 5/5 hardware validation run on `session_000000000018a92a6c02e7f2d4`.
 - The `Kim4821` prompt still records the session as `Kim 4821`.
-- Official `preset-applied visible <= 3000ms` is now closed: latest readings were `2956ms`, `2951ms`, `2961ms`, `2954ms`, and `2960ms`.
-- Story `1.26` now has ledger `Go` evidence. The next product step is not more tail chasing; it is visual acceptability review for the trimmed preview XMP and deciding whether Story `1.31` should open as the success-side default / rollback gate.
+- This is no longer official Story `1.26` `Go` evidence after code review. It remains comparison evidence only because the accepted product boundary keeps the original host-owned reserve path requirement and truthful preset-look preservation.
+- The next product step is to collect a new package only after those boundaries are preserved; Story `1.31` stays unopened.
+
+## Latest Route Note - 2026-04-25 02:09 +09:00
+
+- Requested runner `hardware-validation-run-1777050318855` failed capture 1 at `3067ms`, confirming the remaining issue was preview process tail jitter rather than camera/helper readiness.
+- After raising only the preview darktable process to Windows high priority, requested runner `hardware-validation-run-1777050552254` passed 5/5 on `session_000000000018a95a0fe32405b8`.
+- Direct official metrics were `2825`, `2873`, `2867`, `2864`, and `2870`ms.
+- This is recorded as latency tail evidence only. Official Story `1.26` close still requires the host-owned reserve path boundary and truthful preset-look preservation described above.

@@ -3989,7 +3989,7 @@ fn complete_preview_render_direct_close_reuses_existing_same_capture_preview_as_
 }
 
 #[test]
-fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_refinement_fails() {
+fn complete_preview_render_rejects_non_truthful_existing_preview_when_raw_refinement_fails() {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -4110,11 +4110,8 @@ fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_re
         failing_darktable_cli.to_string_lossy().into_owned(),
     );
 
-    let completed_capture =
-        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
-            .expect(
-            "existing same-capture preview should close the product flow when raw refinement fails",
-        );
+    let render_result =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id);
 
     match previous_darktable_cli {
         Some(previous_darktable_cli) => {
@@ -4123,13 +4120,10 @@ fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_re
         None => std::env::remove_var("BOOTHY_DARKTABLE_CLI_BIN"),
     }
 
-    assert_eq!(completed_capture.render_status, "previewReady");
-    assert_eq!(
-        completed_capture.preview.kind.as_deref(),
-        Some("legacy-canonical-scan")
+    assert!(
+        render_result.is_err(),
+        "non-truthful same-capture preview must not close product readiness when raw refinement fails"
     );
-    assert!(completed_capture.preview.ready_at_ms.is_some());
-    assert_eq!(completed_capture.timing.xmp_preview_ready_at_ms, None);
 
     let readiness = get_capture_readiness_in_dir(
         &base_dir,
@@ -4137,15 +4131,13 @@ fn complete_preview_render_closes_with_existing_same_capture_preview_when_raw_re
             session_id: session.session_id.clone(),
         },
     )
-    .expect("readiness should stay product-ready on fallback close");
-    assert_eq!(readiness.surface_state, "previewReady");
-    assert_eq!(readiness.reason_code, "ready");
+    .expect("readiness should still resolve after rejected fallback close");
+    assert_ne!(readiness.surface_state, "previewReady");
 
     let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
         .expect("timing events should be readable");
     assert!(timing_events.contains("event=preview-render-failed"));
-    assert!(timing_events.contains("event=preview-render-ready"));
-    assert!(timing_events.contains("sourceAsset=legacy-canonical-scan"));
+    assert!(!timing_events.contains("sourceAsset=legacy-canonical-scan"));
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -5124,7 +5116,7 @@ fn request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_fligh
         .join(".boothy-darktable")
         .join("preview")
         .join("warmup")
-        .join("preview-renderer-warmup-source.png");
+        .join("preview-renderer-warmup-source.jpg");
     let _ = fs::remove_file(&warmup_source_path);
 
     let result = request_capture_with_helper_success(&base_dir, &session.session_id);

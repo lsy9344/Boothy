@@ -40,7 +40,8 @@ fn hardware_validation_runner_records_a_full_five_capture_pass_with_artifacts() 
     );
 
     let helper_base_dir = base_dir.clone();
-    let helper_thread = thread::spawn(move || simulate_capture_helper(&helper_base_dir, 5));
+    let helper_thread =
+        thread::spawn(move || simulate_truthful_capture_helper(&helper_base_dir, 5));
 
     let result = run_hardware_validation_in_dir(
         &base_dir,
@@ -82,12 +83,59 @@ fn hardware_validation_runner_records_a_full_five_capture_pass_with_artifacts() 
     let steps = fs::read_to_string(&steps_path).expect("step log should exist");
     assert!(steps.contains("\"eventType\":\"session-started\""));
     assert!(steps.contains("\"eventType\":\"preset-selected\""));
+    assert!(
+        steps.contains("\"eventType\":\"preview-runtime-warmed\""),
+        "hardware validation should warm the preview runtime before the first capture"
+    );
     assert_eq!(
         steps
             .matches("\"eventType\":\"capture-cycle-passed\"")
             .count(),
         5
     );
+}
+
+#[test]
+fn hardware_validation_runner_fails_when_preview_truth_gate_is_not_met() {
+    ensure_fake_darktable_cli();
+    let base_dir = temp_test_dir("runner-non-truthful-preview");
+    let output_dir = base_dir.join("validation-output");
+    create_published_bundle(
+        &resolve_published_preset_catalog_dir(&base_dir),
+        "preset_new-draft-2",
+        "2026.04.10",
+        "look2",
+    );
+
+    let helper_base_dir = base_dir.clone();
+    let helper_thread =
+        thread::spawn(move || simulate_raw_only_capture_helper(&helper_base_dir, 1));
+
+    let result = run_hardware_validation_in_dir(
+        &base_dir,
+        &output_dir,
+        HardwareValidationRunInput {
+            prompt: "Kim validation 4821".into(),
+            preset_query: "look2".into(),
+            capture_count: 1,
+            app_launch_mode: AppLaunchMode::Skip,
+            phone_last_four: None,
+        },
+    )
+    .expect("runner should finish with a failed result");
+
+    helper_thread
+        .join()
+        .expect("helper thread should complete for truth gate run");
+
+    assert_eq!(result.status, "failed");
+    assert!(result.failure_report_path.is_some());
+
+    let summary: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(result.run_dir.join("run-summary.json")).expect("summary should exist"),
+    )
+    .expect("summary should deserialize");
+    assert_eq!(summary["failure"]["code"], "preview-truth-gate-failed");
 }
 
 #[test]
@@ -233,7 +281,19 @@ fn hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeout
     assert!(failure_report.contains("Canon EOS 700D"));
 }
 
-fn simulate_capture_helper(base_dir: &Path, expected_requests: usize) {
+fn simulate_truthful_capture_helper(base_dir: &Path, expected_requests: usize) {
+    simulate_capture_helper(base_dir, expected_requests, true);
+}
+
+fn simulate_raw_only_capture_helper(base_dir: &Path, expected_requests: usize) {
+    simulate_capture_helper(base_dir, expected_requests, false);
+}
+
+fn simulate_capture_helper(
+    base_dir: &Path,
+    expected_requests: usize,
+    include_truthful_preview: bool,
+) {
     let session_id = wait_for_session_id(base_dir);
     let stop_heartbeat = Arc::new(AtomicBool::new(false));
     let heartbeat_base_dir = base_dir.to_path_buf();
@@ -263,10 +323,26 @@ fn simulate_capture_helper(base_dir: &Path, expected_requests: usize) {
         let raw_path = SessionPaths::new(base_dir, &session_id)
             .captures_originals_dir
             .join(format!("capture_{handled_requests}.jpg"));
+        let truthful_preview_path = SessionPaths::new(base_dir, &session_id)
+            .handoff_dir
+            .join("fast-preview")
+            .join(format!(
+                "capture_{handled_requests:02}.preset-applied-preview.jpg"
+            ));
         fs::create_dir_all(raw_path.parent().expect("raw path should have a parent"))
             .expect("raw dir should exist");
         fs::write(&raw_path, format!("helper-raw-{handled_requests}"))
             .expect("raw file should exist");
+        if include_truthful_preview {
+            fs::create_dir_all(
+                truthful_preview_path
+                    .parent()
+                    .expect("truthful preview path should have a parent"),
+            )
+            .expect("truthful preview dir should exist");
+            fs::write(&truthful_preview_path, [0xFF, 0xD8, 0xFF, 0xD9])
+                .expect("truthful preview should exist");
+        }
 
         append_helper_event(
             base_dir,
@@ -289,6 +365,16 @@ fn simulate_capture_helper(base_dir: &Path, expected_requests: usize) {
                 "captureId": format!("capture_{handled_requests:02}"),
                 "arrivedAt": current_timestamp(SystemTime::now()).expect("arrival timestamp should serialize"),
                 "rawPath": raw_path.to_string_lossy().into_owned(),
+                "fastPreviewPath": if include_truthful_preview {
+                    serde_json::Value::String(truthful_preview_path.to_string_lossy().into_owned())
+                } else {
+                    serde_json::Value::Null
+                },
+                "fastPreviewKind": if include_truthful_preview {
+                    serde_json::Value::String("preset-applied-preview".into())
+                } else {
+                    serde_json::Value::Null
+                },
             }),
         );
     }
