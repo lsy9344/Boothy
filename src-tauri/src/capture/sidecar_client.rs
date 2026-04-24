@@ -32,6 +32,7 @@ pub const CANON_HELPER_FAST_THUMBNAIL_FAILED_SCHEMA_VERSION: &str =
 pub const CANON_HELPER_FILE_ARRIVED_SCHEMA_VERSION: &str = "canon-helper-file-arrived/v1";
 pub const CANON_HELPER_RECOVERY_STATUS_SCHEMA_VERSION: &str = "canon-helper-recovery-status/v1";
 pub const CANON_HELPER_ERROR_SCHEMA_VERSION: &str = "canon-helper-error/v1";
+const TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND: &str = "preset-applied-preview";
 
 const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
 // Real camera follow-up captures can occasionally cross the 30 second mark
@@ -525,20 +526,26 @@ pub fn wait_for_matching_fast_preview_ready_message(
     let deadline = current_time_ms()
         .map_err(|_| SidecarClientError::CaptureTimedOut)?
         .saturating_add(timeout_ms);
+    let mut best_match: Option<CanonHelperFastPreviewReadyMessage> = None;
 
     loop {
-        if let Some(message) = find_matching_fast_preview_ready_message(
-            base_dir,
-            session_id,
-            request_id,
-            capture_id,
-        )? {
-            return Ok(Some(message));
+        if let Some(message) =
+            find_matching_fast_preview_ready_message(base_dir, session_id, request_id, capture_id)?
+        {
+            if should_replace_matching_fast_preview_message(best_match.as_ref(), &message) {
+                best_match = Some(message);
+            }
+
+            if best_match.as_ref().is_some_and(|message| {
+                is_truthful_fast_preview_kind(message.fast_preview_kind.as_deref())
+            }) {
+                return Ok(best_match);
+            }
         }
 
         let now_ms = current_time_ms().map_err(|_| SidecarClientError::CaptureTimedOut)?;
         if now_ms >= deadline {
-            return Ok(None);
+            return Ok(best_match);
         }
 
         thread::sleep(Duration::from_millis(CAPTURE_EVENT_POLL_INTERVAL_MS));
@@ -689,17 +696,53 @@ fn find_matching_fast_preview_ready_message(
     capture_id: &str,
 ) -> Result<Option<CanonHelperFastPreviewReadyMessage>, SidecarClientError> {
     let events = read_capture_event_messages(base_dir, session_id)?;
+    let mut best_match: Option<CanonHelperFastPreviewReadyMessage> = None;
 
-    Ok(events.into_iter().rev().find_map(|event| match event {
-        CanonHelperEvent::FastPreviewReady(message)
-            if message.session_id == session_id
-                && message.request_id == request_id
-                && message.capture_id == capture_id =>
+    for event in events {
+        let CanonHelperEvent::FastPreviewReady(message) = event else {
+            continue;
+        };
+        if message.session_id != session_id
+            || message.request_id != request_id
+            || message.capture_id != capture_id
         {
-            Some(message)
+            continue;
         }
-        _ => None,
-    }))
+        if should_replace_matching_fast_preview_message(best_match.as_ref(), &message) {
+            best_match = Some(message);
+        }
+    }
+
+    Ok(best_match)
+}
+
+fn should_replace_matching_fast_preview_message(
+    current: Option<&CanonHelperFastPreviewReadyMessage>,
+    candidate: &CanonHelperFastPreviewReadyMessage,
+) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+
+    let current_priority = fast_preview_kind_priority(current.fast_preview_kind.as_deref());
+    let candidate_priority = fast_preview_kind_priority(candidate.fast_preview_kind.as_deref());
+    candidate_priority > current_priority
+        || (candidate_priority == current_priority
+            && (candidate.observed_at > current.observed_at
+                || (candidate.observed_at == current.observed_at
+                    && candidate.fast_preview_path != current.fast_preview_path)))
+}
+
+fn fast_preview_kind_priority(kind: Option<&str>) -> u8 {
+    if is_truthful_fast_preview_kind(kind) {
+        2
+    } else {
+        1
+    }
+}
+
+fn is_truthful_fast_preview_kind(kind: Option<&str>) -> bool {
+    matches!(kind, Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND))
 }
 
 fn validate_arrived_raw_path(
@@ -840,6 +883,187 @@ mod tests {
         let timeout_ms = capture_round_trip_timeout_ms(&base_dir);
 
         assert_eq!(timeout_ms, 50_000);
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn wait_for_matching_fast_preview_prefers_truthful_when_multiple_matches_already_exist() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-sidecar-fast-preview-selection-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base_dir);
+        let session_id = "session_00000000000000000000000001";
+        let request_id = "request_000000000000000000000001";
+        let capture_id = "capture_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        std::fs::create_dir_all(&paths.diagnostics_dir)
+            .expect("diagnostics dir should be creatable");
+
+        let events_path = paths.diagnostics_dir.join(CAMERA_HELPER_EVENTS_FILE_NAME);
+        append_json_line(
+            &events_path,
+            &CanonHelperFastPreviewReadyMessage {
+                schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                message_type: "fast-preview-ready".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                capture_id: capture_id.into(),
+                observed_at: "2026-04-22T12:00:00Z".into(),
+                fast_preview_path: "C:/preview/intermediate.jpg".into(),
+                fast_preview_kind: Some("windows-shell-thumbnail".into()),
+            },
+        )
+        .expect("intermediate fast preview event should append");
+        append_json_line(
+            &events_path,
+            &CanonHelperFastPreviewReadyMessage {
+                schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                message_type: "fast-preview-ready".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                capture_id: capture_id.into(),
+                observed_at: "2026-04-22T12:00:01Z".into(),
+                fast_preview_path: "C:/preview/truthful.jpg".into(),
+                fast_preview_kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            },
+        )
+        .expect("truthful fast preview event should append");
+
+        let selected = wait_for_matching_fast_preview_ready_message(
+            &base_dir, session_id, request_id, capture_id, 200,
+        )
+        .expect("wait should succeed")
+        .expect("matching fast preview event should be found");
+
+        assert_eq!(
+            selected.fast_preview_kind.as_deref(),
+            Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND)
+        );
+        assert_eq!(selected.fast_preview_path, "C:/preview/truthful.jpg");
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn wait_for_matching_fast_preview_returns_non_truthful_match_after_truthful_wait_window() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-sidecar-fast-preview-non-truthful-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base_dir);
+        let session_id = "session_00000000000000000000000002";
+        let request_id = "request_000000000000000000000002";
+        let capture_id = "capture_000000000000000000000002";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        std::fs::create_dir_all(&paths.diagnostics_dir)
+            .expect("diagnostics dir should be creatable");
+
+        let events_path = paths.diagnostics_dir.join(CAMERA_HELPER_EVENTS_FILE_NAME);
+        append_json_line(
+            &events_path,
+            &CanonHelperFastPreviewReadyMessage {
+                schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                message_type: "fast-preview-ready".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                capture_id: capture_id.into(),
+                observed_at: "2026-04-22T12:00:00Z".into(),
+                fast_preview_path: "C:/preview/intermediate.jpg".into(),
+                fast_preview_kind: Some("windows-shell-thumbnail".into()),
+            },
+        )
+        .expect("non-truthful fast preview event should append");
+
+        let started_at = std::time::Instant::now();
+        let selected = wait_for_matching_fast_preview_ready_message(
+            &base_dir, session_id, request_id, capture_id, 150,
+        )
+        .expect("wait should succeed")
+        .expect("matching fast preview event should be found");
+
+        assert_eq!(
+            selected.fast_preview_kind.as_deref(),
+            Some("windows-shell-thumbnail")
+        );
+        assert!(
+            started_at.elapsed() >= Duration::from_millis(100),
+            "late recovery should preserve a short window for a truthful preview upgrade"
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn wait_for_matching_fast_preview_keeps_polling_for_late_truthful_match() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-sidecar-fast-preview-late-truthful-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base_dir);
+        let session_id = "session_00000000000000000000000003";
+        let request_id = "request_000000000000000000000003";
+        let capture_id = "capture_000000000000000000000003";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        std::fs::create_dir_all(&paths.diagnostics_dir)
+            .expect("diagnostics dir should be creatable");
+
+        let events_path = paths.diagnostics_dir.join(CAMERA_HELPER_EVENTS_FILE_NAME);
+        append_json_line(
+            &events_path,
+            &CanonHelperFastPreviewReadyMessage {
+                schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                message_type: "fast-preview-ready".into(),
+                session_id: session_id.into(),
+                request_id: request_id.into(),
+                capture_id: capture_id.into(),
+                observed_at: "2026-04-22T12:00:00Z".into(),
+                fast_preview_path: "C:/preview/intermediate.jpg".into(),
+                fast_preview_kind: Some("windows-shell-thumbnail".into()),
+            },
+        )
+        .expect("non-truthful fast preview event should append");
+
+        let append_base_dir = base_dir.clone();
+        let append_session_id = session_id.to_string();
+        let append_request_id = request_id.to_string();
+        let append_capture_id = capture_id.to_string();
+        let append_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            let append_paths = SessionPaths::new(&append_base_dir, &append_session_id);
+            append_json_line(
+                &append_paths
+                    .diagnostics_dir
+                    .join(CAMERA_HELPER_EVENTS_FILE_NAME),
+                &CanonHelperFastPreviewReadyMessage {
+                    schema_version: CANON_HELPER_FAST_PREVIEW_READY_SCHEMA_VERSION.into(),
+                    message_type: "fast-preview-ready".into(),
+                    session_id: append_session_id,
+                    request_id: append_request_id,
+                    capture_id: append_capture_id,
+                    observed_at: "2026-04-22T12:00:01Z".into(),
+                    fast_preview_path: "C:/preview/truthful.jpg".into(),
+                    fast_preview_kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+                },
+            )
+            .expect("truthful fast preview event should append");
+        });
+
+        let selected = wait_for_matching_fast_preview_ready_message(
+            &base_dir, session_id, request_id, capture_id, 750,
+        )
+        .expect("wait should succeed")
+        .expect("matching fast preview event should be found");
+        append_thread
+            .join()
+            .expect("truthful append thread should complete");
+
+        assert_eq!(
+            selected.fast_preview_kind.as_deref(),
+            Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND)
+        );
+        assert_eq!(selected.fast_preview_path, "C:/preview/truthful.jpg");
 
         let _ = std::fs::remove_dir_all(&base_dir);
     }

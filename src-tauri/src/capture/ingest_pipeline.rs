@@ -60,6 +60,7 @@ const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
 const LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND: &str = "legacy-canonical-scan";
 const TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND: &str = "preset-applied-preview";
 
+#[derive(Debug, Clone)]
 struct FastPreviewPromotionResult {
     asset_path: String,
     kind: Option<String>,
@@ -118,46 +119,44 @@ pub fn persist_capture_in_dir(
             handoff,
         )
     });
-    let reused_early_fast_preview = if promoted_fast_preview.is_none() {
-        reuse_early_fast_preview_update(
-            &paths,
-            &capture.capture_id,
-            &capture.request_id,
-            early_fast_preview_update,
-        )
-    } else {
-        None
-    };
-    let seeded_fast_preview = if promoted_fast_preview.is_none() && reused_early_fast_preview.is_none() {
+    let reused_early_fast_preview = reuse_early_fast_preview_update(
+        &paths,
+        &capture.capture_id,
+        &capture.request_id,
+        early_fast_preview_update,
+    );
+    let selected_fast_preview = select_saved_fast_preview_baseline(
+        promoted_fast_preview.clone(),
+        reused_early_fast_preview.clone(),
+    );
+    let seeded_fast_preview = if selected_fast_preview.is_none() {
         seed_pending_preview_asset_path(&paths, &capture.capture_id, &capture.request_id)
     } else {
         None
     };
+    let first_visible_at_ms = saved_fast_preview_visible_at_ms(
+        selected_fast_preview.as_ref(),
+        reused_early_fast_preview.as_ref(),
+        seeded_fast_preview.as_ref(),
+    );
 
-    if let Some(ref promoted_fast_preview) = promoted_fast_preview {
-        capture.preview.asset_path = Some(promoted_fast_preview.asset_path.clone());
-        capture.preview.kind = promoted_fast_preview.kind.clone();
-        capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
-    } else if let Some(ref early_fast_preview) = reused_early_fast_preview {
-        capture.preview.asset_path = Some(early_fast_preview.asset_path.clone());
-        capture.preview.kind = early_fast_preview.kind.clone();
-        capture.timing.fast_preview_visible_at_ms = early_fast_preview.visible_at_ms;
+    if let Some(ref selected_fast_preview) = selected_fast_preview {
+        capture.preview.asset_path = Some(selected_fast_preview.asset_path.clone());
+        capture.preview.kind = selected_fast_preview.kind.clone();
     } else if let Some(ref seed_result) = seeded_fast_preview {
         // If helper handoff metadata is missing or invalid but the same-capture
         // preview file already exists on disk, keep the fast-path alive.
         capture.preview.asset_path = Some(seed_result.asset_path.clone());
         capture.preview.kind = seed_result.kind.clone();
-        capture.timing.fast_preview_visible_at_ms = seed_result.visible_at_ms;
     }
+    capture.timing.fast_preview_visible_at_ms = first_visible_at_ms;
 
-    let promoted_fast_preview_kind = promoted_fast_preview
+    let promoted_fast_preview_kind = selected_fast_preview
         .as_ref()
-        .or(reused_early_fast_preview.as_ref())
         .or(seeded_fast_preview.as_ref())
         .and_then(|promoted| promoted.kind.as_deref());
-    let truthful_fast_preview_ready_at_ms = promoted_fast_preview
+    let truthful_fast_preview_ready_at_ms = selected_fast_preview
         .as_ref()
-        .or(reused_early_fast_preview.as_ref())
         .or(seeded_fast_preview.as_ref())
         .and_then(|promoted| promoted.visible_at_ms)
         .or(Some(persisted_at_ms))
@@ -166,18 +165,17 @@ pub fn persist_capture_in_dir(
         .map(|ready_at_ms| close_preview_truth(&mut capture, ready_at_ms))
         .unwrap_or(false);
 
-    let fast_preview_update =
-        promoted_fast_preview
-            .as_ref()
-            .map(|promoted| FastPreviewReadyUpdate {
-                request_id: capture.request_id.clone(),
-                capture_id: capture.capture_id.clone(),
-                asset_path: promoted.asset_path.clone(),
-                kind: fast_preview
-                    .as_ref()
-                    .and_then(|preview| preview.kind.clone()),
-                visible_at_ms: promoted.visible_at_ms.unwrap_or(persisted_at_ms),
-            });
+    let fast_preview_update = promoted_fast_preview.as_ref().and_then(|promoted| {
+        should_emit_promoted_fast_preview_after_persist(selected_fast_preview.as_ref(), promoted)
+            .then(|| {
+                promoted_fast_preview_ready_update(
+                    &capture.request_id,
+                    &capture.capture_id,
+                    promoted,
+                    persisted_at_ms,
+                )
+            })
+    });
 
     manifest.captures.push(capture.clone());
     manifest.updated_at = current_timestamp(SystemTime::now())?;
@@ -436,11 +434,9 @@ pub fn reconcile_saved_capture_fast_preview_in_dir(
         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
     })?;
     let mut manifest = read_session_manifest(&paths.manifest_path)?;
-    let Some(capture_index) = manifest
-        .captures
-        .iter_mut()
-        .position(|capture| capture.capture_id == capture_id && capture.request_id == update.request_id)
-    else {
+    let Some(capture_index) = manifest.captures.iter_mut().position(|capture| {
+        capture.capture_id == capture_id && capture.request_id == update.request_id
+    }) else {
         return Ok(None);
     };
     let capture = manifest
@@ -456,7 +452,9 @@ pub fn reconcile_saved_capture_fast_preview_in_dir(
 
     capture.preview.asset_path = Some(update.asset_path.clone());
     capture.preview.kind = update.kind.clone();
-    capture.timing.fast_preview_visible_at_ms = Some(update.visible_at_ms);
+    if capture.timing.fast_preview_visible_at_ms.is_none() {
+        capture.timing.fast_preview_visible_at_ms = Some(update.visible_at_ms);
+    }
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     let capture_snapshot = capture.clone();
     write_session_manifest(&paths.manifest_path, &manifest)?;
@@ -1626,6 +1624,89 @@ fn reuse_early_fast_preview_update(
     })
 }
 
+fn select_saved_fast_preview_baseline(
+    promoted_fast_preview: Option<FastPreviewPromotionResult>,
+    reused_early_fast_preview: Option<FastPreviewPromotionResult>,
+) -> Option<FastPreviewPromotionResult> {
+    match (reused_early_fast_preview, promoted_fast_preview) {
+        (Some(early_fast_preview), Some(promoted_fast_preview)) => {
+            if should_promoted_fast_preview_override_saved_baseline(
+                &early_fast_preview,
+                &promoted_fast_preview,
+            ) {
+                Some(promoted_fast_preview)
+            } else {
+                Some(early_fast_preview)
+            }
+        }
+        (Some(early_fast_preview), None) => Some(early_fast_preview),
+        (None, Some(promoted_fast_preview)) => Some(promoted_fast_preview),
+        (None, None) => None,
+    }
+}
+
+fn should_promoted_fast_preview_override_saved_baseline(
+    current: &FastPreviewPromotionResult,
+    candidate: &FastPreviewPromotionResult,
+) -> bool {
+    if current.asset_path == candidate.asset_path && current.kind == candidate.kind {
+        return false;
+    }
+
+    match (
+        is_truthful_fast_preview_kind(current.kind.as_deref()),
+        is_truthful_fast_preview_kind(candidate.kind.as_deref()),
+    ) {
+        (false, true) => true,
+        (true, false) => false,
+        (false, false) => false,
+        _ => {
+            candidate.visible_at_ms > current.visible_at_ms
+                || (candidate.visible_at_ms == current.visible_at_ms
+                    && candidate.asset_path != current.asset_path)
+        }
+    }
+}
+
+fn should_emit_promoted_fast_preview_after_persist(
+    selected_fast_preview: Option<&FastPreviewPromotionResult>,
+    promoted_fast_preview: &FastPreviewPromotionResult,
+) -> bool {
+    selected_fast_preview.is_some_and(|selected_fast_preview| {
+        selected_fast_preview.asset_path == promoted_fast_preview.asset_path
+            && selected_fast_preview.kind == promoted_fast_preview.kind
+            && selected_fast_preview.visible_at_ms == promoted_fast_preview.visible_at_ms
+    })
+}
+
+fn promoted_fast_preview_ready_update(
+    request_id: &str,
+    capture_id: &str,
+    promoted_fast_preview: &FastPreviewPromotionResult,
+    persisted_at_ms: u64,
+) -> FastPreviewReadyUpdate {
+    FastPreviewReadyUpdate {
+        request_id: request_id.to_string(),
+        capture_id: capture_id.to_string(),
+        asset_path: promoted_fast_preview.asset_path.clone(),
+        kind: promoted_fast_preview.kind.clone(),
+        visible_at_ms: promoted_fast_preview
+            .visible_at_ms
+            .unwrap_or(persisted_at_ms),
+    }
+}
+
+fn saved_fast_preview_visible_at_ms(
+    selected_fast_preview: Option<&FastPreviewPromotionResult>,
+    reused_early_fast_preview: Option<&FastPreviewPromotionResult>,
+    seeded_fast_preview: Option<&FastPreviewPromotionResult>,
+) -> Option<u64> {
+    reused_early_fast_preview
+        .and_then(|fast_preview| fast_preview.visible_at_ms)
+        .or_else(|| selected_fast_preview.and_then(|fast_preview| fast_preview.visible_at_ms))
+        .or_else(|| seeded_fast_preview.and_then(|fast_preview| fast_preview.visible_at_ms))
+}
+
 fn seed_truthful_fast_preview_asset_path(
     paths: &SessionPaths,
     capture_id: &str,
@@ -2044,7 +2125,7 @@ fn prepare_speculative_preview_source_path(
     }
 
     let _ = fs::remove_file(&staged_source_path);
-    if fs::copy(source_path, &staged_source_path).is_err() {
+    if stage_speculative_preview_source(source_path, &staged_source_path).is_err() {
         return None;
     }
 
@@ -2057,6 +2138,19 @@ fn prepare_speculative_preview_source_path(
         asset_path: staged_source_path.clone(),
         cleanup_path: Some(staged_source_path),
     })
+}
+
+fn stage_speculative_preview_source(
+    source_path: &Path,
+    staged_source_path: &Path,
+) -> std::io::Result<()> {
+    match fs::hard_link(source_path, staged_source_path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(source_path, staged_source_path)?;
+            Ok(())
+        }
+    }
 }
 
 fn current_time_ms() -> Result<u64, std::time::SystemTimeError> {
@@ -2200,6 +2294,88 @@ mod tests {
 
     static SPECULATIVE_WAIT_TEST_MUTEX: std::sync::LazyLock<std::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn truthful_saved_preview_keeps_the_earlier_first_visible_timestamp() {
+        let early_first_visible = FastPreviewPromotionResult {
+            asset_path: "C:/preview/first-visible.jpg".into(),
+            kind: Some("windows-shell-thumbnail".into()),
+            visible_at_ms: Some(1_000),
+        };
+        let truthful_preview = FastPreviewPromotionResult {
+            asset_path: "C:/preview/preset-applied.jpg".into(),
+            kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            visible_at_ms: Some(1_800),
+        };
+
+        let selected_fast_preview = select_saved_fast_preview_baseline(
+            Some(truthful_preview.clone()),
+            Some(early_first_visible.clone()),
+        )
+        .expect("a saved fast preview should be selected");
+
+        assert_eq!(
+            selected_fast_preview.kind.as_deref(),
+            Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND),
+            "truthful saved preview should still win preview ownership"
+        );
+        assert_eq!(
+            saved_fast_preview_visible_at_ms(
+                Some(&selected_fast_preview),
+                Some(&early_first_visible),
+                None,
+            ),
+            Some(1_000),
+            "first-visible timing must remain anchored to the earliest approved preview"
+        );
+    }
+
+    #[test]
+    fn truthful_saved_preview_is_not_downgraded_by_later_non_truthful_metadata() {
+        let truthful_preview = FastPreviewPromotionResult {
+            asset_path: "C:/preview/preset-applied.jpg".into(),
+            kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            visible_at_ms: Some(1_000),
+        };
+        let later_non_truthful = FastPreviewPromotionResult {
+            asset_path: "C:/preview/later-camera-thumbnail.jpg".into(),
+            kind: Some("camera-thumbnail".into()),
+            visible_at_ms: Some(1_600),
+        };
+
+        assert!(
+            !should_promoted_fast_preview_override_saved_baseline(
+                &truthful_preview,
+                &later_non_truthful,
+            ),
+            "a saved truthful preview must keep ownership even if later non-truthful metadata arrives"
+        );
+    }
+
+    #[test]
+    fn promoted_fast_preview_update_uses_the_resolved_promoted_kind() {
+        let promoted_fast_preview = FastPreviewPromotionResult {
+            asset_path: "C:/preview/capture_01.preset-applied-preview.jpg".into(),
+            kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            visible_at_ms: None,
+        };
+
+        let update = promoted_fast_preview_ready_update(
+            "request_0001",
+            "capture_0001",
+            &promoted_fast_preview,
+            1_500,
+        );
+
+        assert_eq!(update.request_id, "request_0001");
+        assert_eq!(update.capture_id, "capture_0001");
+        assert_eq!(
+            update.kind.as_deref(),
+            Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND),
+            "emitted readiness update should inherit the resolved truthful owner"
+        );
+        assert_eq!(update.visible_at_ms, 1_500);
+    }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

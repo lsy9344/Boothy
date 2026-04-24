@@ -11,18 +11,17 @@ use crate::{
         helper_supervisor::{shutdown_helper_process, try_ensure_helper_running},
         ingest_pipeline::{
             complete_preview_render_in_dir, persist_capture_in_dir,
-            promote_pending_fast_preview_in_dir, should_start_speculative_preview_render,
-            start_speculative_preview_render_in_dir, reconcile_saved_capture_fast_preview_in_dir,
+            promote_pending_fast_preview_in_dir, reconcile_saved_capture_fast_preview_in_dir,
+            should_start_speculative_preview_render, start_speculative_preview_render_in_dir,
         },
         sidecar_client::{
             is_retryable_capture_helper_error, latest_helper_status_is_fresh,
             map_capture_round_trip_error, read_capture_event_count, read_capture_request_messages,
             read_latest_helper_error_message, read_latest_status_message,
             read_processed_capture_request_ids, wait_for_capture_round_trip,
-            wait_for_matching_fast_preview_ready_message,
-            write_capture_request_message, CanonHelperCaptureRequestMessage,
-            CanonHelperStatusMessage, FastPreviewReadyUpdate, SidecarClientError,
-            CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION,
+            wait_for_matching_fast_preview_ready_message, write_capture_request_message,
+            CanonHelperCaptureRequestMessage, CanonHelperStatusMessage, FastPreviewReadyUpdate,
+            SidecarClientError, CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION,
         },
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
     },
@@ -63,6 +62,10 @@ const FIRST_CAPTURE_INTERNAL_TRIGGER_READY_STABILIZATION_MS: u64 = 8000;
 const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_TIMEOUT_MS: u64 = 4000;
 const CAPTURE_REQUEST_CONSUMPTION_RECOVERY_WAIT_POLL_MS: u64 = 50;
 const LATE_FAST_PREVIEW_READY_RECOVERY_WAIT_MS: u64 = 750;
+const HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS: u64 = 45;
+const CAPTURE_ROUND_TRIP_FAILURE_EVIDENCE_FILE_NAME: &str =
+    "latest-capture-round-trip-failure.json";
+const TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND: &str = "preset-applied-preview";
 static CAPTURE_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,17 +86,22 @@ pub fn get_capture_readiness_in_dir(
     base_dir: &Path,
     input: CaptureReadinessInputDto,
 ) -> Result<CaptureReadinessDto, HostErrorEnvelope> {
-    let mut manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+    let (mut manifest, retryable_failure_recovery_anchor_updated_at) =
+        read_session_manifest_with_timing_and_recovery_anchor(base_dir, &input.session_id)?;
     recover_stale_capture_in_flight_helper_if_needed(base_dir, &manifest);
     let repaired_invalid_preview = sync_invalid_preview_truth_in_manifest(base_dir, &mut manifest)?;
     let repaired_render_failure =
         sync_recoverable_render_failure_in_manifest(base_dir, &mut manifest)?;
     sync_better_preview_assets_in_manifest(base_dir, &mut manifest)?;
-    sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest)?;
+    sync_retryable_capture_failure_recovery_in_manifest(
+        base_dir,
+        &mut manifest,
+        Some(retryable_failure_recovery_anchor_updated_at.as_str()),
+    )?;
     if repaired_invalid_preview || repaired_render_failure {
         manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
         sync_better_preview_assets_in_manifest(base_dir, &mut manifest)?;
-        sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest)?;
+        sync_retryable_capture_failure_recovery_in_manifest(base_dir, &mut manifest, None)?;
     }
 
     Ok(normalize_capture_readiness(base_dir, &manifest))
@@ -186,14 +194,17 @@ where
                 &request_id,
                 starting_event_count,
                 |fast_preview| {
-                    if early_fast_preview_update.is_none() {
-                        if let Some(update) = promote_pending_fast_preview_in_dir(
-                            &fast_preview_base_dir,
-                            &fast_preview_session_id,
-                            &fast_preview_request_id,
-                            &fast_preview.capture_id,
-                            &fast_preview.fast_preview_path,
-                            fast_preview.fast_preview_kind.as_deref(),
+                    if let Some(update) = promote_pending_fast_preview_in_dir(
+                        &fast_preview_base_dir,
+                        &fast_preview_session_id,
+                        &fast_preview_request_id,
+                        &fast_preview.capture_id,
+                        &fast_preview.fast_preview_path,
+                        fast_preview.fast_preview_kind.as_deref(),
+                    ) {
+                        if should_replace_fast_preview_update(
+                            early_fast_preview_update.as_ref(),
+                            &update,
                         ) {
                             if should_start_speculative_preview_render(update.kind.as_deref()) {
                                 start_speculative_preview_render_in_dir(
@@ -206,7 +217,12 @@ where
                                     &update.asset_path,
                                 );
                             }
-                            on_fast_preview_ready(update.clone());
+                            if should_emit_fast_preview_update(
+                                early_fast_preview_update.as_ref(),
+                                &update,
+                            ) {
+                                on_fast_preview_ready(update.clone());
+                            }
                             early_fast_preview_update = Some(update);
                         }
                     }
@@ -264,7 +280,12 @@ where
                 }
                 Err(error) => {
                     if should_persist_capture_round_trip_failure(&error) {
-                        persist_capture_round_trip_failure(base_dir, &input.session_id, &error)?;
+                        persist_capture_round_trip_failure(
+                            base_dir,
+                            &input.session_id,
+                            Some(&request_id),
+                            &error,
+                        )?;
                     }
 
                     drop(in_flight_guard);
@@ -392,7 +413,7 @@ where
                 .with_live_capture_truth(project_live_capture_truth(base_dir, &manifest).dto),
         )
     })?;
-    if early_fast_preview_update.is_none() && !round_trip_has_fast_preview {
+    if !round_trip_has_fast_preview {
         if let Ok(Some(message)) = wait_for_matching_fast_preview_ready_message(
             base_dir,
             &manifest.session_id,
@@ -408,49 +429,47 @@ where
                 &message.fast_preview_path,
                 message.fast_preview_kind.as_deref(),
             ) {
-                let should_start_late_speculative_render = capture.preview.asset_path.is_none()
-                    && capture.preview.ready_at_ms.is_none()
-                    && should_start_speculative_preview_render(update.kind.as_deref());
-                if let Some(updated_capture) = reconcile_saved_capture_fast_preview_in_dir(
-                    base_dir,
-                    &manifest.session_id,
-                    &capture.capture_id,
-                    &update,
-                )? {
-                    if let Some(existing_capture) = manifest
-                        .captures
-                        .iter_mut()
-                        .find(|existing_capture| existing_capture.capture_id == updated_capture.capture_id)
-                    {
-                        *existing_capture = updated_capture.clone();
-                    }
-                    capture = updated_capture;
-                }
-                if should_start_late_speculative_render {
-                    start_speculative_preview_render_in_dir(
+                if should_replace_fast_preview_update(early_fast_preview_update.as_ref(), &update) {
+                    let should_start_late_speculative_render = capture.preview.asset_path.is_none()
+                        && capture.preview.ready_at_ms.is_none()
+                        && should_start_speculative_preview_render(update.kind.as_deref());
+                    if let Some(updated_capture) = reconcile_saved_capture_fast_preview_in_dir(
                         base_dir,
                         &manifest.session_id,
-                        &update.request_id,
-                        &update.capture_id,
-                        &active_preset.preset_id,
-                        &active_preset.published_version,
-                        &update.asset_path,
-                    );
+                        &capture.capture_id,
+                        &update,
+                    )? {
+                        if let Some(existing_capture) =
+                            manifest.captures.iter_mut().find(|existing_capture| {
+                                existing_capture.capture_id == updated_capture.capture_id
+                            })
+                        {
+                            *existing_capture = updated_capture.clone();
+                        }
+                        capture = updated_capture;
+                    }
+                    if should_start_late_speculative_render {
+                        start_speculative_preview_render_in_dir(
+                            base_dir,
+                            &manifest.session_id,
+                            &update.request_id,
+                            &update.capture_id,
+                            &active_preset.preset_id,
+                            &active_preset.published_version,
+                            &update.asset_path,
+                        );
+                    }
+                    if should_emit_fast_preview_update(early_fast_preview_update.as_ref(), &update)
+                    {
+                        on_fast_preview_ready(update.clone());
+                    }
+                    early_fast_preview_update = Some(update);
                 }
-                on_fast_preview_ready(update);
             }
         }
     }
     if let Some(update) = fast_preview_update {
-        let should_emit = early_fast_preview_update
-            .as_ref()
-            .map(|early_update: &FastPreviewReadyUpdate| {
-                early_update.request_id != update.request_id
-                    || early_update.capture_id != update.capture_id
-                    || early_update.asset_path != update.asset_path
-            })
-            .unwrap_or(true);
-        if should_emit {
+        if should_emit_fast_preview_update(early_fast_preview_update.as_ref(), &update) {
             on_fast_preview_ready(update);
         }
     }
@@ -601,6 +620,10 @@ fn helper_timestamp_is_after(candidate: &str, baseline: &str) -> bool {
 
     candidate_seconds > baseline_seconds
         || (candidate_seconds == baseline_seconds && candidate > baseline)
+}
+
+fn helper_timestamp_is_at_or_after(candidate: &str, baseline: &str) -> bool {
+    candidate == baseline || helper_timestamp_is_after(candidate, baseline)
 }
 
 fn is_helper_camera_ready(status: &CanonHelperStatusMessage) -> bool {
@@ -780,16 +803,30 @@ fn capture_round_trip_failure_detail(error: &SidecarClientError) -> &'static str
 fn persist_capture_round_trip_failure(
     base_dir: &Path,
     session_id: &str,
+    request_id: Option<&str>,
     error: &SidecarClientError,
 ) -> Result<(), HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, session_id)?;
     let mut manifest = read_session_manifest_with_timing(base_dir, session_id)?;
     let occurred_at = current_timestamp(SystemTime::now())?;
+    let reason_code = capture_round_trip_failure_reason_code(error);
 
     manifest.lifecycle.stage = "phone-required".into();
     manifest.post_end = None;
     manifest.updated_at = occurred_at.clone();
     write_session_manifest(&paths.manifest_path, &manifest)?;
+    if let Err(error) =
+        persist_capture_round_trip_failure_evidence(&paths, &occurred_at, reason_code, request_id)
+    {
+        log::warn!(
+            "capture_round_trip_failure_evidence_persist_failed session={} request_id={} reason_code={} code={} message={}",
+            session_id,
+            request_id.unwrap_or("unknown"),
+            reason_code,
+            error.code,
+            error.message
+        );
+    }
 
     try_append_operator_audit_record(
         base_dir,
@@ -808,7 +845,7 @@ fn persist_capture_round_trip_failure(
                 .active_preset
                 .as_ref()
                 .map(|preset| preset.published_version.clone()),
-            reason_code: Some(capture_round_trip_failure_reason_code(error).into()),
+            reason_code: Some(reason_code.into()),
         },
     );
 
@@ -864,6 +901,7 @@ fn persist_retryable_capture_ready_stage_in_dir(
 fn sync_retryable_capture_failure_recovery_in_manifest(
     base_dir: &Path,
     manifest: &mut SessionManifest,
+    recovery_anchor_updated_at: Option<&str>,
 ) -> Result<(), HostErrorEnvelope> {
     if !matches!(
         manifest.lifecycle.stage.as_str(),
@@ -887,18 +925,44 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
 
     let latest_helper_error = read_latest_helper_error_message(base_dir, &manifest.session_id)
         .ok()
-        .flatten();
-    let has_processed_capture_request = read_processed_capture_request_ids(base_dir, &manifest.session_id)
-        .ok()
-        .is_some_and(|request_ids| !request_ids.is_empty());
-    let recovery_reason_code = if let Some(latest_helper_error) = latest_helper_error.as_ref() {
-        if !helper_error_allows_session_recovery_after_ready(latest_helper_error) {
-            return Ok(());
-        }
-        latest_helper_error.detail_code.clone()
-    } else if manifest.captures.is_empty() && has_processed_capture_request {
-        "capture-timeout-without-saved-capture".into()
-    } else {
+        .flatten()
+        .filter(|message| {
+            helper_error_matches_recovery_anchor(
+                message,
+                &manifest.updated_at,
+                recovery_anchor_updated_at,
+            )
+        });
+    let processed_capture_request_ids =
+        read_processed_capture_request_ids(base_dir, &manifest.session_id)
+            .ok()
+            .unwrap_or_default();
+    let latest_capture_failure_evidence =
+        latest_capture_round_trip_failure_evidence(base_dir, manifest, recovery_anchor_updated_at);
+    let latest_capture_timeout_without_saved_capture = latest_capture_failure_evidence
+        .as_ref()
+        .is_some_and(|evidence| evidence.reason_code == "capture-timeout");
+    let processed_request_matches_latest_timeout_evidence = latest_capture_failure_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.request_id.as_deref())
+        .is_some_and(|request_id| {
+            processed_capture_request_ids
+                .iter()
+                .any(|processed_request_id| processed_request_id == request_id)
+        });
+    let helper_error_recovery_reason_code = latest_helper_error
+        .as_ref()
+        .filter(|latest_helper_error| {
+            helper_error_allows_session_recovery_after_ready(latest_helper_error)
+        })
+        .map(|latest_helper_error| latest_helper_error.detail_code.clone());
+    let timeout_without_saved_capture_recovery = manifest.captures.is_empty()
+        && processed_request_matches_latest_timeout_evidence
+        && latest_capture_timeout_without_saved_capture;
+    let Some(recovery_reason_code) = helper_error_recovery_reason_code.or_else(|| {
+        timeout_without_saved_capture_recovery
+            .then(|| "capture-timeout-without-saved-capture".into())
+    }) else {
         return Ok(());
     };
 
@@ -912,6 +976,7 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
     manifest.lifecycle.stage = next_stage.clone();
     manifest.updated_at = current_timestamp(SystemTime::now())?;
     write_session_manifest(&paths.manifest_path, manifest)?;
+    clear_capture_round_trip_failure_evidence(&paths);
 
     log::info!(
         "capture_retry_recovered session={} previous_stage={} next_stage={} detail_code={} live_truth=fresh:matched:ready:healthy",
@@ -925,11 +990,7 @@ fn sync_retryable_capture_failure_recovery_in_manifest(
 }
 
 fn recover_stale_capture_in_flight_helper_if_needed(base_dir: &Path, manifest: &SessionManifest) {
-    if !matches!(manifest.lifecycle.stage.as_str(), "phone-required" | "blocked")
-        || manifest.post_end.is_some()
-        || timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended
-        || !manifest.captures.is_empty()
-    {
+    if !should_attempt_stale_capture_in_flight_recovery(manifest) {
         return;
     }
 
@@ -937,13 +998,7 @@ fn recover_stale_capture_in_flight_helper_if_needed(base_dir: &Path, manifest: &
         return;
     };
 
-    let stale_capture_in_flight = status.session_id == manifest.session_id
-        && !is_fresh_helper_status(&status)
-        && status.camera_state == "capturing"
-        && status.helper_state == "healthy"
-        && status.detail_code.as_deref() == Some("capture-in-flight");
-
-    if !stale_capture_in_flight {
+    if !should_restart_stale_capture_in_flight_status(&manifest.session_id, &status) {
         return;
     }
 
@@ -957,6 +1012,14 @@ fn recover_stale_capture_in_flight_helper_if_needed(base_dir: &Path, manifest: &
     try_ensure_helper_running(base_dir, &manifest.session_id);
 }
 
+fn should_attempt_stale_capture_in_flight_recovery(manifest: &SessionManifest) -> bool {
+    matches!(
+        manifest.lifecycle.stage.as_str(),
+        "phone-required" | "blocked"
+    ) && manifest.post_end.is_none()
+        && timing_phase(manifest.timing.as_ref()) != TimingPhase::Ended
+}
+
 fn helper_error_allows_session_recovery_after_ready(
     message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
 ) -> bool {
@@ -965,6 +1028,35 @@ fn helper_error_allows_session_recovery_after_ready(
     }
 
     matches!(message.detail_code.as_str(), "capture-download-timeout")
+}
+
+fn helper_error_matches_recovery_anchor(
+    message: &crate::capture::sidecar_client::CanonHelperErrorMessage,
+    updated_at: &str,
+    recovery_anchor_updated_at: Option<&str>,
+) -> bool {
+    let Some(observed_at) = message.observed_at.as_deref() else {
+        return false;
+    };
+
+    helper_timestamp_is_at_or_after(observed_at, updated_at)
+        || recovery_anchor_updated_at.is_some_and(|anchor_updated_at| {
+            helper_timestamp_is_at_or_after(observed_at, anchor_updated_at)
+        })
+}
+
+fn should_restart_stale_capture_in_flight_status(
+    session_id: &str,
+    status: &CanonHelperStatusMessage,
+) -> bool {
+    status.session_id == session_id
+        && !is_fresh_helper_status(status)
+        && helper_status_age_seconds(Some(&status.observed_at)).map_or(true, |age| {
+            age >= HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS
+        })
+        && status.camera_state == "capturing"
+        && status.helper_state == "healthy"
+        && status.detail_code.as_deref() == Some("capture-in-flight")
 }
 
 fn sync_recoverable_render_failure_in_manifest(
@@ -1566,6 +1658,427 @@ fn helper_status_age_seconds(observed_at: Option<&str>) -> Option<u64> {
     Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
 }
 
+fn should_replace_fast_preview_update(
+    current: Option<&FastPreviewReadyUpdate>,
+    candidate: &FastPreviewReadyUpdate,
+) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    if same_logical_fast_preview_update(current, candidate) {
+        return false;
+    }
+
+    match (
+        is_truthful_fast_preview_update(current),
+        is_truthful_fast_preview_update(candidate),
+    ) {
+        (false, true) => true,
+        (true, false) => false,
+        (false, false) => false,
+        _ => {
+            candidate.visible_at_ms > current.visible_at_ms
+                || (candidate.visible_at_ms == current.visible_at_ms
+                    && candidate.asset_path != current.asset_path)
+        }
+    }
+}
+
+fn should_emit_fast_preview_update(
+    current: Option<&FastPreviewReadyUpdate>,
+    candidate: &FastPreviewReadyUpdate,
+) -> bool {
+    !current.is_some_and(|current| same_logical_fast_preview_update(current, candidate))
+}
+
+fn same_logical_fast_preview_update(
+    current: &FastPreviewReadyUpdate,
+    candidate: &FastPreviewReadyUpdate,
+) -> bool {
+    current.request_id == candidate.request_id
+        && current.capture_id == candidate.capture_id
+        && current.asset_path == candidate.asset_path
+        && current.kind == candidate.kind
+}
+
+fn is_truthful_fast_preview_update(update: &FastPreviewReadyUpdate) -> bool {
+    matches!(
+        update.kind.as_deref(),
+        Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND)
+    )
+}
+
+fn latest_capture_round_trip_failure_evidence(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+    recovery_anchor_updated_at: Option<&str>,
+) -> Option<CaptureRoundTripFailureEvidence> {
+    let paths = SessionPaths::try_new(base_dir, &manifest.session_id).ok()?;
+    match latest_capture_round_trip_failure_evidence_state(
+        &paths,
+        &manifest.updated_at,
+        recovery_anchor_updated_at,
+    ) {
+        CaptureRoundTripFailureEvidenceState::Matched(evidence) => Some(evidence),
+        CaptureRoundTripFailureEvidenceState::UnreadableMatched => None,
+        CaptureRoundTripFailureEvidenceState::Missing => None,
+    }
+}
+
+fn latest_capture_round_trip_failure_evidence_state(
+    paths: &SessionPaths,
+    updated_at: &str,
+    recovery_anchor_updated_at: Option<&str>,
+) -> CaptureRoundTripFailureEvidenceState {
+    let evidence_path = capture_round_trip_failure_evidence_path(paths);
+    if !evidence_path.is_file() {
+        return CaptureRoundTripFailureEvidenceState::Missing;
+    }
+
+    let unreadable_matches_recovery_anchor = unreadable_failure_evidence_matches_recovery_anchor(
+        &evidence_path,
+        updated_at,
+        recovery_anchor_updated_at,
+    );
+    let evidence = match fs::read_to_string(&evidence_path) {
+        Ok(evidence) => evidence,
+        Err(_) => {
+            return if unreadable_matches_recovery_anchor {
+                CaptureRoundTripFailureEvidenceState::UnreadableMatched
+            } else {
+                CaptureRoundTripFailureEvidenceState::Missing
+            };
+        }
+    };
+    let evidence: CaptureRoundTripFailureEvidence = match serde_json::from_str(&evidence) {
+        Ok(evidence) => evidence,
+        Err(_) => {
+            return if unreadable_matches_recovery_anchor {
+                CaptureRoundTripFailureEvidenceState::UnreadableMatched
+            } else {
+                CaptureRoundTripFailureEvidenceState::Missing
+            };
+        }
+    };
+
+    if evidence.occurred_at == updated_at
+        || recovery_anchor_updated_at
+            .is_some_and(|anchor_updated_at| evidence.occurred_at == anchor_updated_at)
+    {
+        return CaptureRoundTripFailureEvidenceState::Matched(evidence);
+    }
+
+    CaptureRoundTripFailureEvidenceState::Missing
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureRoundTripFailureEvidence {
+    occurred_at: String,
+    reason_code: String,
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+enum CaptureRoundTripFailureEvidenceState {
+    Missing,
+    Matched(CaptureRoundTripFailureEvidence),
+    UnreadableMatched,
+}
+
+fn unreadable_failure_evidence_matches_recovery_anchor(
+    evidence_path: &Path,
+    updated_at: &str,
+    recovery_anchor_updated_at: Option<&str>,
+) -> bool {
+    let Some(evidence_modified_at) = fs::metadata(evidence_path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_to_ms)
+    else {
+        return false;
+    };
+
+    failure_evidence_timestamp_matches_anchor(evidence_modified_at, updated_at)
+        || recovery_anchor_updated_at.is_some_and(|anchor_updated_at| {
+            failure_evidence_timestamp_matches_anchor(evidence_modified_at, anchor_updated_at)
+        })
+}
+
+fn failure_evidence_timestamp_matches_anchor(
+    evidence_modified_at_ms: u64,
+    anchor_timestamp: &str,
+) -> bool {
+    let Ok(anchor_seconds) = rfc3339_to_unix_seconds(anchor_timestamp) else {
+        return false;
+    };
+    let anchor_ms = anchor_seconds.saturating_mul(1_000);
+    evidence_modified_at_ms >= anchor_ms
+        && evidence_modified_at_ms < anchor_ms.saturating_add(2_000)
+}
+
+fn capture_round_trip_failure_evidence_path(paths: &SessionPaths) -> std::path::PathBuf {
+    paths
+        .diagnostics_dir
+        .join(CAPTURE_ROUND_TRIP_FAILURE_EVIDENCE_FILE_NAME)
+}
+
+fn persist_capture_round_trip_failure_evidence(
+    paths: &SessionPaths,
+    occurred_at: &str,
+    reason_code: &str,
+    request_id: Option<&str>,
+) -> Result<(), HostErrorEnvelope> {
+    fs::create_dir_all(&paths.diagnostics_dir).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("촬영 실패 진단을 기록하지 못했어요: {error}"))
+    })?;
+    let evidence = CaptureRoundTripFailureEvidence {
+        occurred_at: occurred_at.to_string(),
+        reason_code: reason_code.to_string(),
+        request_id: request_id.map(str::to_string),
+    };
+    let evidence_bytes = serde_json::to_vec_pretty(&evidence).map_err(|error| {
+        HostErrorEnvelope::persistence(format!("촬영 실패 진단을 직렬화하지 못했어요: {error}"))
+    })?;
+    fs::write(
+        capture_round_trip_failure_evidence_path(paths),
+        evidence_bytes,
+    )
+    .map_err(|error| {
+        HostErrorEnvelope::persistence(format!("촬영 실패 진단을 기록하지 못했어요: {error}"))
+    })
+}
+
+fn clear_capture_round_trip_failure_evidence(paths: &SessionPaths) {
+    let _ = fs::remove_file(capture_round_trip_failure_evidence_path(paths));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_capture_in_flight_restart_waits_for_extended_timeout() {
+        let session_id = "session_000000000000000000000001";
+        let status = CanonHelperStatusMessage {
+            schema_version: "canon-helper-status/v1".into(),
+            message_type: Some("camera-status".into()),
+            session_id: session_id.into(),
+            sequence: Some(12),
+            observed_at: current_timestamp(
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(6))
+                    .expect("stale timestamp should compute"),
+            )
+            .expect("timestamp should serialize"),
+            camera_state: "capturing".into(),
+            helper_state: "healthy".into(),
+            camera_model: Some("Canon EOS 700D".into()),
+            request_id: Some("request_still_active".into()),
+            detail_code: Some("capture-in-flight".into()),
+        };
+
+        assert!(
+            !should_restart_stale_capture_in_flight_status(session_id, &status),
+            "capture-in-flight should not restart after only the freshness window expires"
+        );
+
+        let timeout_status = CanonHelperStatusMessage {
+            observed_at: current_timestamp(
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(
+                        HELPER_CAPTURE_IN_FLIGHT_STALL_RESTART_AFTER_SECONDS + 1,
+                    ))
+                    .expect("timeout timestamp should compute"),
+            )
+            .expect("timestamp should serialize"),
+            ..status
+        };
+
+        assert!(
+            should_restart_stale_capture_in_flight_status(session_id, &timeout_status),
+            "capture-in-flight should restart only after the extended stall timeout"
+        );
+    }
+
+    #[test]
+    fn malformed_capture_in_flight_timestamp_still_restarts_helper() {
+        let session_id = "session_000000000000000000000001";
+        let status = CanonHelperStatusMessage {
+            schema_version: "canon-helper-status/v1".into(),
+            message_type: Some("camera-status".into()),
+            session_id: session_id.into(),
+            sequence: Some(12),
+            observed_at: "not-a-timestamp".into(),
+            camera_state: "capturing".into(),
+            helper_state: "healthy".into(),
+            camera_model: Some("Canon EOS 700D".into()),
+            request_id: Some("request_still_active".into()),
+            detail_code: Some("capture-in-flight".into()),
+        };
+
+        assert!(
+            should_restart_stale_capture_in_flight_status(session_id, &status),
+            "an unparsable capture-in-flight timestamp should fail open and allow helper restart"
+        );
+    }
+
+    #[test]
+    fn stale_capture_in_flight_recovery_stays_enabled_after_prior_capture_history() {
+        let mut manifest = crate::session::session_manifest::build_session_manifest_at(
+            "session_000000000000000000000001".into(),
+            crate::contracts::dto::SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            SystemTime::now(),
+        )
+        .expect("manifest should build");
+        manifest.lifecycle.stage = "phone-required".into();
+        manifest.captures.push(SessionCaptureRecord {
+            schema_version: crate::session::session_manifest::SESSION_CAPTURE_SCHEMA_VERSION.into(),
+            session_id: manifest.session_id.clone(),
+            booth_alias: manifest.booth_alias.clone(),
+            active_preset_id: Some("preset_soft-glow".into()),
+            active_preset_version: "2026.03.20".into(),
+            active_preset_display_name: Some("Soft Glow".into()),
+            capture_id: "capture_0001".into(),
+            request_id: "request_0001".into(),
+            raw: crate::session::session_manifest::RawCaptureAsset {
+                asset_path: "C:/captures/capture_0001.cr3".into(),
+                persisted_at_ms: 1_000,
+            },
+            preview: crate::session::session_manifest::PreviewCaptureAsset {
+                asset_path: Some("C:/captures/capture_0001.jpg".into()),
+                enqueued_at_ms: Some(1_100),
+                ready_at_ms: Some(1_500),
+                kind: Some("preset-applied-preview".into()),
+            },
+            final_asset: crate::session::session_manifest::FinalCaptureAsset {
+                asset_path: Some("C:/captures/capture_0001.final.jpg".into()),
+                ready_at_ms: Some(1_700),
+            },
+            render_status: "previewReady".into(),
+            post_end_state: "activeSession".into(),
+            timing: crate::session::session_manifest::CaptureTimingMetrics {
+                capture_acknowledged_at_ms: 900,
+                preview_visible_at_ms: Some(1_500),
+                fast_preview_visible_at_ms: Some(1_100),
+                xmp_preview_ready_at_ms: Some(1_500),
+                capture_budget_ms: 1_000,
+                preview_budget_ms: 5_000,
+                preview_budget_state: "withinBudget".into(),
+            },
+        });
+
+        assert!(
+            should_attempt_stale_capture_in_flight_recovery(&manifest),
+            "phone-required sessions should still attempt stale capture-in-flight recovery even after earlier captures exist"
+        );
+    }
+
+    #[test]
+    fn duplicate_fast_preview_replay_does_not_replace_or_reemit_same_asset() {
+        let current = FastPreviewReadyUpdate {
+            request_id: "request_0001".into(),
+            capture_id: "capture_0001".into(),
+            asset_path: "C:/preview/first-visible.jpg".into(),
+            kind: Some("windows-shell-thumbnail".into()),
+            visible_at_ms: 1_000,
+        };
+        let replayed = FastPreviewReadyUpdate {
+            visible_at_ms: 6_000,
+            ..current.clone()
+        };
+
+        assert!(
+            !should_replace_fast_preview_update(Some(&current), &replayed),
+            "replayed metadata for the same fast preview must preserve the original first-visible timestamp"
+        );
+        assert!(
+            !should_emit_fast_preview_update(Some(&current), &replayed),
+            "replayed metadata for the same fast preview must not re-emit a duplicate UI update"
+        );
+    }
+
+    #[test]
+    fn truthful_fast_preview_still_replaces_earlier_non_truthful_asset() {
+        let current = FastPreviewReadyUpdate {
+            request_id: "request_0001".into(),
+            capture_id: "capture_0001".into(),
+            asset_path: "C:/preview/first-visible.jpg".into(),
+            kind: Some("windows-shell-thumbnail".into()),
+            visible_at_ms: 1_000,
+        };
+        let truthful = FastPreviewReadyUpdate {
+            request_id: current.request_id.clone(),
+            capture_id: current.capture_id.clone(),
+            asset_path: "C:/preview/truthful-close.jpg".into(),
+            kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            visible_at_ms: 1_800,
+        };
+
+        assert!(
+            should_replace_fast_preview_update(Some(&current), &truthful),
+            "a truthful preset-applied preview must still supersede an earlier non-truthful preview"
+        );
+        assert!(
+            should_emit_fast_preview_update(Some(&current), &truthful),
+            "a truthful preset-applied preview should still emit the upgrade event"
+        );
+    }
+
+    #[test]
+    fn later_non_truthful_fast_preview_does_not_replace_first_visible_baseline() {
+        let current = FastPreviewReadyUpdate {
+            request_id: "request_0001".into(),
+            capture_id: "capture_0001".into(),
+            asset_path: "C:/preview/first-visible.jpg".into(),
+            kind: Some("windows-shell-thumbnail".into()),
+            visible_at_ms: 1_000,
+        };
+        let later_non_truthful = FastPreviewReadyUpdate {
+            request_id: current.request_id.clone(),
+            capture_id: current.capture_id.clone(),
+            asset_path: "C:/preview/later-camera-thumbnail.jpg".into(),
+            kind: Some("camera-thumbnail".into()),
+            visible_at_ms: 1_600,
+        };
+
+        assert!(
+            !should_replace_fast_preview_update(Some(&current), &later_non_truthful),
+            "later non-truthful previews must not overwrite the first-visible baseline"
+        );
+        assert!(
+            should_emit_fast_preview_update(Some(&current), &later_non_truthful),
+            "non-truthful replacement candidates still surface as distinct events until filtered by replacement"
+        );
+    }
+
+    #[test]
+    fn truthful_fast_preview_is_not_downgraded_by_later_non_truthful_metadata() {
+        let current = FastPreviewReadyUpdate {
+            request_id: "request_0001".into(),
+            capture_id: "capture_0001".into(),
+            asset_path: "C:/preview/truthful-close.jpg".into(),
+            kind: Some(TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into()),
+            visible_at_ms: 1_000,
+        };
+        let later_non_truthful = FastPreviewReadyUpdate {
+            request_id: current.request_id.clone(),
+            capture_id: current.capture_id.clone(),
+            asset_path: "C:/preview/later-camera-thumbnail.jpg".into(),
+            kind: Some("camera-thumbnail".into()),
+            visible_at_ms: 1_600,
+        };
+
+        assert!(
+            !should_replace_fast_preview_update(Some(&current), &later_non_truthful),
+            "once a truthful preset-applied preview owns the capture, later non-truthful metadata must not replace it"
+        );
+    }
+}
+
 fn normalize_live_camera_state(camera_state: &str) -> &'static str {
     match camera_state {
         "disconnected" => "disconnected",
@@ -1807,8 +2320,17 @@ fn read_session_manifest_with_timing(
     base_dir: &Path,
     session_id: &str,
 ) -> Result<SessionManifest, HostErrorEnvelope> {
+    read_session_manifest_with_timing_and_recovery_anchor(base_dir, session_id)
+        .map(|(manifest, _)| manifest)
+}
+
+fn read_session_manifest_with_timing_and_recovery_anchor(
+    base_dir: &Path,
+    session_id: &str,
+) -> Result<(SessionManifest, String), HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, session_id)?;
     let manifest = read_session_manifest(&paths.manifest_path)?;
+    let recovery_anchor_updated_at = manifest.updated_at.clone();
 
     sync_session_timing_in_dir(
         base_dir,
@@ -1824,6 +2346,7 @@ fn read_session_manifest_with_timing(
             std::time::SystemTime::now(),
         )
     })
+    .map(|manifest| (manifest, recovery_anchor_updated_at))
 }
 
 fn sync_better_preview_assets_in_manifest(

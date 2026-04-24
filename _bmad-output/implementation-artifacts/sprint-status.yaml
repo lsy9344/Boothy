@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-20 11:54:11 +09:00
+# last_updated: 2026-04-24 12:43:52 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-20 12:46:22 +09:00"
+last_updated: "2026-04-24 12:43:52 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -47,7 +47,7 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
 preview_route_status:
   current_release_judgment: "originalVisibleToPresetAppliedVisibleMs <= 3000ms (`preset-applied visible <= 3000ms`)"
   newer_actual_primary_lane: "bounded No-Go"
-  current_worktree_role: "Story 1.26 reserve path active; Story 1.10 old line frozen as closed No-Go baseline"
+  current_worktree_role: "Story 1.26 reserve path review patch applied after ledger Go package; lens correction is preserved and XMP cache writes are concurrency-safe, so approved hardware rerun is needed before product promotion"
   gpu_acceleration_scope: "old-line comparison evidence only"
   official_verdict_owner: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
   route_story_status:
@@ -62,10 +62,13 @@ preview_route_status:
   next_validation_sequence:
     - "freeze Story 1.10 as the closed No-Go baseline package"
     - "treat owner-attribution mismatch as reduced: shots 2-4 now show preset-applied-preview as the field close owner"
-    - "reduce Story 1.26 first-shot fallback to raw-original and close the reserve-path coverage gap"
-    - "reduce preset-applied close latency from the current 7-8s range down to the official gate"
-    - "rerun one approved-hardware session against the official preset-applied-visible gate"
-    - "record ledger Go / No-Go before considering any 1.31 action"
+    - "Story 1.26 review patch changed the exact fast-preview XMP after the ledger Go package; rerun approved hardware before treating the product gate as current-code Go"
+    - "treat runner-side helper bootstrap recovery as improved by session_000000000018a925271b1710a0"
+    - "treat compact prompt parsing as fixed by session_000000000018a92639f9a96a6c"
+    - "treat extra fast-preview XMP trimming as improved by session_000000000018a926e98958c25c, but not enough for Go"
+    - "treat fast-preview cached XMP iop-order trimming as gate-closing by session_000000000018a92a6c02e7f2d4"
+    - "next attempt should not chase more latency unless visual acceptability fails"
+    - "consider Story 1.31 only after product review of the ledger Go evidence"
 
 development_status:
   epic-1: in-progress

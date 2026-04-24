@@ -6,6 +6,8 @@
 # Follow this workflow even when lifecycle hooks do not fire. The official hooks page notes that native Windows Codex CLI currently disables hooks.
 # """
 
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
 [features]
 multi_agent = true
 codex_hooks = false

@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::{
     capture::{
+        helper_supervisor::try_ensure_helper_running,
         ingest_pipeline::complete_preview_render_in_dir,
         normalized_state::{get_capture_readiness_in_dir, request_capture_in_dir},
         sidecar_client::{
@@ -1054,12 +1055,35 @@ fn resolve_session_start_input(
         .map(str::to_string)
         .collect::<Vec<_>>();
     let phone_last_four = phone_last_four.unwrap_or_else(|| {
+        if let Some(index) = tokens.iter().rposition(|token| {
+            token.len() == 4 && token.chars().all(|value| value.is_ascii_digit())
+        }) {
+            return tokens.remove(index);
+        }
+
         tokens
             .iter()
             .rposition(|token| {
-                token.len() == 4 && token.chars().all(|value| value.is_ascii_digit())
+                token.len() > 4
+                    && token
+                        .chars()
+                        .rev()
+                        .take(4)
+                        .all(|value| value.is_ascii_digit())
+                    && token
+                        .chars()
+                        .take(token.chars().count().saturating_sub(4))
+                        .any(|value| !value.is_ascii_digit())
             })
-            .map(|index| tokens.remove(index))
+            .map(|index| {
+                let token = tokens.remove(index);
+                let (name_part, last_four) = token.split_at(token.len() - 4);
+                let name_part = name_part.trim_end_matches(['-', '_']);
+                if !name_part.is_empty() {
+                    tokens.insert(index, name_part.to_string());
+                }
+                last_four.to_string()
+            })
             .unwrap_or_else(|| "0000".into())
     });
     let normalized_name = normalize_customer_name(&tokens.join(" "));
@@ -1106,8 +1130,10 @@ fn wait_for_ready_capture_gate(
     session_id: &str,
 ) -> Result<crate::contracts::dto::CaptureReadinessDto, RunFailure> {
     let timeout = Duration::from_secs(8);
+    let helper_bootstrap_after = Duration::from_secs(1);
     let start = Instant::now();
     let mut last_readiness = None;
+    let mut helper_bootstrap_requested = false;
 
     while start.elapsed() <= timeout {
         let readiness = get_capture_readiness_in_dir(
@@ -1128,8 +1154,16 @@ fn wait_for_ready_capture_gate(
             )
         })?;
 
-        if readiness.can_capture && readiness.reason_code == "ready" {
+        if readiness_satisfies_capture_gate(&readiness) {
             return Ok(readiness);
+        }
+
+        if !helper_bootstrap_requested
+            && start.elapsed() >= helper_bootstrap_after
+            && readiness_missing_helper_status(&readiness)
+        {
+            try_ensure_helper_running(base_dir, session_id);
+            helper_bootstrap_requested = true;
         }
 
         last_readiness = Some(readiness);
@@ -1156,6 +1190,34 @@ fn wait_for_ready_capture_gate(
             "timing-events.log에서 이전 capture close 이후 helper status가 다시 갱신됐는지 확인하세요.",
         ],
     ))
+}
+
+fn readiness_missing_helper_status(readiness: &crate::contracts::dto::CaptureReadinessDto) -> bool {
+    readiness.reason_code == "camera-preparing"
+        && readiness.live_capture_truth.as_ref().is_some_and(|truth| {
+            truth.freshness == "missing"
+                && truth.session_match == "unknown"
+                && truth.camera_state == "unknown"
+                && truth.helper_state == "unknown"
+        })
+}
+
+fn readiness_satisfies_capture_gate(
+    readiness: &crate::contracts::dto::CaptureReadinessDto,
+) -> bool {
+    readiness.can_capture
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_capture_gate_accepts_warning_when_capture_is_allowed() {
+        let readiness = CaptureReadinessDto::warning("session_000000000000000000000001", None);
+
+        assert!(readiness_satisfies_capture_gate(&readiness));
+    }
 }
 
 fn map_capture_failure(error: &HostErrorEnvelope, capture_index: u32) -> RunFailure {

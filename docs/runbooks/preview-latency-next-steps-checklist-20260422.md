@@ -24,24 +24,51 @@ scope: preview-track
 - latest software attempt session `session_000000000018a868febfab83c0`는 first-shot truth regression 때문에 reject한다.
 - latest rejected field rerun `session_000000000018a88c71e9375868`는 first-shot duplicate render overlap 때문에 reject한다.
 - latest approved rerun `session_000000000018a88d53fa8f00c4`는 first-shot overlap family가 사라졌지만 official gate는 아직 `No-Go`였다.
-- 지금 immediate blocker는 startup/save나 false-ready가 아니라, `display-sized-preset-applied truthful close`가 여전히 `3.6s ~ 3.7s`대로 남아 official gate를 넘기지 못하는 일이다.
+- 이전 immediate blocker는 startup/save나 false-ready가 아니라, accepted current-code evidence 기준 전 컷 공통으로 남은 steady-state truthful-close gap이었다.
+  latest `session_000000000018a92a6c02e7f2d4`에서 이 gap은 official gate 안으로 들어왔다.
 - 다만 latest approved hardware package `session_000000000018a88d53fa8f00c4`는 아직 pre-direct-metric evidence라
   `timing-events.log`에 official gate 구간이 direct metric으로는 없었다.
 - current worktree는 이제 `capture_preview_ready` detail에
   `originalVisibleToPresetAppliedVisibleMs`, `firstVisibleAtMs`, `presetAppliedVisibleAtMs`
   를 같이 남기고, 관련 자동 검증도 통과했다.
-- latest relaunch field evidence `session_000000000018a89961df9c18a0`는
-  `256x256` 복귀 상태에서 first shot도
-  `preview-render-ready elapsedMs=3820`,
-  `originalVisibleToPresetAppliedVisibleMs=3877`
-  로 latest reject family의 cold spike는 보이지 않았다.
-- 따라서 latest rerun 기준으로 `effect-based preview prime race`는 다시 완화된 것으로 읽고,
-  current immediate blocker는 다시 전 컷에 남는
-  `display-sized-preset-applied truthful close`의 steady-state `3.4s ~ 3.9s`
-  로 읽는 편이 맞다.
+- latest accepted current-code evidence `session_000000000018a8fe95ea36f8f4`는
+  startup/connect가 정상이고 5컷 모두 truthful close로 닫혔으며,
+  `preview-render-ready elapsedMs`가 `3317`, `3315`, `3314`, `3215`, `3316`,
+  `originalVisibleToPresetAppliedVisibleMs`가 `3358`, `3368`, `3357`, `3284`, `3361`
+  으로 first shot 포함 전 컷이 조금 더 낮은 steady-state band에 모였다.
+- latest hardware-validation-runner evidence `session_000000000018a91e89791d5370`는
+  `--disable-opencl`을 `--core` 뒤로 옮겨 darktable core option으로 실제 적용한 뒤 수집한 package다.
+  5컷 모두 `previewReady`로 닫혔고 direct metric은
+  `2953`, `2960`, `3039`, `3197`, `2953`으로 3/5컷이 official gate 안에 들어왔다.
+  하지만 full package 기준은 2컷 tail miss 때문에 아직 `No-Go`다.
+- latest hardware-validation-runner evidence `session_000000000018a926e98958c25c`는
+  fast-preview JPEG truthful-close XMP에서 `lens`, `highlights`, `cacorrectrgb`를 추가 제거한 뒤 수집한 package다.
+  5컷 모두 `previewReady`로 닫혔고 direct metric은
+  `3039`, `2955`, `3034`, `3032`, `2956`으로 평균 `3003.2ms`까지 붙었다.
+  하지만 full package 기준은 3컷이 official gate를 `32ms ~ 39ms` 넘어서 아직 `No-Go`다.
+- latest hardware-validation-runner evidence `session_000000000018a92a6c02e7f2d4`는
+  fast-preview cached XMP의 `iop_order_list`를 실제 유지된 preview history operation/priority만 남기도록 줄인 뒤 수집한 package다.
+  5컷 모두 `previewReady`로 닫혔고 direct metric은
+  `2956`, `2951`, `2961`, `2954`, `2960`으로 전부 official `<= 3000ms` 안에 들어왔다.
+  따라서 Story `1.26`은 hardware ledger 기준 `Go` evidence를 확보했다.
+- latest accepted invocation args에는
+  `.boothy-darktable/preview/xmp-cache/preset-new-draft-2-2026-04-10-look2-fast-preview.xmp`
+  가 실제로 남아, preview fast-preview-raster lane이 raw-only darktable history 일부를 덜어낸 cached XMP를 실제로 사용한 것이 확인됐다.
+- latest rejected experiment evidence `session_000000000018a8fdb7a8e88590`는
+  same-capture truthful close cap을 `192x192`로 더 줄였지만,
+  `originalVisibleToPresetAppliedVisibleMs`가 `3523`, `3434`, `3599`, `3602`, `3437`
+  으로 오히려 개선을 만들지 못했다.
+- latest rejected invocation args에는 `--disable-opencl`, `--library :memory:`, `--width 192`, `--height 192`가 같이 남아,
+  단순 raster cap 축소는 current blocker를 닫는 방향이 아니라는 점도 확인됐다.
+- 따라서 기존 current blocker였던 steady-state truthful-close tail은 latest package에서 닫혔다.
+  다음 작업은 추가 latency tuning이 아니라 trimmed preview XMP의 visual acceptability와 success-side default / rollback gate 판단이다.
 - 사용자가 해상도 하향 경로를 더 쓰지 말라고 명시했으므로,
   current worktree는 same-capture truthful close cap을 `256x256`으로 유지하고
-  더 낮은 해상도 실험은 중단한다.
+  방금 확인한 `192x192` 실험도 reject한 채 더 낮은 해상도 실험은 중단한다.
+- current worktree는 추가로 preview renderer warm-up source를 tiny PNG에서 JPEG raster로 바꿔,
+  첫 실전 컷이 real fast-preview lane과 다른 decoder cold-start를 다시 내지 않도록 보강했다.
+- latest app session은 이 JPEG warm-up 보강 뒤 first-shot cold spike가 실제로 사라졌고,
+  hardware validation runner latest session에서도 extreme first-shot regression이 재발하지 않았다는 검증 evidence로 유지한다.
 
 canonical reading order:
 
@@ -54,14 +81,60 @@ canonical reading order:
 ## 최신 출발점
 
 - latest session:
-  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a89961df9c18a0`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4`
+- latest post-fix hardware validation evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4`
+  - runner summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776998171366\run-summary.json`
+  - startup/connect는 정상으로 닫혔다.
+  - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
+  - latest invocation args에는 `--width 256 --height 256 --core --disable-opencl --configdir ... --library :memory:`와 trimmed fast-preview XMP cache가 남았다.
+  - cached XMP `iop_order_list`는 `temperature,0,hazeremoval,0,flip,0,exposure,0,colorin,0,channelmixerrgb,0,sigmoid,0,colorout,0,gamma,0`로 줄었다.
+  - direct metric은 full package 기준 official gate를 닫았다.
+    - `preview-render-ready elapsedMs`: `2916`, `2914`, `2918`, `2919`, `2915`
+    - `originalVisibleToPresetAppliedVisibleMs`: `2956`, `2951`, `2961`, `2954`, `2960`
+    - `capture_preview_ready`: `5010`, `4865`, `5124`, `4999`, `5153`
+- latest post-fix hardware validation evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a926e98958c25c`
+  - runner summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776994312446\run-summary.json`
+  - startup/connect는 정상으로 닫혔다.
+  - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
+  - latest invocation args에는 `--width 256 --height 256 --core --disable-opencl --configdir ... --library :memory:`와 trimmed fast-preview XMP cache가 남았다.
+  - direct metric은 official gate 바로 위까지 줄었지만 full package는 아직 gate 밖이다.
+    - `preview-render-ready elapsedMs`: `3014`, `2914`, `3015`, `3012`, `2913`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3039`, `2955`, `3034`, `3032`, `2956`
+    - `capture_preview_ready`: `5167`, `4844`, `4964`, `5078`, `4885`
+- latest post-fix hardware validation evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a91e89791d5370`
+  - runner summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776985103763\run-summary.json`
+  - startup은 `sdk-initializing -> session-opening -> camera-ready`까지 정상 진입했다.
+  - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
+  - helper correlation도 5컷 모두 `capture-accepted -> file-arrived -> fast-preview-ready`로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
+  - latest invocation args에는 `--width 256 --height 256 --core --disable-opencl --configdir ... --library :memory:`가 남아, OpenCL disable flag가 darktable core option 영역에 들어간 것이 확인됐다.
+  - direct metric은 current route에서 가장 낮은 band지만 full package는 아직 gate 밖이다.
+    - `preview-render-ready elapsedMs`: `2916`, `2913`, `3019`, `3115`, `2913`
+    - `originalVisibleToPresetAppliedVisibleMs`: `2953`, `2960`, `3039`, `3197`, `2953`
+    - `capture_preview_ready`: `5144`, `5024`, `4929`, `5119`, `4990`
 - latest accepted current-code evidence:
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4`
   - startup은 다시 `camera-ready`까지 정상 진입했다.
   - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
   - helper status도 session 끝까지 `cameraState=ready`, `helperState=healthy`로 유지됐다.
-  - direct metric은 `256x256` 상태에서 first shot 포함 5컷 모두 relaunch latency band에 머물렀다.
-    - `preview-render-ready elapsedMs`: `3820`, `3816`, `3417`, `3517`, `3524`
-    - `originalVisibleToPresetAppliedVisibleMs`: `3877`, `3855`, `3441`, `3606`, `3606`
+  - helper correlation도 5컷 모두 `capture-accepted -> file-arrived -> fast-preview-ready`로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
+  - latest `timing-events.log` render invocation에는 `--disable-opencl`, `--library :memory:`와 함께 `.boothy-darktable/preview/xmp-cache/...fast-preview.xmp`가 실제로 기록됐다.
+  - direct metric은 first-shot miss가 사라진 채 accepted band보다 조금 더 낮은 steady-state band로 읽혔다.
+    - `preview-render-ready elapsedMs`: `3317`, `3315`, `3314`, `3215`, `3316`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3358`, `3368`, `3357`, `3284`, `3361`
+    - `capture_preview_ready`: `5757`, `5668`, `5632`, `5561`, `5623`
+- latest rejected narrower-cap experiment:
+  - startup은 다시 `camera-ready`까지 정상 진입했다.
+  - 5컷 모두 `renderStatus = previewReady`, `preview.kind = preset-applied-preview`, `xmpPreviewReadyAtMs != null`로 닫혔다.
+  - helper status도 session 끝까지 `cameraState=ready`, `helperState=healthy`로 유지됐다.
+  - helper correlation도 5컷 모두 `capture-accepted -> file-arrived -> fast-preview-ready`로 닫혔다.
+  - latest `timing-events.log` render invocation에는 `--disable-opencl`, `--library :memory:`, `--width 192`, `--height 192`가 실제로 기록됐다.
+  - direct metric은 accepted band를 더 낮추지 못했다.
+    - `preview-render-ready elapsedMs`: `3515`, `3416`, `3515`, `3515`, `3415`
+    - `originalVisibleToPresetAppliedVisibleMs`: `3523`, `3434`, `3599`, `3602`, `3437`
+    - `capture_preview_ready`: `6632`, `6905`, `6789`, `7042`, `6617`
 - latest approved hardware package:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4`
   - startup은 다시 `camera-ready`까지 정상 진입했다.
@@ -78,14 +151,40 @@ canonical reading order:
     만 남아 있었다.
   - current code는 same-capture speculative close가 renderer timeout 안에 살아 있는 동안
     second darktable render를 다시 열지 않도록 single-lane wait로 보강했다.
-- latest official gate reading from relaunch session:
-  - `capture_preview_ready`: `6054ms`, `5949ms`, `5489ms`, `5635ms`, `5617ms`
-  - `preview-render-ready elapsedMs`: `3820ms`, `3816ms`, `3417ms`, `3517ms`, `3524ms`
+- latest direct gate reading from current-code app session:
+  - `capture_preview_ready`: `5757ms`, `5668ms`, `5632ms`, `5561ms`, `5623ms`
+  - `preview-render-ready elapsedMs`: `3317ms`, `3315ms`, `3314ms`, `3215ms`, `3316ms`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3358ms`, `3368ms`, `3357ms`, `3284ms`, `3361ms`
 - current code logging guardrail:
   - latest approved hardware package는 아직 pre-direct-metric evidence로 남아 있다.
   - current worktree는 next session의 `capture_preview_ready` detail에
     `originalVisibleToPresetAppliedVisibleMs`, `firstVisibleAtMs`, `presetAppliedVisibleAtMs`
     가 직접 함께 남도록 보강됐고, targeted automated coverage도 통과했다.
+  - current worktree는 preview renderer warm-up source를 JPEG raster로 바꾼 뒤
+    `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source -- --nocapture`
+    를 다시 통과했다.
+  - current worktree는 preview truthful-close path에서 `--disable-opencl`을 항상 싣도록 보강했고,
+    2026-04-24에는 이 flag를 `--core` 뒤로 이동해 실제 darktable core option으로 적용되게 했다.
+    `cargo test --manifest-path src-tauri/Cargo.toml preview_invocation_uses_display_sized_render_arguments -- --nocapture`,
+    `cargo test --manifest-path src-tauri/Cargo.toml preview_invocation_prefers_same_capture_raster_when_available -- --nocapture`
+    도 다시 통과했다.
+  - current worktree는 preview truthful-close path에서 preview 전용 disk library 대신 `--library :memory:`를 쓰도록 보강했고,
+    `cargo test --manifest-path src-tauri/Cargo.toml final_invocation_keeps_full_resolution_render_arguments -- --nocapture`,
+    `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview -- --nocapture`
+    도 다시 통과했다.
+  - current worktree는 speculative preview source staging에서 same-volume copy 대신 hard link를 우선 쓰도록 보강했고,
+    `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_source_is_staged_to_a_stable_copy -- --nocapture`,
+    `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_wait_budget_stays_bounded_even_while_another_capture_is_in_flight -- --nocapture`
+    도 다시 통과했다.
+  - current worktree는 preview fast-preview-raster lane가 raw-only darktable history 일부를 뺀 cached XMP를 실제 invocation에 쓰도록 보강했고,
+    `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_xmp_trim_removes_raw_only_operations_from_history_and_iop_order -- --nocapture`,
+    `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_uses_a_trimmed_cached_xmp_when_source_xmp_is_available -- --nocapture`
+    도 다시 통과했다.
+  - latest `192x192` narrower-cap experiment는 hardware rerun에서 accepted band보다 나빠져 reject했고,
+    current worktree는 same-capture truthful close cap을 다시 `256x256`으로 유지한다.
+    `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_wait_budget_stays_bounded_without_in_flight_capture -- --nocapture`,
+    `cargo test --manifest-path src-tauri/Cargo.toml speculative_preview_wait_budget_stays_bounded_even_while_another_capture_is_in_flight -- --nocapture`
+    도 다시 통과했다.
 - latest rejected evidence:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a868febfab83c0`
   - capture-time warm-up 시도가 render queue 경쟁을 만들어
@@ -97,10 +196,10 @@ canonical reading order:
 
 해석:
 
- - latest approved rerun은 first-shot overlap family 제거 evidence로는 합격이다.
- - 하지만 official gate는 여전히 실패했고, truthful close 비용도 아직 `3.6s ~ 3.7s`대에 남아 있다.
-- 다음 주력 작업은 startup/debugging 반복이 아니라,
-  booth-visible truthful close hot path를 더 줄일 후보를 다시 찾는 일이다.
+- latest approved rerun은 first-shot overlap family 제거 evidence로는 합격이다.
+- latest current-code app session은 JPEG warm-up 뒤 extreme first-shot cold-start miss가 다시 나오지 않는다는 점을 보여 줬다.
+- 다음 주력 작업은 general startup/debugging 반복이 아니라,
+  전 컷 공통으로 남은 steady-state gap을 줄이는 일이다.
 
 ## 실행 체크리스트
 
@@ -330,11 +429,11 @@ canonical reading order:
 
 ## 현재 다음 단계
 
-지금 바로 다음 단계는 `4`다.
+지금 바로 다음 단계는 Story `1.26`의 latency tuning 반복이 아니라, ledger `Go` 이후의 product close 판단이다.
 
-- latest approved rerun으로 first-shot overlap family는 current code에서 실제로 사라진 것이 확인됐다.
-- 따라서 이제 startup/debugging 반복으로 돌아가지 말고,
-  booth-visible truthful close hot path를 더 줄일 새 reduction candidate를 다시 찾는 순서가 맞다.
+- latest hardware validation runner session `session_000000000018a92a6c02e7f2d4`에서 official gate가 5/5로 닫혔다.
+- 따라서 이제 startup/debugging 또는 render-tail tuning 반복으로 돌아가지 말고,
+  trimmed preview XMP의 visual acceptability와 success-side default / rollback gate를 확인하는 순서가 맞다.
 - 단, 다음 hardware rerun에서는
   `capture_preview_ready detail`에 `originalVisibleToPresetAppliedVisibleMs`가 실제로 찍히는지부터 먼저 확인한다.
 - latest relaunch capture sessions
@@ -346,8 +445,10 @@ canonical reading order:
   `session_000000000018a8986df67c7e38`,
   `session_000000000018a89961df9c18a0`
   에서는 direct metric이 실제로 찍혔고,
-  latest session 기준으로는 `256x256` 복귀 상태에서도 first-shot cold spike가 보이지 않아
-  blocker가 steady-state truthful-close latency로 유지된다.
+  latest app session `session_000000000018a8e91cef5631a8`에서는
+  first shot도 extreme spike 없이 `3440ms`로 닫혔지만
+  3번째 컷이 `3599ms`까지 다시 올라와,
+  blocker가 여전히 steady-state band 안에서 흔들리는 상태로 남았다.
 - 참고:
   - latest startup-only relaunch session `session_000000000018a88adfee94784c`는 `camera-ready`까지 정상 진입했다.
   - 이번 턴에서는 app re-entry가 existing active preset capture flow로 돌아올 때도
@@ -357,7 +458,172 @@ canonical reading order:
     preview prime 자체를 `useEffect`보다 앞선 session/preset 전이 시점에도 즉시 시작하도록 보강했다.
   - 사용자가 요청한 대로 same-capture `fast-preview-raster` truthful close cap은
     `256x256`으로 유지하고, 더 낮은 해상도 실험은 중단한다.
-  - 다음 판단은 hardware rerun에서 relaunch 이후 first shot의
-    `preview-render-ready elapsedMs`와
+  - current worktree는 추가로 preview renderer warm-up source를 JPEG raster로 바꿔
+    first 실전 컷이 real fast-preview family와 같은 decoder path를 먼저 타게 보강했다.
+  - current worktree는 추가로 preview truthful-close path에서 OpenCL startup cost를 빼기 위해
+    `--disable-opencl`을 실제 render invocation에 싣도록 보강했다.
+  - current worktree는 추가로 preview truthful-close path에서 preview 전용 sqlite startup을 빼기 위해
+    `--library :memory:`를 실제 render invocation에 싣도록 보강했다.
+  - current worktree는 추가로 speculative source staging에서 same-volume copy 대신 hard link를 우선 쓰도록 보강했지만,
+    latest runner 기준으로는 gate-closing improvement까지 이어지지 않았다.
+  - current worktree는 추가로 preview fast-preview-raster lane가 raw-only darktable history 일부를 덜어낸 cached XMP를 실제 invocation에 쓰도록 보강했고,
+    latest runner `session_000000000018a8fe95ea36f8f4`에서는 `.boothy-darktable/preview/xmp-cache/...fast-preview.xmp`가 실제 args에 남으면서
+    direct band가 `3284ms ~ 3368ms`까지 조금 더 내려왔다.
+  - latest 판단은 hardware rerun에서
     `originalVisibleToPresetAppliedVisibleMs`
-    가 함께 내려오는지로 닫는다.
+    전 컷이 `<= 3000ms`로 함께 내려온 것으로 닫았다.
+
+### 2026-04-23 22:13 +09:00 hardware validation runner latest session에서는 preview fast-preview-raster lane가 trimmed XMP cache를 실제로 사용했고 steady-state band가 조금 더 낮아졌지만 gate는 아직 닫히지 않았다
+
+사용자 최신 요청:
+
+1. 최신 앱 실행 세션 로그를 다시 확인해 story `1-26`, ledger, 관련 문서에 기록하고 다음 시도해야 할 방법을 찾아 개선하라고 요청했다.
+2. 코드 개선 뒤 하드웨어 검증 스크립트를 한 번 실행하라고 요청했다.
+
+실제 확인 근거:
+
+- fast-preview-raster preview lane가 raw-only darktable history 일부를 덜어낸 cached XMP를 쓰도록 보강한 뒤
+  `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 실행했다.
+- runner summary는 `status=passed`, `capturesPassed=5/5`, `sessionId=session_000000000018a8fe95ea36f8f4`로 닫혔다.
+- latest session `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4`는 startup/connect가 정상으로 닫혔다.
+  - `camera-helper-startup.log`: `sdk-initializing -> session-opening -> camera-ready`
+  - `camera-helper-status.json`: session 종료 시점에도 `cameraState=ready`, `helperState=healthy`
+- helper correlation을 보면 5컷 모두
+  `capture-accepted -> file-arrived -> fast-preview-ready`
+  로 닫혔고 `fastPreviewKind = windows-shell-thumbnail`였다.
+- latest `timing-events.log` render invocation args에는 `--disable-opencl`, `--library :memory:`와 함께
+  `.boothy-darktable/preview/xmp-cache/preset-new-draft-2-2026-04-10-look2-fast-preview.xmp`
+  가 실제로 남았다.
+- direct metric은 first-shot extreme spike가 아니라, 다섯 컷 모두 조금 더 낮은 steady-state band로 읽혔다.
+  - `preview-render-ready elapsedMs`: `3317`, `3315`, `3314`, `3215`, `3316`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3358`, `3368`, `3357`, `3284`, `3361`
+  - `capture_preview_ready elapsedMs`: `5757`, `5668`, `5632`, `5561`, `5623`
+
+이번 회차 해석:
+
+- first-shot extreme spike는 latest session에서도 재발하지 않았다.
+- preview fast-preview-raster lane가 lighter XMP를 실제로 쓴 것은 확인됐고, steady-state band도 accepted `256x256` evidence보다 약간 더 내려왔다.
+- 하지만 official gate `<= 3000ms`는 여전히 넘고 있어 current blocker는 계속 steady-state truthful-close latency다.
+
+이번 회차 조치:
+
+- preview fast-preview-raster lane가 raw-only darktable history 일부를 덜어낸 cached XMP를 실제 invocation에 쓰도록 보강했다.
+- story `1-26`, hardware validation ledger, preview latency checklist, validation history를 latest session 기준으로 다시 갱신했다.
+- latest runner evidence를 canonical 문서들에 다시 연결했다.
+
+검증:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_xmp_trim_removes_raw_only_operations_from_history_and_iop_order -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_uses_a_trimmed_cached_xmp_when_source_xmp_is_available -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_invocation_prefers_same_capture_raster_when_available -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml fast_preview_raster_invocation_uses_a_smaller_cap_than_raw_preview -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source_is_written_as_jpeg -- --nocapture`
+- `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+
+이번 시점 제품 판단:
+
+1. latest hardware-validation-runner session은 5/5 통과와 first-shot spike 미재발, 그리고 trimmed XMP cache 실제 적용을 함께 보여 줬다.
+2. 하지만 latest band가 `3284ms ~ 3368ms`로 여전히 official gate 밖이라 Story `1.26`은 계속 `No-Go`다.
+3. 다음 개선은 추가 해상도 축소가 아니라, darktable truthful-close fixed cost를 더 줄이거나 host-owned truthful close owner를 더 앞당기는 쪽이어야 한다.
+
+### 2026-04-24 10:00 +09:00 hardware validation runner helper-bootstrap recovery는 readiness timeout을 줄였지만 official gate는 latency tail 때문에 아직 No-Go다
+
+사용자 최신 요청:
+
+1. 최신 앱 실행 세션 로그를 확인해 story `1-26`, ledger, 관련 문서에 기록하고 다음 시도해야 할 방법을 찾아 개선하라고 요청했다.
+2. 코드 개선 뒤 하드웨어 검증 스크립트를 한 번 실행하라고 요청했다.
+
+실제 확인 근거:
+
+- 직전 실패 세션 `session_000000000018a92491e8b75984`, `session_000000000018a924971612f514`는 모두 촬영 샘플 없이 `capture-readiness-timeout`으로 실패했다.
+- failure diagnostics 수집 시점에는 helper status/startup log가 없었고, 한 세션은 실패 뒤에야 `camera-ready` startup log가 늦게 남았다.
+- 이는 app command path가 helper start를 먼저 열어 주는 일반 UI 흐름과 달리, hardware validation runner의 direct library path가 helper bootstrap을 충분히 보장하지 못한 것으로 해석한다.
+
+이번 회차 조치:
+
+- `src-tauri/src/automation/hardware_validation.rs`에서 readiness 대기 중 missing helper status가 1초 이상 유지되면 runner가 helper bootstrap을 직접 한 번 요청하도록 보강했다.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test hardware_validation_runner -- --test-threads=1`는 통과했다.
+- 요청한 커맨드 `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 한 번 실행했다.
+
+검증 결과:
+
+- runner summary: `status=passed`, `capturesPassed=5/5`
+- run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776992377859\run-summary.json`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a925271b1710a0`
+- startup/connect: `sdk-initializing -> session-opening -> camera-ready`; session 종료 시점 `cameraState=ready`, `helperState=healthy`
+- truthful close: 5컷 모두 `renderStatus=previewReady`, `preview.kind=preset-applied-preview`
+- latest invocation은 `--width 256 --height 256 --core --disable-opencl --configdir ... --library :memory:`와 trimmed fast-preview XMP cache를 유지했다.
+- direct metric:
+  - `preview-render-ready elapsedMs`: `3014`, `2912`, `2923`, `3214`, `2915`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3037`, `2952`, `2974`, `3279`, `2954`
+  - `capture_preview_ready elapsedMs`: `5237`, `5157`, `5071`, `5331`, `4995`
+
+이번 시점 제품 판단:
+
+1. runner-side readiness timeout family는 이번 단일 실행에서 재발하지 않았다.
+2. 다만 official `<= 3000ms` gate는 2/5컷 tail miss로 아직 닫히지 않았다.
+3. 다음 시도는 helper/readiness가 아니라 `3014ms`, `3214ms`로 남는 darktable truthful-close tail jitter를 줄이는 방향이어야 한다.
+
+### 2026-04-24 10:19 +09:00 hardware validation runner compact prompt parsing은 식별자를 고쳤지만 official gate는 latency tail 때문에 아직 No-Go다
+
+사용자 최신 요청:
+
+1. 최신 앱 실행 세션 로그를 확인해 story `1-26`, ledger, 관련 문서에 기록하고 다음 시도해야 할 방법을 찾아 개선하라고 요청했다.
+2. 코드 개선 뒤 하드웨어 검증 스크립트를 한 번 실행하라고 요청했다.
+
+실제 확인 근거:
+
+- 직전 latest runner summary에서 `Prompt "Kim4821"`이 `boothAlias="Kim4821 0000"`으로 기록됐다.
+- 이는 현장 운영자가 이름과 뒤 4자리를 붙여 입력할 때 고객 식별자가 틀어지는 문제다.
+- current worktree는 compact prompt를 `Kim 4821`로 분리하도록 runner parsing을 보강했다.
+- `cargo test --test hardware_validation_runner -- --test-threads=1` 통과 뒤 요청 커맨드를 한 번 실행했다.
+
+검증 결과:
+
+- runner summary: `status=passed`, `capturesPassed=5/5`
+- run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776993558412\run-summary.json`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92639f9a96a6c`
+- identity: `boothAlias=Kim 4821`, `name=Kim`, `phoneLastFour=4821`
+- startup/connect: session 종료 시점 `cameraState=ready`, `helperState=healthy`
+- direct metric:
+  - `preview-render-ready elapsedMs`: `3115`, `2915`, `2915`, `2913`, `3219`
+  - `originalVisibleToPresetAppliedVisibleMs`: `3200`, `2956`, `2955`, `2958`, `3276`
+  - `capture_preview_ready elapsedMs`: `5397`, `5001`, `4857`, `4849`, `5184`
+
+이번 시점 제품 판단:
+
+1. latest 단일 실행은 고객 식별자와 5/5 capture pass를 함께 회복했다.
+2. 하지만 official gate는 `3200ms`, `3276ms` tail miss 때문에 아직 닫히지 않았다.
+3. 다음 개선은 prompt/readiness가 아니라 truthful-close latency tail jitter를 더 줄이는 방향이어야 한다.
+
+### 2026-04-24 10:32 +09:00 extra fast-preview XMP trimming은 tail을 40ms 안쪽으로 좁혔지만 official gate는 아직 No-Go다
+
+최신 실행에서 확인한 점:
+
+- 직전 latest session `session_000000000018a92639f9a96a6c`는 readiness와 prompt가 아니라 darktable render tail 때문에 실패했다.
+- current worktree는 fast-preview JPEG 입력에 불필요한 `lens`, `highlights`, `cacorrectrgb` history를 cached XMP에서 추가 제거했다.
+- 요청 커맨드는 한 번 실행했고 `status=passed`, `capturesPassed=5/5`로 닫혔다.
+- latest session `session_000000000018a926e98958c25c`는 `Kim 4821` 식별자와 5/5 `preset-applied-preview` truthful close를 유지했다.
+- direct metric은 `3039`, `2955`, `3034`, `3032`, `2956`ms였다.
+
+판단:
+
+- tail은 이전 `3276ms`에서 `3039ms`까지 줄었고 평균도 `3003.2ms`까지 붙었다.
+- 하지만 official `<= 3000ms` gate는 3컷이 `32ms ~ 39ms` 넘어서 아직 닫히지 않았다.
+- 다음 시도는 해상도, readiness, prompt가 아니라 cached XMP에 남은 duplicate builtin/default work를 시각 차이 없이 줄이거나 host-owned truthful close owner를 더 앞당기는 방향이다.
+
+### 2026-04-24 11:36 +09:00 fast-preview cached XMP iop-order trimming은 Story 1.26 official gate를 닫았다
+
+최신 실행에서 확인한 점:
+
+- 직전 latest session `session_000000000018a9292e867e1a68`는 5/5 capture와 truth owner는 유지했지만 `3035ms`, `3036ms`, `3039ms` tail miss가 남았다.
+- cached XMP history는 이미 9개 operation으로 줄었지만 `iop_order_list`에는 history에서 제거된 default pipeline 항목이 계속 남아 있었다.
+- current worktree는 fast-preview cached XMP의 `iop_order_list`를 실제 유지된 preview history operation/priority만 남기도록 줄였다.
+- 요청 커맨드는 한 번 실행했고 `status=passed`, `capturesPassed=5/5`로 닫혔다.
+- latest session `session_000000000018a92a6c02e7f2d4`는 `Kim 4821` 식별자와 5/5 `preset-applied-preview` truthful close를 유지했다.
+- direct metric은 `2956`, `2951`, `2961`, `2954`, `2960`ms였다.
+
+판단:
+
+- Story `1.26`의 official `<= 3000ms` gate는 latest hardware package에서 닫혔다.
+- 다음 시도는 추가 tail tuning이 아니라 visual acceptability 확인과 Story `1.31` success-side default / rollback gate 판단이다.

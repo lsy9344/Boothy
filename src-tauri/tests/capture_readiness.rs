@@ -2640,7 +2640,8 @@ fn legacy_canonical_scan_activates_reserve_close_and_records_preset_applied_owne
 }
 
 #[test]
-fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_file_arrival_metadata() {
+fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_file_arrival_metadata(
+) {
     let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
         .lock()
         .expect("speculative preview test mutex should lock");
@@ -2775,6 +2776,392 @@ fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_fi
         timing_events.matches("event=preview-render-start").count(),
         1,
         "early helper preview should start one reserve close and avoid a duplicate render after file arrival"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn later_non_truthful_file_arrived_metadata_does_not_replace_first_visible_baseline() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("late-non-truthful-file-arrived-does-not-replace-baseline");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let canonical_preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            canonical_preview_path
+                .parent()
+                .expect("preview path should have a parent directory"),
+        )
+        .expect("preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&canonical_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_fast_preview_ready_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &canonical_preview_path,
+            Some("windows-shell-thumbnail"),
+        );
+        thread::sleep(Duration::from_millis(40));
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            Some(&canonical_preview_path),
+            Some("camera-thumbnail"),
+        );
+    });
+
+    let mut preview_updates: Vec<Option<String>> = Vec::new();
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |update| preview_updates.push(update.kind),
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    assert_eq!(result.capture.render_status, "previewWaiting");
+    assert_eq!(
+        result.capture.preview.kind.as_deref(),
+        Some("windows-shell-thumbnail")
+    );
+    assert_eq!(
+        preview_updates,
+        vec![Some("windows-shell-thumbnail".into())],
+        "later non-truthful file-arrived metadata should not replace the first visible preview update"
+    );
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("capture should still close truthfully");
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.kind.as_deref(),
+        Some("preset-applied-preview")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn truthful_fast_preview_ready_is_not_downgraded_by_later_file_arrived_metadata() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("truthful-fast-preview-is-not-downgraded");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let canonical_preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            canonical_preview_path
+                .parent()
+                .expect("preview path should have a parent directory"),
+        )
+        .expect("preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&canonical_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_fast_preview_ready_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &canonical_preview_path,
+            Some("preset-applied-preview"),
+        );
+        thread::sleep(Duration::from_millis(40));
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            Some(&canonical_preview_path),
+            Some("camera-thumbnail"),
+        );
+    });
+
+    let mut preview_updates: Vec<Option<String>> = Vec::new();
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |update| preview_updates.push(update.kind),
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    assert_eq!(result.capture.render_status, "previewReady");
+    assert_eq!(
+        result.capture.preview.kind.as_deref(),
+        Some("preset-applied-preview")
+    );
+    assert_eq!(
+        preview_updates,
+        vec![Some("preset-applied-preview".into())],
+        "once truthful close is observed, later non-truthful file-arrived metadata must not downgrade it"
+    );
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    let saved_capture = manifest
+        .captures
+        .last()
+        .expect("the saved capture should be present in the manifest");
+    assert_eq!(saved_capture.render_status, "previewReady");
+    assert_eq!(
+        saved_capture.preview.kind.as_deref(),
+        Some("preset-applied-preview")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn truthful_close_reemits_when_same_canonical_path_upgrades_preview_kind() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("truthful-close-reemits-same-canonical-path-upgrade");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+        let canonical_preview_path = session_paths
+            .renders_previews_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        fs::create_dir_all(
+            canonical_preview_path
+                .parent()
+                .expect("preview path should have a parent directory"),
+        )
+        .expect("preview directory should exist");
+        fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
+        write_test_jpeg(&canonical_preview_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_fast_preview_ready_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &canonical_preview_path,
+            Some("windows-shell-thumbnail"),
+        );
+        thread::sleep(Duration::from_millis(40));
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            Some(&canonical_preview_path),
+            Some("preset-applied-preview"),
+        );
+    });
+
+    let mut preview_updates: Vec<Option<String>> = Vec::new();
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |update| preview_updates.push(update.kind),
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    assert_eq!(result.capture.render_status, "previewReady");
+    assert_eq!(
+        result.capture.preview.kind.as_deref(),
+        Some("preset-applied-preview")
+    );
+    assert_eq!(
+        preview_updates,
+        vec![
+            Some("windows-shell-thumbnail".into()),
+            Some("preset-applied-preview".into())
+        ],
+        "truthful close should emit a second upgrade event even when it reuses the canonical preview path"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -6585,6 +6972,12 @@ fn readiness_releases_phone_required_without_saved_capture_once_helper_is_ready_
         &session.session_id,
         "request_accepted_only_timeout",
     );
+    write_capture_round_trip_failure_evidence(
+        &base_dir,
+        &session.session_id,
+        "capture-timeout",
+        Some("request_accepted_only_timeout"),
+    );
     write_ready_helper_status(&base_dir, &session.session_id);
 
     let readiness = get_capture_readiness_in_dir(
@@ -6600,6 +6993,429 @@ fn readiness_releases_phone_required_without_saved_capture_once_helper_is_ready_
 
     let manifest = read_manifest(&base_dir, &session.session_id);
     assert_eq!(manifest.lifecycle.stage, "capture-ready");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_releases_phone_required_without_saved_capture_even_with_unrelated_helper_error() {
+    let base_dir = unique_test_root("capture-timeout-with-unrelated-helper-error-unlocks");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_accepted_only_timeout",
+    );
+    write_capture_round_trip_failure_evidence(
+        &base_dir,
+        &session.session_id,
+        "capture-timeout",
+        Some("request_accepted_only_timeout"),
+    );
+    append_helper_event(
+        &base_dir,
+        &session.session_id,
+        serde_json::json!({
+          "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+          "type": "helper-error",
+          "sessionId": session.session_id,
+          "observedAt": current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+          "detailCode": "camera-disconnected",
+          "message": "카메라 연결이 잠시 끊겼어요.",
+        }),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("accepted-only timeout should still recover when unrelated helper errors exist");
+
+    assert_eq!(readiness.reason_code, "ready");
+    assert!(readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_releases_phone_required_without_saved_capture_after_timing_sync_updates_manifest() {
+    let base_dir =
+        unique_test_root("capture-timeout-without-saved-capture-unlocks-after-timing-sync");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    update_timing(
+        &base_dir,
+        &session.session_id,
+        &current_timestamp(SystemTime::now() - Duration::from_secs(5))
+            .expect("warning timestamp should serialize"),
+        &current_timestamp(SystemTime::now() + Duration::from_secs(300))
+            .expect("end timestamp should serialize"),
+        "active",
+    );
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_accepted_only_timeout",
+    );
+    write_capture_round_trip_failure_evidence(
+        &base_dir,
+        &session.session_id,
+        "capture-timeout",
+        Some("request_accepted_only_timeout"),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("accepted-only timeout should still recover after timing sync updates the manifest");
+
+    assert_eq!(readiness.reason_code, "warning");
+    assert!(readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "capture-ready");
+    assert_eq!(
+        manifest.timing.as_ref().map(|timing| timing.phase.as_str()),
+        Some("warning"),
+        "the same readiness poll should still persist the timing transition"
+    );
+    assert!(
+        manifest
+            .timing
+            .as_ref()
+            .and_then(|timing| timing.warning_triggered_at.as_ref())
+            .is_some(),
+        "warning timing evidence should be recorded during the recovery poll"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_without_saved_capture_when_timeout_evidence_is_missing() {
+    let base_dir = unique_test_root("capture-timeout-without-saved-capture-stays-blocked");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_unrelated_failure",
+    );
+    write_capture_round_trip_failure_evidence(
+        &base_dir,
+        &session.session_id,
+        "capture-file-missing",
+        Some("request_unrelated_failure"),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should stay blocked without timeout-specific evidence");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_when_timeout_evidence_file_is_corrupted() {
+    let base_dir = unique_test_root("capture-timeout-with-corrupted-evidence-recovers");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_accepted_only_timeout",
+    );
+    write_corrupted_capture_round_trip_failure_evidence(&base_dir, &session.session_id);
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("corrupted timeout evidence should keep the session blocked");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_when_corrupted_timeout_evidence_is_stale() {
+    let base_dir = unique_test_root("capture-timeout-with-stale-corrupted-evidence-stays-blocked");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_corrupted_capture_round_trip_failure_evidence(&base_dir, &session.session_id);
+    thread::sleep(Duration::from_secs(3));
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    update_manifest_updated_at(
+        &base_dir,
+        &session.session_id,
+        &current_timestamp(SystemTime::now()).expect("manifest timestamp should serialize"),
+    );
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_accepted_only_timeout",
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("stale corrupted timeout evidence should not unlock the session");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_when_timeout_evidence_request_id_does_not_match_processed_request(
+) {
+    let base_dir = unique_test_root("capture-timeout-with-mismatched-request-id-stays-blocked");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_processed_capture_request_id(
+        &base_dir,
+        &session.session_id,
+        "request_processed_but_different",
+    );
+    write_capture_round_trip_failure_evidence(
+        &base_dir,
+        &session.session_id,
+        "capture-timeout",
+        Some("request_timeout_original"),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("mismatched timeout evidence should not unlock the session");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_keeps_phone_required_when_latest_helper_error_predates_current_route_hold() {
+    let base_dir = unique_test_root("stale-helper-error-does-not-recover-phone-required");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    update_stage(&base_dir, &session.session_id, "phone-required");
+    append_helper_event(
+        &base_dir,
+        &session.session_id,
+        serde_json::json!({
+          "schemaVersion": CANON_HELPER_ERROR_SCHEMA_VERSION,
+          "type": "helper-error",
+          "sessionId": session.session_id,
+          "observedAt": current_timestamp(SystemTime::now() - Duration::from_secs(10)).expect("helper timestamp should serialize"),
+          "detailCode": "capture-trigger-failed",
+          "message": "셔터 명령을 보낼 수 없었어요: 0x00008d01",
+        }),
+    );
+    update_manifest_updated_at(
+        &base_dir,
+        &session.session_id,
+        &current_timestamp(SystemTime::now()).expect("manifest timestamp should serialize"),
+    );
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("stale helper error should not reopen the session");
+
+    assert_eq!(readiness.reason_code, "phone-required");
+    assert!(!readiness.can_capture);
+
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    assert_eq!(manifest.lifecycle.stage, "phone-required");
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -8468,6 +9284,21 @@ fn update_stage(base_dir: &PathBuf, session_id: &str, stage: &str) {
     .expect("manifest should be writable");
 }
 
+fn update_manifest_updated_at(base_dir: &PathBuf, session_id: &str, updated_at: &str) {
+    let manifest_path = SessionPaths::new(base_dir, session_id).manifest_path;
+    let manifest_bytes = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+    let mut manifest: SessionManifest =
+        serde_json::from_str(&manifest_bytes).expect("manifest should deserialize");
+
+    manifest.updated_at = updated_at.into();
+
+    fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be writable");
+}
+
 fn update_timing(
     base_dir: &PathBuf,
     session_id: &str,
@@ -8759,6 +9590,41 @@ fn append_processed_capture_request_id(base_dir: &PathBuf, session_id: &str, req
     };
 
     fs::write(processed_path, next_contents).expect("processed request log should be writable");
+}
+
+fn write_capture_round_trip_failure_evidence(
+    base_dir: &PathBuf,
+    session_id: &str,
+    reason_code: &str,
+    request_id: Option<&str>,
+) {
+    let paths = SessionPaths::new(base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics dir should exist");
+    let manifest = read_manifest(base_dir, session_id);
+    let evidence = serde_json::json!({
+      "occurredAt": manifest.updated_at,
+      "reasonCode": reason_code,
+      "requestId": request_id,
+    });
+    fs::write(
+        paths
+            .diagnostics_dir
+            .join("latest-capture-round-trip-failure.json"),
+        serde_json::to_vec_pretty(&evidence).expect("failure evidence should serialize"),
+    )
+    .expect("failure evidence should be writable");
+}
+
+fn write_corrupted_capture_round_trip_failure_evidence(base_dir: &PathBuf, session_id: &str) {
+    let paths = SessionPaths::new(base_dir, session_id);
+    fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics dir should exist");
+    fs::write(
+        paths
+            .diagnostics_dir
+            .join("latest-capture-round-trip-failure.json"),
+        b"{ not-valid-json",
+    )
+    .expect("corrupted failure evidence should be writable");
 }
 
 fn wait_for_timing_event(base_dir: &PathBuf, session_id: &str, pattern: &str) {

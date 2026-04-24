@@ -107,3 +107,10 @@ Story `1.26`의 목표는 old line을 더 깎는 것이 아니다.
 - [Preview Track Route Decision](./preview-track-route-decision-20260418.md)
 - [Release Baseline](../release-baseline.md)
 - [Preview Architecture History And Agent Guide](../preview-architecture-history-and-agent-guide.md)
+
+## Latest Route Note - 2026-04-24 11:36 +09:00
+
+- Latest fast-preview cached XMP `iop_order_list` trimming produced a stable 5/5 hardware validation run on `session_000000000018a92a6c02e7f2d4`.
+- The `Kim4821` prompt still records the session as `Kim 4821`.
+- Official `preset-applied visible <= 3000ms` is now closed: latest readings were `2956ms`, `2951ms`, `2961ms`, `2954ms`, and `2960ms`.
+- Story `1.26` now has ledger `Go` evidence. The next product step is not more tail chasing; it is visual acceptability review for the trimmed preview XMP and deciding whether Story `1.31` should open as the success-side default / rollback gate.

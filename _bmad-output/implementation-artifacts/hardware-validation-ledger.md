@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-04-22 11:38 +09:00
+Last Updated: 2026-04-24 12:43 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -20,6 +20,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 - Story `1.10` is now the closed `No-Go` baseline for the old `resident first-visible` line because the latest one-session rerun revalidated the lane but still failed the official gate.
 - Story `1.31` remains unopened and is reserved as the success-side default / rollback gate, not as the current rerun path.
 - Story `1.26` is now the officially opened reserve path for the next preview-route attempt.
+- Latest single-run hardware validation after fast-preview cached XMP `iop_order_list` trimming passed 5/5 captures and records `Kim4821` as `Kim 4821`. That package closed the official release gate with `2951ms ~ 2961ms` preset-applied visible readings, but current code now preserves lens correction after code review, so Story `1.26` needs one approved-hardware rerun before current-code product promotion.
 - This worktree no longer treats the older `resident first-visible` line as the active execution lane; it remains comparison evidence only.
 - That older line is not release-proof. Historical better runs are comparison evidence only until they are revalidated against the single official hardware gate.
 - GPU-enabled acceleration on the old line belongs here only as optional comparison evidence. It is not a standalone release decision.
@@ -30,7 +31,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 | --- | --- | --- | --- | --- |
 | newer `actual-primary-lane` | Story `1.30` bounded evidence lane | `bounded No-Go` | repeated approved-hardware reruns failed the official `preset-applied visible <= 3000ms` gate; further open-ended tuning is paused | `docs/runbooks/preview-track-route-decision-20260418.md` |
 | older `resident first-visible` line | Story `1.10` closed baseline | `closed No-Go baseline` | latest one-session rerun closed the baseline evidence package, but still failed the official `preset-applied visible <= 3000ms` gate; keep it as comparison evidence only | `docs/runbooks/current-actual-lane-handoff-20260419.md`; `_bmad-output/implementation-artifacts/1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입.md`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574\` |
-| reserve path | Story `1.26` active reserve path | `active / official No-Go` | the latest approved-hardware rerun removed the first-shot duplicate render overlap reject and kept truthful same-session close healthy, but the official `preset-applied visible <= 3000ms` gate still failed at `5905ms`, `5982ms`, `5763ms`, `5864ms`, and `5803ms`; route remains active only as the current truthful-close latency debugging lane | `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`; `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\` |
+| reserve path | Story `1.26` active reserve path | `review / rerun required` | latest single-run hardware-validation after fast-preview cached XMP `iop_order_list` trimming passed 5/5 captures on `session_000000000018a92a6c02e7f2d4` and records `boothAlias=Kim 4821`. `originalVisibleToPresetAppliedVisibleMs` was `2956ms`, `2951ms`, `2961ms`, `2954ms`, and `2960ms`, averaging `2956.4ms`. A later code-review patch preserved `lens` in the fast-preview XMP for visual parity, so that Go package is now historical evidence and current-code promotion requires one approved-hardware rerun | `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`; `docs/runbooks/preview-latency-next-steps-checklist-20260422.md`; `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4\`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776998171366\run-summary.json` |
 | success-side default / rollback gate | Story `1.31` | `unopened` | kept closed unless a success-side fallback or rollback decision is explicitly reopened | `docs/runbooks/preview-track-route-decision-20260418.md` |
 | GPU-enabled acceleration on old lane | optional comparison evidence | `unproven` | may still be tested for side evidence, but does not change the release gate or the fact that Story `1.26` is the active route | `docs/runbooks/current-actual-lane-handoff-20260419.md` |
 
@@ -61,7 +62,7 @@ Supporting regression / follow-up notes:
 | 1.6 | Pass | Partial helper/readiness proof | No-Go | Reconnect-safe `HV-10` package and canonical helper metadata were not normalized into one close row. | Noah Lee | `history/camera-helper-troubleshooting-history.md` |
 | 1.8 | Pass | User field observation recorded; canonical package still missing | No-Go | 2026-04-03 최신 재현 세션에서 `Preview Waiting`은 즉시 보였지만 fast preview는 여전히 비어 있었고, 약 `3.3초 ~ 3.4초` 뒤 render-backed preset preview만 나타났다. `file-arrived`는 fast thumbnail 시도보다 먼저 닫혔으나 helper가 `fast-thumbnail-download-failed` 뒤 customer-visible fast preview를 만들지 못했다. `HV-05/HV-07/HV-08/HV-11/HV-12` canonical evidence는 아직 한 회차로 묶이지 않았다. | Noah Lee | `_bmad-output/implementation-artifacts/1-9-fast-preview-handoff와-xmp-preview-교체.md` |
 | 1.10 | Pass | Pass | No-Go for release judgment | Latest one-session rerun package closed helper correlation, same-session replacement, and `capture-ready` recovery on approved hardware, but official `preset-applied visible <= 3000ms` timing still landed at `8972ms`, `7942ms`, and `7967ms`. `sameCaptureFullScreenVisibleMs` (`4685ms`, `3587ms`, `3270ms`) remains comparison evidence only. Official `Go / No-Go` ownership remains in this ledger. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574\` |
-| 1.26 | Pass | Pass package collected; verdict No-Go | No-Go | Latest approved-hardware rerun `session_000000000018a88d53fa8f00c4` confirmed the first-shot duplicate render overlap reject is gone: startup reached `camera-ready`, all five captures closed as `previewReady`, every capture had `preview.kind = preset-applied-preview` plus non-null `xmpPreviewReadyAtMs`, helper correlation closed as `capture-accepted -> file-arrived -> fast-preview-ready`, and all five timing closes kept `truthOwner=display-sized-preset-applied`. But the official gate still failed at `5905ms`, `5982ms`, `5763ms`, `5864ms`, and `5803ms`. The remaining blocker is truthful-close latency, not startup/save, false-ready, or duplicate-render overlap. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a88d53fa8f00c4\` |
+| 1.26 | Pass | Latest single-run package passed 5/5 before review patch; current code needs rerun | Review | Requested validation on `2026-04-24 11:36 +09:00` passed all five captures and records `Kim4821` as `Kim 4821`. `originalVisibleToPresetAppliedVisibleMs` was `2956ms`, `2951ms`, `2961ms`, `2954ms`, and `2960ms`; all captures were inside the official `<= 3000ms` gate. A later code-review patch preserved `lens` in fast-preview XMP, so this remains positive historical evidence but not current-code release proof. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4\`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776998171366\run-summary.json` |
 | 3.2 | Pass | Missing | No-Go | `HV-08/HV-11` execution and evidence package are not yet recorded. | Noah Lee | `TBD` |
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
@@ -196,17 +197,17 @@ Supporting regression / follow-up notes:
 - story key: `1-26-host-owned-local-native-gpu-resident-preview-lane-검증`
 - HV checklist ID: `preview-track official gate package`
 - evidence package path: `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md ; docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
-- executedAt: `Opened 2026-04-20 10:58 +09:00; software scope advanced 2026-04-20 11:37 +09:00; hardware package collected 2026-04-20 11:54 +09:00; owner-attribution rerun collected 2026-04-20 12:46 +09:00; field failures captured 2026-04-20 13:27 +09:00, 14:02 +09:00, 14:17 +09:00, 14:31~14:32 +09:00, 14:41 +09:00, 14:59 +09:00, 15:17 +09:00, 15:21 +09:00, and 15:29 +09:00; corrective software patch verified 2026-04-20 afternoon; rejected warm-up attempt recorded 2026-04-22 00:40 +09:00; rollback/current-code rerun collected 2026-04-22 00:40 +09:00; duplicate-render-overlap rerun rejected 2026-04-22 11:21 +09:00; post-patch approved rerun collected 2026-04-22 11:38 +09:00`
+- executedAt: `Opened 2026-04-20 10:58 +09:00; software scope advanced 2026-04-20 11:37 +09:00; hardware package collected 2026-04-20 11:54 +09:00; owner-attribution rerun collected 2026-04-20 12:46 +09:00; field failures captured 2026-04-20 13:27 +09:00, 14:02 +09:00, 14:17 +09:00, 14:31~14:32 +09:00, 14:41 +09:00, 14:59 +09:00, 15:17 +09:00, 15:21 +09:00, and 15:29 +09:00; corrective software patch verified 2026-04-20 afternoon; rejected warm-up attempt recorded 2026-04-22 00:40 +09:00; rollback/current-code rerun collected 2026-04-22 00:40 +09:00; duplicate-render-overlap rerun rejected 2026-04-22 11:21 +09:00; post-patch approved rerun collected 2026-04-22 11:38 +09:00; latest app-run cold-start evidence collected 2026-04-23 14:35~14:36 +09:00; JPEG warm-up source patch verified 2026-04-23 14:46 +09:00; latest post-patch steady-state evidence collected 2026-04-23 14:57 +09:00; hardware validation runner passed 2026-04-23 15:02 +09:00; OpenCL-disabled preview rerun passed 2026-04-23 15:09 +09:00; in-memory preview-library rerun passed 2026-04-23 15:30 +09:00; hard-link speculative-source rerun passed 2026-04-23 15:39 +09:00; narrower-cap experiment rejected 2026-04-23 21:57 +09:00; trimmed-preview-xmp rerun passed 2026-04-23 22:13 +09:00; OpenCL core-option order rerun passed 2026-04-24 07:58 +09:00; three-run validation attempt collected 2026-04-24 09:48~09:49 +09:00; runner helper-bootstrap recovery rerun passed 2026-04-24 09:59~10:00 +09:00; compact prompt parsing rerun passed 2026-04-24 10:19 +09:00; extra fast-preview XMP trimming rerun passed 2026-04-24 10:32 +09:00; duplicate builtin/default and repeated builtin-auto XMP trimming rerun passed but narrowly missed 2026-04-24 11:14 +09:00; fast-preview `iop_order_list` trimming rerun passed and closed official gate 2026-04-24 11:36 +09:00`
 - validator: `Noah Lee`
 - booth PC: `NOAHLEE`
 - camera model: `Canon EOS 700D`
 - darktable pin: `darktable remains parity/fallback/final-export boundary; active hot-path owner TBD by implementation`
 - helper identifier: `canon-helper-status/v1 via diagnostics/camera-helper-status.json`
-- Go / No-Go result: `No-Go`
-- release blocker: `Latest approved-hardware rerun session_000000000018a88d53fa8f00c4 confirmed the single-lane guardrail removed the first-shot duplicate render overlap reject: startup reached `camera-ready`, all five captures closed as `previewReady`, every capture had `preview.kind = preset-applied-preview` plus non-null `xmpPreviewReadyAtMs`, helper correlation closed as `capture-accepted -> file-arrived -> fast-preview-ready`, and timing evidence kept `truthOwner=display-sized-preset-applied` on all five closes. But the official reserve-path gate still failed at `5905ms`, `5982ms`, `5763ms`, `5864ms`, and `5803ms`, while per-capture `preview-render-ready elapsedMs` remained `3717ms`, `3617ms`, `3615ms`, `3618ms`, and `3715ms`. Story 1.26 therefore remains blocked on truthful-close latency, not on startup/save, false-ready, or duplicate-render overlap correctness.`
+- Go / No-Go result: `Review / rerun required`
+- release blocker: `Current-code hardware proof is stale. Latest requested hardware-validation run after fast-preview cached XMP iop-order trimming passed 5/5 captures and recorded boothAlias Kim 4821. session_000000000018a92a6c02e7f2d4 produced preset-applied visible timings of 2956ms, 2951ms, 2961ms, 2954ms, and 2960ms, all inside the official <= 3000ms gate. A later review patch preserved lens correction in the preview XMP, so approved hardware must be rerun before product promotion.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Land a new truthful-close hot-path reduction that keeps `previewReady` truth-first, then collect one more approved-hardware rerun and re-read the official `preset-applied visible <= 3000ms` gate in the same package.`
-- target rerun date: `After the next truthful-close reduction candidate is implemented`
+- rerun prerequisite: `Run one approved-hardware package on current code after the lens-preserving preview XMP patch.`
+- target rerun date: `After code review patch verification on 2026-04-24`
 - core evidence paths:
   - `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`
   - `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`
@@ -218,6 +219,15 @@ Supporting regression / follow-up notes:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\timing-events.log`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\camera-helper-events.jsonl`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f0faf87fd164\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fe95ea36f8f4\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a91e89791d5370\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a91e89791d5370\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a91e89791d5370\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a91e89791d5370\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776985103763\run-summary.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\session.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\diagnostics\timing-events.log`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7f3c5b88c698c\diagnostics\camera-helper-events.jsonl`
@@ -260,6 +270,61 @@ Supporting regression / follow-up notes:
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\session.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\diagnostics\camera-helper-status.json`
   - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a84b9b92af73ac\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e59c3f873ffc\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e59c3f873ffc\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e59c3f873ffc\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e59c3f873ffc\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e59c3f873ffc\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e6cb585230d4\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e6cb585230d4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e6cb585230d4\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e6cb585230d4\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e6cb585230d4\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e716e9987b48\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e716e9987b48\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e716e9987b48\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e716e9987b48\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e716e9987b48\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e7702849122c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e7702849122c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e7702849122c\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e7702849122c\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e7702849122c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e892447836f8\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e892447836f8\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e892447836f8\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e892447836f8\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e892447836f8\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e91cef5631a8\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e91cef5631a8\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e91cef5631a8\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e91cef5631a8\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8e91cef5631a8\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fdb7a8e88590\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fdb7a8e88590\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fdb7a8e88590\diagnostics\camera-helper-events.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fdb7a8e88590\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a8fdb7a8e88590\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a925271b1710a0\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a925271b1710a0\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a925271b1710a0\diagnostics\camera-helper-startup.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a925271b1710a0\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776992377859\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92639f9a96a6c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92639f9a96a6c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92639f9a96a6c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776993558412\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a926e98958c25c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a926e98958c25c\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a926e98958c25c\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776994312446\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a9292e867e1a68\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a9292e867e1a68\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776996807774\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a92a6c02e7f2d4\diagnostics\camera-helper-status.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1776998171366\run-summary.json`
 
 ### Story 3.2
 

@@ -130,6 +130,34 @@ fn hardware_validation_runner_writes_failure_report_when_look2_preset_is_missing
 }
 
 #[test]
+fn hardware_validation_runner_splits_compact_name_and_last_four_prompt() {
+    ensure_fake_darktable_cli();
+    let base_dir = temp_test_dir("runner-compact-prompt");
+    let output_dir = base_dir.join("validation-output");
+
+    let result = run_hardware_validation_in_dir(
+        &base_dir,
+        &output_dir,
+        HardwareValidationRunInput {
+            prompt: "Kim4821".into(),
+            preset_query: "look2".into(),
+            capture_count: 1,
+            app_launch_mode: AppLaunchMode::Skip,
+            phone_last_four: None,
+        },
+    )
+    .expect("runner should emit a failed result instead of crashing");
+
+    assert_eq!(result.status, "failed");
+
+    let summary: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(result.run_dir.join("run-summary.json")).expect("summary should exist"),
+    )
+    .expect("summary should deserialize");
+    assert_eq!(summary["boothAlias"], "Kim 4821");
+}
+
+#[test]
 fn hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeouts() {
     ensure_fake_darktable_cli();
     let base_dir = temp_test_dir("runner-readiness-timeout");

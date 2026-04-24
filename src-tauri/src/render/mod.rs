@@ -37,19 +37,71 @@ const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
 const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
 const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
+const FAST_PREVIEW_XMP_CACHE_DIR_NAME: &str = "xmp-cache";
+const FAST_PREVIEW_XMP_CACHE_SUFFIX: &str = "fast-preview";
+const FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS: [&str; 6] = [
+    "rawprepare",
+    "demosaic",
+    "denoiseprofile",
+    "hotpixels",
+    "highlights",
+    "cacorrectrgb",
+];
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
+const DARKTABLE_MEMORY_LIBRARY: &str = ":memory:";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PREVIEW_RENDER_WARMUP_SETTLE_POLL_MS: u64 = 50;
-const PREVIEW_RENDER_WARMUP_INPUT_PNG: &[u8] = &[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0x60, 0x60, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x01, 0x2B, 0x09, 0x4D, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
-    0xAE, 0x42, 0x60, 0x82,
+// Keep warm-up on the same JPEG raster family as the real fast-preview lane so
+// the first customer-visible render does not pay a separate decoder cold-start.
+const PREVIEW_RENDER_WARMUP_INPUT_JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60,
+    0x00, 0x60, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x05, 0x04, 0x04, 0x04, 0x04, 0x03, 0x05,
+    0x04, 0x04, 0x04, 0x06, 0x05, 0x05, 0x06, 0x08, 0x0D, 0x08, 0x08, 0x07, 0x07, 0x08, 0x10, 0x0B,
+    0x0C, 0x09, 0x0D, 0x13, 0x10, 0x14, 0x13, 0x12, 0x10, 0x12, 0x12, 0x14, 0x17, 0x1D, 0x19, 0x14,
+    0x16, 0x1C, 0x16, 0x12, 0x12, 0x1A, 0x23, 0x1A, 0x1C, 0x1E, 0x1F, 0x21, 0x21, 0x21, 0x14, 0x19,
+    0x24, 0x27, 0x24, 0x20, 0x26, 0x1D, 0x20, 0x21, 0x20, 0xFF, 0xDB, 0x00, 0x43, 0x01, 0x05, 0x06,
+    0x06, 0x08, 0x07, 0x08, 0x0F, 0x08, 0x08, 0x0F, 0x20, 0x15, 0x12, 0x15, 0x20, 0x20, 0x20, 0x20,
+    0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+    0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+    0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00,
+    0x20, 0x00, 0x20, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xFF, 0xC4, 0x00,
+    0x1F, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0xFF, 0xC4, 0x00,
+    0xB5, 0x10, 0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+    0x01, 0x7D, 0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51,
+    0x61, 0x07, 0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xA1, 0x08, 0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52,
+    0xD1, 0xF0, 0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0A, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x25, 0x26,
+    0x27, 0x28, 0x29, 0x2A, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4A, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x63, 0x64, 0x65, 0x66, 0x67,
+    0x68, 0x69, 0x6A, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x83, 0x84, 0x85, 0x86, 0x87,
+    0x88, 0x89, 0x8A, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA2, 0xA3, 0xA4, 0xA5,
+    0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xC2, 0xC3,
+    0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA,
+    0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6,
+    0xF7, 0xF8, 0xF9, 0xFA, 0xFF, 0xC4, 0x00, 0x1F, 0x01, 0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01,
+    0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0x07, 0x08, 0x09, 0x0A, 0x0B, 0xFF, 0xC4, 0x00, 0xB5, 0x11, 0x00, 0x02, 0x01, 0x02, 0x04, 0x04,
+    0x03, 0x04, 0x07, 0x05, 0x04, 0x04, 0x00, 0x01, 0x02, 0x77, 0x00, 0x01, 0x02, 0x03, 0x11, 0x04,
+    0x05, 0x21, 0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71, 0x13, 0x22, 0x32, 0x81, 0x08, 0x14,
+    0x42, 0x91, 0xA1, 0xB1, 0xC1, 0x09, 0x23, 0x33, 0x52, 0xF0, 0x15, 0x62, 0x72, 0xD1, 0x0A, 0x16,
+    0x24, 0x34, 0xE1, 0x25, 0xF1, 0x17, 0x18, 0x19, 0x1A, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x35, 0x36,
+    0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x53, 0x54, 0x55, 0x56,
+    0x57, 0x58, 0x59, 0x5A, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x73, 0x74, 0x75, 0x76,
+    0x77, 0x78, 0x79, 0x7A, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x92, 0x93, 0x94,
+    0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xB2,
+    0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9,
+    0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7,
+    0xE8, 0xE9, 0xEA, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFF, 0xDA, 0x00, 0x0C,
+    0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00, 0xF5, 0xAA, 0x28, 0xAF, 0x9C, 0xAB,
+    0xC7, 0x94, 0xB9, 0x4F, 0x56, 0x31, 0xB9, 0xF4, 0x6D, 0x15, 0xF3, 0x95, 0x7D, 0x1B, 0x44, 0x65,
+    0xCC, 0x12, 0x8D, 0x82, 0xBE, 0x72, 0xAF, 0xA3, 0x68, 0xA2, 0x51, 0xE6, 0x08, 0xCA, 0xC7, 0xCE,
+    0x55, 0xF4, 0x6D, 0x14, 0x51, 0x18, 0xF2, 0x84, 0xA5, 0x73, 0xFF, 0xD9,
 ];
 
 static RENDER_QUEUE_DEPTH: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
+static FAST_PREVIEW_XMP_CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static FAST_PREVIEW_XMP_CACHE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static PREVIEW_RENDER_WARMUP_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 static RESIDENT_PREVIEW_WORKERS: LazyLock<Mutex<HashMap<String, ResidentPreviewWorkerHandle>>> =
@@ -101,7 +153,9 @@ impl PreviewInvocationProfile {
     fn approved_booth_safe() -> Self {
         Self {
             apply_custom_presets: false,
-            disable_opencl: false,
+            // Small truthful-close previews pay more for OpenCL startup than they gain
+            // from GPU acceleration, so keep the booth-visible preview path CPU-only.
+            disable_opencl: true,
             allow_fast_preview_raster: true,
         }
     }
@@ -953,7 +1007,7 @@ fn ensure_preview_renderer_warmup_source(base_dir: &Path) -> Result<PathBuf, Ren
         .join(".boothy-darktable")
         .join("preview")
         .join("warmup")
-        .join("preview-renderer-warmup-source.png");
+        .join("preview-renderer-warmup-source.jpg");
     if let Some(parent) = warmup_source_path.parent() {
         fs::create_dir_all(parent).map_err(|error| RenderWorkerError {
             reason_code: "render-warmup-dir-unavailable",
@@ -965,12 +1019,12 @@ fn ensure_preview_renderer_warmup_source(base_dir: &Path) -> Result<PathBuf, Ren
     }
 
     let needs_refresh = match fs::read(&warmup_source_path) {
-        Ok(existing_bytes) => existing_bytes != PREVIEW_RENDER_WARMUP_INPUT_PNG,
+        Ok(existing_bytes) => existing_bytes != PREVIEW_RENDER_WARMUP_INPUT_JPEG,
         Err(_) => true,
     };
 
     if needs_refresh {
-        fs::write(&warmup_source_path, PREVIEW_RENDER_WARMUP_INPUT_PNG).map_err(|error| {
+        fs::write(&warmup_source_path, PREVIEW_RENDER_WARMUP_INPUT_JPEG).map_err(|error| {
             RenderWorkerError {
                 reason_code: "render-warmup-source-write-failed",
                 customer_message: safe_render_failure_message(RenderIntent::Preview),
@@ -1333,21 +1387,37 @@ fn build_darktable_invocation_from_source(
     render_source_kind: PreviewRenderSourceKind,
 ) -> DarktableInvocation {
     let profile = approved_preview_invocation_profile();
+    let effective_xmp_template_path = preview_invocation_xmp_template_path(
+        base_dir,
+        xmp_template_path,
+        intent,
+        render_source_kind,
+    );
     let mode = match intent {
         RenderIntent::Preview => "preview",
         RenderIntent::Final => "final",
     };
     let worker_root = base_dir.join(".boothy-darktable").join(mode);
     let configdir = worker_root.join("config");
-    let library = worker_root.join("library.db");
     let hq_flag = match intent {
         RenderIntent::Preview => "false",
         RenderIntent::Final => "true",
     };
+    let library = match intent {
+        // Preview renders do not need persistent catalog state, so keep the
+        // library in memory and avoid extra per-invocation sqlite startup work.
+        RenderIntent::Preview => DARKTABLE_MEMORY_LIBRARY.to_string(),
+        RenderIntent::Final => worker_root
+            .join("library.db")
+            .to_string_lossy()
+            .replace('\\', "/"),
+    };
     let binary_resolution = resolve_darktable_cli_binary();
     let mut arguments = vec![
         source_asset_path.to_string_lossy().replace('\\', "/"),
-        xmp_template_path.to_string_lossy().replace('\\', "/"),
+        effective_xmp_template_path
+            .to_string_lossy()
+            .replace('\\', "/"),
         output_path.to_string_lossy().replace('\\', "/"),
         "--hq".into(),
         hq_flag.into(),
@@ -1358,9 +1428,6 @@ fn build_darktable_invocation_from_source(
             arguments.push("--apply-custom-presets".into());
             arguments.push(DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED.into());
         }
-        if profile.disable_opencl {
-            arguments.push("--disable-opencl".into());
-        }
         let (width_cap, height_cap) = preview_render_dimensions(render_source_kind);
         arguments.push("--width".into());
         arguments.push(width_cap.to_string());
@@ -1368,12 +1435,15 @@ fn build_darktable_invocation_from_source(
         arguments.push(height_cap.to_string());
     }
 
+    arguments.push("--core".into());
+    if matches!(intent, RenderIntent::Preview) && profile.disable_opencl {
+        arguments.push("--disable-opencl".into());
+    }
     arguments.extend([
-        "--core".into(),
         "--configdir".into(),
         configdir.to_string_lossy().replace('\\', "/"),
         "--library".into(),
-        library.to_string_lossy().replace('\\', "/"),
+        library,
     ]);
 
     DarktableInvocation {
@@ -1383,6 +1453,461 @@ fn build_darktable_invocation_from_source(
         arguments,
         working_directory: base_dir.to_path_buf(),
     }
+}
+
+fn preview_invocation_xmp_template_path(
+    base_dir: &Path,
+    xmp_template_path: &Path,
+    intent: RenderIntent,
+    render_source_kind: PreviewRenderSourceKind,
+) -> PathBuf {
+    if matches!(intent, RenderIntent::Preview)
+        && matches!(
+            render_source_kind,
+            PreviewRenderSourceKind::FastPreviewRaster
+        )
+    {
+        return prepare_fast_preview_xmp_template_in_dir(base_dir, xmp_template_path)
+            .unwrap_or_else(|| xmp_template_path.to_path_buf());
+    }
+
+    xmp_template_path.to_path_buf()
+}
+
+fn prepare_fast_preview_xmp_template_in_dir(
+    base_dir: &Path,
+    xmp_template_path: &Path,
+) -> Option<PathBuf> {
+    let source_xmp = fs::read_to_string(xmp_template_path).ok()?;
+    let trimmed_xmp = trim_xmp_for_fast_preview(&source_xmp)?;
+    if trimmed_xmp == source_xmp {
+        return Some(xmp_template_path.to_path_buf());
+    }
+
+    let cache_path = build_fast_preview_xmp_cache_path(base_dir, xmp_template_path);
+    if fs::read_to_string(&cache_path)
+        .ok()
+        .as_deref()
+        .map(|existing| existing == trimmed_xmp.as_str())
+        .unwrap_or(false)
+    {
+        return Some(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).ok()?;
+    }
+    write_fast_preview_xmp_cache_atomically(&cache_path, &trimmed_xmp).ok()?;
+    Some(cache_path)
+}
+
+fn build_fast_preview_xmp_cache_path(base_dir: &Path, xmp_template_path: &Path) -> PathBuf {
+    let stem = xmp_template_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(sanitize_xmp_cache_segment)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "preview".into());
+    let published_version = xmp_template_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(|value| value.file_name())
+        .and_then(|value| value.to_str())
+        .map(sanitize_xmp_cache_segment)
+        .filter(|value| !value.is_empty());
+    let preset_id = xmp_template_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(|value| value.file_name())
+        .and_then(|value| value.to_str())
+        .map(sanitize_xmp_cache_segment)
+        .filter(|value| !value.is_empty());
+
+    let mut file_name_segments = Vec::new();
+    if let Some(preset_id) = preset_id {
+        file_name_segments.push(preset_id);
+    }
+    if let Some(published_version) = published_version {
+        file_name_segments.push(published_version);
+    }
+    file_name_segments.push(stem);
+    file_name_segments.push(stable_fast_preview_xmp_cache_identity(xmp_template_path));
+    file_name_segments.push(FAST_PREVIEW_XMP_CACHE_SUFFIX.into());
+
+    base_dir
+        .join(".boothy-darktable")
+        .join("preview")
+        .join(FAST_PREVIEW_XMP_CACHE_DIR_NAME)
+        .join(format!("{}.xmp", file_name_segments.join("-")))
+}
+
+fn stable_fast_preview_xmp_cache_identity(xmp_template_path: &Path) -> String {
+    let normalized_path = xmp_template_path.to_string_lossy().replace('\\', "/");
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in normalized_path.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn write_fast_preview_xmp_cache_atomically(
+    cache_path: &Path,
+    trimmed_xmp: &str,
+) -> std::io::Result<()> {
+    let _write_guard = FAST_PREVIEW_XMP_CACHE_WRITE_LOCK
+        .lock()
+        .map_err(|_| std::io::Error::other("fast preview xmp cache write lock poisoned"))?;
+    let temp_path = fast_preview_xmp_cache_temp_path(cache_path);
+    fs::write(&temp_path, trimmed_xmp)?;
+    let result = replace_file_atomically(&temp_path, cache_path);
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+fn fast_preview_xmp_cache_temp_path(cache_path: &Path) -> PathBuf {
+    let counter = FAST_PREVIEW_XMP_CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    cache_path.with_extension(format!("xmp.{}.{}.tmp", std::process::id(), counter))
+}
+
+#[cfg(windows)]
+fn replace_file_atomically(source_path: &Path, target_path: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            dwFlags: u32,
+        ) -> i32;
+    }
+
+    let source = source_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let target = target_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomically(source_path: &Path, target_path: &Path) -> std::io::Result<()> {
+    fs::rename(source_path, target_path)
+}
+
+fn sanitize_xmp_cache_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
+fn trim_xmp_for_fast_preview(source_xmp: &str) -> Option<String> {
+    let builtin_default_duplicate_operations =
+        find_fast_preview_builtin_default_duplicate_operations(source_xmp);
+    let mut trimmed_history = String::new();
+    let mut kept_history_count = 0usize;
+    let mut captured_history = false;
+    let mut in_history_sequence = false;
+    let mut history_block = String::new();
+    let mut collecting_history_block = false;
+    let mut kept_builtin_auto_signatures = HashSet::new();
+    let mut kept_iop_order_pairs = HashSet::new();
+
+    for segment in source_xmp.split_inclusive('\n') {
+        if !captured_history {
+            if segment.contains("<darktable:history>") {
+                captured_history = true;
+            }
+            trimmed_history.push_str(segment);
+            continue;
+        }
+
+        if !in_history_sequence {
+            if segment.contains("<rdf:Seq>") {
+                in_history_sequence = true;
+            }
+            trimmed_history.push_str(segment);
+            continue;
+        }
+
+        if collecting_history_block || segment.trim_start().starts_with("<rdf:li") {
+            collecting_history_block = true;
+            history_block.push_str(segment);
+            if !darktable_history_block_is_complete(&history_block) {
+                continue;
+            }
+
+            collecting_history_block = false;
+            let repeated_builtin_auto = fast_preview_builtin_auto_signature(&history_block)
+                .map(|signature| !kept_builtin_auto_signatures.insert(signature))
+                .unwrap_or(false);
+            if !repeated_builtin_auto
+                && !should_strip_fast_preview_history_block(
+                    &history_block,
+                    &builtin_default_duplicate_operations,
+                )
+            {
+                let rewritten_block =
+                    rewrite_darktable_history_num(&history_block, kept_history_count);
+                trimmed_history.push_str(&rewritten_block);
+                if let Some(operation_priority) =
+                    fast_preview_history_operation_priority(&history_block)
+                {
+                    kept_iop_order_pairs.insert(operation_priority);
+                }
+                kept_history_count += 1;
+            }
+            history_block.clear();
+            continue;
+        }
+
+        if segment.contains("</rdf:Seq>") {
+            in_history_sequence = false;
+        }
+        trimmed_history.push_str(segment);
+    }
+
+    if collecting_history_block {
+        return None;
+    }
+
+    let history_end = if kept_history_count == 0 {
+        "-1".to_string()
+    } else {
+        kept_history_count.saturating_sub(1).to_string()
+    };
+    let with_history_end =
+        rewrite_xml_attribute_value_once(&trimmed_history, "darktable:history_end", &history_end);
+    let with_iop_order = rewrite_darktable_iop_order_list(&with_history_end, &kept_iop_order_pairs);
+    Some(with_iop_order)
+}
+
+fn find_fast_preview_builtin_default_duplicate_operations(source_xmp: &str) -> HashSet<String> {
+    let mut builtin_default_operations = HashSet::new();
+    let mut user_operations = HashSet::new();
+
+    for history_block in extract_darktable_history_blocks(source_xmp) {
+        let Some(operation) = extract_darktable_history_operation(&history_block) else {
+            continue;
+        };
+
+        if is_fast_preview_builtin_default_history_block(&history_block) {
+            builtin_default_operations.insert(operation.to_string());
+        } else {
+            user_operations.insert(operation.to_string());
+        }
+    }
+
+    builtin_default_operations
+        .intersection(&user_operations)
+        .cloned()
+        .collect()
+}
+
+fn extract_darktable_history_blocks(source_xmp: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut captured_history = false;
+    let mut in_history_sequence = false;
+    let mut history_block = String::new();
+    let mut collecting_history_block = false;
+
+    for segment in source_xmp.split_inclusive('\n') {
+        if !captured_history {
+            if segment.contains("<darktable:history>") {
+                captured_history = true;
+            }
+            continue;
+        }
+
+        if !in_history_sequence {
+            if segment.contains("<rdf:Seq>") {
+                in_history_sequence = true;
+            }
+            continue;
+        }
+
+        if collecting_history_block || segment.trim_start().starts_with("<rdf:li") {
+            collecting_history_block = true;
+            history_block.push_str(segment);
+            if !darktable_history_block_is_complete(&history_block) {
+                continue;
+            }
+
+            collecting_history_block = false;
+            blocks.push(history_block.clone());
+            history_block.clear();
+        }
+    }
+
+    blocks
+}
+
+fn darktable_history_block_is_complete(history_block: &str) -> bool {
+    history_block.contains("/>") || history_block.contains("</rdf:li>")
+}
+
+fn should_strip_fast_preview_history_block(
+    history_block: &str,
+    builtin_default_duplicate_operations: &HashSet<String>,
+) -> bool {
+    extract_darktable_history_operation(history_block)
+        .map(|operation| {
+            FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS
+                .iter()
+                .any(|candidate| operation == *candidate)
+                || (builtin_default_duplicate_operations.contains(operation)
+                    && is_fast_preview_builtin_default_history_block(history_block))
+        })
+        .unwrap_or(false)
+}
+
+fn is_fast_preview_builtin_default_history_block(history_block: &str) -> bool {
+    extract_xml_attribute_value(history_block, "darktable:multi_name")
+        .map(|multi_name| multi_name.starts_with("_builtin_scene-referred default"))
+        .unwrap_or(false)
+}
+
+fn fast_preview_builtin_auto_signature(history_block: &str) -> Option<String> {
+    let multi_name = extract_xml_attribute_value(history_block, "darktable:multi_name")?;
+    if !multi_name.starts_with("_builtin_auto") {
+        return None;
+    }
+
+    let operation = extract_darktable_history_operation(history_block)?;
+    let params = extract_xml_attribute_value(history_block, "darktable:params").unwrap_or("");
+    Some(format!("{operation}\0{multi_name}\0{params}"))
+}
+
+fn extract_darktable_history_operation(history_block: &str) -> Option<&str> {
+    extract_xml_attribute_value(history_block, "darktable:operation")
+}
+
+fn fast_preview_history_operation_priority(history_block: &str) -> Option<String> {
+    let operation = extract_darktable_history_operation(history_block)?;
+    let priority = extract_xml_attribute_value(history_block, "darktable:multi_priority")
+        .filter(|value| !value.is_empty())
+        .unwrap_or("0");
+    Some(format!("{operation}\0{priority}"))
+}
+
+fn rewrite_darktable_history_num(history_block: &str, new_num: usize) -> String {
+    rewrite_xml_attribute_value_once(history_block, "darktable:num", &new_num.to_string())
+}
+
+fn rewrite_darktable_iop_order_list(
+    source_xmp: &str,
+    kept_iop_order_pairs: &HashSet<String>,
+) -> String {
+    let Some(existing_iop_order_list) =
+        extract_xml_attribute_value(source_xmp, "darktable:iop_order_list")
+    else {
+        return source_xmp.to_string();
+    };
+
+    let mut tokens = existing_iop_order_list.split(',');
+    let mut kept_tokens = Vec::new();
+    let mut kept_operation_priorities = HashSet::new();
+    while let Some(operation) = tokens.next() {
+        let Some(priority) = tokens.next() else {
+            kept_tokens.push(operation.to_string());
+            break;
+        };
+
+        if FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS
+            .iter()
+            .any(|candidate| operation == *candidate)
+        {
+            continue;
+        }
+
+        let operation_priority = format!("{operation}\0{priority}");
+        if !kept_iop_order_pairs.is_empty() && !kept_iop_order_pairs.contains(&operation_priority) {
+            continue;
+        }
+        if !kept_operation_priorities.insert(operation_priority) {
+            continue;
+        }
+
+        kept_tokens.push(operation.to_string());
+        kept_tokens.push(priority.to_string());
+    }
+
+    rewrite_xml_attribute_value_once(
+        source_xmp,
+        "darktable:iop_order_list",
+        &kept_tokens.join(","),
+    )
+}
+
+fn extract_xml_attribute_value<'a>(source: &'a str, attribute_name: &str) -> Option<&'a str> {
+    let prefix = format!("{attribute_name}=\"");
+    let start = source.find(&prefix)? + prefix.len();
+    let remaining = source.get(start..)?;
+    let end = remaining.find('"')?;
+    remaining.get(..end)
+}
+
+fn rewrite_xml_attribute_value_once(
+    source: &str,
+    attribute_name: &str,
+    replacement_value: &str,
+) -> String {
+    let prefix = format!("{attribute_name}=\"");
+    let Some(start) = source.find(&prefix) else {
+        return source.to_string();
+    };
+    let value_start = start + prefix.len();
+    let Some(remaining) = source.get(value_start..) else {
+        return source.to_string();
+    };
+    let Some(value_end_offset) = remaining.find('"') else {
+        return source.to_string();
+    };
+    let value_end = value_start + value_end_offset;
+
+    let mut rewritten = String::with_capacity(
+        source
+            .len()
+            .saturating_sub(value_end.saturating_sub(value_start))
+            + replacement_value.len(),
+    );
+    rewritten.push_str(&source[..value_start]);
+    rewritten.push_str(replacement_value);
+    rewritten.push_str(&source[value_end..]);
+    rewritten
 }
 
 fn approved_preview_invocation_profile() -> PreviewInvocationProfile {
@@ -1964,9 +2489,27 @@ mod tests {
             pair[0] == "--apply-custom-presets"
                 && pair[1] == DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED
         }));
-        assert!(!invocation
+        assert!(invocation
+            .arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--library" && pair[1] == DARKTABLE_MEMORY_LIBRARY));
+        assert!(invocation
             .arguments
             .contains(&"--disable-opencl".to_string()));
+        let core_index = invocation
+            .arguments
+            .iter()
+            .position(|argument| argument == "--core")
+            .expect("darktable core separator should be present");
+        let disable_opencl_index = invocation
+            .arguments
+            .iter()
+            .position(|argument| argument == "--disable-opencl")
+            .expect("preview invocation should disable OpenCL");
+        assert!(
+            disable_opencl_index > core_index,
+            "darktable only treats --disable-opencl as a core option after --core"
+        );
         assert_eq!(
             invocation.render_source_kind,
             PreviewRenderSourceKind::RawOriginal
@@ -2033,41 +2576,55 @@ mod tests {
         assert!(!invocation
             .arguments
             .contains(&"--apply-custom-presets".to_string()));
+        assert!(invocation.arguments.windows(2).any(|pair| {
+            pair[0] == "--library"
+                && pair[1]
+                    == temp_dir
+                        .join(".boothy-darktable")
+                        .join("final")
+                        .join("library.db")
+                        .to_string_lossy()
+                        .replace('\\', "/")
+        }));
     }
 
     #[test]
-    fn preview_renderer_warmup_source_is_written_as_png() {
+    fn preview_renderer_warmup_source_is_written_as_jpeg() {
         let temp_dir = unique_temp_dir("preview-warmup-source");
         let warmup_source = ensure_preview_renderer_warmup_source(&temp_dir)
             .expect("warmup source should be creatable");
         let bytes = fs::read(&warmup_source).expect("warmup source should be readable");
 
-        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_PNG);
+        assert_eq!(
+            warmup_source.extension().and_then(|value| value.to_str()),
+            Some("jpg")
+        );
+        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_JPEG);
 
         let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
-    fn preview_renderer_warmup_source_rewrites_stale_png_bytes() {
+    fn preview_renderer_warmup_source_rewrites_stale_jpeg_bytes() {
         let temp_dir = unique_temp_dir("preview-warmup-source-refresh");
         let warmup_source = temp_dir
             .join(".boothy-darktable")
             .join("preview")
             .join("warmup")
-            .join("preview-renderer-warmup-source.png");
+            .join("preview-renderer-warmup-source.jpg");
         fs::create_dir_all(
             warmup_source
                 .parent()
                 .expect("warmup source should have a parent"),
         )
         .expect("warmup source parent should be creatable");
-        fs::write(&warmup_source, b"broken-png").expect("stale warmup source should be writable");
+        fs::write(&warmup_source, b"broken-jpeg").expect("stale warmup source should be writable");
 
         let warmup_source = ensure_preview_renderer_warmup_source(&temp_dir)
             .expect("warmup source should be refreshed");
         let bytes = fs::read(&warmup_source).expect("refreshed warmup source should be readable");
 
-        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_PNG);
+        assert_eq!(bytes, PREVIEW_RENDER_WARMUP_INPUT_JPEG);
 
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -2145,6 +2702,13 @@ mod tests {
         assert!(invocation
             .arguments
             .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert!(invocation
+            .arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--library" && pair[1] == DARKTABLE_MEMORY_LIBRARY));
+        assert!(invocation
+            .arguments
+            .contains(&"--disable-opencl".to_string()));
         assert_eq!(
             invocation.arguments.first().map(String::as_str),
             Some(
@@ -2283,6 +2847,10 @@ mod tests {
         assert!(invocation
             .arguments
             .contains(&FAST_PREVIEW_RENDER_MAX_HEIGHT_PX.to_string()));
+        assert!(invocation
+            .arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--library" && pair[1] == DARKTABLE_MEMORY_LIBRARY));
         assert!(
             FAST_PREVIEW_RENDER_MAX_WIDTH_PX < RAW_PREVIEW_MAX_WIDTH_PX,
             "fast-preview-raster should use a smaller cap than raw-original preview"
@@ -2291,6 +2859,457 @@ mod tests {
             FAST_PREVIEW_RENDER_MAX_HEIGHT_PX < RAW_PREVIEW_MAX_HEIGHT_PX,
             "fast-preview-raster should use a smaller cap than raw-original preview"
         );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_removes_raw_only_operations_from_history_and_iop_order() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="6"
+   darktable:iop_order_list="rawprepare,0,demosaic,0,exposure,0,hotpixels,0,lens,0,highlights,0,cacorrectrgb,0,sigmoid,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="rawprepare"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="demosaic"/>
+     <rdf:li
+      darktable:num="2"
+      darktable:operation="exposure"/>
+     <rdf:li
+      darktable:num="3"
+      darktable:operation="lens"/>
+     <rdf:li
+      darktable:num="4"
+      darktable:operation="highlights"/>
+     <rdf:li
+      darktable:num="5"
+      darktable:operation="cacorrectrgb"/>
+     <rdf:li
+      darktable:num="6"
+      darktable:operation="sigmoid"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert!(!trimmed_xmp.contains("darktable:operation=\"rawprepare\""));
+        assert!(!trimmed_xmp.contains("darktable:operation=\"demosaic\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"lens\""));
+        assert!(!trimmed_xmp.contains("darktable:operation=\"highlights\""));
+        assert!(!trimmed_xmp.contains("darktable:operation=\"cacorrectrgb\""));
+        assert_eq!(
+            trimmed_xmp
+                .matches("darktable:operation=\"exposure\"")
+                .count(),
+            1
+        );
+        assert_eq!(
+            trimmed_xmp
+                .matches("darktable:operation=\"sigmoid\"")
+                .count(),
+            1
+        );
+        assert!(trimmed_xmp.contains("darktable:num=\"0\""));
+        assert!(trimmed_xmp.contains("darktable:num=\"1\""));
+        assert!(trimmed_xmp.contains("darktable:num=\"2\""));
+        assert!(trimmed_xmp.contains("darktable:history_end=\"2\""));
+        assert!(trimmed_xmp.contains("darktable:iop_order_list=\"exposure,0,lens,0,sigmoid,0\""));
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_preserves_lens_correction_for_preview_parity() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="2"
+   darktable:iop_order_list="rawprepare,0,lens,0,exposure,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="rawprepare"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="lens"/>
+     <rdf:li
+      darktable:num="2"
+      darktable:operation="exposure"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert!(!trimmed_xmp.contains("darktable:operation=\"rawprepare\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"lens\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"exposure\""));
+        assert!(trimmed_xmp.contains("darktable:iop_order_list=\"lens,0,exposure,0\""));
+    }
+
+    #[test]
+    fn fast_preview_xmp_cache_writes_do_not_collide_for_same_process_writers() {
+        let temp_dir = unique_temp_dir("fast-preview-xmp-cache-concurrent");
+        let cache_path = temp_dir.join("preview-cache.xmp");
+        fs::create_dir_all(
+            cache_path
+                .parent()
+                .expect("cache path should have a parent directory"),
+        )
+        .expect("cache parent should be creatable");
+
+        let writer_count = 16usize;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(writer_count));
+        let handles = (0..writer_count)
+            .map(|index| {
+                let cache_path = cache_path.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    write_fast_preview_xmp_cache_atomically(
+                        &cache_path,
+                        &format!("<xmp>writer-{index}</xmp>"),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("cache writer thread should join"))
+            .collect::<Vec<_>>();
+
+        assert!(
+            results.iter().all(Result::is_ok),
+            "same-process cache writers should not fail because they share a temp path: {results:?}"
+        );
+        let final_xmp = fs::read_to_string(&cache_path).expect("cache file should be readable");
+        assert!(final_xmp.starts_with("<xmp>writer-"));
+        assert!(
+            fs::read_dir(&temp_dir)
+                .expect("temp dir should be readable")
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp")),
+            "cache writer should not leave temporary files behind"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_removes_duplicate_builtin_defaults_when_user_work_exists() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="5"
+   darktable:iop_order_list="channelmixerrgb,0,exposure,0,flip,0,sigmoid,0,channelmixerrgb,1,exposure,1,flip,1,sigmoid,1,colorout,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="channelmixerrgb"
+      darktable:multi_name="_builtin_scene-referred default"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="exposure"
+      darktable:multi_name="_builtin_scene-referred default"/>
+     <rdf:li
+      darktable:num="2"
+      darktable:operation="flip"
+      darktable:multi_name="_builtin_auto"/>
+     <rdf:li
+      darktable:num="3"
+      darktable:operation="channelmixerrgb"
+      darktable:multi_name=""/>
+     <rdf:li
+      darktable:num="4"
+      darktable:operation="exposure"
+      darktable:multi_name=""/>
+     <rdf:li
+      darktable:num="5"
+      darktable:operation="colorout"
+      darktable:multi_name=""/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert!(!trimmed_xmp.contains("_builtin_scene-referred default"));
+        assert!(trimmed_xmp.contains("darktable:operation=\"channelmixerrgb\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"exposure\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"flip\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"colorout\""));
+        assert!(trimmed_xmp.contains("darktable:history_end=\"3\""));
+        assert!(trimmed_xmp.contains(
+            "darktable:iop_order_list=\"channelmixerrgb,0,exposure,0,flip,0,colorout,0\""
+        ));
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_removes_repeated_builtin_auto_blocks_and_iop_pairs() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="3"
+   darktable:iop_order_list="flip,0,exposure,0,sigmoid,1,sigmoid,1,colorout,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="flip"
+      darktable:params="ffffffff"
+      darktable:multi_name="_builtin_auto"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="exposure"
+      darktable:multi_name=""/>
+     <rdf:li
+      darktable:num="2"
+      darktable:operation="flip"
+      darktable:params="ffffffff"
+      darktable:multi_name="_builtin_auto"/>
+     <rdf:li
+      darktable:num="3"
+      darktable:operation="colorout"
+      darktable:multi_name=""/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert_eq!(
+            trimmed_xmp.matches("darktable:operation=\"flip\"").count(),
+            1
+        );
+        assert_eq!(
+            trimmed_xmp
+                .matches("darktable:operation=\"exposure\"")
+                .count(),
+            1
+        );
+        assert_eq!(
+            trimmed_xmp
+                .matches("darktable:operation=\"colorout\"")
+                .count(),
+            1
+        );
+        assert!(trimmed_xmp.contains("darktable:history_end=\"2\""));
+        assert!(trimmed_xmp.contains("darktable:iop_order_list=\"flip,0,exposure,0,colorout,0\""));
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_marks_empty_history_when_all_blocks_are_removed() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="1"
+   darktable:iop_order_list="rawprepare,0,demosaic,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="rawprepare"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="demosaic"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert!(!trimmed_xmp.contains("<rdf:li"));
+        assert!(trimmed_xmp.contains("darktable:history_end=\"-1\""));
+        assert!(trimmed_xmp.contains("darktable:iop_order_list=\"\""));
+    }
+
+    #[test]
+    fn fast_preview_xmp_trim_handles_open_close_rdf_li_blocks() {
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="1"
+   darktable:iop_order_list="rawprepare,0,exposure,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="rawprepare">
+     </rdf:li>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="exposure">
+     </rdf:li>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let trimmed_xmp =
+            trim_xmp_for_fast_preview(source_xmp).expect("preview xmp should be trimmed");
+
+        assert!(!trimmed_xmp.contains("darktable:operation=\"rawprepare\""));
+        assert_eq!(
+            trimmed_xmp
+                .matches("darktable:operation=\"exposure\"")
+                .count(),
+            1
+        );
+        assert!(trimmed_xmp.contains("darktable:num=\"0\""));
+        assert!(trimmed_xmp.contains("darktable:history_end=\"0\""));
+        assert!(trimmed_xmp.contains("darktable:iop_order_list=\"exposure,0\""));
+    }
+
+    #[test]
+    fn fast_preview_xmp_cache_path_includes_stable_identity_to_avoid_slug_collisions() {
+        let temp_dir = unique_temp_dir("fast-preview-xmp-cache-collision");
+        let first_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset_test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+        let second_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset-test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+
+        let first_cache_path = build_fast_preview_xmp_cache_path(&temp_dir, &first_xmp_path);
+        let second_cache_path = build_fast_preview_xmp_cache_path(&temp_dir, &second_xmp_path);
+
+        assert_ne!(
+            first_cache_path, second_cache_path,
+            "different source XMP paths must not share one fast-preview cache file"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn fast_preview_raster_invocation_uses_a_trimmed_cached_xmp_when_source_xmp_is_available() {
+        let temp_dir = unique_temp_dir("fast-preview-xmp-cache");
+        let bundle_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset_test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.source.jpg");
+        let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description
+   darktable:history_end="2"
+   darktable:iop_order_list="rawprepare,0,exposure,0,demosaic,0">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li
+      darktable:num="0"
+      darktable:operation="rawprepare"/>
+     <rdf:li
+      darktable:num="1"
+      darktable:operation="exposure"/>
+     <rdf:li
+      darktable:num="2"
+      darktable:operation="demosaic"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        fs::create_dir_all(
+            bundle_xmp_path
+                .parent()
+                .expect("bundle xmp path should have a parent"),
+        )
+        .expect("bundle xmp parent should exist");
+        fs::create_dir_all(
+            output_path
+                .parent()
+                .expect("fast preview output path should have a parent"),
+        )
+        .expect("fast preview output directory should exist");
+        fs::write(&bundle_xmp_path, source_xmp).expect("source xmp should be writable");
+        fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00])
+            .expect("fast preview source should be writable");
+
+        let invocation = build_darktable_invocation_from_source(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            &bundle_xmp_path,
+            &source_path,
+            &output_path,
+            RenderIntent::Preview,
+            PreviewRenderSourceKind::FastPreviewRaster,
+        );
+
+        let trimmed_xmp_path = PathBuf::from(&invocation.arguments[1]);
+        let trimmed_xmp = fs::read_to_string(&trimmed_xmp_path)
+            .expect("trimmed fast preview xmp should be written to cache");
+
+        assert_ne!(
+            trimmed_xmp_path, bundle_xmp_path,
+            "fast preview render should point at the cached trimmed xmp"
+        );
+        let trimmed_xmp_file_name = trimmed_xmp_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("trimmed xmp cache should have a filename");
+        assert!(trimmed_xmp_file_name.starts_with("preset-test-2026-03-31-preview-"));
+        assert!(trimmed_xmp_file_name.ends_with("-fast-preview.xmp"));
+        assert!(!trimmed_xmp.contains("darktable:operation=\"rawprepare\""));
+        assert!(!trimmed_xmp.contains("darktable:operation=\"demosaic\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"exposure\""));
 
         let _ = fs::remove_dir_all(temp_dir);
     }
