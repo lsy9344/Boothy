@@ -215,6 +215,7 @@ where
                                     &active_preset.preset_id,
                                     &active_preset.published_version,
                                     &update.asset_path,
+                                    update.kind.as_deref(),
                                 );
                             }
                             if should_emit_fast_preview_update(
@@ -379,6 +380,7 @@ where
                         &active_preset.preset_id,
                         &active_preset.published_version,
                         &update.asset_path,
+                        update.kind.as_deref(),
                     );
                 }
                 on_fast_preview_ready(update.clone());
@@ -457,6 +459,7 @@ where
                             &active_preset.preset_id,
                             &active_preset.published_version,
                             &update.asset_path,
+                            update.kind.as_deref(),
                         );
                     }
                     if should_emit_fast_preview_update(early_fast_preview_update.as_ref(), &update)

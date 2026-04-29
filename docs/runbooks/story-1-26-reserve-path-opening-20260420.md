@@ -121,3 +121,25 @@ Story `1.26`의 목표는 old line을 더 깎는 것이 아니다.
 - After raising only the preview darktable process to Windows high priority, requested runner `hardware-validation-run-1777050552254` passed 5/5 on `session_000000000018a95a0fe32405b8`.
 - Direct official metrics were `2825`, `2873`, `2867`, `2864`, and `2870`ms.
 - This is recorded as latency tail evidence only. Official Story `1.26` close still requires the host-owned reserve path boundary and truthful preset-look preservation described above.
+
+## Latest Route Note - 2026-04-29 Direction Decision
+
+- Superseded by the `12:45 Current Answer` section below.
+- The `11:38` pass is retracted as false Go because partial native RAW approximation was mislabeled as full-preset truth.
+- The latest requested validation `hardware-validation-run-1777431500206` failed `0/5`; native output is comparison-only with `truthBlocker=full-preset-parity-unverified`, and final canonical preview was not over-white.
+- The chosen product direction is option 2: a resident/long-lived darktable-compatible full-preset engine path.
+- This is not another round of per-capture `darktable-cli` fallback tuning, and it is not more partial native approximation.
+- Next implementation should keep the real preset result owner hot enough to reduce process spawn, cold-start, and jitter while preserving full preset fidelity.
+- At this decision point, Story `1.26` remained `in-progress / No-Go` until that path could honestly emit `truthProfile=original-full-preset` and pass the approved hardware gate.
+
+## Latest Route Note - 2026-04-29 12:45 Current Answer
+
+- The direction above is now implemented and has approved-hardware `Go` evidence.
+- Requested validation `hardware-validation-run-1777434275752` passed `5/5` on session `session_000000000018aab70e79e5baa8`.
+- The accepted path is option 2: resident/long-lived darktable-compatible full-preset ownership.
+- Accepted route evidence: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`.
+- Official timing band: `2316ms ~ 2338ms`.
+- Resident render elapsed band: `3188ms ~ 3234ms`.
+- The earlier native approximation path remains comparison-only and is not part of the official product truth.
+- The earlier per-capture darktable fallback path remains fallback/comparison evidence and is not the official Story `1.26` answer.
+- Future changes should preserve the accepted route fields above. If those fields disappear, treat the resident full-preset product path as broken rather than tuning fallback.

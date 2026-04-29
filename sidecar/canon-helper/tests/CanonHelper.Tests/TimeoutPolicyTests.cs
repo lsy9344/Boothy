@@ -227,6 +227,35 @@ public sealed class TimeoutPolicyTests
     }
 
     [Fact]
+    public async Task EnsureConnectedAsync_ignores_late_updates_from_a_timed_out_connect_attempt()
+    {
+        var camera = new CanonSdkCamera();
+        var previousTimeout = Environment.GetEnvironmentVariable("BOOTHY_HELPER_CONNECT_TIMEOUT_MS");
+        Environment.SetEnvironmentVariable("BOOTHY_HELPER_CONNECT_TIMEOUT_MS", "25");
+
+        try
+        {
+            var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            SetField(camera, "_connectAttemptGeneration", 1UL);
+            SetField(camera, "_connectAttemptStartedAt", DateTimeOffset.UtcNow.AddMilliseconds(-50));
+            SetField(camera, "_connectTask", stalled.Task);
+
+            await camera.EnsureConnectedAsync(CancellationToken.None);
+
+            InvokeUpdateConnectAttemptFailure(camera, 1UL, "ready", "healthy", "camera-ready");
+
+            var snapshot = camera.Snapshot;
+            Assert.Equal("error", snapshot.CameraState);
+            Assert.Equal("error", snapshot.HelperState);
+            Assert.Equal("sdk-init-timeout", snapshot.DetailCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BOOTHY_HELPER_CONNECT_TIMEOUT_MS", previousTimeout);
+        }
+    }
+
+    [Fact]
     public async Task EnsureConnectedAsync_uses_session_open_timeout_when_camera_session_opening_stalls()
     {
         var camera = new CanonSdkCamera();
@@ -639,6 +668,42 @@ public sealed class TimeoutPolicyTests
         Assert.Equal(firstThreadId, secondThreadId);
     }
 
+    [Fact]
+    public void TryGenerateFastPreviewFromRaw_prefers_raw_sdk_preview_before_windows_shell_thumbnail()
+    {
+        var runtimeRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"boothy-helper-fast-preview-order-{Guid.NewGuid():N}"
+        );
+        var sessionId = $"session_{Guid.NewGuid():N}";
+        Directory.CreateDirectory(runtimeRoot);
+
+        var camera = new CanonSdkCamera();
+        var paths = new SessionPaths(runtimeRoot, sessionId);
+        var rawPath = Path.Combine(paths.CapturesOriginalsDir, "capture_order.CR2");
+        Directory.CreateDirectory(paths.CapturesOriginalsDir);
+        File.WriteAllBytes(rawPath, [0x43, 0x52, 0x32]);
+        var callOrder = new List<string>();
+
+        camera.SetFastPreviewGenerationOverridesForTests(
+            rawPreviewRenderer: (_, _, _) =>
+            {
+                callOrder.Add("raw-sdk-preview");
+                return true;
+            },
+            shellThumbnailExtractor: (_, _, _) =>
+            {
+                callOrder.Add("windows-shell-thumbnail");
+                return true;
+            }
+        );
+
+        var result = InvokeGenerateFastPreviewFromRaw(camera, paths, rawPath, "capture_order");
+
+        Assert.Equal("raw-sdk-preview", result.FastPreviewKind);
+        Assert.Equal(["raw-sdk-preview"], callOrder);
+    }
+
     private static TimeSpan ResolveCaptureCompletionTimeout(string runtimeRoot)
     {
         var method = typeof(CanonSdkCamera).GetMethod(
@@ -663,6 +728,25 @@ public sealed class TimeoutPolicyTests
         return Assert.IsType<TimeSpan>(method!.Invoke(null, []));
     }
 
+    private static CaptureFastPreviewDownloadResult InvokeGenerateFastPreviewFromRaw(
+        CanonSdkCamera camera,
+        SessionPaths paths,
+        string rawPath,
+        string captureId
+    )
+    {
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "TryGenerateFastPreviewFromRaw",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+
+        Assert.NotNull(method);
+
+        return Assert.IsType<CaptureFastPreviewDownloadResult>(
+            method!.Invoke(camera, [paths, rawPath, captureId, null])
+        );
+    }
+
     private static void SetField(object target, string fieldName, object? value)
     {
         var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -675,5 +759,21 @@ public sealed class TimeoutPolicyTests
         var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         return (T?)field!.GetValue(target);
+    }
+
+    private static void InvokeUpdateConnectAttemptFailure(
+        CanonSdkCamera camera,
+        ulong generation,
+        string cameraState,
+        string helperState,
+        string detailCode
+    )
+    {
+        var method = typeof(CanonSdkCamera).GetMethod(
+            "UpdateConnectAttemptFailure",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        Assert.NotNull(method);
+        method.Invoke(camera, [generation, cameraState, helperState, detailCode, null]);
     }
 }

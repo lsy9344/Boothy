@@ -39,22 +39,17 @@ const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
 const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
 const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
+const RAW_ORIGINAL_NATIVE_DECODE_MAX_WIDTH_PX: u32 = 512;
+const RAW_ORIGINAL_NATIVE_DECODE_MAX_HEIGHT_PX: u32 = 512;
 const FAST_PREVIEW_XMP_CACHE_DIR_NAME: &str = "xmp-cache";
 const FAST_PREVIEW_XMP_CACHE_SUFFIX: &str = "fast-preview";
-const FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS: [&str; 6] = [
-    "rawprepare",
-    "demosaic",
-    "denoiseprofile",
-    "hotpixels",
-    "highlights",
-    "cacorrectrgb",
-];
+const FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS: [&str; 4] =
+    ["rawprepare", "demosaic", "denoiseprofile", "hotpixels"];
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
 const DARKTABLE_MEMORY_LIBRARY: &str = ":memory:";
 const RESIDENT_PREVIEW_WORKER_QUEUE_CAPACITY: usize = 2;
 const RESIDENT_PREVIEW_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PREVIEW_RENDER_WARMUP_SETTLE_POLL_MS: u64 = 50;
-const WINDOWS_HIGH_PRIORITY_CLASS: u32 = 0x0000_0080;
 // Keep warm-up on the same JPEG raster family as the real fast-preview lane so
 // the first customer-visible render does not pay a separate decoder cold-start.
 #[allow(dead_code)]
@@ -147,7 +142,7 @@ pub struct RenderWorkerError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PreviewRenderSourceKind {
+pub(crate) enum PreviewRenderSourceKind {
     RawOriginal,
     FastPreviewRaster,
 }
@@ -195,6 +190,7 @@ struct ResidentPreviewRenderJob {
     preset_id: String,
     preset_version: String,
     source_asset_path: PathBuf,
+    source_kind: PreviewRenderSourceKind,
     source_cleanup_path: Option<PathBuf>,
     output_path: PathBuf,
     detail_path: PathBuf,
@@ -350,6 +346,30 @@ pub fn render_preview_asset_to_path_in_dir(
     source_asset_path: &Path,
     output_path: &Path,
 ) -> Result<PreparedPreviewRender, RenderWorkerError> {
+    render_preview_asset_to_path_with_source_kind_in_dir(
+        base_dir,
+        session_id,
+        request_id,
+        capture_id,
+        preset_id,
+        preset_version,
+        source_asset_path,
+        PreviewRenderSourceKind::FastPreviewRaster,
+        output_path,
+    )
+}
+
+pub(crate) fn render_preview_asset_to_path_with_source_kind_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    source_asset_path: &Path,
+    source_kind: PreviewRenderSourceKind,
+    output_path: &Path,
+) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let _queue_guard = acquire_render_queue_slot()?;
     render_preview_asset_to_path_with_queue_guard_in_dir(
         base_dir,
@@ -359,6 +379,7 @@ pub fn render_preview_asset_to_path_in_dir(
         preset_id,
         preset_version,
         source_asset_path,
+        source_kind,
         output_path,
     )
 }
@@ -371,6 +392,7 @@ fn render_preview_asset_to_path_with_background_capacity_in_dir(
     preset_id: &str,
     preset_version: &str,
     source_asset_path: &Path,
+    source_kind: PreviewRenderSourceKind,
     output_path: &Path,
 ) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let Some(_queue_guard) = try_acquire_resident_preview_render_queue_slot() else {
@@ -389,6 +411,7 @@ fn render_preview_asset_to_path_with_background_capacity_in_dir(
         preset_id,
         preset_version,
         source_asset_path,
+        source_kind,
         output_path,
     )
 }
@@ -401,17 +424,18 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
     preset_id: &str,
     preset_version: &str,
     source_asset_path: &Path,
+    source_kind: PreviewRenderSourceKind,
     output_path: &Path,
 ) -> Result<PreparedPreviewRender, RenderWorkerError> {
     let bundle =
         resolve_runtime_bundle_in_dir(base_dir, preset_id, preset_version, RenderIntent::Preview)?;
 
-    if !is_valid_render_preview_asset(source_asset_path) {
+    if !is_supported_host_owned_native_preview_source(source_asset_path, source_kind) {
         return Err(RenderWorkerError {
             reason_code: "invalid-preview-source",
             customer_message: safe_render_failure_message(RenderIntent::Preview),
             operator_detail: format!(
-                "speculative preview source가 displayable raster가 아니에요: {}",
+                "speculative preview source가 host-owned native preview 입력으로 유효하지 않아요: {}",
                 source_asset_path.to_string_lossy()
             ),
         });
@@ -427,6 +451,66 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
     })?;
     let _ = fs::remove_file(output_path);
 
+    if matches!(source_kind, PreviewRenderSourceKind::RawOriginal)
+        && is_camera_raw_asset_path(source_asset_path)
+    {
+        return render_resident_full_preset_preview_to_path(
+            base_dir,
+            &bundle,
+            source_asset_path,
+            output_path,
+        );
+    }
+
+    let render_detail =
+        render_invocation_detail_with_source(RenderIntent::Preview, Some(source_kind));
+    log::info!(
+        "speculative_preview_render_started session={} capture_id={} request_id={} binary={} source={} detail={}",
+        session_id,
+        capture_id,
+        request_id,
+        "host-owned-native-preview",
+        "host-owned-native",
+        render_detail
+    );
+
+    let render_started = Instant::now();
+    let xmp_source =
+        fs::read_to_string(&bundle.xmp_template_path).map_err(|error| RenderWorkerError {
+            reason_code: "native-preview-preset-unreadable",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!("native preview preset XMP를 읽지 못했어요: {error}"),
+        })?;
+    let truth_profile_detail = host_owned_native_truth_profile_detail(source_kind, &xmp_source);
+    render_host_owned_native_preset_preview_to_path(
+        &bundle.xmp_template_path,
+        source_asset_path,
+        output_path,
+    )?;
+    validate_render_output(output_path, RenderIntent::Preview)?;
+    let render_elapsed_ms = render_started.elapsed().as_millis();
+
+    Ok(PreparedPreviewRender {
+        detail: resident_preview_handoff_ready_detail(
+            &bundle.preset_id,
+            &bundle.published_version,
+            render_elapsed_ms,
+            "host-owned-native-preview",
+            "host-owned-native",
+            &format!("{render_detail};{truth_profile_detail}"),
+            &host_owned_native_preview_arguments(source_asset_path, output_path, source_kind),
+            0,
+        ),
+    })
+}
+
+fn render_resident_full_preset_preview_to_path(
+    base_dir: &Path,
+    bundle: &PublishedPresetRuntimeBundle,
+    source_asset_path: &Path,
+    output_path: &Path,
+) -> Result<PreparedPreviewRender, RenderWorkerError> {
+    let render_started = Instant::now();
     let invocation = build_darktable_invocation_from_source(
         base_dir,
         &bundle.darktable_version,
@@ -434,40 +518,461 @@ fn render_preview_asset_to_path_with_queue_guard_in_dir(
         source_asset_path,
         output_path,
         RenderIntent::Preview,
-        PreviewRenderSourceKind::FastPreviewRaster,
+        PreviewRenderSourceKind::RawOriginal,
     );
-    let render_detail = render_invocation_detail_with_source(
-        RenderIntent::Preview,
-        Some(invocation.render_source_kind),
-    );
-    log::info!(
-        "speculative_preview_render_started session={} capture_id={} request_id={} binary={} source={} detail={}",
-        session_id,
-        capture_id,
-        request_id,
-        invocation.binary,
-        invocation.binary_source,
-        render_detail
-    );
-
-    let render_started = Instant::now();
     let invocation_result = run_darktable_invocation(&invocation, RenderIntent::Preview)?;
     validate_render_output(output_path, RenderIntent::Preview)?;
     let render_elapsed_ms = render_started.elapsed().as_millis();
+    let render_detail = format!(
+        "{};truthProfile=original-full-preset;engineMode=resident-full-preset;engineAdapter=darktable-compatible;engineAdapterSource={}",
+        render_invocation_detail_with_source(
+            RenderIntent::Preview,
+            Some(PreviewRenderSourceKind::RawOriginal),
+        ),
+        invocation.binary_source
+    );
 
     Ok(PreparedPreviewRender {
-        detail: format!(
-            "presetId={};publishedVersion={};binary={};source={};elapsedMs={};detail={};args={};status={}",
-            bundle.preset_id,
-            bundle.published_version,
-            invocation.binary,
-            invocation.binary_source,
+        detail: resident_preview_handoff_ready_detail(
+            &bundle.preset_id,
+            &bundle.published_version,
             render_elapsed_ms,
-            render_detail,
-            invocation.arguments.join(" "),
-            invocation_result.exit_code
+            &invocation.binary,
+            "host-owned-native",
+            &render_detail,
+            &invocation.arguments.join(" "),
+            invocation_result.exit_code,
         ),
     })
+}
+
+fn is_supported_host_owned_native_preview_source(
+    source_asset_path: &Path,
+    source_kind: PreviewRenderSourceKind,
+) -> bool {
+    if is_valid_render_preview_asset(source_asset_path) {
+        return true;
+    }
+
+    matches!(source_kind, PreviewRenderSourceKind::RawOriginal)
+        && is_camera_raw_asset_path(source_asset_path)
+}
+
+fn render_host_owned_native_preset_preview_to_path(
+    xmp_template_path: &Path,
+    source_asset_path: &Path,
+    output_path: &Path,
+) -> Result<(), RenderWorkerError> {
+    let source_image = load_host_owned_native_source_image(source_asset_path)?;
+    let xmp_source = fs::read_to_string(xmp_template_path).map_err(|error| RenderWorkerError {
+        reason_code: "native-preview-preset-unreadable",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!("native preview preset XMP를 읽지 못했어요: {error}"),
+    })?;
+    let profile = host_owned_native_preview_profile_from_xmp(&xmp_source);
+    let mut preview = image::imageops::resize(
+        &source_image,
+        FAST_PREVIEW_RENDER_MAX_WIDTH_PX,
+        FAST_PREVIEW_RENDER_MAX_HEIGHT_PX,
+        image::imageops::FilterType::Triangle,
+    );
+    apply_host_owned_native_preview_profile(&mut preview, profile);
+
+    let temp_output_path = output_path.with_extension("native-rendering.jpg");
+    let mut encoded = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 86);
+    encoder
+        .encode(
+            preview.as_raw(),
+            preview.width(),
+            preview.height(),
+            image::ColorType::Rgb8.into(),
+        )
+        .map_err(|error| RenderWorkerError {
+            reason_code: "native-preview-encode-failed",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!("native preview artifact를 encode하지 못했어요: {error}"),
+        })?;
+    fs::write(&temp_output_path, encoded).map_err(|error| RenderWorkerError {
+        reason_code: "native-preview-write-failed",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!("native preview artifact를 쓰지 못했어요: {error}"),
+    })?;
+    fs::rename(&temp_output_path, output_path).map_err(|error| RenderWorkerError {
+        reason_code: "native-preview-promote-failed",
+        customer_message: safe_render_failure_message(RenderIntent::Preview),
+        operator_detail: format!("native preview artifact를 승격하지 못했어요: {error}"),
+    })?;
+
+    Ok(())
+}
+
+fn load_host_owned_native_source_image(
+    source_asset_path: &Path,
+) -> Result<image::RgbImage, RenderWorkerError> {
+    match image::ImageReader::open(source_asset_path) {
+        Ok(reader) => match reader.decode() {
+            Ok(image) => return Ok(image.to_rgb8()),
+            Err(image_error) => {
+                if !is_camera_raw_asset_path(source_asset_path) {
+                    return Err(RenderWorkerError {
+                        reason_code: "native-preview-source-decode-failed",
+                        customer_message: safe_render_failure_message(RenderIntent::Preview),
+                        operator_detail: format!(
+                            "native preview source를 decode하지 못했어요: {image_error}"
+                        ),
+                    });
+                }
+                let raw_image =
+                    rawloader::decode_file(source_asset_path).map_err(|raw_error| {
+                        RenderWorkerError {
+                            reason_code: "native-preview-raw-decode-failed",
+                            customer_message: safe_render_failure_message(RenderIntent::Preview),
+                            operator_detail: format!(
+                                "native preview RAW source를 decode하지 못했어요: image={image_error}; rawloader={raw_error}"
+                            ),
+                        }
+                    })?;
+                rawloader_image_to_rgb_preview(
+                    &raw_image,
+                    RAW_ORIGINAL_NATIVE_DECODE_MAX_WIDTH_PX,
+                    RAW_ORIGINAL_NATIVE_DECODE_MAX_HEIGHT_PX,
+                )
+                .map_err(|error| RenderWorkerError {
+                    reason_code: "native-preview-raw-convert-failed",
+                    customer_message: safe_render_failure_message(RenderIntent::Preview),
+                    operator_detail: format!(
+                        "native preview RAW source를 RGB preview로 변환하지 못했어요: {error}"
+                    ),
+                })
+            }
+        },
+        Err(open_error) => Err(RenderWorkerError {
+            reason_code: "native-preview-source-unreadable",
+            customer_message: safe_render_failure_message(RenderIntent::Preview),
+            operator_detail: format!("native preview source를 열지 못했어요: {open_error}"),
+        }),
+    }
+}
+
+fn is_camera_raw_asset_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("cr2" | "crw" | "dng" | "nef" | "arw" | "rw2" | "orf" | "raf" | "pef")
+    )
+}
+
+fn rawloader_image_to_rgb_preview(
+    raw_image: &rawloader::RawImage,
+    max_width: u32,
+    max_height: u32,
+) -> Result<image::RgbImage, String> {
+    if raw_image.width == 0 || raw_image.height == 0 || max_width == 0 || max_height == 0 {
+        return Err("invalid dimensions".into());
+    }
+    let raw_data = match &raw_image.data {
+        rawloader::RawImageData::Integer(data) => data,
+        rawloader::RawImageData::Float(_) => {
+            return Err("float RAW data is not supported for booth preview".into())
+        }
+    };
+    let expected_len = raw_image
+        .width
+        .checked_mul(raw_image.height)
+        .and_then(|pixels| pixels.checked_mul(raw_image.cpp.max(1)))
+        .ok_or_else(|| "RAW dimensions overflow".to_string())?;
+    if raw_data.len() < expected_len {
+        return Err(format!(
+            "RAW data is shorter than expected: actual={} expected={expected_len}",
+            raw_data.len()
+        ));
+    }
+
+    let crop_top = raw_image.crops[0].min(raw_image.height.saturating_sub(1));
+    let crop_right = raw_image.crops[1].min(raw_image.width.saturating_sub(1));
+    let crop_bottom = raw_image.crops[2].min(raw_image.height.saturating_sub(1));
+    let crop_left = raw_image.crops[3].min(raw_image.width.saturating_sub(1));
+    let usable_width = raw_image
+        .width
+        .saturating_sub(crop_left)
+        .saturating_sub(crop_right)
+        .max(1);
+    let usable_height = raw_image
+        .height
+        .saturating_sub(crop_top)
+        .saturating_sub(crop_bottom)
+        .max(1);
+    let (target_width, target_height) = scale_dimensions_to_fit(
+        usable_width as u32,
+        usable_height as u32,
+        max_width,
+        max_height,
+    );
+
+    let mut preview = image::RgbImage::new(target_width, target_height);
+    for target_y in 0..target_height {
+        for target_x in 0..target_width {
+            let source_x = crop_left
+                + (((target_x as f32 + 0.5) * usable_width as f32 / target_width as f32).floor()
+                    as usize)
+                    .min(usable_width.saturating_sub(1));
+            let source_y = crop_top
+                + (((target_y as f32 + 0.5) * usable_height as f32 / target_height as f32).floor()
+                    as usize)
+                    .min(usable_height.saturating_sub(1));
+            let rgb = if raw_image.cpp >= 3 {
+                rawloader_rgb_pixel(raw_image, raw_data, source_x, source_y)
+            } else {
+                rawloader_bayer_pixel(raw_image, raw_data, source_x, source_y)
+            };
+            preview.put_pixel(target_x, target_y, image::Rgb(rgb));
+        }
+    }
+
+    Ok(preview)
+}
+
+fn scale_dimensions_to_fit(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
+    if width <= max_width && height <= max_height {
+        return (width.max(1), height.max(1));
+    }
+
+    let scale = (max_width as f32 / width.max(1) as f32)
+        .min(max_height as f32 / height.max(1) as f32)
+        .max(0.001);
+    (
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    )
+}
+
+fn rawloader_rgb_pixel(
+    raw_image: &rawloader::RawImage,
+    raw_data: &[u16],
+    source_x: usize,
+    source_y: usize,
+) -> [u8; 3] {
+    let base = (source_y * raw_image.width + source_x) * raw_image.cpp;
+    [
+        rawloader_channel_to_u8(raw_data[base], raw_image, 0),
+        rawloader_channel_to_u8(raw_data[base + 1], raw_image, 1),
+        rawloader_channel_to_u8(raw_data[base + 2], raw_image, 2),
+    ]
+}
+
+fn rawloader_bayer_pixel(
+    raw_image: &rawloader::RawImage,
+    raw_data: &[u16],
+    source_x: usize,
+    source_y: usize,
+) -> [u8; 3] {
+    let mut sums = [0.0f32; 3];
+    let mut counts = [0.0f32; 3];
+    let min_x = source_x.saturating_sub(2);
+    let max_x = (source_x + 2).min(raw_image.width.saturating_sub(1));
+    let min_y = source_y.saturating_sub(2);
+    let max_y = (source_y + 2).min(raw_image.height.saturating_sub(1));
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let raw_color = raw_image.cfa.color_at(y, x).min(3);
+            let rgb_channel = match raw_color {
+                0 => 0,
+                2 => 2,
+                _ => 1,
+            };
+            let value = raw_data[y * raw_image.width + x];
+            sums[rgb_channel] += rawloader_channel_to_unit(value, raw_image, raw_color);
+            counts[rgb_channel] += 1.0;
+        }
+    }
+
+    let average = |channel: usize| -> f32 {
+        if counts[channel] > 0.0 {
+            sums[channel] / counts[channel]
+        } else {
+            let total_count: f32 = counts.iter().sum();
+            if total_count > 0.0 {
+                sums.iter().sum::<f32>() / total_count
+            } else {
+                0.0
+            }
+        }
+    };
+
+    [
+        (average(0).clamp(0.0, 1.0) * 255.0).round() as u8,
+        (average(1).clamp(0.0, 1.0) * 255.0).round() as u8,
+        (average(2).clamp(0.0, 1.0) * 255.0).round() as u8,
+    ]
+}
+
+fn rawloader_channel_to_u8(value: u16, raw_image: &rawloader::RawImage, channel: usize) -> u8 {
+    (rawloader_channel_to_unit(value, raw_image, channel).clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn rawloader_channel_to_unit(value: u16, raw_image: &rawloader::RawImage, channel: usize) -> f32 {
+    let black = raw_image.blacklevels[channel.min(3)] as f32;
+    let white =
+        raw_image.whitelevels[channel.min(3)].max(raw_image.blacklevels[channel.min(3)] + 1) as f32;
+    let wb = raw_image.wb_coeffs[channel.min(3)].max(0.01);
+    let wb_exposure_floor = raw_image.wb_coeffs.iter().copied().fold(0.01f32, f32::max);
+    (((value as f32 - black) / (white - black)) * (wb / wb_exposure_floor)).clamp(0.0, 1.0)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HostOwnedNativePreviewProfile {
+    exposure: f32,
+    contrast: f32,
+    saturation: f32,
+    warmth: f32,
+    sigmoid: bool,
+}
+
+fn host_owned_native_preview_profile_from_xmp(xmp_source: &str) -> HostOwnedNativePreviewProfile {
+    let operation_count = |operation: &str| {
+        xmp_source
+            .matches(&format!("darktable:operation=\"{operation}\""))
+            .count() as f32
+    };
+    let exposure_count = operation_count("exposure").min(2.0);
+    let haze_count = operation_count("hazeremoval").min(1.0);
+    let channel_mix_count = operation_count("channelmixerrgb").min(1.0);
+    let temperature_count = operation_count("temperature").min(1.0);
+
+    HostOwnedNativePreviewProfile {
+        exposure: 1.0 + (exposure_count * 0.035),
+        contrast: 1.0 + (haze_count * 0.08),
+        saturation: 1.0 + (channel_mix_count * 0.06),
+        warmth: 1.0 + (temperature_count * 0.03),
+        sigmoid: operation_count("sigmoid") > 0.0,
+    }
+}
+
+fn apply_host_owned_native_preview_profile(
+    preview: &mut image::RgbImage,
+    profile: HostOwnedNativePreviewProfile,
+) {
+    for pixel in preview.pixels_mut() {
+        let mut r = f32::from(pixel[0]) / 255.0;
+        let mut g = f32::from(pixel[1]) / 255.0;
+        let mut b = f32::from(pixel[2]) / 255.0;
+
+        r *= profile.exposure * profile.warmth;
+        g *= profile.exposure;
+        b *= profile.exposure / profile.warmth;
+
+        let luma = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+        r = luma + ((r - luma) * profile.saturation);
+        g = luma + ((g - luma) * profile.saturation);
+        b = luma + ((b - luma) * profile.saturation);
+
+        r = ((r - 0.5) * profile.contrast) + 0.5;
+        g = ((g - 0.5) * profile.contrast) + 0.5;
+        b = ((b - 0.5) * profile.contrast) + 0.5;
+
+        if profile.sigmoid {
+            r = sigmoid_preview_tone(r);
+            g = sigmoid_preview_tone(g);
+            b = sigmoid_preview_tone(b);
+        }
+
+        *pixel = image::Rgb([
+            float_channel_to_u8(r),
+            float_channel_to_u8(g),
+            float_channel_to_u8(b),
+        ]);
+    }
+}
+
+fn sigmoid_preview_tone(value: f32) -> f32 {
+    1.0 / (1.0 + (-6.0 * (value - 0.5)).exp())
+}
+
+fn float_channel_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn host_owned_native_preview_arguments(
+    source_asset_path: &Path,
+    output_path: &Path,
+    source_kind: PreviewRenderSourceKind,
+) -> String {
+    let profile = match source_kind {
+        PreviewRenderSourceKind::RawOriginal => "raw-original-derived",
+        PreviewRenderSourceKind::FastPreviewRaster => "operation-derived",
+    };
+    format!(
+        "source={} output={} profile={}",
+        source_asset_path.to_string_lossy().replace('\\', "/"),
+        output_path.to_string_lossy().replace('\\', "/"),
+        profile
+    )
+}
+
+fn host_owned_native_truth_profile_detail(
+    source_kind: PreviewRenderSourceKind,
+    xmp_source: &str,
+) -> String {
+    match source_kind {
+        PreviewRenderSourceKind::FastPreviewRaster => {
+            "truthProfile=operation-derived-comparison".into()
+        }
+        PreviewRenderSourceKind::RawOriginal => {
+            let unsupported_operations =
+                unsupported_host_owned_native_preset_operations(xmp_source);
+            if unsupported_operations.is_empty() {
+                "truthProfile=host-owned-native-preview-comparison;truthBlocker=full-preset-parity-unverified".into()
+            } else {
+                format!(
+                    "truthProfile=unsupported-preset-comparison;truthBlocker=unsupported-preset-operations;unsupportedOperations={}",
+                    unsupported_operations.join(",")
+                )
+            }
+        }
+    }
+}
+
+fn unsupported_host_owned_native_preset_operations(xmp_source: &str) -> Vec<String> {
+    let supported = [
+        "cacorrectrgb",
+        "channelmixerrgb",
+        "colorin",
+        "colorout",
+        "demosaic",
+        "denoiseprofile",
+        "exposure",
+        "flip",
+        "gamma",
+        "hazeremoval",
+        "highlights",
+        "hotpixels",
+        "lens",
+        "rawprepare",
+        "sigmoid",
+        "temperature",
+    ];
+    let mut unsupported = Vec::new();
+    for operation in extract_darktable_operations(xmp_source) {
+        if !supported.contains(&operation.as_str()) && !unsupported.contains(&operation) {
+            unsupported.push(operation);
+        }
+    }
+    unsupported
+}
+
+fn extract_darktable_operations(xmp_source: &str) -> Vec<String> {
+    xmp_source
+        .split("darktable:operation=\"")
+        .skip(1)
+        .filter_map(|part| {
+            part.split_once('"')
+                .map(|(operation, _)| operation.to_string())
+        })
+        .collect()
 }
 
 pub fn prime_preview_worker_runtime_in_dir(base_dir: &Path, _session_id: &str) {
@@ -476,7 +981,7 @@ pub fn prime_preview_worker_runtime_in_dir(base_dir: &Path, _session_id: &str) {
     let _ = ensure_preview_renderer_warmup_source(base_dir);
 }
 
-pub fn enqueue_resident_preview_render_in_dir(
+pub(crate) fn enqueue_resident_preview_render_in_dir(
     base_dir: &Path,
     session_id: &str,
     request_id: &str,
@@ -484,6 +989,7 @@ pub fn enqueue_resident_preview_render_in_dir(
     preset_id: &str,
     preset_version: &str,
     source_asset_path: &Path,
+    source_kind: PreviewRenderSourceKind,
     source_cleanup_path: Option<&Path>,
     output_path: &Path,
     detail_path: &Path,
@@ -498,6 +1004,7 @@ pub fn enqueue_resident_preview_render_in_dir(
         preset_id: preset_id.to_string(),
         preset_version: preset_version.to_string(),
         source_asset_path: source_asset_path.to_path_buf(),
+        source_kind,
         source_cleanup_path: source_cleanup_path.map(PathBuf::from),
         output_path: output_path.to_path_buf(),
         detail_path: detail_path.to_path_buf(),
@@ -545,11 +1052,7 @@ pub fn schedule_preview_renderer_warmup_in_dir(
                 error.operator_detail
             );
         }
-        let warmup_key = build_preview_render_warmup_key(
-            &session_id,
-            &preset_id,
-            &preset_version,
-        );
+        let warmup_key = build_preview_render_warmup_key(&session_id, &preset_id, &preset_version);
         record_preview_render_warmup_result(&warmup_key, warmup_succeeded);
         clear_preview_render_warmup_in_flight(&warmup_key);
     });
@@ -728,6 +1231,50 @@ fn render_ready_event_detail(
 
     format!(
         "presetId={preset_id};publishedVersion={published_version};binary={binary};source={binary_source};elapsedMs={render_elapsed_ms};detail={normalized_detail};args={arguments};status={exit_code}"
+    )
+}
+
+fn resident_preview_handoff_ready_detail(
+    preset_id: &str,
+    published_version: &str,
+    render_elapsed_ms: u128,
+    engine_binary: &str,
+    engine_source: &str,
+    render_detail: &str,
+    arguments: &str,
+    exit_code: i32,
+) -> String {
+    let normalized_detail = render_detail
+        .replace(
+            "sourceAsset=fast-preview-raster",
+            "inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview",
+        )
+        .replace(
+            "sourceAsset=raw-original",
+            "inputSourceAsset=raw-original;sourceAsset=preset-applied-preview",
+        );
+    let normalized_detail = if normalized_detail.contains("truthOwner=") {
+        normalized_detail
+    } else {
+        format!("{normalized_detail};truthOwner=display-sized-preset-applied")
+    };
+    let normalized_detail = if normalized_detail.contains("inputSourceAsset=fast-preview-raster")
+        && !normalized_detail.contains("truthProfile=")
+    {
+        format!("{normalized_detail};truthProfile=operation-derived-comparison")
+    } else {
+        normalized_detail
+    };
+    let normalized_detail = if normalized_detail.contains("inputSourceAsset=fast-preview-raster")
+        && !normalized_detail.contains("truthBlocker=")
+    {
+        format!("{normalized_detail};truthBlocker=fast-preview-raster-input;requiredInputSourceAsset=raw-original")
+    } else {
+        normalized_detail
+    };
+
+    format!(
+        "presetId={preset_id};publishedVersion={published_version};binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs={render_elapsed_ms};detail={normalized_detail};engineBinary={engine_binary};engineSource={engine_source};args={arguments};status={exit_code}"
     )
 }
 
@@ -934,6 +1481,7 @@ fn run_resident_preview_render_job(job: ResidentPreviewRenderJob) {
         &job.preset_id,
         &job.preset_version,
         &job.source_asset_path,
+        job.source_kind,
         &job.output_path,
     );
 
@@ -1483,11 +2031,9 @@ fn build_darktable_invocation_from_source(
     };
     let binary_resolution = resolve_darktable_cli_binary();
     let mut arguments = vec![
-        source_asset_path.to_string_lossy().replace('\\', "/"),
-        effective_xmp_template_path
-            .to_string_lossy()
-            .replace('\\', "/"),
-        output_path.to_string_lossy().replace('\\', "/"),
+        darktable_cli_path_argument(source_asset_path),
+        darktable_cli_path_argument(&effective_xmp_template_path),
+        darktable_cli_path_argument(output_path),
         "--hq".into(),
         hq_flag.into(),
     ];
@@ -1510,7 +2056,7 @@ fn build_darktable_invocation_from_source(
     }
     arguments.extend([
         "--configdir".into(),
-        configdir.to_string_lossy().replace('\\', "/"),
+        darktable_cli_path_argument(&configdir),
         "--library".into(),
         library,
     ]);
@@ -1522,6 +2068,14 @@ fn build_darktable_invocation_from_source(
         arguments,
         working_directory: base_dir.to_path_buf(),
     }
+}
+
+fn darktable_cli_path_argument(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized
+        .strip_prefix("//?/")
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 fn preview_invocation_xmp_template_path(
@@ -2266,11 +2820,8 @@ fn render_process_poll_interval(intent: RenderIntent) -> Duration {
 }
 
 fn darktable_process_creation_flags(intent: RenderIntent) -> u32 {
-    if cfg!(windows) && matches!(intent, RenderIntent::Preview) {
-        WINDOWS_HIGH_PRIORITY_CLASS
-    } else {
-        0
-    }
+    let _ = intent;
+    0
 }
 
 fn configure_darktable_process(command: &mut Command, intent: RenderIntent) {
@@ -2423,6 +2974,31 @@ mod tests {
         _guard: std::sync::MutexGuard<'static, ()>,
     }
 
+    struct EnvVarTestGuard {
+        key: &'static str,
+        previous_value: Option<String>,
+    }
+
+    impl EnvVarTestGuard {
+        fn set_path(key: &'static str, value: &Path) -> Self {
+            let previous_value = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key,
+                previous_value,
+            }
+        }
+    }
+
+    impl Drop for EnvVarTestGuard {
+        fn drop(&mut self) {
+            match self.previous_value.as_ref() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     impl ResidentPreviewWorkerTestGuard {
         fn new(run_inline: bool, idle_timeout_ms: u64) -> Self {
             let guard = RESIDENT_PREVIEW_WORKER_TEST_MUTEX
@@ -2461,6 +3037,7 @@ mod tests {
             preset_id: "preset_test".into(),
             preset_version: "2026.03.31".into(),
             source_asset_path: temp_dir.join("source.jpg"),
+            source_kind: PreviewRenderSourceKind::FastPreviewRaster,
             source_cleanup_path: None,
             output_path: temp_dir.join("output.jpg"),
             detail_path: temp_dir.join("output.detail"),
@@ -2612,6 +3189,116 @@ mod tests {
             invocation.render_source_kind,
             PreviewRenderSourceKind::RawOriginal
         );
+    }
+
+    #[test]
+    fn darktable_invocation_strips_windows_extended_path_prefixes() {
+        let temp_dir = unique_temp_dir("darktable-extended-path-prefix");
+        let invocation = build_darktable_invocation_from_source(
+            &temp_dir,
+            PINNED_DARKTABLE_VERSION,
+            Path::new(r"\\?\C:\boothy\preset\look2.xmp"),
+            Path::new(r"\\?\C:\boothy\sessions\capture.CR2"),
+            Path::new(r"\\?\C:\boothy\sessions\capture.jpg"),
+            RenderIntent::Preview,
+            PreviewRenderSourceKind::RawOriginal,
+        );
+
+        assert_eq!(invocation.arguments[0], "C:/boothy/sessions/capture.CR2");
+        assert_eq!(invocation.arguments[1], "C:/boothy/preset/look2.xmp");
+        assert_eq!(invocation.arguments[2], "C:/boothy/sessions/capture.jpg");
+        assert!(
+            invocation.arguments.iter().all(|argument| !argument.contains("//?/")),
+            "darktable-cli does not accept //?/ prefixed source paths"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn rawloader_bayer_image_converts_to_rgb_preview_pixels() {
+        let raw_image = rawloader::RawImage {
+            make: "Canon".into(),
+            model: "EOS 700D".into(),
+            clean_make: "canon".into(),
+            clean_model: "eos700d".into(),
+            width: 4,
+            height: 4,
+            cpp: 1,
+            wb_coeffs: [1.0, 1.0, 1.0, 1.0],
+            whitelevels: [1023, 1023, 1023, 1023],
+            blacklevels: [0, 0, 0, 0],
+            xyz_to_cam: [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+            ],
+            cfa: rawloader::CFA::new("RGGB"),
+            crops: [0, 0, 0, 0],
+            blackareas: Vec::new(),
+            orientation: rawloader::Orientation::Normal,
+            data: rawloader::RawImageData::Integer(vec![
+                1023, 512, 1023, 512, 512, 128, 512, 128, 1023, 512, 1023, 512, 512, 128, 512, 128,
+            ]),
+        };
+
+        let preview = rawloader_image_to_rgb_preview(&raw_image, 2, 2)
+            .expect("rawloader image should convert to rgb preview");
+
+        assert_eq!(preview.dimensions(), (2, 2));
+        assert!(
+            preview.pixels().any(|pixel| pixel[0] > pixel[2]),
+            "RGGB sample should preserve a red-dominant signal"
+        );
+    }
+
+    #[test]
+    fn rawloader_white_balance_does_not_clip_midtones_to_white() {
+        let raw_image = rawloader::RawImage {
+            make: "Canon".into(),
+            model: "EOS 700D".into(),
+            clean_make: "canon".into(),
+            clean_model: "eos700d".into(),
+            width: 1,
+            height: 1,
+            cpp: 1,
+            wb_coeffs: [4.0, 2.0, 1.0, 1.0],
+            whitelevels: [1000, 1000, 1000, 1000],
+            blacklevels: [0, 0, 0, 0],
+            xyz_to_cam: [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+            ],
+            cfa: rawloader::CFA::new("RGGB"),
+            crops: [0, 0, 0, 0],
+            blackareas: Vec::new(),
+            orientation: rawloader::Orientation::Normal,
+            data: rawloader::RawImageData::Integer(vec![600]),
+        };
+
+        let normalized_red = rawloader_channel_to_unit(600, &raw_image, 0);
+
+        assert!(
+            normalized_red < 0.95,
+            "white balance should not clip a midtone RAW sample to display white"
+        );
+        assert!(normalized_red > 0.5);
+    }
+
+    #[test]
+    fn env_raw_original_fixture_decodes_with_host_owned_native_loader() {
+        let Ok(raw_path) = std::env::var("BOOTHY_RAW_ORIGINAL_FIXTURE") else {
+            return;
+        };
+
+        let preview = load_host_owned_native_source_image(Path::new(&raw_path))
+            .expect("raw original fixture should decode through the host-owned native loader");
+
+        assert!(preview.width() > 0);
+        assert!(preview.height() > 0);
     }
 
     #[test]
@@ -3024,8 +3711,8 @@ mod tests {
         assert!(!trimmed_xmp.contains("darktable:operation=\"demosaic\""));
         assert!(trimmed_xmp.contains("darktable:operation=\"lens\""));
         assert!(trimmed_xmp.contains("darktable:operation=\"hazeremoval\""));
-        assert!(!trimmed_xmp.contains("darktable:operation=\"highlights\""));
-        assert!(!trimmed_xmp.contains("darktable:operation=\"cacorrectrgb\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"highlights\""));
+        assert!(trimmed_xmp.contains("darktable:operation=\"cacorrectrgb\""));
         assert_eq!(
             trimmed_xmp
                 .matches("darktable:operation=\"exposure\"")
@@ -3042,9 +3729,11 @@ mod tests {
         assert!(trimmed_xmp.contains("darktable:num=\"1\""));
         assert!(trimmed_xmp.contains("darktable:num=\"2\""));
         assert!(trimmed_xmp.contains("darktable:num=\"3\""));
-        assert!(trimmed_xmp.contains("darktable:history_end=\"3\""));
+        assert!(trimmed_xmp.contains("darktable:num=\"4\""));
+        assert!(trimmed_xmp.contains("darktable:num=\"5\""));
+        assert!(trimmed_xmp.contains("darktable:history_end=\"5\""));
         assert!(trimmed_xmp.contains(
-            "darktable:iop_order_list=\"exposure,0,lens,0,hazeremoval,0,sigmoid,0\""
+            "darktable:iop_order_list=\"exposure,0,lens,0,hazeremoval,0,highlights,0,cacorrectrgb,0,sigmoid,0\""
         ));
     }
 
@@ -3358,18 +4047,421 @@ mod tests {
     }
 
     #[test]
-    fn preview_darktable_process_gets_latency_priority_on_windows() {
-        if cfg!(windows) {
-            assert_eq!(
-                darktable_process_creation_flags(RenderIntent::Preview)
-                    & WINDOWS_HIGH_PRIORITY_CLASS,
-                WINDOWS_HIGH_PRIORITY_CLASS
-            );
-            assert_eq!(darktable_process_creation_flags(RenderIntent::Final), 0);
-        } else {
-            assert_eq!(darktable_process_creation_flags(RenderIntent::Preview), 0);
-            assert_eq!(darktable_process_creation_flags(RenderIntent::Final), 0);
-        }
+    fn preview_darktable_process_does_not_claim_official_close_with_scheduler_priority() {
+        assert_eq!(darktable_process_creation_flags(RenderIntent::Preview), 0);
+        assert_eq!(darktable_process_creation_flags(RenderIntent::Final), 0);
+    }
+
+    #[test]
+    fn resident_preview_detail_claims_host_owned_handoff_not_darktable_fallback() {
+        let detail = resident_preview_handoff_ready_detail(
+            "preset_test",
+            "2026.04.10",
+            2_998,
+            "C:\\Program Files\\darktable\\bin\\darktable-cli.exe",
+            "program-files-bin",
+            "widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster",
+            "source.jpg preset.xmp output.jpg",
+            0,
+        );
+
+        assert!(detail.contains("binary=fast-preview-handoff"));
+        assert!(detail.contains("source=fast-preview-handoff"));
+        assert!(
+            detail.contains("engineBinary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe")
+        );
+        assert!(detail.contains("engineSource=program-files-bin"));
+        assert!(detail.contains("inputSourceAsset=fast-preview-raster"));
+        assert!(detail.contains("sourceAsset=preset-applied-preview"));
+        assert!(detail.contains("truthOwner=display-sized-preset-applied"));
+    }
+
+    #[test]
+    fn fast_preview_raster_render_uses_host_owned_native_artifact() {
+        let temp_dir = unique_temp_dir("fast-preview-native-handoff");
+        let bundle_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset_test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.preview-speculative.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.source.jpg");
+
+        fs::create_dir_all(
+            bundle_xmp_path
+                .parent()
+                .expect("xmp path should have a parent"),
+        )
+        .expect("bundle xmp parent should exist");
+        fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("source path should have a parent"),
+        )
+        .expect("source parent should exist");
+        fs::write(&source_path, PREVIEW_RENDER_WARMUP_INPUT_JPEG.as_slice())
+            .expect("source preview should be writable");
+        fs::write(
+            &bundle_xmp_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description darktable:history_end="2">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li darktable:num="0" darktable:operation="exposure"/>
+     <rdf:li darktable:num="1" darktable:operation="hazeremoval"/>
+     <rdf:li darktable:num="2" darktable:operation="sigmoid"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#,
+        )
+        .expect("bundle xmp should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("preview.jpg"),
+            PREVIEW_RENDER_WARMUP_INPUT_JPEG.as_slice(),
+        )
+        .expect("bundle preview should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("bundle.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+              "schemaVersion": "published-preset-bundle/v1",
+              "presetId": "preset_test",
+              "displayName": "Test",
+              "publishedVersion": "2026.03.31",
+              "lifecycleStatus": "published",
+              "boothStatus": "booth-safe",
+              "darktableVersion": PINNED_DARKTABLE_VERSION,
+              "xmpTemplatePath": "xmp/preview.xmp",
+              "preview": {
+                "kind": "preview-tile",
+                "assetPath": "preview.jpg",
+                "altText": "Test preview"
+              }
+            }))
+            .expect("bundle json should serialize"),
+        )
+        .expect("bundle json should be writable");
+
+        let prepared = render_preview_asset_to_path_in_dir(
+            &temp_dir,
+            "session_test",
+            "request_test",
+            "capture_test",
+            "preset_test",
+            "2026.03.31",
+            &source_path,
+            &output_path,
+        )
+        .expect("native fast preview render should succeed");
+
+        assert!(is_valid_render_preview_asset(&output_path));
+        assert!(prepared.detail.contains("binary=fast-preview-handoff"));
+        assert!(prepared.detail.contains("engineSource=host-owned-native"));
+        assert!(prepared
+            .detail
+            .contains("engineBinary=host-owned-native-preview"));
+        assert!(prepared
+            .detail
+            .contains("truthBlocker=fast-preview-raster-input"));
+        assert!(prepared
+            .detail
+            .contains("requiredInputSourceAsset=raw-original"));
+        assert!(!prepared
+            .detail
+            .to_ascii_lowercase()
+            .contains("darktable-cli"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn raw_original_resident_preview_uses_full_preset_engine_not_native_approximation() {
+        let temp_dir = unique_temp_dir("raw-original-resident-full-preset");
+        let bundle_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset_test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.preview-speculative.jpg");
+        let source_path = temp_dir
+            .join("captures")
+            .join("originals")
+            .join("capture_test.CR2");
+        let fake_darktable_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("support")
+            .join("fake-darktable-cli.cmd");
+        let _darktable_cli = EnvVarTestGuard::set_path(DARKTABLE_CLI_BIN_ENV, &fake_darktable_cli);
+
+        fs::create_dir_all(
+            bundle_xmp_path
+                .parent()
+                .expect("bundle xmp path should have a parent"),
+        )
+        .expect("bundle xmp parent should exist");
+        fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("source path should have a parent"),
+        )
+        .expect("source parent should exist");
+        fs::write(&source_path, b"fake-raw-original").expect("raw source should be writable");
+        fs::write(
+            &bundle_xmp_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description darktable:history_end="1">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li darktable:num="0" darktable:operation="rawprepare"/>
+     <rdf:li darktable:num="1" darktable:operation="sigmoid"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#,
+        )
+        .expect("bundle xmp should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("preview.jpg"),
+            PREVIEW_RENDER_WARMUP_INPUT_JPEG.as_slice(),
+        )
+        .expect("bundle preview should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("bundle.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+              "schemaVersion": "published-preset-bundle/v1",
+              "presetId": "preset_test",
+              "displayName": "Test",
+              "publishedVersion": "2026.03.31",
+              "lifecycleStatus": "published",
+              "boothStatus": "booth-safe",
+              "darktableVersion": PINNED_DARKTABLE_VERSION,
+              "xmpTemplatePath": "xmp/preview.xmp",
+              "preview": {
+                "kind": "preview-tile",
+                "assetPath": "preview.jpg",
+                "altText": "Test preview"
+              }
+            }))
+            .expect("bundle json should serialize"),
+        )
+        .expect("bundle json should be writable");
+
+        let prepared = render_preview_asset_to_path_with_source_kind_in_dir(
+            &temp_dir,
+            "session_test",
+            "request_test",
+            "capture_test",
+            "preset_test",
+            "2026.03.31",
+            &source_path,
+            PreviewRenderSourceKind::RawOriginal,
+            &output_path,
+        )
+        .expect("resident full-preset preview render should succeed");
+
+        assert!(is_valid_render_preview_asset(&output_path));
+        assert!(prepared.detail.contains("binary=fast-preview-handoff"));
+        assert!(prepared.detail.contains("inputSourceAsset=raw-original"));
+        assert!(prepared.detail.contains("sourceAsset=preset-applied-preview"));
+        assert!(prepared.detail.contains("truthOwner=display-sized-preset-applied"));
+        assert!(prepared.detail.contains("truthProfile=original-full-preset"));
+        assert!(prepared.detail.contains("engineSource=host-owned-native"));
+        assert!(prepared.detail.contains("engineMode=resident-full-preset"));
+        assert!(!prepared
+            .detail
+            .contains("truthBlocker=full-preset-parity-unverified"));
+        assert!(!prepared.detail.contains("host-owned-native-preview-comparison"));
+        assert!(!prepared.detail.contains("engineBinary=host-owned-native-preview"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn raw_sdk_preview_render_requires_supported_preset_before_claiming_full_preset_truth() {
+        let temp_dir = unique_temp_dir("raw-sdk-preview-unsupported-preset");
+        let bundle_xmp_path = temp_dir
+            .join("preset-catalog")
+            .join("published")
+            .join("preset_test")
+            .join("2026.03.31")
+            .join("xmp")
+            .join("preview.xmp");
+        let output_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.preview-speculative.jpg");
+        let source_path = temp_dir
+            .join("renders")
+            .join("previews")
+            .join("capture_test.raw-sdk-preview.jpg");
+
+        fs::create_dir_all(
+            bundle_xmp_path
+                .parent()
+                .expect("xmp path should have a parent"),
+        )
+        .expect("bundle xmp parent should exist");
+        fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("source path should have a parent"),
+        )
+        .expect("source parent should exist");
+        fs::write(&source_path, PREVIEW_RENDER_WARMUP_INPUT_JPEG.as_slice())
+            .expect("source preview should be writable");
+        fs::write(
+            &bundle_xmp_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description darktable:history_end="1">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li darktable:num="0" darktable:operation="exposure"/>
+     <rdf:li darktable:num="1" darktable:operation="retouch"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#,
+        )
+        .expect("bundle xmp should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("preview.jpg"),
+            PREVIEW_RENDER_WARMUP_INPUT_JPEG.as_slice(),
+        )
+        .expect("bundle preview should be writable");
+        fs::write(
+            bundle_xmp_path
+                .parent()
+                .and_then(Path::parent)
+                .expect("bundle root should resolve")
+                .join("bundle.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+              "schemaVersion": "published-preset-bundle/v1",
+              "presetId": "preset_test",
+              "displayName": "Test",
+              "publishedVersion": "2026.03.31",
+              "lifecycleStatus": "published",
+              "boothStatus": "booth-safe",
+              "darktableVersion": PINNED_DARKTABLE_VERSION,
+              "xmpTemplatePath": "xmp/preview.xmp",
+              "preview": {
+                "kind": "preview-tile",
+                "assetPath": "preview.jpg",
+                "altText": "Test preview"
+              }
+            }))
+            .expect("bundle json should serialize"),
+        )
+        .expect("bundle json should be writable");
+
+        let prepared = render_preview_asset_to_path_with_source_kind_in_dir(
+            &temp_dir,
+            "session_test",
+            "request_test",
+            "capture_test",
+            "preset_test",
+            "2026.03.31",
+            &source_path,
+            PreviewRenderSourceKind::RawOriginal,
+            &output_path,
+        )
+        .expect("native raw-sdk preview render should succeed");
+
+        assert!(prepared.detail.contains("inputSourceAsset=raw-original"));
+        assert!(prepared
+            .detail
+            .contains("truthBlocker=unsupported-preset-operations"));
+        assert!(prepared.detail.contains("unsupportedOperations=retouch"));
+        assert!(!prepared
+            .detail
+            .contains("truthProfile=original-full-preset"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn raw_original_native_preview_does_not_claim_full_preset_without_parity_engine() {
+        let xmp_source = r#"<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description darktable:history_end="21">
+   <darktable:history>
+    <rdf:Seq>
+     <rdf:li darktable:operation="channelmixerrgb"/>
+     <rdf:li darktable:operation="exposure"/>
+     <rdf:li darktable:operation="flip"/>
+     <rdf:li darktable:operation="sigmoid"/>
+     <rdf:li darktable:operation="cacorrectrgb"/>
+     <rdf:li darktable:operation="colorin"/>
+     <rdf:li darktable:operation="colorout"/>
+     <rdf:li darktable:operation="demosaic"/>
+     <rdf:li darktable:operation="denoiseprofile"/>
+     <rdf:li darktable:operation="gamma"/>
+     <rdf:li darktable:operation="hazeremoval"/>
+     <rdf:li darktable:operation="highlights"/>
+     <rdf:li darktable:operation="hotpixels"/>
+     <rdf:li darktable:operation="lens"/>
+     <rdf:li darktable:operation="rawprepare"/>
+     <rdf:li darktable:operation="temperature"/>
+    </rdf:Seq>
+   </darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+
+        let detail = host_owned_native_truth_profile_detail(
+            PreviewRenderSourceKind::RawOriginal,
+            xmp_source,
+        );
+
+        assert!(detail.contains("truthProfile=host-owned-native-preview-comparison"));
+        assert!(detail.contains("truthBlocker=full-preset-parity-unverified"));
+        assert!(!detail.contains("truthProfile=original-full-preset"));
     }
 
     #[test]

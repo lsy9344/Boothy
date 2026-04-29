@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-25 02:09:54 +09:00
+# last_updated: 2026-04-28 15:39:20 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-25 02:09:54 +09:00"
+last_updated: "2026-04-29 12:45:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -47,7 +47,7 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
 preview_route_status:
   current_release_judgment: "originalVisibleToPresetAppliedVisibleMs <= 3000ms (`preset-applied visible <= 3000ms`)"
   newer_actual_primary_lane: "bounded No-Go"
-  current_worktree_role: "Story 1.26 reserve path is in-progress after code review; latest high-priority darktable preview run passed 5/5 as latency evidence only, and official Go requires host-owned boundary plus truthful preset-look preservation"
+  current_worktree_role: "Story 1.26 reserve path has fresh resident full-preset Go evidence"
   gpu_acceleration_scope: "old-line comparison evidence only"
   official_verdict_owner: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
   route_story_status:
@@ -68,7 +68,9 @@ preview_route_status:
     - "treat extra fast-preview XMP trimming as rejected for official truth when it removes look-affecting operations"
     - "treat fast-preview cached XMP iop-order trimming as historical comparison evidence only"
     - "latest requested high-priority preview process rerun passed 5/5 with direct band 2825ms~2873ms, but keep it as latency evidence only"
-    - "next attempt should preserve truthful preset look and host-owned boundary before chasing release close"
+    - "latest requested validation hardware-validation-run-1777434275752 passed 5/5 with resident full-preset route evidence; official band 2316ms~2338ms"
+    - "keep partial native approximation comparison-only; latest Go belongs to raw-original resident darktable-compatible full-preset ownership"
+    - "do not count operation-derived raster artifacts as original/full-preset truth"
     - "keep Story 1.31 unopened until Story 1.26 has a fresh official Go"
 
 development_status:

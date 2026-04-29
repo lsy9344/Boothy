@@ -88,6 +88,16 @@ fn write_test_jpeg(path: &std::path::Path) {
     fs::write(path, [0xFF, 0xD8, 0xFF, 0xD9]).expect("jpeg fixture should be writable");
 }
 
+fn write_decodable_test_jpeg(path: &std::path::Path) {
+    let mut encoded = Vec::new();
+    let pixels = [240, 230, 220, 210, 200, 190, 180, 170, 160, 150, 140, 130];
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 86);
+    encoder
+        .encode(&pixels, 2, 2, image::ColorType::Rgb8.into())
+        .expect("jpeg fixture should encode");
+    fs::write(path, encoded).expect("jpeg fixture should be writable");
+}
+
 #[test]
 fn readiness_requires_an_active_preset_before_capture_is_allowed() {
     let base_dir = unique_test_root("preset-required");
@@ -2568,7 +2578,7 @@ fn legacy_canonical_scan_activates_reserve_close_and_records_preset_applied_owne
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -2617,7 +2627,7 @@ fn legacy_canonical_scan_activates_reserve_close_and_records_preset_applied_owne
     assert_eq!(completed_capture.render_status, "previewReady");
     assert_eq!(
         completed_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let timing_events = fs::read_to_string(
@@ -2629,11 +2639,11 @@ fn legacy_canonical_scan_activates_reserve_close_and_records_preset_applied_owne
     assert!(timing_events.contains("event=fast-preview-promoted"));
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("kind=legacy-canonical-scan"));
-    assert!(timing_events.contains("sourceAsset=preset-applied-preview"));
+    assert!(timing_events.contains("sourceAsset=raw-original"));
     assert_eq!(
         timing_events.matches("event=preview-render-start").count(),
-        1,
-        "legacy canonical scan should keep first-visible alive, then finish through one speculative truthful close"
+        2,
+        "legacy canonical scan should keep first-visible alive, then raw fallback must own the truthful close"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -2700,7 +2710,7 @@ fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_fi
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -2758,7 +2768,7 @@ fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_fi
     assert_eq!(completed_capture.render_status, "previewReady");
     assert_eq!(
         completed_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let timing_events = fs::read_to_string(
@@ -2774,8 +2784,8 @@ fn early_windows_shell_thumbnail_is_preserved_and_starts_reserve_close_before_fi
     );
     assert_eq!(
         timing_events.matches("event=preview-render-start").count(),
-        1,
-        "early helper preview should start one reserve close and avoid a duplicate render after file arrival"
+        3,
+        "early non-truthful helper preview starts comparison work before and after file arrival, then raw fallback owns the truthful close"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -2841,7 +2851,7 @@ fn later_non_truthful_file_arrived_metadata_does_not_replace_first_visible_basel
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -2905,7 +2915,7 @@ fn later_non_truthful_file_arrived_metadata_does_not_replace_first_visible_basel
     assert_eq!(completed_capture.render_status, "previewReady");
     assert_eq!(
         completed_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -2971,7 +2981,7 @@ fn truthful_fast_preview_ready_is_not_downgraded_by_later_file_arrived_metadata(
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -3103,7 +3113,7 @@ fn truthful_close_reemits_when_same_canonical_path_upgrades_preview_kind() {
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -3227,7 +3237,7 @@ fn late_windows_shell_thumbnail_is_preserved_after_file_arrival_without_metadata
         )
         .expect("preview directory should exist");
         fs::write(&raw_path, b"helper-raw").expect("helper raw should be writable");
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
 
         append_helper_event(
             &helper_base_dir,
@@ -3249,7 +3259,7 @@ fn late_windows_shell_thumbnail_is_preserved_after_file_arrival_without_metadata
             None,
         );
         thread::sleep(Duration::from_millis(400));
-        write_test_jpeg(&canonical_preview_path);
+        write_decodable_test_jpeg(&canonical_preview_path);
         append_fast_preview_ready_event(
             &helper_base_dir,
             &helper_session_id,
@@ -3286,7 +3296,7 @@ fn late_windows_shell_thumbnail_is_preserved_after_file_arrival_without_metadata
     assert_eq!(completed_capture.render_status, "previewReady");
     assert_eq!(
         completed_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let timing_events = fs::read_to_string(
@@ -3302,8 +3312,8 @@ fn late_windows_shell_thumbnail_is_preserved_after_file_arrival_without_metadata
     );
     assert_eq!(
         timing_events.matches("event=preview-render-start").count(),
-        1,
-        "late helper preview should keep a single reserve close"
+        2,
+        "late non-truthful helper preview should keep first-visible, then raw fallback owns truth"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -3433,7 +3443,7 @@ fn late_windows_shell_thumbnail_is_preserved_even_when_helper_preview_arrives_af
     assert_eq!(completed_capture.render_status, "previewReady");
     assert_eq!(
         completed_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let timing_events = fs::read_to_string(
@@ -3804,7 +3814,7 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
     );
     assert_eq!(
         refined_capture.preview.kind.as_deref(),
-        Some("preset-applied-preview")
+        Some("raw-original")
     );
 
     let timing_events = fs::read_to_string(
@@ -3843,8 +3853,8 @@ fn complete_preview_render_reuses_a_late_same_capture_preview_before_raw_fallbac
     );
     assert_eq!(
         timing_events.matches("event=preview-render-start").count(),
-        1,
-        "late same-capture preview can keep first-visible alive, then finish through one speculative truthful close"
+        2,
+        "late non-truthful same-capture preview can keep first-visible alive, then raw fallback must own the truthful close"
     );
 
     let _ = fs::remove_dir_all(base_dir);
@@ -4219,6 +4229,426 @@ fn complete_preview_render_treats_a_finished_speculative_preview_as_preview_read
     assert!(timing_events.contains("event=preview-render-ready"));
     assert!(timing_events.contains("sourceAsset=preset-applied-preview"));
     assert!(timing_events.contains("inputSourceAsset=fast-preview-raster"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_does_not_promote_operation_derived_speculative_preview() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("reject-operation-derived-speculative-preview");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&speculative_output_path);
+    fs::write(
+        &speculative_detail_path,
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=120;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=source=C:/preview-source.jpg output=C:/preview.jpg profile=operation-derived;status=0",
+    )
+    .expect("speculative render detail should be writable");
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("raw original preview close should replace non-truthful speculative output");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(
+        timing_events.contains("sourceAsset=raw-original"),
+        "operation-derived speculative output should not own previewReady truth: {timing_events}"
+    );
+    assert!(
+        !timing_events.contains("profile=operation-derived"),
+        "operation-derived speculative output must remain comparison-only: {timing_events}"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_does_not_promote_host_owned_handoff_without_original_full_preset_truth_profile(
+) {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("reject-host-owned-without-full-preset-profile");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&speculative_output_path);
+    fs::write(
+        &speculative_detail_path,
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=120;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=source=C:/preview-source.jpg output=C:/preview.jpg;status=0",
+    )
+    .expect("speculative render detail should be writable");
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("raw original preview close should replace incomplete host-owned handoff");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(
+        timing_events.contains("sourceAsset=raw-original"),
+        "host-owned handoff without original/full-preset truth profile should not own previewReady truth: {timing_events}"
+    );
+    assert!(
+        !timing_events.contains("binary=fast-preview-handoff"),
+        "incomplete host-owned handoff must remain comparison-only: {timing_events}"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_promotes_host_owned_original_full_preset_speculative_preview() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("promote-original-full-preset-speculative-preview");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let result = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let canonical_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", result.capture.capture_id));
+    let speculative_output_path = paths.renders_previews_dir.join(format!(
+        "{}.preview-speculative.jpg",
+        result.capture.capture_id
+    ));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview directory should exist");
+    write_test_jpeg(&speculative_output_path);
+    fs::write(
+        &speculative_detail_path,
+        "presetId=preset_soft-glow;publishedVersion=2026.03.20;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=120;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=source=C:/capture.CR2 output=C:/preview.jpg;status=0",
+    )
+    .expect("speculative render detail should be writable");
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("host-owned original/full-preset speculative output should close preview");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.asset_path.as_deref(),
+        Some(canonical_preview_path.to_string_lossy().as_ref())
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(timing_events.contains("truthProfile=original-full-preset"));
+    assert!(timing_events.contains("inputSourceAsset=raw-original"));
+    assert!(timing_events.contains("sourceAsset=preset-applied-preview"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn complete_preview_render_does_not_promote_unverified_native_raw_handoff() {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("raw-original-host-owned-handoff-before-darktable");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        write_decodable_test_jpeg(&raw_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            None,
+            None,
+        );
+    });
+
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |_| {},
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+
+    let completed_capture =
+        complete_preview_render_in_dir(&base_dir, &session.session_id, &result.capture.capture_id)
+            .expect("unverified native raw-original handoff should fall back to darktable truth");
+
+    assert_eq!(completed_capture.render_status, "previewReady");
+    assert_eq!(
+        completed_capture.preview.kind.as_deref(),
+        Some("raw-original")
+    );
+
+    let timing_events = fs::read_to_string(paths.diagnostics_dir.join("timing-events.log"))
+        .expect("timing events should be readable");
+    assert!(!timing_events.contains("truthProfile=original-full-preset"));
+    assert!(
+        timing_events.contains("source=env-override"),
+        "darktable fallback should own the close while native raw handoff is comparison-only: {timing_events}"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn capture_persist_starts_comparison_only_host_owned_raw_original_handoff_before_preview_completion(
+) {
+    let _guard = SPECULATIVE_PREVIEW_TEST_MUTEX
+        .lock()
+        .expect("speculative preview test mutex should lock");
+    let base_dir = unique_test_root("persist-starts-raw-original-handoff");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+    let existing_request_count = capture_request_count(&base_dir, &session.session_id);
+
+    let helper_base_dir = base_dir.clone();
+    let helper_session_id = session.session_id.clone();
+    let helper_thread = thread::spawn(move || {
+        let request = wait_for_latest_capture_request(
+            &helper_base_dir,
+            &helper_session_id,
+            existing_request_count,
+        );
+        let capture_id = format!("capture_helper_{}", &request.request_id[8..]);
+        let session_paths = SessionPaths::new(&helper_base_dir, &helper_session_id);
+        let raw_path = session_paths
+            .captures_originals_dir
+            .join(format!("{capture_id}.jpg"));
+
+        fs::create_dir_all(
+            raw_path
+                .parent()
+                .expect("raw capture path should have a parent directory"),
+        )
+        .expect("raw capture directory should exist");
+        write_decodable_test_jpeg(&raw_path);
+
+        append_helper_event(
+            &helper_base_dir,
+            &helper_session_id,
+            serde_json::json!({
+              "schemaVersion": CANON_HELPER_CAPTURE_ACCEPTED_SCHEMA_VERSION,
+              "type": "capture-accepted",
+              "sessionId": helper_session_id,
+              "requestId": request.request_id,
+            }),
+        );
+        append_file_arrived_event(
+            &helper_base_dir,
+            &helper_session_id,
+            &request,
+            &capture_id,
+            &raw_path,
+            None,
+            None,
+        );
+    });
+
+    let result = request_capture_in_dir_with_fast_preview(
+        &base_dir,
+        CaptureRequestInputDto {
+            session_id: session.session_id.clone(),
+            request_id: None,
+        },
+        |_| {},
+    )
+    .expect("capture should save");
+
+    helper_thread
+        .join()
+        .expect("helper capture thread should complete");
+
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{}.{}.preview-speculative.detail",
+        result.capture.capture_id, result.capture.request_id
+    ));
+    let render_detail = fs::read_to_string(&speculative_detail_path)
+        .expect("raw-original handoff detail should exist before preview completion");
+
+    assert!(render_detail.contains("binary=fast-preview-handoff"));
+    assert!(render_detail.contains("inputSourceAsset=raw-original"));
+    assert!(render_detail.contains("sourceAsset=preset-applied-preview"));
+    assert!(render_detail.contains("truthProfile=host-owned-native-preview-comparison"));
+    assert!(render_detail.contains("truthBlocker=full-preset-parity-unverified"));
+    assert!(!render_detail.contains("truthProfile=original-full-preset"));
 
     let _ = fs::remove_dir_all(base_dir);
 }

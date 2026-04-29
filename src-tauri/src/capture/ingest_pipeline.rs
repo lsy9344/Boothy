@@ -17,7 +17,8 @@ use crate::{
         enqueue_resident_preview_render_in_dir, is_valid_render_preview_asset,
         log_render_failure_in_dir, log_render_ready_in_dir, log_render_start_in_dir,
         promote_preview_render_output, render_capture_asset_from_raw_in_dir,
-        render_capture_asset_in_dir, render_preview_asset_to_path_in_dir, RenderIntent,
+        render_capture_asset_in_dir, render_preview_asset_to_path_with_source_kind_in_dir,
+        PreviewRenderSourceKind, RenderIntent,
     },
     session::{
         session_manifest::{
@@ -34,6 +35,9 @@ use crate::{
 };
 
 const FAST_PREVIEW_ALLOWED_EXTENSIONS: [&str; 2] = ["jpg", "jpeg"];
+const HOST_OWNED_RAW_ORIGINAL_ALLOWED_EXTENSIONS: [&str; 9] = [
+    "cr2", "crw", "dng", "nef", "arw", "rw2", "orf", "raf", "pef",
+];
 // Latest booth evidence shows the helper's usable same-capture preview often
 // lands ~0.6-0.7s after RAW persistence. Keep the wait under 1s so fallback
 // still stays bounded, but leave enough budget to actually catch that path.
@@ -210,6 +214,16 @@ pub fn persist_capture_in_dir(
     }
 
     if capture.preview.ready_at_ms.is_none() {
+        start_host_owned_raw_original_preview_handoff_in_dir(
+            base_dir,
+            &manifest.session_id,
+            &capture.request_id,
+            &capture.capture_id,
+            &active_preset.preset_id,
+            &active_preset.published_version,
+            &capture.raw.asset_path,
+        );
+
         if let Some(first_visible_asset_path) = capture.preview.asset_path.as_deref() {
             let fast_preview_kind = promoted_fast_preview
                 .as_ref()
@@ -224,12 +238,120 @@ pub fn persist_capture_in_dir(
                     &active_preset.preset_id,
                     &active_preset.published_version,
                     first_visible_asset_path,
+                    fast_preview_kind,
                 );
             }
         }
     }
 
     Ok((manifest, capture, fast_preview_update))
+}
+
+fn start_host_owned_raw_original_preview_handoff_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+    preset_id: &str,
+    preset_version: &str,
+    raw_asset_path: &str,
+) {
+    let paths = match SessionPaths::try_new(base_dir, session_id) {
+        Ok(paths) => paths,
+        Err(_) => return,
+    };
+    let source_path = match fs::canonicalize(raw_asset_path) {
+        Ok(path) => path,
+        Err(_) => return,
+    };
+
+    if !source_path.is_file()
+        || !is_session_scoped_asset_path(&paths, &source_path)
+        || !is_supported_host_owned_raw_original_source(&source_path)
+    {
+        return;
+    }
+
+    let speculative_output_path = speculative_preview_output_path(&paths, capture_id);
+    let speculative_lock_path = speculative_preview_lock_path(&paths, capture_id, request_id);
+    let speculative_detail_path = speculative_preview_detail_path(&paths, capture_id, request_id);
+
+    if is_valid_render_preview_asset(&speculative_output_path) || speculative_lock_path.exists() {
+        return;
+    }
+
+    if let Some(parent) = speculative_output_path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+
+    if fs::write(&speculative_lock_path, request_id).is_err() {
+        return;
+    }
+
+    if let Err(error) = enqueue_resident_preview_render_in_dir(
+        base_dir,
+        session_id,
+        request_id,
+        capture_id,
+        preset_id,
+        preset_version,
+        &source_path,
+        PreviewRenderSourceKind::RawOriginal,
+        None,
+        &speculative_output_path,
+        &speculative_detail_path,
+        &speculative_lock_path,
+    ) {
+        log::warn!(
+            "host_owned_raw_original_preview_handoff_enqueue_failed session={} capture_id={} request_id={} reason_code={} detail={}",
+            session_id,
+            capture_id,
+            request_id,
+            error.reason_code,
+            error.operator_detail
+        );
+        log_render_failure_in_dir(
+            base_dir,
+            session_id,
+            capture_id,
+            Some(request_id),
+            RenderIntent::Preview,
+            error.reason_code,
+        );
+        spawn_one_shot_speculative_preview_render_in_dir(
+            base_dir.to_path_buf(),
+            session_id.to_string(),
+            request_id.to_string(),
+            capture_id.to_string(),
+            preset_id.to_string(),
+            preset_version.to_string(),
+            source_path,
+            PreviewRenderSourceKind::RawOriginal,
+            None,
+            speculative_output_path,
+            speculative_detail_path,
+            speculative_lock_path,
+        );
+    }
+}
+
+fn is_supported_host_owned_raw_original_source(source_path: &Path) -> bool {
+    let extension = source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+
+    if extension
+        .as_deref()
+        .map(|value| HOST_OWNED_RAW_ORIGINAL_ALLOWED_EXTENSIONS.contains(&value))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    is_valid_render_preview_asset(source_path)
 }
 
 pub fn promote_pending_fast_preview_in_dir(
@@ -269,6 +391,7 @@ pub fn start_speculative_preview_render_in_dir(
     preset_id: &str,
     preset_version: &str,
     fast_preview_asset_path: &str,
+    fast_preview_kind: Option<&str>,
 ) {
     let paths = match SessionPaths::try_new(base_dir, session_id) {
         Ok(paths) => paths,
@@ -285,13 +408,6 @@ pub fn start_speculative_preview_render_in_dir(
         return;
     }
 
-    let prepared_source =
-        match prepare_speculative_preview_source_path(&paths, capture_id, request_id, &source_path)
-        {
-            Some(value) => value,
-            None => return,
-        };
-
     let speculative_output_path = speculative_preview_output_path(&paths, capture_id);
     let speculative_lock_path = speculative_preview_lock_path(&paths, capture_id, request_id);
     let speculative_detail_path = speculative_preview_detail_path(&paths, capture_id, request_id);
@@ -299,6 +415,14 @@ pub fn start_speculative_preview_render_in_dir(
     if is_valid_render_preview_asset(&speculative_output_path) || speculative_lock_path.exists() {
         return;
     }
+
+    let prepared_source =
+        match prepare_speculative_preview_source_path(&paths, capture_id, request_id, &source_path)
+        {
+            Some(value) => value,
+            None => return,
+        };
+    let source_kind = fast_preview_source_kind(fast_preview_kind);
 
     if let Some(parent) = speculative_output_path.parent() {
         if fs::create_dir_all(parent).is_err() {
@@ -318,6 +442,7 @@ pub fn start_speculative_preview_render_in_dir(
         preset_id,
         preset_version,
         &prepared_source.asset_path,
+        source_kind,
         prepared_source.cleanup_path.as_deref(),
         &speculative_output_path,
         &speculative_detail_path,
@@ -347,6 +472,7 @@ pub fn start_speculative_preview_render_in_dir(
             preset_id.to_string(),
             preset_version.to_string(),
             prepared_source.asset_path,
+            source_kind,
             prepared_source.cleanup_path,
             speculative_output_path,
             speculative_detail_path,
@@ -363,6 +489,7 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
     preset_id: String,
     preset_version: String,
     source_path: PathBuf,
+    source_kind: PreviewRenderSourceKind,
     source_cleanup_path: Option<PathBuf>,
     speculative_output_path: PathBuf,
     speculative_detail_path: PathBuf,
@@ -379,7 +506,7 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
             RenderIntent::Preview,
         );
 
-        let render_result = render_preview_asset_to_path_in_dir(
+        let render_result = render_preview_asset_to_path_with_source_kind_in_dir(
             &base_dir,
             &session_id,
             &request_id,
@@ -387,6 +514,7 @@ fn spawn_one_shot_speculative_preview_render_in_dir(
             &preset_id,
             &preset_version,
             &source_path,
+            source_kind,
             &speculative_output_path,
         );
 
@@ -541,6 +669,7 @@ pub fn complete_preview_render_in_dir(
                         preset_id,
                         &capture.active_preset_version,
                         first_visible_asset_path,
+                        promoted_late_fast_preview_kind.as_deref(),
                     );
                 }
                 let request_id = capture.request_id.clone();
@@ -613,6 +742,14 @@ pub fn complete_preview_render_in_dir(
         capture_snapshot = manifest.captures[capture_index].clone();
     }
 
+    if let Some(host_owned_capture) = try_complete_host_owned_raw_original_preview_handoff_in_dir(
+        base_dir,
+        &paths,
+        &capture_snapshot,
+    )? {
+        return Ok(host_owned_capture);
+    }
+
     log_render_start_in_dir(
         base_dir,
         session_id,
@@ -652,6 +789,88 @@ pub fn complete_preview_render_in_dir(
     };
 
     finish_preview_render_in_dir(base_dir, &paths, session_id, capture_id, rendered_preview)
+}
+
+fn try_complete_host_owned_raw_original_preview_handoff_in_dir(
+    base_dir: &Path,
+    paths: &SessionPaths,
+    capture: &SessionCaptureRecord,
+) -> Result<Option<SessionCaptureRecord>, HostErrorEnvelope> {
+    let Some(preset_id) = capture.active_preset_id.as_deref() else {
+        return Ok(None);
+    };
+    let raw_path = PathBuf::from(&capture.raw.asset_path);
+    if !raw_path.is_file() || !is_session_scoped_asset_path(paths, &raw_path) {
+        return Ok(None);
+    }
+
+    let output_path = speculative_preview_output_path(paths, &capture.capture_id);
+    let detail_path =
+        speculative_preview_detail_path(paths, &capture.capture_id, &capture.request_id);
+    let lock_path = speculative_preview_lock_path(paths, &capture.capture_id, &capture.request_id);
+    if is_valid_render_preview_asset(&output_path) || lock_path.exists() {
+        return Ok(None);
+    }
+
+    if let Some(parent) = output_path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return Ok(None);
+        }
+    }
+    if fs::write(&lock_path, &capture.request_id).is_err() {
+        return Ok(None);
+    }
+
+    let render_result = render_preview_asset_to_path_with_source_kind_in_dir(
+        base_dir,
+        &capture.session_id,
+        &capture.request_id,
+        &capture.capture_id,
+        preset_id,
+        &capture.active_preset_version,
+        &raw_path,
+        PreviewRenderSourceKind::RawOriginal,
+        &output_path,
+    );
+
+    match render_result {
+        Ok(prepared_render) => {
+            if fs::write(&detail_path, prepared_render.detail).is_err() {
+                let _ = fs::remove_file(&output_path);
+                let _ = fs::remove_file(&detail_path);
+                let _ = fs::remove_file(&lock_path);
+                return Ok(None);
+            }
+        }
+        Err(error) => {
+            log::info!(
+                "host_owned_raw_original_preview_handoff_unavailable session={} capture_id={} request_id={} reason_code={} detail={}",
+                capture.session_id,
+                capture.capture_id,
+                capture.request_id,
+                error.reason_code,
+                error.operator_detail
+            );
+            let _ = fs::remove_file(&output_path);
+            let _ = fs::remove_file(&detail_path);
+            let _ = fs::remove_file(&lock_path);
+            return Ok(None);
+        }
+    }
+
+    let _ = fs::remove_file(&lock_path);
+
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
+    })?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let Some(capture_index) = manifest.captures.iter().position(|candidate| {
+        candidate.capture_id == capture.capture_id && candidate.request_id == capture.request_id
+    }) else {
+        return Ok(None);
+    };
+
+    try_complete_speculative_preview_render_in_dir(base_dir, paths, &mut manifest, capture_index)
 }
 
 fn render_capture_asset_from_raw_with_queue_retry_in_dir(
@@ -841,6 +1060,20 @@ fn try_complete_speculative_preview_render_in_dir(
         &speculative_detail_path,
         &speculative_lock_path,
     ) {
+        let Some(render_detail) =
+            read_promotable_speculative_preview_detail(&speculative_detail_path)
+        else {
+            log::info!(
+                "speculative_preview_rejected session={} capture_id={} request_id={} reason=non-truthful-host-owned-handoff",
+                capture_snapshot.session_id,
+                capture_snapshot.capture_id,
+                capture_snapshot.request_id
+            );
+            let _ = fs::remove_file(&speculative_output_path);
+            let _ = fs::remove_file(&speculative_detail_path);
+            let _ = fs::remove_file(&speculative_lock_path);
+            return Ok(None);
+        };
         let canonical_preview_path = paths
             .renders_previews_dir
             .join(format!("{}.jpg", capture_snapshot.capture_id));
@@ -864,19 +1097,13 @@ fn try_complete_speculative_preview_render_in_dir(
             return Ok(None);
         }
 
-        let preview_visible_at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| {
-                HostErrorEnvelope::persistence(
-                    "프리뷰 시각을 기록하지 못했어요. 잠시 후 다시 시도해 주세요.",
-                )
-            })?
-            .as_millis() as u64;
-        let render_detail = fs::read_to_string(&speculative_detail_path)
-        .unwrap_or_else(|_| {
-            "presetId=unknown;publishedVersion=unknown;binary=darktable-cli;source=unknown;elapsedMs=unknown;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=unknown;status=unknown"
-                .into()
-        });
+        let adoption_time_ms = current_time_ms().map_err(|_| {
+            HostErrorEnvelope::persistence(
+                "프리뷰 시각을 기록하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            )
+        })?;
+        let preview_visible_at_ms =
+            speculative_preview_ready_at_ms(&canonical_preview_path, adoption_time_ms);
         let truthful_render_detail = normalize_preset_applied_render_detail(&render_detail);
         log_render_ready_in_dir(
             base_dir,
@@ -936,6 +1163,34 @@ fn try_complete_speculative_preview_render_in_dir(
     Ok(None)
 }
 
+fn read_promotable_speculative_preview_detail(speculative_detail_path: &Path) -> Option<String> {
+    let render_detail = fs::read_to_string(speculative_detail_path).ok()?;
+    speculative_preview_detail_is_promotable(&render_detail).then_some(render_detail)
+}
+
+fn speculative_preview_detail_is_promotable(render_detail: &str) -> bool {
+    if is_host_owned_preview_handoff_detail(render_detail) {
+        return is_host_owned_original_full_preset_truth_detail(render_detail);
+    }
+
+    true
+}
+
+fn is_host_owned_preview_handoff_detail(render_detail: &str) -> bool {
+    render_detail.contains("binary=fast-preview-handoff")
+        && render_detail.contains("source=fast-preview-handoff")
+        && render_detail.contains("engineSource=host-owned-native")
+}
+
+fn is_host_owned_original_full_preset_truth_detail(render_detail: &str) -> bool {
+    render_detail.contains("inputSourceAsset=raw-original")
+        && render_detail.contains("sourceAsset=preset-applied-preview")
+        && render_detail.contains("truthOwner=display-sized-preset-applied")
+        && render_detail.contains("truthProfile=original-full-preset")
+        && !render_detail.contains("inputSourceAsset=fast-preview-raster")
+        && !render_detail.contains("profile=operation-derived")
+}
+
 fn speculative_preview_output_is_ready_to_promote(
     speculative_output_path: &Path,
     speculative_detail_path: &Path,
@@ -943,6 +1198,15 @@ fn speculative_preview_output_is_ready_to_promote(
 ) -> bool {
     is_valid_render_preview_asset(speculative_output_path)
         && (!speculative_lock_path.exists() || speculative_detail_path.is_file())
+}
+
+fn speculative_preview_ready_at_ms(preview_path: &Path, adoption_time_ms: u64) -> u64 {
+    fs::metadata(preview_path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_to_ms)
+        .filter(|ready_at_ms| *ready_at_ms <= adoption_time_ms)
+        .unwrap_or(adoption_time_ms)
 }
 
 fn wait_for_capture_pipeline_idle(base_dir: &Path) {
@@ -1845,6 +2109,13 @@ pub(crate) fn should_start_speculative_preview_render(fast_preview_kind: Option<
     )
 }
 
+fn fast_preview_source_kind(fast_preview_kind: Option<&str>) -> PreviewRenderSourceKind {
+    match fast_preview_kind {
+        Some("raw-sdk-preview") => PreviewRenderSourceKind::RawOriginal,
+        _ => PreviewRenderSourceKind::FastPreviewRaster,
+    }
+}
+
 fn validate_fast_preview_candidate(
     paths: &SessionPaths,
     capture_id: &str,
@@ -2170,7 +2441,7 @@ fn truthful_fast_preview_render_detail(
     capture_acknowledged_at_ms: u64,
 ) -> String {
     format!(
-        "presetId={};publishedVersion={};binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;args=none;status=ready",
+        "presetId={};publishedVersion={};binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready",
         preset_id,
         preset_version,
         preview_ready_at_ms.saturating_sub(capture_acknowledged_at_ms)
@@ -2433,6 +2704,30 @@ mod tests {
     }
 
     #[test]
+    fn speculative_preview_ready_time_uses_output_file_mtime_before_adoption_time() {
+        let base_dir = unique_temp_dir("speculative-ready-mtime");
+        fs::create_dir_all(&base_dir).expect("test dir should be created");
+        let output_path = base_dir.join("capture.preview-speculative.jpg");
+        fs::write(&output_path, [0xff, 0xd8, 0xff, 0xd9]).expect("preview file should write");
+
+        let file_ready_at_ms = fs::metadata(&output_path)
+            .expect("metadata should be readable")
+            .modified()
+            .ok()
+            .and_then(system_time_to_ms)
+            .expect("mtime should be available");
+        let adoption_time_ms = file_ready_at_ms + 250;
+
+        assert_eq!(
+            speculative_preview_ready_at_ms(&output_path, adoption_time_ms),
+            file_ready_at_ms,
+            "truthful close should use artifact ready time, not later manifest adoption time"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn speculative_preview_source_is_staged_to_a_stable_copy() {
         let _guard = SPECULATIVE_WAIT_TEST_MUTEX
             .lock()
@@ -2474,6 +2769,47 @@ mod tests {
         assert!(
             prepared.asset_path.exists(),
             "staged source should survive canonical preview replacement"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn duplicate_speculative_preview_does_not_leave_a_staged_source_file() {
+        let _guard = SPECULATIVE_WAIT_TEST_MUTEX
+            .lock()
+            .expect("test mutex should lock");
+        let base_dir = unique_temp_dir("speculative-preview-duplicate-cleanup");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture_id = "capture_test";
+        let request_id = "request_test";
+        let source_path = paths.renders_previews_dir.join("capture_test.jpg");
+        let existing_output_path = speculative_preview_output_path(&paths, capture_id);
+        let staged_source_path =
+            speculative_preview_source_path(&paths, capture_id, request_id, "jpg");
+
+        fs::create_dir_all(&paths.renders_previews_dir)
+            .expect("preview directory should be created");
+        fs::write(&source_path, [0xFF, 0xD8, 0xFF, 0xD9])
+            .expect("source preview should be writable");
+        fs::write(&existing_output_path, [0xFF, 0xD8, 0xFF, 0xD9])
+            .expect("existing speculative output should be writable");
+
+        start_speculative_preview_render_in_dir(
+            &base_dir,
+            session_id,
+            request_id,
+            capture_id,
+            "preset_soft-glow",
+            "2026.03.20",
+            source_path.to_string_lossy().as_ref(),
+            Some("windows-shell-thumbnail"),
+        );
+
+        assert!(
+            !staged_source_path.exists(),
+            "duplicate speculative events should return before staging or clean the staged source"
         );
 
         let _ = fs::remove_dir_all(base_dir);

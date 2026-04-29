@@ -80,6 +80,10 @@ scope: preview-track
   preview ownership은 `preset-applied-preview`로 닫혔고 camera/helper readiness는 healthy였으며,
   `capturesPassed=5/5`와 direct official metrics `2819`, `2835`, `2861`, `2884`, `2831`ms를 기록했다.
   하지만 code review 후 이 package는 official Story `1.26` `Go`가 아니라 comparison evidence로만 읽는다. 이유는 original Story `1.26` boundary가 host-owned reserve path를 요구하고, look-affecting operation trimming은 truthful preset look 기준을 약하게 만들 수 있기 때문이다.
+- `2026-04-29` false-Go correction 이후 current direction이 바뀌었다.
+  native RAW partial approximation은 over-white output과 비현실적으로 낮은 timing을 만들 수 있으므로 official truth가 아니다.
+  사용자가 선택한 2번 방법은 실제 full preset result를 만드는 `resident/long-lived darktable-compatible` engine path다.
+  이는 per-capture darktable fallback tail 미세조정이 아니라, 실제 preset engine을 hot path owner로 유지해 process spawn/cold-start/jitter를 줄이는 제품 경로다.
 
 canonical reading order:
 
@@ -309,8 +313,17 @@ canonical reading order:
 이번 단계의 방향:
 
 - `Preview Waiting -> Preview Ready` truth contract는 유지한다.
-- darktable는 parity reference / fallback / final-export truth로 남길 수 있다.
-- 하지만 booth-visible truthful close는 더 낮은 비용 경계로 당기는 쪽을 우선 검토한다.
+- 2026-04-29 false-Go 이후에는 partial native approximation을 official truth로 승격하지 않는다.
+- darktable는 단순 fallback tail 튜닝 대상이 아니라, 실제 full preset 결과를 만드는 resident/long-lived engine 후보로 다시 본다.
+- 하지만 booth-visible truthful close는 per-capture process spawn과 cold-start를 반복하지 않는 더 낮은 비용 경계로 당겨야 한다.
+- look-affecting operation trim, fast-preview-raster input, operation-derived profile, parity 없는 native output은 official close로 세지 않는다.
+
+2026-04-29 방향 재선택:
+
+- 이 문서는 이미 per-capture darktable tail과 host-owned reserve artifact 부재를 반복 기록하고 있었다.
+- 그러나 기존 문구는 "darktable fallback tuning 금지"를 강조하면서, 실제 preset engine을 resident/long-lived 제품 경로로 다시 세우는 결정을 명시하지 않았다.
+- 현재 선택한 방향은 2번 방법이다. 실제 full preset result를 만드는 darktable-compatible engine을 계속 살아 있게 두고, process spawn/cold-start/queue jitter를 제거하거나 줄인다.
+- 성공 조건은 `truthProfile=original-full-preset`을 정직하게 주장할 수 있는 output이다. 빠른 native approximation이나 fallback comparison evidence는 official truth가 아니다.
 
 검증 결과:
 
@@ -854,3 +867,175 @@ canonical reading order:
 - prompt parsing, helper/camera readiness, truthful `preset-applied-preview` close는 정상이다.
 - all direct official metrics are under `<= 3000ms`.
 - 제품 판정은 기존 기준을 유지한다. 이번 run은 latency tail 개선 evidence이며, Story `1.26`의 official close는 host-owned reserve path boundary와 truthful preset-look preservation까지 다시 맞춘 뒤 판단한다.
+
+### 2026-04-27 14:38 +09:00 latest requested hardware validation은 host-owned reserve input 부재로 No-Go다
+
+최신 실행에서 확인한 점:
+
+- 최근 일반 앱 로그 `session_000000000018a9e0f606e69ed0`는 helper가 `windows-shell-thumbnail`만 제공하고, preset-applied close는 per-capture `darktable-cli` speculative render로 닫히는 패턴을 보였다.
+- current worktree는 hardware validation runner가 helper handoff, timing route, speculative preview output/detail/lock 상태를 official 3초 reserve-input window 동안 함께 기록하도록 보강했다.
+- 관련 자동 테스트는 통과했다.
+  - `cargo test --manifest-path src-tauri\Cargo.toml --lib automation::hardware_validation::tests::host_owned_reserve_input_records_speculative_preview_route_evidence -- --exact`
+  - `cargo test --manifest-path src-tauri\Cargo.toml --test hardware_validation_runner -- --test-threads=1`
+- 요청 커맨드 `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 다시 실행했다.
+  - run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777268284508\run-summary.json`
+  - session: `session_000000000018aa2016a0ccd26c`
+  - result: `status=failed`, `capturesPassed=0/5`, failure `preview-host-owned-reserve-unavailable`
+  - host-owned evidence: `latestFastPreviewKind=windows-shell-thumbnail`, `latestPreviewRouteDetail=null`, `latestSpeculativePreviewDetail=null`
+  - speculative state: `speculativeLockPresent=true`, `speculativeOutputReady=false`
+  - wait evidence: `waitElapsedMs=3028`, `waitTimedOut=true`
+
+판단:
+
+- 이번 실패는 검증기가 helper event만 본 한계나 짧은 wait 문제가 아니다.
+- official 3초 window 안에 host-owned `preset-applied-preview` artifact가 생성되지 않았다.
+- Story `1.26`은 계속 `in-progress / No-Go`이며, 다음 개선은 darktable tail 미세 조정이 아니라 host-owned reserve path 산출물을 실제로 만드는 쪽이다.
+
+### 2026-04-27 14:50 +09:00 capture stuck symptom 수정 후 requested hardware validation
+
+최신 실패 원인은 카메라 저장 실패가 아니었다. runner가 `preview-host-owned-reserve-unavailable` No-Go를 반환하면서 같은 실행 안의 preview render를 끝까지 정리하지 않아, 저장된 capture가 `previewWaiting`에 남는 문제였다.
+
+이번 개선 내용:
+
+- No-Go 반환 전에 저장된 capture의 preview render를 마무리한다.
+- run-step에 `capture-preview-settled-after-no-go`를 남겨, 실패 판정 뒤에도 세션이 정상 상태로 닫혔는지 확인한다.
+
+자동 테스트:
+
+- `cargo test --manifest-path src-tauri\Cargo.toml --test hardware_validation_runner hardware_validation_runner_fails_when_host_owned_reserve_input_is_missing -- --exact --test-threads=1`
+- 결과: RED 확인 후 수정, 최종 `1 passed`
+- `cargo test --manifest-path src-tauri\Cargo.toml --test hardware_validation_runner -- --test-threads=1`
+- 결과: `7 passed`
+- `cargo test --manifest-path src-tauri\Cargo.toml --lib automation::hardware_validation::tests::host_owned_reserve_input_records_speculative_preview_route_evidence -- --exact`
+- 결과: `1 passed`
+
+요청 커맨드 `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 다시 실행했다.
+
+- run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777269000875\run-summary.json`
+- session: `session_000000000018aa20bd6b9bb82c`
+- result: `status=failed`, `capturesPassed=0/5`, failure `preview-host-owned-reserve-unavailable`
+- settled step: `capture-preview-settled-after-no-go` status `passed`
+- final session state: `capture-ready`
+- latest capture state: `previewReady / preset-applied-preview`
+
+판단:
+
+- 촬영 저장은 정상이고, 실패처럼 보인 증상은 실패 반환 시 미리보기 정리가 끊긴 것이었다.
+- 그 증상은 수정됐다. 다만 Story `1.26`의 공식 판정은 host-owned reserve input 부재 때문에 계속 `No-Go`다.
+
+### 2026-04-27 15:11 +09:00 failure summary에 fallback route evidence까지 기록했다
+
+최신 실행에서 확인한 점:
+
+- 최근 No-Go run은 final summary가 host-owned reserve 입력 부재만 보여 주고, settle 뒤 실제로 생긴 fallback route를 충분히 보여 주지 못했다.
+- current worktree는 No-Go settle 이후 reserve evidence를 다시 읽어 final failure summary에 fallback route까지 남기도록 보강했다.
+- 관련 자동 테스트는 통과했다.
+  - `cargo test --manifest-path src-tauri\Cargo.toml --test hardware_validation_runner hardware_validation_runner_fails_when_host_owned_reserve_input_is_missing -- --exact --test-threads=1`
+  - `cargo test --manifest-path src-tauri\Cargo.toml --test hardware_validation_runner -- --test-threads=1`
+- 요청 커맨드 `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 다시 실행했다.
+  - run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777270283523\run-summary.json`
+  - session: `session_000000000018aa21e80f662534`
+  - result: `status=failed`, `capturesPassed=0/5`, failure `preview-host-owned-reserve-unavailable`
+  - host-owned evidence: `latestFastPreviewKind=windows-shell-thumbnail`, `waitElapsedMs=3023`, `waitTimedOut=true`
+  - fallback route evidence: `darktable-cli`, `program-files-bin`, `elapsedMs=3011`, `inputSourceAsset=fast-preview-raster`, `sourceAsset=preset-applied-preview`
+  - settled step: `capture-preview-settled-after-no-go=passed`
+  - final operator state: `capture-ready`
+
+판단:
+
+- 최신 검증은 No-Go지만 더 유용한 No-Go다.
+- camera/helper readiness, capture save, warm-up, preview cleanup은 정상으로 닫혔다.
+- 남은 blocker는 명확히 host-owned reserve artifact 부재다.
+- per-capture `darktable-cli` fallback route는 comparison evidence로만 남기고, Story `1.26` official `Go` 근거로 쓰지 않는다.
+
+### 2026-04-27 15:44 +09:00 latest requested validation도 같은 reserve-input 부재로 No-Go다
+
+최신 실행에서 확인한 점:
+
+- 요청 커맨드 `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`를 다시 실행했다.
+  - run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777272273229\run-summary.json`
+  - session: `session_000000000018aa23b7531de818`
+  - result: `status=failed`, `capturesPassed=0/5`, failure `preview-host-owned-reserve-unavailable`
+  - host-owned evidence: `latestFastPreviewKind=windows-shell-thumbnail`, `waitElapsedMs=3030`, `waitTimedOut=true`
+  - fallback route evidence: `darktable-cli`, `program-files-bin`, `elapsedMs=3163`, `inputSourceAsset=fast-preview-raster`, `sourceAsset=preset-applied-preview`
+  - official timing: `originalVisibleToPresetAppliedVisibleMs=3179`
+  - settled step: `capture-preview-settled-after-no-go=passed`
+  - final operator state: `capture-ready`
+
+판단:
+
+- capture save, warm-up, helper/camera readiness, and cleanup remain healthy.
+- current worktree still does not produce a host-owned `preset-applied-preview` reserve artifact inside the official window.
+- next product improvement is not another darktable tail tweak; it is implementing/restoring the host-owned truthful preview path and then collecting a fresh approved hardware package.
+
+### 2026-04-27 15:54 +09:00 app log review와 requested validation이 같은 blocker를 가리킨다
+
+최신 앱 로그와 요청 검증을 함께 봤다.
+
+- app log: `C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+- app session: `session_000000000018a9e0f606e69ed0`
+- app observation: 두 컷 모두 `file-arrived fastPreviewKind=none` 뒤 `windows-shell-thumbnail`이 먼저 보였고, final close는 per-capture `darktable-cli` fallback이었다.
+- app timing: `originalVisibleToPresetAppliedVisibleMs=4616`, `3017`
+- requested run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777272846171\run-summary.json`
+- requested session: `session_000000000018aa243cb94f60f0`
+- result: `status=failed`, `capturesPassed=0/5`, failure `preview-host-owned-reserve-unavailable`
+- host-owned evidence: `latestFastPreviewKind=windows-shell-thumbnail`, `waitElapsedMs=3019`, `waitTimedOut=true`
+- fallback route evidence: `darktable-cli`, `program-files-bin`, `elapsedMs=7426`, `inputSourceAsset=fast-preview-raster`, `sourceAsset=preset-applied-preview`
+- official timing: `originalVisibleToPresetAppliedVisibleMs=7505`
+- settled step: `capture-preview-settled-after-no-go=passed`
+- final operator state: `capture-ready`
+
+판단:
+
+- warm-up, camera/helper readiness, RAW save, and cleanup remain healthy.
+- app run and requested validation now point to the same product blocker: host-owned `preset-applied-preview` reserve artifact is still absent.
+- darktable fallback is useful comparison evidence only, and this run is far outside the 3s official gate.
+- next product improvement remains host-owned truthful preview generation, not more darktable fallback tuning.
+
+### 2026-04-29 direction decision: option 2 is the resident/long-lived actual preset engine path
+
+확인한 기존 문서 상태:
+
+- `docs/preview-architecture-history-and-agent-guide.md`에는 old `resident first-visible` line과 `darktable-compatible path`를 reference/fallback으로 둔 기록이 있었다.
+- 이 문서에도 `darktable tail`과 `host-owned reserve artifact` 부재는 반복 기록되어 있었다.
+- 하지만 두 문서 모두 "partial native approximation 대신 실제 preset engine을 resident/long-lived로 살리는 2번 방법을 선택한다"는 최신 결론은 명시하지 않았다.
+
+새 current direction:
+
+- native RAW approximation은 official truth가 아니다. over-white false-Go와 비현실적으로 낮은 timing이 이미 확인됐다.
+- 다음 제품 경로는 resident/long-lived darktable-compatible worker, libdarktable-style in-process owner, 또는 동등한 long-lived full-preset renderer다.
+- 목표는 darktable fallback을 조금 더 빠르게 만드는 것이 아니라, 실제 full preset result owner를 booth-visible hot path로 만드는 것이다.
+- `inputSourceAsset=fast-preview-raster`, `profile=operation-derived`, darktable-backed fallback, full-preset parity 없는 host-owned output은 계속 comparison evidence로만 본다.
+- 다음 구현은 `original-full-preset`을 정직하게 주장할 수 있는 생성/승격/검증 경로를 만든 뒤 같은 hardware validation runner로 fresh package를 수집해야 한다.
+
+다음 실행 체크:
+
+- resident engine process를 먼저 살리고, per-capture spawn 없이 same-capture request를 받을 수 있는지 확인한다.
+- output은 full preset XMP 기준이어야 하며, trimmed XMP 또는 operation-derived profile이면 official truth로 세지 않는다.
+- route evidence는 `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`을 모두 가져야 한다.
+- visual sanity gate는 over-white false Go를 다시 막기 위해 hardware validation package에 남긴다.
+- 승인 하드웨어 재검증은 위 route evidence가 실제로 나온 뒤 실행한다.
+
+### 2026-04-29 12:45 current answer: option 2 passed
+
+최신 결과:
+
+- option 2 implementation has approved-hardware `Go` evidence.
+- hardware run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777434275752\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab70e79e5baa8\`
+- result: `passed`, capturesPassed `5/5`
+- official timing: `2316ms ~ 2338ms`
+- resident render elapsed: `3188ms ~ 3234ms`
+
+현재 정답:
+
+- Story `1.26` 공식 제품 경로는 resident/long-lived darktable-compatible full-preset owner다.
+- 이 경로는 `raw-original` 같은 촬영본에서 `preset-applied-preview`를 만든다.
+- route evidence는 `truthProfile=original-full-preset`, `truthOwner=display-sized-preset-applied`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`을 포함해야 한다.
+
+다음 변경 기준:
+
+- 이 결과를 바꿀 때는 fallback 속도만 보지 말고 route evidence를 먼저 본다.
+- `inputSourceAsset=fast-preview-raster`, `profile=operation-derived`, per-capture fallback, partial native approximation은 official truth가 아니다.
+- timing이 다시 나빠지면 resident owner hardening을 먼저 본다.
+- route evidence가 사라지면 resident full-preset generation/promotion path가 깨진 것이다.

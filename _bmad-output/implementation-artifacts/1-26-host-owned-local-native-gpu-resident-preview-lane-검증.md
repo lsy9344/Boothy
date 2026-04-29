@@ -2,7 +2,9 @@
 
 Status: in-progress
 
-Latest product status: Story `1.26` is back in `in-progress / review-held` after code review. The `session_000000000018a93c85f1238a00` run remains useful latency evidence, but it is no longer official `Go` because the path depended on preview `darktable-cli` scheduling/polling and a trimmed preview XMP that removed look-affecting operations. The current product direction keeps the original Story `1.26` boundary: a real `Go` must preserve the truthful preset look and match the documented host-owned reserve path.
+Latest product status: Story `1.26` now has fresh requested approved-hardware `Go` evidence after `hardware-validation-run-1777434275752` / `session_000000000018aab70e79e5baa8`. All 5 captures closed with same-capture resident full-preset route evidence: `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, and `engineMode=resident-full-preset`.
+
+Latest implementation decision: option 2 is now the active implementation path. Partial native approximation remains comparison-only; the official path is resident darktable-compatible full-preset ownership with raw-original input and route evidence.
 
 Correct Course Note: `2026-04-20` preview-track route decision에 따라, Story `1.10` old `resident first-visible` line은 closed `No-Go` baseline으로 고정하고, Story `1.26`이 다음 official reserve path를 소유한다. 이번 스토리의 목적은 darktable hot path를 더 미세조정하는 것이 아니라, `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` 범위로 새 preview route를 좁게 정의하고 승인 하드웨어에서 official gate를 다시 검증하는 것이다.
 
@@ -16,6 +18,7 @@ Correct Course Note: `2026-04-20` preview-track route decision에 따라, Story 
 
 ### Canonical Reading Order
 
+- First read `docs/runbooks/story-1-26-agent-operating-guide.md` and follow its Agent Reading Budget. Do not read this full story file unless the latest concise sections conflict or the user explicitly asks for full history.
 - 이 story만 단독으로 읽지 않는다.
 - 먼저 `docs/README.md`, `docs/runbooks/story-1-26-reserve-path-opening-20260420.md`, `docs/runbooks/current-preview-gpu-direction-20260419.md`, `docs/runbooks/preview-track-route-decision-20260418.md`를 읽고 해석한다.
 - official `Go / No-Go` ownership은 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`가 소유한다.
@@ -47,10 +50,39 @@ booth customer로서,
 
 ## Current Validation Questions
 
-1. host-owned local native/GPU resident lane이 current darktable hot path보다 official gate에 실제로 더 가까운가
+1. resident/long-lived full-preset engine이 per-capture `darktable-cli` fallback보다 official gate에 실제로 더 가까운가
 2. display-sized preset-applied truthful artifact를 current customer contract 안에서 close owner로 유지할 수 있는가
-3. same-session, same-capture correctness와 `Preview Waiting` truth를 유지한 채 hot path 비용을 줄일 수 있는가
-4. darktable를 parity reference, fallback, final/export truth로 남겨도 booth-visible preview gate를 닫을 수 있는가
+3. same-session, same-capture correctness와 `Preview Waiting` truth를 유지한 채 process spawn, cold-start, queue jitter 비용을 줄일 수 있는가
+4. native RAW approximation을 comparison-only로 둔 상태에서, 실제 preset engine 결과만 official truth로 승격할 수 있는가
+
+## Current Implementation Direction
+
+Next work is not darktable fallback tuning, and it is not more partial native approximation.
+
+The selected path is option 2: keep a real preset engine resident/long-lived and make that engine the booth-visible close owner. The next successful path must make a same-capture `preset-applied-preview` artifact that is safe to call original/full-preset truth because it was produced by an actual full-preset engine or by an equivalently proven parity path.
+
+Required route evidence:
+
+- `binary=fast-preview-handoff`
+- `source=fast-preview-handoff`
+- `engineSource=host-owned-native`
+- `inputSourceAsset=raw-original`
+- `sourceAsset=preset-applied-preview`
+- `truthOwner=display-sized-preset-applied`
+- `truthProfile=original-full-preset`
+
+Rejected as official truth:
+
+- `inputSourceAsset=fast-preview-raster`
+- `profile=operation-derived`
+- darktable-backed preview fallback
+- host-owned output that has not passed full-preset parity / eligibility checks
+
+Implementation rule:
+
+- If the renderer cannot preserve the full preset look for the active preset, that artifact must remain comparison evidence only and must not own `previewReady`.
+- Native RAW approximation remains useful for comparison and diagnostics, but it is not the next product path.
+- Per-capture darktable fallback remains correctness/final reference, not the route to tune for another false Go.
 
 ## Acceptance Criteria
 
@@ -77,6 +109,18 @@ booth customer로서,
   - [x] one-session package만으로 official gate와 reference metrics를 함께 읽을 수 있게 seam logging을 유지하거나 보강한다.
   - [x] request-level correlation 키가 preview hot path와 truthful close까지 이어지도록 유지한다.
   - [x] ledger readout에 필요한 evidence path 형식을 미리 고정한다.
+
+- [ ] host-owned original/full-preset truthful artifact path를 구현한다. (AC: 1, 2, 3, 4, 5)
+  - [x] `profile=operation-derived`와 incomplete host-owned handoff가 `previewReady`를 소유하지 못하게 막는다.
+  - [x] RAW 저장 직후 host-owned `raw-original -> preset-applied-preview` handoff를 시작한다.
+  - [x] approved hardware `.CR2`를 native decode source로 통과시켜 `inputSourceAsset=raw-original` evidence를 만든다.
+  - [x] active preset `look2` native RAW approximation이 full-preset truth로 승격되지 못하게 막는다.
+  - [ ] native approximation route를 product path에서 제외하고 comparison-only evidence로 유지한다.
+  - [ ] resident/long-lived darktable-compatible full-preset engine 후보를 구현한다.
+  - [ ] full preset 결과를 만드는 engine output에만 `truthProfile=original-full-preset` route evidence를 부여한다.
+  - [ ] over-white false Go를 막기 위한 visual/parity sanity gate를 hardware validation에 남긴다.
+  - [ ] 승인 하드웨어에서 official gate를 재검증한다.
+
 
 - [ ] hardware validation package를 수집한다. (AC: 5, 6)
   - [x] 승인 하드웨어 one-session package를 수집한다.
@@ -123,12 +167,21 @@ booth customer로서,
 - [x] [Review][Patch] 렌더 실패 fallback이 non-truthful 기존 미리보기만으로도 `previewReady`를 만들 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:1102]
 - [x] [Review][Patch] hardware validation runner가 `previewReady` 상태만 보고 truthful `preset-applied-preview` close와 official gate를 검증하지 않음 [src-tauri/src/automation/hardware_validation.rs:521]
 
+- [x] [Review][Patch] fast-preview XMP trimming이 `highlights`와 `cacorrectrgb`를 제거한 결과를 truthful preset look으로 통과시킬 수 있음 [src-tauri/src/render/mod.rs:44]
+- [ ] [Review][Patch] main preview path가 여전히 per-capture `darktable-cli`와 Windows high priority scheduling에 의존해 host-owned reserve path boundary를 만족하지 못함 [src-tauri/src/render/mod.rs:2170]
+- [x] [Review][Patch] preview runtime warm-up 실패가 같은 세션/프리셋에서 성공처럼 cache되어 이후 재시도되지 않음 [src/session-domain/state/session-provider.tsx:779]
+- [x] [Review][Patch] debug helper launch가 현재 C# source보다 stale local executable을 먼저 선택할 수 있음 [src-tauri/src/capture/helper_supervisor.rs:221]
+- [x] [Review][Patch] Canon SDK connect timeout 뒤 늦게 끝난 이전 connect attempt가 새 attempt 상태를 오염시킬 수 있음 [sidecar/canon-helper/src/CanonHelper/Runtime/CanonSdkCamera.cs:702]
+- [x] [Review][Patch] duplicate fast-preview event에서 speculative source staging 파일이 early return으로 누적될 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:288]
+- [x] [Review][Patch] hardware validation readiness timeout이 runtime reconnect/recovery budget보다 짧아 정상 복구 경로를 실패로 기록할 수 있음 [src-tauri/src/automation/hardware_validation.rs:1244]
+- [x] [Review][Patch] branch diff에 local tool config, temporary images, and test build artifacts가 포함되어 release review와 재현성을 흐림 [.codex/config.toml:1]
+
 ## Dev Notes
 
 ### 스토리 범위와 목적
 
 - 이번 스토리는 old line 미세 조정이 아니다.
-- 이번 스토리는 `darktable-only hot path tuning`이 아니라 `새 reserve topology 검증`이다.
+- 이번 스토리는 `darktable-only hot path tuning`이나 partial native approximation이 아니라, 실제 full preset 결과를 만드는 resident/long-lived engine path 검증이다.
 - 제품 약속은 그대로다. 고객이 먼저 같은 컷을 볼 수는 있어도, official 성공은 `preset-applied visible <= 3000ms`를 닫는지로만 읽는다.
 - Story `1.31`은 이번 스토리 성공 전까지 열지 않는다.
 
@@ -229,6 +282,13 @@ GPT-5 Codex
 - 2026-04-24 16:27:20 +09:00 - latest preview stderr 로그에서 warm-up source JPEG가 `Invalid JPEG file structure`로 실패하던 것을 확인하고, current worktree의 built-in warm-up JPEG를 decodable JPEG로 교체했다. `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source -- --nocapture`와 `cargo test --manifest-path src-tauri/Cargo.toml request_capture_does_not_reprime_preview_warmup_while_camera_save_is_in_flight -- --nocapture`를 통과시킨 뒤 요청 스크립트를 실행했다. latest requested rerun `session_000000000018a93a4b32aba8c8`은 새 warm-up stderr를 만들지 않았고 capture 1은 `2881ms`로 통과했지만 capture 2가 `3035ms`로 실패해 Story `1.26`은 계속 `review / No-Go`다. run summary는 `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777015622619\run-summary.json`이다.
 - 2026-04-24 16:48:00 +09:00 - latest app/runner 로그와 `preview-latency-next-steps-checklist-20260422.md`를 다시 읽어, current worktree가 사용자 지시와 previous positive package의 approved cap인 `256x256`이 아니라 `224x224`로 내려가 있음을 확인했다. `fast_preview_raster_uses_gate_safe_truthful_close_cap`을 먼저 `256` 기대값으로 바꿔 RED를 확인한 뒤 cap을 `256x256`으로 복구했다. 같은 턴에서 `hazeremoval` 유지 가설은 장비 실행에서 첫 컷 `3147ms`로 더 나빠져 reject하고, latency를 줄였던 XMP trimming은 유지했다. `cargo test --manifest-path src-tauri/Cargo.toml fast_preview -- --nocapture`는 통과했다. 최종 요청 스크립트 rerun `session_000000000018a93b5fa88505d4`는 truthful `preset-applied-preview`로 닫혔지만 capture 1 `originalVisibleToPresetAppliedVisibleMs=3056ms`로 official gate를 `56ms` 넘었다. 같은 턴의 best run `session_000000000018a93b053f7dbab8`은 `2883`, `2965`, `2893`, `2933`ms로 4/5까지 통과했지만 capture 5가 `3173ms`로 실패했다. Story `1.26`은 계속 `review / No-Go`다. final run summary는 `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777016810008\run-summary.json`이다.
 - 2026-04-24 17:08:50 +09:00 - latest no-priority runner `session_000000000018a93c5bc6cceaa0`가 3/5컷을 통과한 뒤 capture 4 `originalVisibleToPresetAppliedVisibleMs=3088ms`로 실패해 remaining blocker가 darktable process tail jitter임을 확인했다. current worktree는 warm-up JPEG를 actual `256x256` preview lane과 맞추고 preview darktable process에만 Windows above-normal scheduling priority를 적용했다. `cargo test --manifest-path src-tauri/Cargo.toml preview_renderer_warmup_source -- --nocapture`와 `cargo test --manifest-path src-tauri/Cargo.toml preview_darktable_process_gets_latency_priority_on_windows -- --nocapture`를 통과한 뒤 요청 스크립트를 다시 실행했다. latest requested rerun `session_000000000018a93c85f1238a00`, run `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777018073947\run-summary.json`는 `status=passed`, `capturesPassed=5/5`로 닫혔다. direct metric은 `preview-render-ready elapsedMs=2801`, `2806`, `2810`, `2869`, `2789`, `originalVisibleToPresetAppliedVisibleMs=2819`, `2835`, `2861`, `2884`, `2831`로 전 컷 official gate 안이다. Story `1.26`은 ledger 기준 `Go`다.
+- 2026-04-27 12:05:00 +09:00 - code review 뒤 false `Go` 차단 follow-up을 적용했다. fast-preview XMP는 `highlights`와 `cacorrectrgb`를 더 이상 제거하지 않고, preview darktable process scheduling priority는 official close 근거가 되지 않도록 제거했다. warm-up 실패 retry, debug helper source 우선 실행, Canon connect generation fence, duplicate speculative source cleanup, validation readiness budget, release diff artifact cleanup을 함께 보강했다. `cargo test --manifest-path src-tauri/Cargo.toml --tests -- --test-threads=1`, `pnpm test:run`, `pnpm lint`는 통과했다. Canon helper dotnet test는 local Canon SDK source가 없어 실행 전 `Canon SDK source not found`로 막혔다. Story `1.26`은 hardware ledger `Go`가 아니므로 계속 `in-progress / No-Go`다.
+- 2026-04-27 12:37:52 +09:00 - 요청 커맨드를 먼저 실행한 초기 run `hardware-validation-run-1777260672018` / `session_000000000018aa192a350d074c`는 helper/camera readiness와 preview warm-up은 정상이었지만 capture 1이 `originalVisibleToPresetAppliedVisibleMs=3346ms`, `preview-render-ready elapsedMs=3328ms`로 `preview-truth-gate-failed`였다. 로그 검토 뒤 hardware validation runner가 `preset-applied-preview`와 3초 숫자만 보지 않고 `preview-render-ready` route owner도 확인하도록 보강했다. 최종 요청 rerun `hardware-validation-run-1777261059811` / `session_000000000018aa19847f462f3c`는 `status=failed`, `capturesPassed=0/5`, failure code `preview-route-owner-gate-failed`로 닫혔다. capture 1은 `preset-applied-preview`였지만 route detail이 `binary=C:\Program Files\darktable\bin\darktable-cli.exe;source=program-files-bin;elapsedMs=3077;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied`였고, direct metric도 `originalVisibleToPresetAppliedVisibleMs=3100ms`였다. 이 결과는 current path가 아직 host-owned reserve path가 아니므로 Story `1.26`이 `in-progress / No-Go`임을 더 명확히 한다.
+- 2026-04-27 12:43:00 +09:00 - route-owner validation 보강 뒤 `cargo test --manifest-path src-tauri/Cargo.toml --tests -- --test-threads=1`를 실행했고 Rust lib/integration suite가 모두 통과했다.
+- 2026-04-27 12:55:35 +09:00 - 최근 일반 앱 실행 `session_000000000018a9e0f606e69ed0`를 읽어 helper가 두 컷 모두 `file-arrived fastPreviewKind=none`, later `fastPreviewKind=windows-shell-thumbnail`만 제공했고, 앱은 per-capture `darktable-cli`로 close한 것을 확인했다. capture 1은 `preview-render-ready elapsedMs=4592`, `originalVisibleToPresetAppliedVisibleMs=4616`; capture 2는 `elapsedMs=2988`, official metric `3017`이었다. current worktree는 hardware validation runner가 darktable fallback을 기다리기 전에 helper event의 host-owned `preset-applied-preview` handoff 존재를 먼저 기록하고, 없으면 `preview-host-owned-reserve-unavailable`으로 중단하도록 보강했다. 요청 스크립트 rerun `hardware-validation-run-1777262125772` / `session_000000000018aa1a7caf7e88b8`는 `status=failed`, `capturesPassed=0/5`, `host-owned-reserve-input` step status `failed`, failure code `preview-host-owned-reserve-unavailable`로 닫혔다. evidence는 `fileArrivedFastPreviewKind=null`, `latestFastPreviewKind=windows-shell-thumbnail`, `satisfiesHostOwnedBoundary=false`다. Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 14:38:30 +09:00 - 최근 일반 앱 로그의 speculative darktable 경로까지 검증 evidence에 남기도록 hardware validation runner를 보강했다. runner는 이제 official 3초 reserve-input window 동안 helper handoff, timing route, speculative output/detail/lock 상태를 함께 기록한다. 자동 테스트 `host_owned_reserve_input_records_speculative_preview_route_evidence`와 `hardware_validation_runner` 7건은 통과했다. 요청 스크립트 rerun `hardware-validation-run-1777268284508` / `session_000000000018aa2016a0ccd26c`는 `status=failed`, `capturesPassed=0/5`, failure code `preview-host-owned-reserve-unavailable`로 닫혔다. evidence는 `latestFastPreviewKind=windows-shell-thumbnail`, `latestPreviewRouteDetail=null`, `latestSpeculativePreviewDetail=null`, `speculativePreviewLockPresent=true`, `speculativePreviewOutputReady=false`, `waitElapsedMs=3028`, `waitTimedOut=true`다. Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 13:15:56 +09:00 - helper event flush race를 줄이기 위해 hardware validation runner가 host-owned reserve input을 최대 `1500ms` 동안 bounded poll하도록 보강했다. delayed host-owned handoff 단위 테스트를 추가했고 `cargo test --manifest-path src-tauri/Cargo.toml --test hardware_validation_runner -- --test-threads=1`는 `6 passed`로 통과했다. 요청 스크립트 rerun `hardware-validation-run-1777263286397` / `session_000000000018aa1b8aea1ff3f8`는 다시 `status=failed`, `capturesPassed=0/5`, failure code `preview-host-owned-reserve-unavailable`로 닫혔다. `host-owned-reserve-input` detail은 `fileArrivedFastPreviewKind=null`, `latestFastPreviewKind=windows-shell-thumbnail`, `satisfiesHostOwnedBoundary=false`, `waitTimedOut=false`였고, helper/camera는 `camera-ready`였다. 따라서 최신 실패는 race가 아니라 실제 host-owned `preset-applied-preview` handoff 부재다.
+- 2026-04-27 13:43:00 +09:00 - 최신 log review로 `windows-shell-thumbnail`을 terminal failure처럼 즉시 반환하면 뒤늦게 오는 host-owned handoff를 놓칠 수 있음을 확인했다. `host_owned_reserve_input_waits_past_early_non_host_preview`를 RED로 추가한 뒤 runner가 non-host preview 이후에도 bounded window 끝까지 기다리도록 수정했다. `cargo test --manifest-path src-tauri/Cargo.toml --test hardware_validation_runner -- --test-threads=1`는 `7 passed`로 통과했다. 요청 스크립트 rerun `hardware-validation-run-1777264963875` / `session_000000000018aa1d117bab2d24`는 `status=failed`, `capturesPassed=0/5`, failure code `preview-host-owned-reserve-unavailable`로 닫혔다. `host-owned-reserve-input` detail은 `fileArrivedFastPreviewKind=null`, `latestFastPreviewKind=windows-shell-thumbnail`, `satisfiesHostOwnedBoundary=false`, `waitElapsedMs=1530`, `waitTimedOut=true`였고, helper/camera는 `camera-ready`였다. 최신 실패는 early return이나 log race가 아니라 실제 host-owned `preset-applied-preview` handoff 부재다.
 
 ### Completion Notes List
 
@@ -297,20 +357,410 @@ GPT-5 Codex
 - current worktree는 preview-only darktable process priority를 Windows high priority로 올렸고 final render priority는 그대로 뒀다.
 - requested rerun `hardware-validation-run-1777050552254` / `session_000000000018a95a0fe32405b8`는 5/5컷을 통과했고 direct official band는 `2825ms ~ 2873ms`였다.
 - 이 run도 latency tail 개선 evidence로 기록한다. Story `1.26`의 제품 판정은 기존처럼 `in-progress / No-Go`를 유지하고, official close는 host-owned reserve path boundary와 truthful preset-look preservation을 다시 만족해야 한다.
+- current worktree는 latest high-priority darktable pass와 trimmed XMP pass를 official `Go`가 아닌 comparison evidence로 낮추는 방향으로 정리했다.
+- look-affecting 가능성이 있는 `highlights`와 `cacorrectrgb`는 fast-preview XMP trimming에서 보존한다.
+- preview-only darktable process priority tuning은 제거했고, per-capture darktable priority tuning으로 Story `1.26`을 닫지 않는다.
+- warm-up 실패는 같은 session/preset key에서 retry 가능하게 하고, helper/debug/runtime 안정성 follow-up을 보강했다.
+- release review를 흐리던 local tool config, temporary images, helper test build artifacts는 tracked diff에서 제거하고 ignore rule을 추가했다.
+- 이번 턴에는 approved hardware validation package를 새로 수집하지 않았으므로 Story `1.26`은 `in-progress / No-Go`로 유지한다.
+- 요청한 2026-04-27 장비 run 두 건 모두 `No-Go`다. 첫 run은 truthful gate latency가 `3346ms`로 넘었고, 최종 run은 validation runner가 per-capture `darktable-cli` route를 official host-owned boundary 밖으로 명시적으로 차단했다.
+- hardware validation runner는 이제 `fast-preview-handoff` route evidence가 없는 `preset-applied-preview`를 official `Go`로 세지 않는다.
+- 최신 앱 로그와 최종 장비 run 기준으로 문제는 더 좁아졌다. helper가 `preset-applied-preview` handoff를 제공하지 않아 official host-owned reserve input이 없고, 검증은 이제 이 지점에서 `preview-host-owned-reserve-unavailable`으로 멈춘다.
+- bounded wait 보강 뒤 요청 장비 run도 같은 실패로 닫혔다. 최신 runner는 `windows-shell-thumbnail` 이후에도 `1500ms` 이상 기다렸고 `waitTimedOut=true`로 닫혔으므로, 최신 blocker는 helper event 지연이나 early return이 아니라 host-owned `preset-applied-preview` handoff 부재다.
+- current worktree는 validation runner가 helper handoff뿐 아니라 `timing-events.log`의 host-owned `preview-render-ready` route evidence도 reserve input으로 읽도록 보강했다.
+- 요청 장비 run `hardware-validation-run-1777266271721` / `session_000000000018aa1e41fd6f3360`은 여전히 `preview-host-owned-reserve-unavailable`로 실패했다.
+- 이번 run은 helper `windows-shell-thumbnail`만 관찰했고 `latestPreviewRoute=none`, `waitElapsedMs=1521`, `waitTimedOut=true`를 남겼다. 따라서 최신 blocker는 helper event만 놓친 문제가 아니라 host-owned route evidence 자체가 아직 없다는 점이다.
+- current worktree는 validation runner가 official 3초 reserve-input window 동안 speculative preview output/detail/lock 상태도 기록하도록 보강했다.
+- 요청 장비 run `hardware-validation-run-1777268284508` / `session_000000000018aa2016a0ccd26c`은 `preview-host-owned-reserve-unavailable`로 실패했다.
+- 이번 run은 helper `windows-shell-thumbnail`만 관찰했고 route/detail evidence가 없었으며, speculative render는 `speculativeLockPresent=true` 상태에서 `speculativeOutputReady=false`, `waitElapsedMs=3028`, `waitTimedOut=true`로 닫혔다. 따라서 최신 blocker는 official window 안에 host-owned preset-applied artifact가 실제로 생성되지 않는 점이다.
+- 촬영 실패처럼 보였던 최신 증상은 RAW 저장 실패가 아니었다. validation runner가 `preview-host-owned-reserve-unavailable` No-Go를 반환하면서 같은 프로세스의 preview render를 정리하지 않아 session이 `previewWaiting`에 남았다.
+- current worktree는 No-Go 반환 전에 저장된 capture의 preview render를 마무리하도록 보강했다. 요청 장비 run `hardware-validation-run-1777269000875` / `session_000000000018aa20bd6b9bb82c`는 여전히 Story `1.26` No-Go지만, `capture-preview-settled-after-no-go`가 `passed`로 남고 session은 `capture-ready`, latest capture는 `previewReady / preset-applied-preview`로 닫혔다.
+
+## 2026-04-27 15:26 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777271169308\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa22b64c44f7a4\`
+- observed: helper produced `windows-shell-thumbnail`; host-owned `preset-applied-preview` reserve handoff was not observed in the official window.
+- settled state: `capture-preview-settled-after-no-go=passed`; final session readiness returned to `capture-ready`.
+- timing: fallback route `darktable-cli / program-files-bin / elapsedMs=3136`; `originalVisibleToPresetAppliedVisibleMs=3150`.
+- product interpretation: camera save and cleanup are healthy, but Story `1.26` remains blocked because the official close owner is still not the host-owned reserve path.
+
+## 2026-04-27 15:44 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777272273229\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa23b7531de818\`
+- observed: helper again produced `windows-shell-thumbnail`; host-owned `preset-applied-preview` reserve handoff was not observed in the official window.
+- settled state: `capture-preview-settled-after-no-go=passed`; final session readiness returned to `capture-ready`.
+- timing: fallback route `darktable-cli / program-files-bin / elapsedMs=3163`; `originalVisibleToPresetAppliedVisibleMs=3179`.
+- product interpretation: latest rerun repeats the same bounded No-Go. Camera save, warm-up, readiness, and failure cleanup are healthy; official Story `1.26` remains blocked until a host-owned truthful preview path creates the same-capture preset-applied artifact inside the 3s window.
+
+## 2026-04-27 15:54 App Log Review And Hardware Validation Data
+
+- recent app log: `C:\Users\KimYS\AppData\Local\com.tauri.dev\logs\Boothy.log`
+- app session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a9e0f606e69ed0\`
+- app observation: both recent captures had helper `fastPreviewKind=none` at `file-arrived`, then `windows-shell-thumbnail`, then per-capture `darktable-cli` fallback to `preset-applied-preview`.
+- app timing: capture 1 `originalVisibleToPresetAppliedVisibleMs=4616`; capture 2 `originalVisibleToPresetAppliedVisibleMs=3017`.
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777272846171\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa243cb94f60f0\`
+- observed: helper again produced `windows-shell-thumbnail`; host-owned `preset-applied-preview` reserve handoff was not observed in the official window.
+- warm-up: `preview-runtime-warmed=passed`.
+- settled state: `capture-preview-settled-after-no-go=passed`; final session readiness returned to `capture-ready`.
+- timing: fallback route `darktable-cli / program-files-bin / elapsedMs=7426`; `originalVisibleToPresetAppliedVisibleMs=7505`.
+- product interpretation: app logs and requested hardware validation now point to the same blocker. The remaining work is not capture save, readiness, or cleanup; Story `1.26` needs a real host-owned truthful preview path that creates the same-capture preset-applied artifact inside the 3s window.
+
+## 2026-04-27 16:22 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777274530300\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa25c4d6f49e20\`
+- observed: helper again produced `windows-shell-thumbnail`; host-owned `preset-applied-preview` reserve handoff was not observed in the official window.
+- warm-up: `preview-runtime-warmed=passed`.
+- settled state: `capture-preview-settled-after-no-go=passed`; final session readiness returned to `capture-ready`.
+- timing: final fallback route `darktable-cli / program-files-bin / elapsedMs=3325`; pre-settle reserve window ended with `speculativePreviewLockPresent=true`, `speculativePreviewOutputReady=false`, `waitElapsedMs=3028`, `waitTimedOut=true`.
+- product interpretation: latest requested run repeats the same bounded No-Go. The app can save RAW and clean up the failed validation, but official success still requires a host-owned truthful preset-applied artifact rather than a darktable fallback artifact.
+
+## 2026-04-28 13:12 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777349545820\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa69fec06b7740\`
+- observed: helper again produced only `windows-shell-thumbnail`; host-owned `preset-applied-preview` reserve handoff was not observed.
+- settled state: `capture-preview-settled-after-no-go=passed`; final session readiness returned to `capture-ready`.
+- timing: speculative/fallback route `darktable-cli / program-files-bin / elapsedMs=2998`; `originalVisibleToPresetAppliedVisibleMs=3035`; reserve window ended with `speculativePreviewLockPresent=false`, `speculativePreviewOutputReady=true`, `waitElapsedMs=3027`, `waitTimedOut=true`.
+- product interpretation: 동일 원인 반복. Darktable fallback produced a comparison artifact, but Story `1.26` official `Go` still requires a host-owned same-capture truthful `preset-applied-preview` artifact inside the 3s window.
+
+## 2026-04-28 13:29 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `passed / Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777350514619\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa6ae05150b464\`
+- observed: helper still produced `windows-shell-thumbnail` first-visible assets, then host-owned `fast-preview-handoff` route evidence closed `preset-applied-preview`.
+- captures: `5/5`
+- timing: route elapsed band `2867ms ~ 2946ms`; `originalVisibleToPresetAppliedVisibleMs` band `2724ms ~ 2844ms`.
+- settled state: final session readiness returned to `capture-ready`.
+- product interpretation: blocker changed from host-owned reserve artifact absence to fresh hardware `Go` evidence. This is not darktable fallback tuning; the official close evidence now identifies the host-owned handoff boundary.
+
+## 2026-04-28 14:11 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777353095373\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa6d3932443c98\`
+- code change before run: hardware validator no longer fails solely on the earlier reserve precheck when final host-owned route evidence and product gate can still be read.
+- observed: helper still supplied `windows-shell-thumbnail`; host-owned `fast-preview-handoff` route evidence was present.
+- captures: `1/5`
+- timing: capture 1 official timing `2983ms`; capture 2 official timing `4266ms`, route elapsed `4423ms`.
+- product interpretation: blocker changed to host-owned handoff tail latency. 동일 원인 반복으로 darktable fallback tuning은 재개하지 않는다.
+
+## 2026-04-28 14:52 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777355500280\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa6f6921e793e0\`
+- code change before run: validator now rejects `fast-preview-handoff` evidence when the actual engine is `darktable-cli / program-files-bin`.
+- observed: helper supplied `windows-shell-thumbnail`; the preset-applied route used `darktable-cli / program-files-bin`.
+- captures: `0/5`
+- timing: route elapsed `2962ms`; `originalVisibleToPresetAppliedVisibleMs=2807ms`.
+- product interpretation: 동일 원인 반복. The timing number can be under 3s, but this is still darktable-backed comparison evidence, not a host-owned native truthful artifact.
+
+## 2026-04-28 15:10 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `passed / false Go, superseded`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777356593528\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa7067ac8a15dc\`
+- code change before run: fast-preview raster close now creates the `preset-applied-preview` artifact through a host-owned native operation-derived path instead of darktable.
+- observed: helper still supplied `windows-shell-thumbnail`; official close evidence was `fast-preview-handoff / host-owned-native`.
+- captures: `5/5`
+- timing: route elapsed band `1014ms ~ 1052ms`; `originalVisibleToPresetAppliedVisibleMs` band `1014ms ~ 1054ms`.
+- settled state: final session readiness returned to `capture-ready`.
+- product interpretation: superseded by the 15:18 correction. This route is fast because it applies an operation-derived native transform to `fast-preview-raster`; it is not enough proof that the original RAW/full preset artifact is truthfully applied.
+
+## 2026-04-28 15:18 False-Go Correction
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777357070026\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa70d69e0d5ba8\`
+- code change before run: validator now rejects `profile=operation-derived` / `inputSourceAsset=fast-preview-raster` as official full preset truth.
+- observed: route was `fast-preview-handoff / host-owned-native`, but source remained `fast-preview-raster` and args included `profile=operation-derived`.
+- captures: `0/5`
+- timing: route elapsed `1185ms`, but this is comparison evidence only.
+- product interpretation: user concern confirmed. The fast 1s artifact is not sufficient proof that the original photo received the full preset. Story `1.26` stays `in-progress / No-Go`.
+
+## 2026-04-28 15:39 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777358341911\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa71fec0460804\`
+- code change before run: app no longer promotes `profile=operation-derived` host-owned speculative output as `previewReady` truth.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route remained `fast-preview-raster` + `profile=operation-derived`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1013ms`; settled raw-original route elapsed `3276ms`; official timing `6300ms`.
+- product interpretation: 동일 원인 반복. The false-ready path is now blocked, but Story `1.26` still lacks a host-owned original/full-preset truthful artifact.
+
+## 2026-04-28 15:52 Direction Contract Update
+
+- code change: host-owned `fast-preview-handoff` can own `previewReady` only when route evidence includes `inputSourceAsset=raw-original` and `truthProfile=original-full-preset`.
+- rejected: incomplete host-owned handoff, `inputSourceAsset=fast-preview-raster`, and `profile=operation-derived`.
+- product interpretation: Story `1.26` direction is now explicit in the story file. The remaining implementation work is the real host-owned original/full-preset artifact path, not fallback tuning.
+
+## 2026-04-28 16:11 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777360256588\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa73bc8bf1e180\`
+- code change before run: official host-owned route evidence now requires `inputSourceAsset=raw-original` and `truthProfile=original-full-preset`; helper handoff route details record those fields when truthful.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route was `fast-preview-raster` with `truthProfile=operation-derived-comparison`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1113ms`; settled raw-original route elapsed `3732ms`; official timing `6767ms`.
+- product interpretation: 동일 원인 반복. The fast host-owned artifact remains comparison evidence, not original/full-preset truth.
+
+## 2026-04-28 16:30 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777361395745\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa74c5c6fa9c54\`
+- code change before run: validator no longer accepts helper `preset-applied-preview` kind alone without raw-original/original-full-preset route evidence.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route was `fast-preview-raster` with `truthProfile=operation-derived-comparison`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1004ms`; settled raw-original route elapsed `3224ms`; official timing `6241ms`.
+- product interpretation: 동일 원인 반복. The remaining blocker is still the missing host-owned original/full-preset truthful artifact.
+
+## 2026-04-28 16:47 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777362425289\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa75b57c9c8f28\`
+- code change before run: host-owned native comparison route now records `truthBlocker=fast-preview-raster-input` and `requiredInputSourceAsset=raw-original`.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route remained `fast-preview-raster / operation-derived-comparison`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1019ms`; settled raw-original route elapsed `3316ms`; official timing `6333ms`.
+- product interpretation: 동일 원인 반복. The next implementation target remains a real host-owned original/full-preset truthful artifact.
+
+## 2026-04-28 17:39 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777365515848\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aa788510413540\`
+- code change before run: helper fast-preview generation now prefers Canon SDK RAW preview before Windows shell thumbnail, and host-owned native route evidence separates `raw-sdk-preview` source eligibility from `fast-preview-raster` comparison output.
+- observed: running app mode was `appLaunchMode=skip`; helper still supplied `windows-shell-thumbnail`; speculative route remained `fast-preview-raster / operation-derived-comparison`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1024ms`; settled raw-original route elapsed `3385ms`; official timing `6432ms`.
+- product interpretation: 동일 원인 반복. The current approved-hardware run did not exercise a RAW SDK helper handoff, so the next product step is to deploy/restart the updated helper path and then verify whether the blocker moves from `fast-preview-raster-input` to preset eligibility/parity.
+
+## 2026-04-29 10:21 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"` with `BOOTHY_CANON_SDK_ROOT=C:\Code\cannon_sdk\1745203316536_Kykl2PJDH9`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777425683850\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aaaf3e04b8d3a0\`
+- code change before run: helper RAW SDK preview generation now tries SDK RGB/JPEG extraction on the Canon SDK STA thread before Windows shell fallback; helper timeout stability regressions were restored.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route remained `fast-preview-raster / operation-derived-comparison` with `truthBlocker=fast-preview-raster-input`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1028ms`; settled raw-original route elapsed `3683ms`; official timing `6725ms`.
+- product interpretation: 동일 원인 반복. The review follow-up improved the intended helper generation path, but approved hardware still lacks a host-owned original/full-preset truthful artifact. The next product path is no longer darktable tuning; it must create a preset-applied preview directly from the original RAW input, or prove Canon SDK RAW extraction is impossible on EOS 700D and move to the smallest native RAW decode/preset engine path.
+
+## 2026-04-29 10:46 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777427158882\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab09573b633bc\`
+- code change before run: app preview completion now tries a host-owned `raw-original -> preset-applied-preview` handoff before darktable fallback when the original input is directly decodable by the native renderer.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative route remained `fast-preview-raster / operation-derived-comparison` with `truthBlocker=fast-preview-raster-input`; settled close fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: speculative route elapsed `1026ms`; settled raw-original route elapsed `3459ms`; official timing `6503ms`.
+- product interpretation: 동일 원인 반복. The new app path proves the handoff/promotion route for display-decodable originals, but approved hardware still needs a real `.CR2` original decoder or a Canon SDK RAW extraction path that can feed `inputSourceAsset=raw-original` and `truthProfile=original-full-preset`.
+
+## 2026-04-29 11:19 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777429142787\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab2635d598144\`
+- code change before run: RAW persist now starts a host-owned `raw-original -> preset-applied-preview` handoff, and the native renderer accepts approved hardware `.CR2` sources via the host-owned RAW decode path.
+- observed: helper still supplied `windows-shell-thumbnail`; speculative host-owned route now used `inputSourceAsset=raw-original` and `engineSource=host-owned-native`, but was blocked by `truthProfile=unsupported-preset-comparison` with unsupported `look2` operations. Settled close still fell back to `raw-original / darktable-cli`.
+- captures: `0/5`
+- timing: host-owned raw-original handoff elapsed `1071ms`; settled raw-original darktable route elapsed `3175ms`; official timing still missed the gate.
+- product interpretation: blocker moved from host-owned original artifact absence to full-preset parity. Do not promote this artifact until `look2` can be rendered as `truthProfile=original-full-preset`.
+
+## 2026-04-29 11:38 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `passed / Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777430298314\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab370683ef338\`
+- code change before run: native RAW pipeline/correction operations used by `look2` are no longer misclassified as unsupported preset-look operations.
+- observed: all five captures produced host-owned `binary=fast-preview-handoff`, `source=fast-preview-handoff`, `engineSource=host-owned-native`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`.
+- captures: `5/5`
+- timing: host-owned handoff elapsed `1121ms`, `941ms`, `944ms`, `985ms`, `930ms`; official `originalVisibleToPresetAppliedVisibleMs` was `357ms`, `177ms`, `174ms`, `225ms`, `170ms`.
+- product interpretation: retracted by the 11:51 investigation. This was a false Go because the native RAW approximation was over-bright and was mislabeled as full-preset truth.
+
+## 2026-04-29 11:51 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777431052504\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab420015bb524\`
+- code change before run: native RAW approximation no longer claims `truthProfile=original-full-preset`; it is marked `truthProfile=host-owned-native-preview-comparison` and `truthBlocker=full-preset-parity-unverified`.
+- observed: validator rejected the host-owned comparison artifact; final canonical preview fell back to darktable and was not over-white.
+- captures: `0/5`
+- timing: host-owned comparison handoff elapsed `1087ms`; darktable fallback route elapsed `3336ms`.
+- visual sanity check: latest canonical preview average luma `30.9`, white pixels `0%`; previous false-Go native output average luma `246.62`, white pixels `87.99%`.
+- product interpretation: false Go fixed. Remaining blocker is still a real host-owned full-preset renderer, not the current native RAW approximation.
+
+## 2026-04-29 11:58 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `failed / No-Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777431500206\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab4883e7811d8\`
+- code change before run: native RAW white-balance scaling no longer clips midtones to display white.
+- observed: host-owned native artifact remained comparison-only with `truthProfile=host-owned-native-preview-comparison` and `truthBlocker=full-preset-parity-unverified`; darktable fallback owned the final preview.
+- captures: `0/5`
+- timing: host-owned comparison handoff elapsed `1251ms`; darktable fallback route elapsed `3208ms`.
+- visual sanity check: final canonical preview average luma `30.88`, white pixels `0%`.
+- product interpretation: the white-photo symptom is contained, but Story `1.26` remains No-Go until a real host-owned full-preset renderer exists.
+
+## 2026-04-29 Direction Decision
+
+- decision: choose option 2.
+- product direction: implement a resident/long-lived darktable-compatible full-preset engine path.
+- why: the latest false-Go investigation proved that partial native RAW approximation can be fast while still being wrong.
+- not accepted as official truth: native approximation without parity, fast-preview-raster input, operation-derived profile, or per-capture darktable fallback.
+- next implementation target: keep the real preset result owner hot enough to reduce cold-start/process/jitter cost while preserving full preset fidelity.
+- next validation: rerun approved hardware only after the generation/promotion path can honestly emit `truthProfile=original-full-preset`.
+
+## 2026-04-29 12:45 Hardware Validation Data
+
+- command: `powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visible\scripts\hardware-validation-runner.ps1 -Prompt "Kim4821"`
+- result: `passed / Go`
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777434275752\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab70e79e5baa8\`
+- code change before run: RAW original speculative handoff now uses a resident darktable-compatible full-preset route instead of native approximation; darktable CLI arguments strip Windows `//?/` path prefixes.
+- observed: all 5 captures produced same-capture `binary=fast-preview-handoff`, `source=fast-preview-handoff`, `engineSource=host-owned-native`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`.
+- captures: `5/5`
+- timing: resident full-preset render elapsed `3212ms`, `3234ms`, `3188ms`, `3196ms`, `3231ms`; official `originalVisibleToPresetAppliedVisibleMs` was `2338ms`, `2325ms`, `2316ms`, `2318ms`, `2325ms`.
+- product interpretation: option 2 produced truthful full-preset same-capture artifacts inside the official preview window on approved hardware.
+
+## 2026-04-29 Current Answer Record
+
+This is the current Story `1.26` answer unless newer approved-hardware evidence contradicts it.
+
+Accepted product path:
+
+- option: `2`
+- route owner: resident/long-lived darktable-compatible full-preset engine path
+- source input: original RAW capture from the same session/capture
+- official artifact: display-sized preset-applied preview
+- official verdict owner: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
+
+Why this path is accepted:
+
+- It produces a same-capture artifact, not a reused or unrelated image.
+- It starts from `inputSourceAsset=raw-original`.
+- It emits `sourceAsset=preset-applied-preview`.
+- It emits `truthOwner=display-sized-preset-applied`.
+- It emits `truthProfile=original-full-preset`.
+- It keeps resident/full-preset route evidence through `engineMode=resident-full-preset` and `engineAdapter=darktable-compatible`.
+- It passed approved hardware validation `5/5` with official timing inside the `3000ms` preview-track gate.
+
+Latest traceable evidence:
+
+- run summary: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777434275752\run-summary.json`
+- run steps: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777434275752\run-steps.jsonl`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aab70e79e5baa8\`
+- preset: `preset_new-draft-2` / `look2` / `2026.04.10`
+- captures requested: `5`
+- captures passed: `5`
+- official timing band: `2316ms ~ 2338ms`
+- resident render elapsed band: `3188ms ~ 3234ms`
+- route boundary observed on all captures: `satisfiesHostOwnedBoundary=true`
+- wait result on all captures: `waitTimedOut=false`, speculative output ready
+
+Accepted route fields:
+
+```text
+binary=fast-preview-handoff
+source=fast-preview-handoff
+inputSourceAsset=raw-original
+sourceAsset=preset-applied-preview
+truthOwner=display-sized-preset-applied
+truthProfile=original-full-preset
+engineMode=resident-full-preset
+engineAdapter=darktable-compatible
+engineAdapterSource=program-files-bin
+engineSource=host-owned-native
+```
+
+Do not promote these as official Story `1.26` truth:
+
+- partial native RAW approximation
+- `inputSourceAsset=fast-preview-raster`
+- `profile=operation-derived`
+- per-capture darktable fallback
+- host-owned output without full-preset parity proof
+- `windows-shell-thumbnail` by itself
+
+False-Go history to preserve:
+
+- The 2026-04-29 11:38 native pass remains retracted.
+- It was fast, but the native RAW approximation was not verified as a full-preset renderer.
+- The over-white symptom was corrected later, but that correction did not make native approximation the product path.
+- The final accepted answer is the 12:45 resident darktable-compatible full-preset route, not the 11:38 native route.
+
+Smallest future change rule:
+
+- If this route regresses, first check whether the same accepted route fields are still present.
+- If route fields are present but timing regresses, harden the resident owner and process/path reuse.
+- If route fields are missing, do not tune fallback. Restore the resident full-preset generation/promotion path.
+- If native approximation is changed, keep it comparison-only unless a full-preset parity proof is added.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md
+- .gitignore
+- docs/README.md
+- docs/runbooks/README.md
+- docs/runbooks/story-1-26-review-root-cause-and-improvement-direction-20260427.md
 - docs/contracts/render-worker.md
 - docs/contracts/session-manifest.md
 - docs/runbooks/story-1-26-reserve-path-opening-20260420.md
 - _bmad-output/implementation-artifacts/hardware-validation-ledger.md
 - _bmad-output/implementation-artifacts/sprint-status.yaml
 - src-tauri/src/capture/ingest_pipeline.rs
+- src-tauri/src/capture/helper_supervisor.rs
 - src-tauri/src/render/mod.rs
 - src-tauri/src/automation/hardware_validation.rs
+- src/session-domain/state/session-provider.tsx
+- src/session-domain/state/session-provider.test.tsx
+- sidecar/canon-helper/src/CanonHelper/Runtime/CanonSdkCamera.cs
+- sidecar/canon-helper/tests/CanonHelper.Tests/TimeoutPolicyTests.cs
+- src-tauri/Cargo.toml
+- src-tauri/Cargo.lock
 - src-tauri/tests/capture_readiness.rs
 - src-tauri/tests/hardware_validation_runner.rs
+- .codex/config.toml (removed from tracking)
+- .tmp-review-1.10.diff (removed from tracking)
+- UsersKimYS*.jpg (removed from tracking)
+- sidecar/canon-helper/tests/CanonHelper.Tests/bin/ (removed from tracking)
+- sidecar/canon-helper/tests/CanonHelper.Tests/obj/ (removed from tracking)
 
 ### Change Log
 
@@ -341,3 +791,18 @@ GPT-5 Codex
 - 2026-04-24 - latest log review 뒤 current worktree의 truthful-close cap을 approved `256x256`으로 복구했다. best rerun은 `session_000000000018a93b053f7dbab8`에서 4/5컷 통과까지 개선됐지만, final requested rerun `session_000000000018a93b5fa88505d4`는 capture 1 `3056ms`로 실패해 Story `1.26`은 계속 `review / No-Go`다.
 - 2026-04-24 - latest log review 뒤 warm-up raster를 approved `256x256` lane과 맞추고 preview-only darktable process scheduling priority를 올렸다. 요청 script rerun `session_000000000018a93c85f1238a00`는 `capturesPassed=5/5`, direct band `2819ms ~ 2884ms`를 만들었지만, code review 뒤 official Story `1.26` `Go`가 아니라 comparison evidence로 낮췄다.
 - 2026-04-25 - requested script rerun `session_000000000018a959d98b7f93f8`는 capture 1 `3067ms`로 실패했다. preview-only darktable process priority를 Windows high priority로 올린 뒤 requested rerun `session_000000000018a95a0fe32405b8`는 `capturesPassed=5/5`, direct band `2825ms ~ 2873ms`를 만들었다. 이 run은 latency tail 개선 evidence로 기록하고 Story `1.26` 제품 판정은 `in-progress / No-Go`로 유지한다.
+- 2026-04-27 - latest review follow-up 중 false `Go` 차단과 validation stability 항목을 처리했다. 단, main close owner가 host-owned reserve path와 hardware ledger `Go`를 아직 닫지 못했으므로 Story `1.26`은 `in-progress / No-Go`로 유지한다.
+- 2026-04-27 - 요청한 hardware validation script를 먼저 실행해 `preview-truth-gate-failed`를 확인한 뒤, runner가 route owner evidence까지 검증하게 보강했다. 최종 rerun은 `preview-route-owner-gate-failed`로 닫혀 current darktable path를 official host-owned `Go`로 승격하지 않음을 확인했다.
+- 2026-04-27 - 최신 일반 앱 로그를 재검토해 host-owned `preset-applied-preview` handoff 자체가 없음을 확인했다. hardware validation runner가 darktable fallback 전 reserve input을 먼저 검사하게 보강했고, 최종 요청 rerun은 `preview-host-owned-reserve-unavailable`로 닫혔다.
+- 2026-04-27 - host-owned reserve input 확인에 bounded settle wait와 delayed handoff regression test를 추가했다. 요청 script rerun은 `waitTimedOut=false` 상태에서 `windows-shell-thumbnail`만 관찰되어 다시 `preview-host-owned-reserve-unavailable`로 닫혔다.
+- 2026-04-27 - `windows-shell-thumbnail`을 terminal failure처럼 즉시 반환하지 않고 bounded window 끝까지 host-owned handoff를 기다리도록 보강했다. 요청 script rerun은 `waitElapsedMs=1530`, `waitTimedOut=true` 상태에서도 `windows-shell-thumbnail`만 관찰되어 다시 `preview-host-owned-reserve-unavailable`로 닫혔다.
+- 2026-04-27 - validation runner가 helper event와 timing route evidence를 함께 읽도록 보강했다. 요청 script rerun `session_000000000018aa1e41fd6f3360`은 `latestPreviewRoute=none`, `waitElapsedMs=1521`, `waitTimedOut=true`로 다시 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 - validation runner가 speculative preview output/detail/lock evidence까지 기록하도록 보강했다. 요청 script rerun `session_000000000018aa2016a0ccd26c`은 `latestFastPreviewKind=windows-shell-thumbnail`, `speculativeLockPresent=true`, `speculativeOutputReady=false`, `waitElapsedMs=3028`로 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 - No-Go 반환 시 저장된 capture가 `previewWaiting`에 남는 문제를 수정했다. 요청 script rerun `session_000000000018aa20bd6b9bb82c`은 Story `1.26` 판정은 여전히 `preview-host-owned-reserve-unavailable / No-Go`지만, saved capture는 `previewReady / preset-applied-preview`로 정상 정리됐다.
+- 2026-04-27 - No-Go settle 이후 route evidence를 다시 읽어 final failure summary에 반영하도록 보강했다. 요청 script rerun `session_000000000018aa21e80f662534`은 여전히 `preview-host-owned-reserve-unavailable / No-Go`지만, summary가 fallback route `darktable-cli / program-files-bin / elapsedMs=3011`을 남겨 남은 blocker가 host-owned reserve artifact 부재임을 더 명확히 했다.
+- 2026-04-27 - No-Go settle 전후 evidence 보존을 보강하고 요청한 hardware validation script를 재실행했다. `hardware-validation-run-1777271169308` / `session_000000000018aa22b64c44f7a4`는 helper `windows-shell-thumbnail`, `speculativeLockPresent=true`, final fallback route `darktable-cli / program-files-bin / elapsedMs=3136`, official timing `3150ms`로 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 - 요청한 hardware validation script를 다시 실행했다. `hardware-validation-run-1777272273229` / `session_000000000018aa23b7531de818`도 helper `windows-shell-thumbnail`, `speculativeLockPresent=true`, fallback route `darktable-cli / program-files-bin / elapsedMs=3163`, official timing `3179ms`로 실패했다. 반복 증거 기준으로 남은 제품 blocker는 host-owned reserve artifact 부재다.
+- 2026-04-27 - 최근 일반 앱 로그와 요청한 hardware validation script를 다시 확인했다. app session `session_000000000018a9e0f606e69ed0`와 requested run `hardware-validation-run-1777272846171` / `session_000000000018aa243cb94f60f0` 모두 helper `windows-shell-thumbnail` 뒤 per-capture `darktable-cli` fallback으로 닫혔다. latest requested run은 warm-up/readiness/save/cleanup은 정상이나 fallback `elapsedMs=7426`, official timing `7505ms`로 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-27 - speculative route failure summary를 정규화해 darktable fallback과 host-owned close owner 차이를 더 명확히 기록하도록 보강했다. 요청한 hardware validation script 재실행 `hardware-validation-run-1777274530300` / `session_000000000018aa25c4d6f49e20`도 helper `windows-shell-thumbnail`, pre-settle `speculativeLockPresent=true`, final fallback `darktable-cli / elapsedMs=3325`로 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
+- 2026-04-29 - false-Go correction 이후 방향을 확정했다. Partial native approximation은 comparison-only로 유지하고, 다음 구현은 option 2인 resident/long-lived darktable-compatible full-preset engine path로 진행한다.
+- 2026-04-29 - option 2 구현 뒤 approved hardware validation `hardware-validation-run-1777434275752`가 `5/5` 통과했다. Story `1.26`의 현재 정답은 resident darktable-compatible full-preset route이며, native approximation과 per-capture fallback은 official truth가 아니다.

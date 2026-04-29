@@ -789,7 +789,11 @@ export function SessionProvider({
           presetId: input.preset.presetId,
           publishedVersion: input.preset.publishedVersion,
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (capturePreviewRuntimePrimeKeyRef.current === primeKey) {
+            capturePreviewRuntimePrimeKeyRef.current = null
+          }
+        })
 
     if (primePromise === undefined) {
       capturePreviewRuntimePrimePromiseRef.current = null

@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using CanonHelper.Protocol;
@@ -19,6 +21,7 @@ internal sealed class CanonSdkCamera : IDisposable
     private static readonly TimeSpan InternalTriggerRetryHalfPressLead = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMilliseconds(1500);
     private const uint DefaultPreviewJpegQuality = 8;
+    private const int RawPreviewMaxDimension = 1600;
     // Live camera-thumbnail extraction can stall the RAW handoff on EOS 700D
     // hardware. Prefer the post-download raw fallback so capture correctness
     // wins over speculative first-visible speed.
@@ -59,10 +62,13 @@ internal sealed class CanonSdkCamera : IDisposable
     private CurrentCaptureContext? _currentCapture;
     private Task? _connectTask;
     private DateTimeOffset _connectAttemptStartedAt = DateTimeOffset.MinValue;
+    private ulong _connectAttemptGeneration;
     private Action<CurrentCaptureContext, IntPtr>? _downloadCaptureOverride;
     private Func<bool>? _connectAttemptOverride;
     private Func<uint>? _pumpEventsOverride;
     private Func<IntPtr, uint, int, uint>? _sendCommandOverride;
+    private Func<SessionPaths, string, string, bool>? _rawPreviewRendererOverride;
+    private Func<SessionPaths, string, string, bool>? _shellThumbnailExtractorOverride;
     private readonly Queue<PendingFastPreviewDownload> _pendingFastPreviewDownloads = new();
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
@@ -159,6 +165,15 @@ internal sealed class CanonSdkCamera : IDisposable
         _sendCommandOverride = sendCommandOverride;
     }
 
+    internal void SetFastPreviewGenerationOverridesForTests(
+        Func<SessionPaths, string, string, bool>? rawPreviewRenderer,
+        Func<SessionPaths, string, string, bool>? shellThumbnailExtractor
+    )
+    {
+        _rawPreviewRendererOverride = rawPreviewRenderer;
+        _shellThumbnailExtractorOverride = shellThumbnailExtractor;
+    }
+
     public void PumpEvents()
     {
         bool sdkInitialized;
@@ -239,7 +254,8 @@ internal sealed class CanonSdkCamera : IDisposable
             if (_connectTask is null)
             {
                 _connectAttemptStartedAt = DateTimeOffset.UtcNow;
-                _connectTask = StartConnectTask();
+                _connectAttemptGeneration += 1;
+                _connectTask = StartConnectTask(_connectAttemptGeneration);
             }
 
             connectTask = _connectTask;
@@ -424,12 +440,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 continue;
             }
 
-            if (TryExtractPreviewWithWindowsShell(paths, rawPath, captureId))
+            if (TryRenderPreviewFromRaw(paths, rawPath, captureId))
             {
                 continue;
             }
 
-            TryRenderPreviewFromRaw(paths, rawPath, captureId);
+            TryExtractPreviewWithWindowsShell(paths, rawPath, captureId);
         }
     }
 
@@ -707,6 +723,7 @@ internal sealed class CanonSdkCamera : IDisposable
         {
             _connectTask = null;
             _connectAttemptStartedAt = DateTimeOffset.MinValue;
+            _connectAttemptGeneration += 1;
         }
 
         RecycleSdkIfNeeded();
@@ -719,7 +736,7 @@ internal sealed class CanonSdkCamera : IDisposable
 
         return snapshot.DetailCode switch
         {
-            "sdk-initializing" or "scanning" => "sdk-init-timeout",
+            "helper-starting" or "sdk-initializing" or "scanning" => "sdk-init-timeout",
             "session-opening" => "session-open-timeout",
             _ => "camera-connect-timeout",
         };
@@ -835,10 +852,15 @@ internal sealed class CanonSdkCamera : IDisposable
         return report;
     }
 
-    private void TryOpenCamera()
+    private void TryOpenCamera(ulong connectAttemptGeneration)
     {
         lock (_sync)
         {
+            if (connectAttemptGeneration != _connectAttemptGeneration)
+            {
+                return;
+            }
+
             _snapshot = _snapshot with
             {
                 CameraState = "connecting",
@@ -860,12 +882,31 @@ internal sealed class CanonSdkCamera : IDisposable
                 var initializeResult = EDSDK.EdsInitializeSDK();
                 if (initializeResult != EDSDK.EDS_ERR_OK)
                 {
-                    UpdateFailure("error", "error", "sdk-init-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "sdk-init-failed"
+                    );
                     return;
                 }
 
-                _sdkInitialized = true;
-                UpdateFailure("connecting", "connecting", "scanning");
+                lock (_sync)
+                {
+                    if (connectAttemptGeneration != _connectAttemptGeneration)
+                    {
+                        EDSDK.EdsTerminateSDK();
+                        return;
+                    }
+
+                    _sdkInitialized = true;
+                }
+                UpdateConnectAttemptFailure(
+                    connectAttemptGeneration,
+                    "connecting",
+                    "connecting",
+                    "scanning"
+                );
             }
 
             IntPtr cameraList = IntPtr.Zero;
@@ -876,7 +917,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 var listResult = EDSDK.EdsGetCameraList(out cameraList);
                 if (listResult != EDSDK.EDS_ERR_OK)
                 {
-                    UpdateFailure("error", "error", "sdk-camera-list-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "sdk-camera-list-failed"
+                    );
                     return;
                 }
 
@@ -884,7 +930,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 if (countResult != EDSDK.EDS_ERR_OK)
                 {
                     RecycleSdkIfNeeded();
-                    UpdateFailure("error", "error", "sdk-camera-list-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "sdk-camera-list-failed"
+                    );
                     return;
                 }
 
@@ -892,7 +943,8 @@ internal sealed class CanonSdkCamera : IDisposable
                 {
                     var windowsCamera = WindowsCameraPresenceProbe.DetectCanonCamera();
                     RecycleSdkIfNeeded();
-                    UpdateFailure(
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
                         windowsCamera.IsPresent ? "connecting" : "disconnected",
                         "healthy",
                         windowsCamera.IsPresent
@@ -907,7 +959,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 if (childResult != EDSDK.EDS_ERR_OK || camera == IntPtr.Zero)
                 {
                     RecycleSdkIfNeeded();
-                    UpdateFailure("error", "error", "camera-open-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "camera-open-failed"
+                    );
                     return;
                 }
 
@@ -915,7 +972,12 @@ internal sealed class CanonSdkCamera : IDisposable
                 if (infoResult != EDSDK.EDS_ERR_OK)
                 {
                     RecycleSdkIfNeeded();
-                    UpdateFailure("error", "error", "camera-open-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "camera-open-failed"
+                    );
                     return;
                 }
 
@@ -924,7 +986,8 @@ internal sealed class CanonSdkCamera : IDisposable
                 EDSDK.EdsSetObjectEventHandler(camera, EDSDK.ObjectEvent_All, _objectHandler, context);
                 EDSDK.EdsSetCameraStateEventHandler(camera, EDSDK.StateEvent_All, _stateHandler, context);
 
-                UpdateFailure(
+                UpdateConnectAttemptFailure(
+                    connectAttemptGeneration,
                     "connecting",
                     "connecting",
                     "session-opening",
@@ -936,11 +999,17 @@ internal sealed class CanonSdkCamera : IDisposable
                 {
                     EDSDK.EdsRelease(camera);
                     RecycleSdkIfNeeded();
-                    UpdateFailure("error", "error", "session-open-failed");
+                    UpdateConnectAttemptFailure(
+                        connectAttemptGeneration,
+                        "error",
+                        "error",
+                        "session-open-failed"
+                    );
                     return;
                 }
 
-                UpdateFailure(
+                UpdateConnectAttemptFailure(
+                    connectAttemptGeneration,
                     "connected-idle",
                     "healthy",
                     "session-opened",
@@ -950,6 +1019,13 @@ internal sealed class CanonSdkCamera : IDisposable
 
                 lock (_sync)
                 {
+                    if (connectAttemptGeneration != _connectAttemptGeneration)
+                    {
+                        EDSDK.EdsCloseSession(camera);
+                        EDSDK.EdsRelease(camera);
+                        return;
+                    }
+
                     _camera = camera;
                     _sessionOpen = true;
                     _lastKeepAlive = DateTimeOffset.UtcNow;
@@ -970,12 +1046,22 @@ internal sealed class CanonSdkCamera : IDisposable
         }
         catch (DllNotFoundException)
         {
-            UpdateFailure("error", "error", "sdk-payload-missing");
+            UpdateConnectAttemptFailure(
+                connectAttemptGeneration,
+                "error",
+                "error",
+                "sdk-payload-missing"
+            );
         }
         catch (Exception)
         {
             RecycleSdkIfNeeded();
-            UpdateFailure("error", "error", "camera-open-failed");
+            UpdateConnectAttemptFailure(
+                connectAttemptGeneration,
+                "error",
+                "error",
+                "camera-open-failed"
+            );
         }
     }
 
@@ -1003,13 +1089,39 @@ internal sealed class CanonSdkCamera : IDisposable
         }
     }
 
-    private Task StartConnectTask()
+    private Task StartConnectTask(ulong connectAttemptGeneration)
     {
         return RunOnSdkStaThreadAsync(() =>
         {
-            TryOpenCamera();
+            TryOpenCamera(connectAttemptGeneration);
             return true;
         });
+    }
+
+    private void UpdateConnectAttemptFailure(
+        ulong connectAttemptGeneration,
+        string cameraState,
+        string helperState,
+        string detailCode,
+        string? cameraModel = null
+    )
+    {
+        lock (_sync)
+        {
+            if (connectAttemptGeneration != _connectAttemptGeneration)
+            {
+                return;
+            }
+
+            _snapshot = _snapshot with
+            {
+                CameraState = cameraState,
+                HelperState = helperState,
+                DetailCode = detailCode,
+                CameraModel = cameraModel,
+                RequestId = _currentCapture?.Request.RequestId,
+            };
+        }
     }
 
     internal static bool IsStartupConnectFailureDetailCode(string? detailCode)
@@ -1487,20 +1599,20 @@ internal sealed class CanonSdkCamera : IDisposable
         string? previousFailureDetailCode
     )
     {
-        if (TryExtractPreviewWithWindowsShell(paths, rawPath, captureId))
-        {
-            return new CaptureFastPreviewDownloadResult(
-                Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg"),
-                "windows-shell-thumbnail",
-                null
-            );
-        }
-
         if (TryRenderPreviewFromRaw(paths, rawPath, captureId))
         {
             return new CaptureFastPreviewDownloadResult(
                 Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg"),
                 "raw-sdk-preview",
+                null
+            );
+        }
+
+        if (TryExtractPreviewWithWindowsShell(paths, rawPath, captureId))
+        {
+            return new CaptureFastPreviewDownloadResult(
+                Path.Combine(paths.RendersPreviewsDir, $"{captureId}.jpg"),
+                "windows-shell-thumbnail",
                 null
             );
         }
@@ -1514,9 +1626,29 @@ internal sealed class CanonSdkCamera : IDisposable
 
     private bool TryRenderPreviewFromRaw(SessionPaths paths, string rawPath, string captureId)
     {
+        if (Thread.CurrentThread.ManagedThreadId != _sdkThreadId)
+        {
+            try
+            {
+                return RunOnSdkStaThreadAsync(() => TryRenderPreviewFromRaw(paths, rawPath, captureId))
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        if (_rawPreviewRendererOverride is { } overrideRenderer)
+        {
+            return overrideRenderer(paths, rawPath, captureId);
+        }
+
         IntPtr rawStream = IntPtr.Zero;
         IntPtr imageRef = IntPtr.Zero;
         IntPtr previewStream = IntPtr.Zero;
+        IntPtr rgbStream = IntPtr.Zero;
         var tempPreviewPath = Path.Combine(
             paths.RendersPreviewsDir,
             $"{captureId}.rendering.jpg"
@@ -1553,6 +1685,12 @@ internal sealed class CanonSdkCamera : IDisposable
             if (createImageRefResult != EDSDK.EDS_ERR_OK)
             {
                 return false;
+            }
+
+            if (TryRenderPreviewFromRawImageRef(imageRef, tempPreviewPath))
+            {
+                File.Move(tempPreviewPath, previewPath, overwrite: true);
+                return true;
             }
 
             var createPreviewStreamResult = EDSDK.EdsCreateFileStream(
@@ -1607,6 +1745,11 @@ internal sealed class CanonSdkCamera : IDisposable
                 EDSDK.EdsRelease(previewStream);
             }
 
+            if (rgbStream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(rgbStream);
+            }
+
             if (imageRef != IntPtr.Zero)
             {
                 EDSDK.EdsRelease(imageRef);
@@ -1643,6 +1786,11 @@ internal sealed class CanonSdkCamera : IDisposable
         string captureId
     )
     {
+        if (_shellThumbnailExtractorOverride is { } overrideExtractor)
+        {
+            return overrideExtractor(paths, rawPath, captureId);
+        }
+
         var tempPreviewPath = Path.Combine(
             paths.RendersPreviewsDir,
             $"{captureId}.shell-preview.jpg"
@@ -1698,7 +1846,7 @@ internal sealed class CanonSdkCamera : IDisposable
         {
             if (_currentCapture == context)
             {
-                var nextDetailCode = shouldReconnectSession
+                var nextDetailCode = sessionResetRequired
                     ? "reconnect-pending"
                     : nextCameraState == "ready"
                         ? "camera-ready"
@@ -1735,6 +1883,168 @@ internal sealed class CanonSdkCamera : IDisposable
             RecycleSdkIfNeeded();
             ReleaseCamera();
         }
+    }
+
+    private static bool TryRenderPreviewFromRawImageRef(IntPtr imageRef, string outputPath)
+    {
+        foreach (var imageSource in new[]
+                 {
+                     EDSDK.EdsImageSource.Preview,
+                     EDSDK.EdsImageSource.Thumbnail,
+                     EDSDK.EdsImageSource.FullView,
+                 })
+        {
+            if (TryRenderPreviewFromRawImageRef(imageRef, imageSource, outputPath))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryRenderPreviewFromRawImageRef(
+        IntPtr imageRef,
+        EDSDK.EdsImageSource imageSource,
+        string outputPath
+    )
+    {
+        IntPtr rgbStream = IntPtr.Zero;
+
+        try
+        {
+            var infoResult = EDSDK.EdsGetImageInfo(imageRef, imageSource, out var imageInfo);
+            if (
+                infoResult != EDSDK.EDS_ERR_OK
+                || imageInfo.Width == 0
+                || imageInfo.Height == 0
+            )
+            {
+                return false;
+            }
+
+            var outputSize = ScaleToFit(
+                checked((int)imageInfo.Width),
+                checked((int)imageInfo.Height),
+                RawPreviewMaxDimension
+            );
+            var sourceRect = imageInfo.EffectiveRect;
+            if (sourceRect.width <= 0 || sourceRect.height <= 0)
+            {
+                sourceRect = new EDSDK.EdsRect
+                {
+                    x = 0,
+                    y = 0,
+                    width = checked((int)imageInfo.Width),
+                    height = checked((int)imageInfo.Height),
+                };
+            }
+
+            var bufferSize = checked((ulong)outputSize.width * (ulong)outputSize.height * 3UL);
+            var streamResult = EDSDK.EdsCreateMemoryStream(bufferSize, out rgbStream);
+            if (streamResult != EDSDK.EDS_ERR_OK)
+            {
+                return false;
+            }
+
+            var imageResult = EDSDK.EdsGetImage(
+                imageRef,
+                imageSource,
+                EDSDK.EdsTargetImageType.RGB,
+                sourceRect,
+                outputSize,
+                rgbStream
+            );
+            if (imageResult != EDSDK.EDS_ERR_OK)
+            {
+                return false;
+            }
+
+            var lengthResult = EDSDK.EdsGetLength(rgbStream, out var length);
+            if (lengthResult != EDSDK.EDS_ERR_OK || length < bufferSize)
+            {
+                return false;
+            }
+
+            var pointerResult = EDSDK.EdsGetPointer(rgbStream, out var rgbPointer);
+            if (pointerResult != EDSDK.EDS_ERR_OK || rgbPointer == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var rgbBytes = new byte[checked((int)bufferSize)];
+            Marshal.Copy(rgbPointer, rgbBytes, 0, rgbBytes.Length);
+            return TryWriteRgbJpeg(rgbBytes, outputSize.width, outputSize.height, outputPath);
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (rgbStream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(rgbStream);
+            }
+        }
+    }
+
+    private static EDSDK.EdsSize ScaleToFit(int width, int height, int maxDimension)
+    {
+        if (width <= maxDimension && height <= maxDimension)
+        {
+            return new EDSDK.EdsSize { width = width, height = height };
+        }
+
+        var scale = Math.Min(maxDimension / (double)width, maxDimension / (double)height);
+        return new EDSDK.EdsSize
+        {
+            width = Math.Max(1, (int)Math.Round(width * scale)),
+            height = Math.Max(1, (int)Math.Round(height * scale)),
+        };
+    }
+
+    private static bool TryWriteRgbJpeg(byte[] rgbBytes, int width, int height, string outputPath)
+    {
+        if (rgbBytes.Length < width * height * 3)
+        {
+            return false;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        using var bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+        var rect = new Rectangle(0, 0, width, height);
+        var bitmapData = bitmap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+
+        try
+        {
+            var stride = bitmapData.Stride;
+            var rowBytes = width * 3;
+            var rowBuffer = new byte[Math.Abs(stride)];
+            for (var y = 0; y < height; y++)
+            {
+                Array.Clear(rowBuffer);
+                var sourceOffset = y * rowBytes;
+                for (var x = 0; x < width; x++)
+                {
+                    var sourcePixel = sourceOffset + (x * 3);
+                    var destPixel = x * 3;
+                    rowBuffer[destPixel] = rgbBytes[sourcePixel + 2];
+                    rowBuffer[destPixel + 1] = rgbBytes[sourcePixel + 1];
+                    rowBuffer[destPixel + 2] = rgbBytes[sourcePixel];
+                }
+
+                Marshal.Copy(rowBuffer, 0, bitmapData.Scan0 + (y * stride), rowBytes);
+            }
+        }
+        finally
+        {
+            bitmap.UnlockBits(bitmapData);
+        }
+
+        bitmap.Save(outputPath, ImageFormat.Jpeg);
+        var fileInfo = new FileInfo(outputPath);
+        return fileInfo.Exists && fileInfo.Length > 0;
     }
 
     private void FailActiveCapture(CanonCaptureException exception)

@@ -42,6 +42,8 @@ use crate::{
 };
 
 const PREVIEW_RUNTIME_WARMUP_SETTLE_TIMEOUT_MS: u64 = 20_000;
+const HOST_OWNED_RESERVE_INPUT_SETTLE_TIMEOUT_MS: u64 = 3_000;
+const HOST_OWNED_RESERVE_INPUT_POLL_INTERVAL_MS: u64 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppLaunchMode {
@@ -530,6 +532,15 @@ fn execute_validation_run(
             )
             .map_err(internal_run_failure)?;
 
+        let initial_reserve_input = wait_for_host_owned_reserve_input_evidence(
+            base_dir,
+            &session.session_id,
+            &capture_result.capture.capture_id,
+            &capture_result.capture.request_id,
+            Duration::from_millis(HOST_OWNED_RESERVE_INPUT_SETTLE_TIMEOUT_MS),
+        )
+        .map_err(internal_run_failure)?;
+
         let preview_capture = complete_preview_render_in_dir(
             base_dir,
             &session.session_id,
@@ -549,6 +560,64 @@ fn execute_validation_run(
                 ],
             )
         })?;
+        let reserve_input = if initial_reserve_input.satisfies_host_owned_boundary() {
+            initial_reserve_input
+        } else {
+            let mut refreshed_reserve_input = read_host_owned_reserve_input_evidence(
+                base_dir,
+                &session.session_id,
+                &capture_result.capture.capture_id,
+                &capture_result.capture.request_id,
+            )
+            .map_err(internal_run_failure)?;
+            refreshed_reserve_input.preserve_pre_settle_evidence(&initial_reserve_input);
+            refreshed_reserve_input.wait_elapsed_ms = initial_reserve_input.wait_elapsed_ms;
+            refreshed_reserve_input.wait_timed_out = initial_reserve_input.wait_timed_out;
+            refreshed_reserve_input
+        };
+        let reserve_input_ready = reserve_input.satisfies_host_owned_boundary();
+        context
+            .append_step(
+                "host-owned-reserve-input",
+                if reserve_input_ready {
+                    "passed"
+                } else {
+                    "failed"
+                },
+                if reserve_input_ready {
+                    "Host-owned preset-applied fast preview handoff was observed."
+                } else {
+                    "Host-owned preset-applied fast preview handoff was not observed."
+                },
+                Some(capture_index),
+                Some(&capture_result.capture.capture_id),
+                Some(&capture_result.capture.request_id),
+                reserve_input.to_step_detail(),
+            )
+            .map_err(internal_run_failure)?;
+        if !reserve_input_ready {
+            context
+                .append_step(
+                    "capture-preview-settled-after-no-go",
+                    "passed",
+                    "Saved capture preview was settled before returning the No-Go result.",
+                    Some(capture_index),
+                    Some(&preview_capture.capture_id),
+                    Some(&preview_capture.request_id),
+                    json!({
+                        "captureId": preview_capture.capture_id,
+                        "requestId": preview_capture.request_id,
+                        "previewPath": preview_capture.preview.asset_path,
+                        "previewKind": preview_capture.preview.kind,
+                        "renderStatus": preview_capture.render_status,
+                    }),
+                )
+                .map_err(internal_run_failure)?;
+            return Err(host_owned_reserve_unavailable_failure(
+                capture_index,
+                &reserve_input,
+            ));
+        }
         let readiness = get_capture_readiness_in_dir(
             base_dir,
             CaptureReadinessInputDto {
@@ -584,7 +653,18 @@ fn execute_validation_run(
                 ],
             ));
         }
-        validate_preview_truth_gate(&preview_capture, capture_index)?;
+        let preview_route_detail = read_latest_preview_route_detail(
+            base_dir,
+            &session.session_id,
+            &preview_capture.capture_id,
+            &preview_capture.request_id,
+        )
+        .map_err(internal_run_failure)?;
+        validate_preview_truth_gate(
+            &preview_capture,
+            capture_index,
+            preview_route_detail.as_deref(),
+        )?;
 
         context.captures_passed += 1;
         context
@@ -625,9 +705,241 @@ fn execute_validation_run(
     Ok(())
 }
 
+#[derive(Debug, Clone, Default)]
+struct HostOwnedReserveInputEvidence {
+    event_count: usize,
+    file_arrived_fast_preview_kind: Option<String>,
+    file_arrived_fast_preview_path: Option<String>,
+    latest_fast_preview_kind: Option<String>,
+    latest_fast_preview_path: Option<String>,
+    latest_fast_preview_failure_kind: Option<String>,
+    latest_fast_preview_failure_code: Option<String>,
+    latest_preview_route_detail: Option<String>,
+    latest_speculative_preview_detail: Option<String>,
+    speculative_preview_output_ready: bool,
+    speculative_preview_lock_present: bool,
+    wait_elapsed_ms: u128,
+    wait_timed_out: bool,
+}
+
+impl HostOwnedReserveInputEvidence {
+    fn satisfies_host_owned_boundary(&self) -> bool {
+        self.has_host_owned_preview_route_evidence()
+    }
+
+    fn has_host_owned_preview_route_evidence(&self) -> bool {
+        self.latest_preview_route_detail
+            .as_deref()
+            .or(self.latest_speculative_preview_detail.as_deref())
+            .is_some_and(preview_route_satisfies_host_owned_boundary)
+    }
+
+    fn preserve_pre_settle_evidence(&mut self, original: &Self) {
+        if self.latest_speculative_preview_detail.is_none() {
+            self.latest_speculative_preview_detail =
+                original.latest_speculative_preview_detail.clone();
+        }
+        self.speculative_preview_output_ready |= original.speculative_preview_output_ready;
+        self.speculative_preview_lock_present |= original.speculative_preview_lock_present;
+    }
+
+    fn observed_summary(&self) -> String {
+        format!(
+            "fileArrivedKind={};latestFastPreviewKind={};latestFailureKind={};latestFailureCode={};latestPreviewRoute={};latestSpeculativeRoute={};speculativeOutputReady={};speculativeLockPresent={};eventCount={}",
+            self.file_arrived_fast_preview_kind
+                .as_deref()
+                .unwrap_or("none"),
+            self.latest_fast_preview_kind
+                .as_deref()
+                .unwrap_or("none"),
+            self.latest_fast_preview_failure_kind
+                .as_deref()
+                .unwrap_or("none"),
+            self.latest_fast_preview_failure_code
+                .as_deref()
+                .unwrap_or("none"),
+            self.latest_preview_route_detail
+                .as_deref()
+                .map(summarize_preview_route_detail)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "none".into()),
+            self.latest_speculative_preview_detail
+                .as_deref()
+                .map(summarize_preview_route_detail)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "none".into()),
+            self.speculative_preview_output_ready,
+            self.speculative_preview_lock_present,
+            self.event_count
+        )
+    }
+
+    fn to_step_detail(&self) -> serde_json::Value {
+        json!({
+            "satisfiesHostOwnedBoundary": self.satisfies_host_owned_boundary(),
+            "eventCount": self.event_count,
+            "fileArrivedFastPreviewKind": self.file_arrived_fast_preview_kind,
+            "fileArrivedFastPreviewPath": self.file_arrived_fast_preview_path,
+            "latestFastPreviewKind": self.latest_fast_preview_kind,
+            "latestFastPreviewPath": self.latest_fast_preview_path,
+            "latestFastPreviewFailureKind": self.latest_fast_preview_failure_kind,
+            "latestFastPreviewFailureCode": self.latest_fast_preview_failure_code,
+            "latestPreviewRouteDetail": self.latest_preview_route_detail,
+            "latestSpeculativePreviewDetail": self.latest_speculative_preview_detail,
+            "speculativePreviewOutputReady": self.speculative_preview_output_ready,
+            "speculativePreviewLockPresent": self.speculative_preview_lock_present,
+            "waitElapsedMs": self.wait_elapsed_ms,
+            "waitTimedOut": self.wait_timed_out,
+        })
+    }
+}
+
+fn wait_for_host_owned_reserve_input_evidence(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+    timeout: Duration,
+) -> Result<HostOwnedReserveInputEvidence, HardwareValidationRunnerError> {
+    let started_at = Instant::now();
+
+    loop {
+        let mut latest_evidence =
+            read_host_owned_reserve_input_evidence(base_dir, session_id, capture_id, request_id)?;
+        latest_evidence.wait_elapsed_ms = started_at.elapsed().as_millis();
+
+        if latest_evidence.satisfies_host_owned_boundary() {
+            return Ok(latest_evidence);
+        }
+
+        if started_at.elapsed() >= timeout {
+            latest_evidence.wait_elapsed_ms = started_at.elapsed().as_millis();
+            latest_evidence.wait_timed_out = true;
+            return Ok(latest_evidence);
+        }
+
+        thread::sleep(Duration::from_millis(
+            HOST_OWNED_RESERVE_INPUT_POLL_INTERVAL_MS,
+        ));
+    }
+}
+
+fn read_host_owned_reserve_input_evidence(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+) -> Result<HostOwnedReserveInputEvidence, HardwareValidationRunnerError> {
+    let events_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join(CAMERA_HELPER_EVENTS_FILE_NAME);
+
+    let mut evidence = HostOwnedReserveInputEvidence::default();
+    if events_path.exists() {
+        for line in fs::read_to_string(events_path)?.lines() {
+            let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if json_string_field(&event, "sessionId").as_deref() != Some(session_id)
+                || json_string_field(&event, "requestId").as_deref() != Some(request_id)
+            {
+                continue;
+            }
+            let event_capture_id = json_string_field(&event, "captureId");
+            if event_capture_id
+                .as_deref()
+                .is_some_and(|value| value != capture_id)
+            {
+                continue;
+            }
+
+            let Some(event_type) = json_string_field(&event, "type") else {
+                continue;
+            };
+            match event_type.as_str() {
+                "file-arrived" => {
+                    evidence.event_count += 1;
+                    evidence.file_arrived_fast_preview_kind =
+                        json_string_field(&event, "fastPreviewKind");
+                    evidence.file_arrived_fast_preview_path =
+                        json_string_field(&event, "fastPreviewPath");
+                }
+                "fast-preview-ready" => {
+                    evidence.event_count += 1;
+                    evidence.latest_fast_preview_kind =
+                        json_string_field(&event, "fastPreviewKind");
+                    evidence.latest_fast_preview_path =
+                        json_string_field(&event, "fastPreviewPath");
+                }
+                "fast-preview-failed" => {
+                    evidence.event_count += 1;
+                    evidence.latest_fast_preview_failure_kind =
+                        json_string_field(&event, "fastPreviewKind");
+                    evidence.latest_fast_preview_failure_code =
+                        json_string_field(&event, "detailCode");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    evidence.latest_preview_route_detail =
+        read_latest_preview_route_detail(base_dir, session_id, capture_id, request_id)?;
+    let paths = SessionPaths::new(base_dir, session_id);
+    let speculative_output_path = paths
+        .renders_previews_dir
+        .join(format!("{capture_id}.preview-speculative.jpg"));
+    let speculative_detail_path = paths.renders_previews_dir.join(format!(
+        "{capture_id}.{request_id}.preview-speculative.detail"
+    ));
+    let speculative_lock_path = paths.renders_previews_dir.join(format!(
+        "{capture_id}.{request_id}.preview-speculative.lock"
+    ));
+    evidence.speculative_preview_output_ready =
+        speculative_output_path.is_file() && speculative_detail_path.is_file();
+    evidence.speculative_preview_lock_present = speculative_lock_path.exists();
+    if speculative_detail_path.is_file() {
+        evidence.latest_speculative_preview_detail = Some(normalize_preview_route_truth_detail(
+            fs::read_to_string(speculative_detail_path)?.trim(),
+        ))
+        .filter(|value| !value.is_empty());
+    }
+
+    Ok(evidence)
+}
+
+fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn host_owned_reserve_unavailable_failure(
+    capture_index: u32,
+    evidence: &HostOwnedReserveInputEvidence,
+) -> RunFailure {
+    run_failure(
+        "preview-host-owned-reserve-unavailable",
+        format!(
+            "capture {capture_index} host-owned preset-applied fast preview handoff가 없어요: {}",
+            evidence.observed_summary()
+        ),
+        "helper가 공식 reserve path 입력인 preset-applied fast-preview handoff를 제공하지 않아 validation이 darktable fallback으로 넘어가기 전에 중단했습니다.",
+        vec![
+            "camera-helper-events.jsonl에서 file-arrived fastPreviewKind와 fast-preview-ready fastPreviewKind를 확인하세요.",
+            "run-steps.jsonl의 latestSpeculativePreviewDetail이 darktable 경로인지 확인하세요.",
+            "windows-shell-thumbnail/raw-fallback-preview는 first-visible comparison evidence일 뿐 official host-owned Go 근거가 아닙니다.",
+        ],
+    )
+}
+
 fn validate_preview_truth_gate(
     capture: &SessionCaptureRecord,
     capture_index: u32,
+    preview_route_detail: Option<&str>,
 ) -> Result<(), RunFailure> {
     let preview_kind = capture.preview.kind.as_deref().unwrap_or("unknown");
     if preview_kind != "preset-applied-preview" {
@@ -656,6 +968,21 @@ fn validate_preview_truth_gate(
     }
 
     let official_gate_elapsed_ms = preset_applied_visible_at_ms.saturating_sub(first_visible_at_ms);
+    match preview_route_detail {
+        Some(detail) if preview_route_satisfies_host_owned_boundary(detail) => {}
+        Some(detail) => {
+            return Err(preview_route_owner_gate_failure(format!(
+                "capture {capture_index} preview route가 host-owned reserve path가 아니에요: {}",
+                summarize_preview_route_detail(detail)
+            )));
+        }
+        None => {
+            return Err(preview_route_owner_gate_failure(format!(
+                "capture {capture_index}에 preview-render-ready route owner evidence가 없어요."
+            )));
+        }
+    }
+
     if official_gate_elapsed_ms > 3_000 {
         return Err(preview_truth_gate_failure(
             format!(
@@ -665,6 +992,132 @@ fn validate_preview_truth_gate(
     }
 
     Ok(())
+}
+
+fn read_latest_preview_route_detail(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    request_id: &str,
+) -> Result<Option<String>, HardwareValidationRunnerError> {
+    let log_path = SessionPaths::new(base_dir, session_id)
+        .diagnostics_dir
+        .join("timing-events.log");
+    if !log_path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(log_path)?;
+    Ok(contents
+        .lines()
+        .filter(|line| {
+            line.contains("event=preview-render-ready")
+                && line.contains(&format!("capture={capture_id}"))
+                && line.contains(&format!("request={request_id}"))
+        })
+        .filter_map(extract_timing_detail)
+        .last()
+        .map(str::to_string))
+}
+
+fn extract_timing_detail(line: &str) -> Option<&str> {
+    line.split_once("\tdetail=").map(|(_, detail)| detail)
+}
+
+fn preview_route_satisfies_host_owned_boundary(detail: &str) -> bool {
+    detail.contains("binary=fast-preview-handoff")
+        && detail.contains("source=fast-preview-handoff")
+        && detail.contains("engineSource=host-owned-native")
+        && detail.contains("inputSourceAsset=raw-original")
+        && detail.contains("sourceAsset=preset-applied-preview")
+        && detail.contains("truthOwner=display-sized-preset-applied")
+        && detail.contains("truthProfile=original-full-preset")
+        && !preview_route_uses_darktable_engine(detail)
+        && !preview_route_uses_operation_derived_raster_approximation(detail)
+}
+
+fn preview_route_uses_darktable_engine(detail: &str) -> bool {
+    if preview_route_uses_resident_darktable_compatible_full_preset_engine(detail) {
+        return false;
+    }
+
+    detail.split(';').any(|part| {
+        let normalized_part = part.to_ascii_lowercase();
+        (normalized_part.starts_with("enginebinary=") && normalized_part.contains("darktable-cli"))
+            || (normalized_part.starts_with("enginesource=")
+                && normalized_part.contains("program-files-bin"))
+    })
+}
+
+fn preview_route_uses_resident_darktable_compatible_full_preset_engine(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    normalized.contains("enginemode=resident-full-preset")
+        && normalized.contains("engineadapter=darktable-compatible")
+        && normalized.contains("inputsourceasset=raw-original")
+        && normalized.contains("truthprofile=original-full-preset")
+}
+
+fn preview_route_uses_operation_derived_raster_approximation(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    normalized.contains("profile=operation-derived")
+        || normalized.contains("inputsourceasset=fast-preview-raster")
+}
+
+fn normalize_preview_route_truth_detail(detail: &str) -> String {
+    let with_truth_owner = if detail.contains("truthOwner=") {
+        detail.to_string()
+    } else {
+        format!("{detail};truthOwner=display-sized-preset-applied")
+    };
+
+    if with_truth_owner.contains("sourceAsset=preset-applied-preview") {
+        return with_truth_owner;
+    }
+
+    if with_truth_owner.contains("sourceAsset=fast-preview-raster") {
+        return with_truth_owner.replace(
+            "sourceAsset=fast-preview-raster",
+            "inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview",
+        );
+    }
+
+    format!("{with_truth_owner};sourceAsset=preset-applied-preview")
+}
+
+fn summarize_preview_route_detail(detail: &str) -> String {
+    let interesting_keys = [
+        "binary=",
+        "source=",
+        "sourceAsset=",
+        "inputSourceAsset=",
+        "truthOwner=",
+        "truthProfile=",
+        "truthBlocker=",
+        "requiredInputSourceAsset=",
+        "elapsedMs=",
+        "engineBinary=",
+        "engineSource=",
+        "engineMode=",
+        "engineAdapter=",
+        "engineAdapterSource=",
+    ];
+    detail
+        .split(';')
+        .filter(|part| interesting_keys.iter().any(|key| part.starts_with(key)))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn preview_route_owner_gate_failure(problem: String) -> RunFailure {
+    run_failure(
+        "preview-route-owner-gate-failed",
+        problem,
+        "공식 hardware Go는 darktable per-capture close가 아니라 host-owned reserve path evidence로만 닫혀야 합니다.",
+        vec![
+            "timing-events.log의 preview-render-ready detail에서 binary/source가 fast-preview-handoff인지 확인하세요.",
+            "darktable-cli elapsed pass나 XMP trimming pass는 comparison evidence로만 기록하고 official Go로 승격하지 마세요.",
+        ],
+    )
 }
 
 fn preview_truth_gate_failure(problem: String) -> RunFailure {
@@ -1241,7 +1694,7 @@ fn wait_for_ready_capture_gate(
     base_dir: &Path,
     session_id: &str,
 ) -> Result<crate::contracts::dto::CaptureReadinessDto, RunFailure> {
-    let timeout = Duration::from_secs(8);
+    let timeout = ready_capture_gate_timeout();
     let helper_bootstrap_after = Duration::from_secs(1);
     let start = Instant::now();
     let mut last_readiness = None;
@@ -1304,6 +1757,10 @@ fn wait_for_ready_capture_gate(
     ))
 }
 
+fn ready_capture_gate_timeout() -> Duration {
+    Duration::from_secs(15)
+}
+
 fn readiness_missing_helper_status(readiness: &crate::contracts::dto::CaptureReadinessDto) -> bool {
     readiness.reason_code == "camera-preparing"
         && readiness.live_capture_truth.as_ref().is_some_and(|truth| {
@@ -1333,13 +1790,9 @@ mod tests {
 
     #[test]
     fn preview_truth_gate_rejects_inverted_timing_evidence() {
-        let capture = truth_gate_capture(
-            "preset-applied-preview",
-            Some(2_000),
-            Some(1_500),
-        );
+        let capture = truth_gate_capture("preset-applied-preview", Some(2_000), Some(1_500));
 
-        let failure = validate_preview_truth_gate(&capture, 1)
+        let failure = validate_preview_truth_gate(&capture, 1, None)
             .expect_err("inverted timing evidence should fail the official gate");
 
         assert_eq!(failure.diagnostic.code, "preview-truth-gate-failed");
@@ -1350,6 +1803,382 @@ mod tests {
     fn preview_runtime_warmup_step_status_marks_unsettled_as_failed() {
         assert_eq!(preview_runtime_warmup_step_status(true), "passed");
         assert_eq!(preview_runtime_warmup_step_status(false), "failed");
+    }
+
+    #[test]
+    fn host_owned_reserve_input_waits_past_early_non_host_preview() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-host-owned-reserve-wait-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let session_id = "session_000000000000000000000001";
+        let capture_id = "capture_01";
+        let request_id = "request_01";
+        let events_path = SessionPaths::new(&base_dir, session_id)
+            .diagnostics_dir
+            .join(CAMERA_HELPER_EVENTS_FILE_NAME);
+        fs::create_dir_all(
+            events_path
+                .parent()
+                .expect("events path should have a parent"),
+        )
+        .expect("diagnostics dir should be writable");
+        append_helper_event_for_wait_test(
+            &events_path,
+            json!({
+                "schemaVersion": "canon-helper-file-arrived/v1",
+                "type": "file-arrived",
+                "sessionId": session_id,
+                "requestId": request_id,
+                "captureId": capture_id,
+                "rawPath": "C:/capture_01.CR2",
+                "fastPreviewPath": null,
+                "fastPreviewKind": null,
+            }),
+        );
+        append_helper_event_for_wait_test(
+            &events_path,
+            json!({
+                "schemaVersion": "canon-helper-fast-preview-ready/v1",
+                "type": "fast-preview-ready",
+                "sessionId": session_id,
+                "requestId": request_id,
+                "captureId": capture_id,
+                "fastPreviewPath": "C:/capture_01.shell.jpg",
+                "fastPreviewKind": "windows-shell-thumbnail",
+            }),
+        );
+
+        let delayed_events_path = events_path.clone();
+        let delayed_timing_path = SessionPaths::new(&base_dir, session_id)
+            .diagnostics_dir
+            .join("timing-events.log");
+        let delayed_session_id = session_id.to_string();
+        let delayed_request_id = request_id.to_string();
+        let delayed_capture_id = capture_id.to_string();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            append_helper_event_for_wait_test(
+                &delayed_events_path,
+                json!({
+                    "schemaVersion": "canon-helper-fast-preview-ready/v1",
+                    "type": "fast-preview-ready",
+                    "sessionId": delayed_session_id,
+                    "requestId": delayed_request_id,
+                    "captureId": delayed_capture_id,
+                    "fastPreviewPath": "C:/capture_01.preset-applied-preview.jpg",
+                    "fastPreviewKind": "preset-applied-preview",
+                }),
+            );
+            fs::write(
+                &delayed_timing_path,
+                format!(
+                    "2026-04-27T00:00:00Z\tsession={delayed_session_id}\tcapture={delayed_capture_id}\trequest={delayed_request_id}\tevent=preview-render-ready\tstage=preview\treason=render-ready\tdetail=presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=900;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready\n"
+                ),
+            )
+            .expect("truthful route timing evidence should be writable");
+        });
+
+        let evidence = wait_for_host_owned_reserve_input_evidence(
+            &base_dir,
+            session_id,
+            capture_id,
+            request_id,
+            Duration::from_millis(1_000),
+        )
+        .expect("wait evidence should be readable");
+        writer.join().expect("delayed event writer should complete");
+
+        assert!(evidence.satisfies_host_owned_boundary());
+        assert_eq!(
+            evidence.latest_fast_preview_kind.as_deref(),
+            Some("preset-applied-preview")
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn host_owned_reserve_input_rejects_preset_applied_kind_without_truth_route_evidence() {
+        let evidence = HostOwnedReserveInputEvidence {
+            latest_fast_preview_kind: Some("preset-applied-preview".into()),
+            latest_fast_preview_path: Some("C:/capture_01.preset-applied-preview.jpg".into()),
+            ..Default::default()
+        };
+
+        assert!(
+            !evidence.satisfies_host_owned_boundary(),
+            "preset-applied kind alone is not enough; official reserve input needs raw-original original/full-preset route evidence"
+        );
+    }
+
+    #[test]
+    fn host_owned_reserve_input_accepts_host_route_timing_evidence_without_helper_handoff() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-host-owned-reserve-route-evidence-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let session_id = "session_000000000000000000000001";
+        let capture_id = "capture_01";
+        let request_id = "request_01";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics dir should be writable");
+        fs::write(
+            paths.diagnostics_dir.join("timing-events.log"),
+            format!(
+                "2026-04-27T00:00:00Z\tsession={session_id}\tcapture={capture_id}\trequest={request_id}\tevent=preview-render-ready\tstage=preview\treason=render-ready\tdetail=presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=900;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready\n"
+            ),
+        )
+        .expect("timing events should be writable");
+
+        let evidence =
+            read_host_owned_reserve_input_evidence(&base_dir, session_id, capture_id, request_id)
+                .expect("evidence should be readable");
+
+        assert!(
+            evidence.satisfies_host_owned_boundary(),
+            "host-owned route evidence should satisfy the reserve boundary even without helper metadata"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn host_owned_reserve_input_records_speculative_preview_route_evidence() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-host-owned-reserve-speculative-evidence-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let session_id = "session_000000000000000000000001";
+        let capture_id = "capture_01";
+        let request_id = "request_01";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should be writable");
+        fs::write(
+            paths
+                .renders_previews_dir
+                .join("capture_01.preview-speculative.jpg"),
+            [0xFF, 0xD8, 0xFF, 0xD9],
+        )
+        .expect("speculative preview output should be writable");
+        fs::write(
+            paths
+                .renders_previews_dir
+                .join("capture_01.request_01.preview-speculative.detail"),
+            "presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=900;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready",
+        )
+        .expect("speculative detail should be writable");
+
+        let evidence =
+            read_host_owned_reserve_input_evidence(&base_dir, session_id, capture_id, request_id)
+                .expect("evidence should be readable");
+
+        assert!(evidence.speculative_preview_output_ready);
+        assert!(
+            evidence.satisfies_host_owned_boundary(),
+            "speculative fast-preview-handoff route evidence should satisfy the reserve boundary"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn no_go_failure_evidence_preserves_pre_settle_speculative_detail_when_settle_cleans_it_up() {
+        let original = HostOwnedReserveInputEvidence {
+            latest_speculative_preview_detail: Some(
+                normalize_preview_route_truth_detail("presetId=preset_test;publishedVersion=2026.04.10;binary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;source=program-files-bin;elapsedMs=3011;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=none;status=0"),
+            ),
+            speculative_preview_output_ready: true,
+            speculative_preview_lock_present: true,
+            wait_elapsed_ms: 3_023,
+            wait_timed_out: true,
+            ..Default::default()
+        };
+        let mut refreshed = HostOwnedReserveInputEvidence {
+            latest_preview_route_detail: Some(
+                "presetId=preset_test;publishedVersion=2026.04.10;binary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;source=program-files-bin;elapsedMs=3011;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;args=none;status=0".into(),
+            ),
+            ..Default::default()
+        };
+
+        refreshed.preserve_pre_settle_evidence(&original);
+
+        let summary = refreshed.observed_summary();
+        assert!(
+            summary.contains("latestSpeculativeRoute=binary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;source=program-files-bin;"),
+            "final No-Go summary should retain the speculative route that existed before settle cleanup: {summary}"
+        );
+        assert!(summary.contains("inputSourceAsset=fast-preview-raster"));
+        assert!(summary.contains("sourceAsset=preset-applied-preview"));
+        assert!(summary.contains("truthOwner=display-sized-preset-applied"));
+        assert!(summary.contains("elapsedMs=3011"));
+        assert!(
+            summary.contains("speculativeOutputReady=true"),
+            "final No-Go summary should retain pre-settle speculative output readiness: {summary}"
+        );
+        assert!(
+            summary.contains("speculativeLockPresent=true"),
+            "final No-Go summary should retain pre-settle speculative lock state: {summary}"
+        );
+    }
+
+    #[test]
+    fn host_owned_reserve_input_normalizes_speculative_darktable_route_for_failure_readout() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-host-owned-reserve-normalized-speculative-evidence-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let session_id = "session_000000000000000000000001";
+        let capture_id = "capture_01";
+        let request_id = "request_01";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should be writable");
+        fs::write(
+            paths
+                .renders_previews_dir
+                .join("capture_01.preview-speculative.jpg"),
+            [0xFF, 0xD8, 0xFF, 0xD9],
+        )
+        .expect("speculative preview output should be writable");
+        fs::write(
+            paths
+                .renders_previews_dir
+                .join("capture_01.request_01.preview-speculative.detail"),
+            "presetId=preset_test;publishedVersion=2026.04.10;binary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;source=program-files-bin;elapsedMs=3008;detail=widthCap=256;heightCap=256;hq=false;sourceAsset=fast-preview-raster;args=none;status=0",
+        )
+        .expect("speculative detail should be writable");
+
+        let evidence =
+            read_host_owned_reserve_input_evidence(&base_dir, session_id, capture_id, request_id)
+                .expect("evidence should be readable");
+        let detail = evidence
+            .latest_speculative_preview_detail
+            .as_deref()
+            .expect("speculative detail should be recorded");
+
+        assert!(detail.contains("inputSourceAsset=fast-preview-raster"));
+        assert!(detail.contains("sourceAsset=preset-applied-preview"));
+        assert!(detail.contains("truthOwner=display-sized-preset-applied"));
+        assert!(
+            !evidence.satisfies_host_owned_boundary(),
+            "darktable speculative routes remain comparison evidence after normalization"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_darktable_route_even_inside_latency_budget() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;source=program-files-bin;elapsedMs=950;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied"),
+        )
+        .expect_err("darktable preview route must not satisfy the official host-owned boundary");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
+        assert!(failure
+            .diagnostic
+            .problem
+            .contains("host-owned reserve path"));
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_darktable_backed_fast_preview_handoff() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=950;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;engineBinary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;engineSource=program-files-bin;args=none;status=0"),
+        )
+        .expect_err("darktable-backed handoff must remain comparison evidence");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_operation_derived_raster_handoff() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=950;detail=widthCap=256;heightCap=256;hq=false;inputSourceAsset=fast-preview-raster;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=source=C:/preview-source.jpg output=C:/preview.jpg profile=operation-derived;status=0"),
+        )
+        .expect_err("operation-derived raster handoff is not full original preset truth");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_fast_preview_handoff_without_original_full_preset_profile() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=950;detail=widthCap=display;heightCap=display;hq=false;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready"),
+        )
+        .expect_err("host-owned handoff without original/full-preset proof is not official truth");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
+    }
+
+    #[test]
+    fn preview_truth_gate_accepts_fast_preview_handoff_route_inside_latency_budget() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+
+        validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=1000;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready"),
+        )
+        .expect("fast preview handoff route should satisfy the official host-owned boundary");
+    }
+
+    #[test]
+    fn preview_truth_gate_accepts_resident_darktable_compatible_full_preset_engine() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+
+        validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=1000;detail=widthCap=384;heightCap=384;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineMode=resident-full-preset;engineAdapter=darktable-compatible;engineAdapterSource=program-files-bin;engineBinary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;engineSource=host-owned-native;args=none;status=0"),
+        )
+        .expect("resident full-preset darktable-compatible engine should satisfy the official host-owned boundary");
+    }
+
+    #[test]
+    fn readiness_wait_budget_covers_runtime_reconnect_headroom() {
+        assert!(
+            ready_capture_gate_timeout() >= Duration::from_secs(15),
+            "validation readiness timeout should not be shorter than helper reconnect recovery"
+        );
+    }
+
+    fn append_helper_event_for_wait_test(path: &Path, event: serde_json::Value) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("event log should be writable");
+        writeln!(
+            file,
+            "{}",
+            serde_json::to_string(&event).expect("event should serialize")
+        )
+        .expect("event line should be writable");
     }
 
     fn truth_gate_capture(

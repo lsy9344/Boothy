@@ -32,6 +32,7 @@
 - `2026-04-16` 기준 판단에서는 이후 forward path가 `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` 쪽으로 재정렬됐다.
 - `2026-04-20` 기준으로는 old `resident first-visible` line이 closed `No-Go` baseline으로 확정됐고, 그 forward path가 Story `1.26` reserve path로 공식 오픈됐다.
 - 최신 후속 조사에서는 세션 소실 race, preview close latency, follow-up capture timeout이 서로 다른 문제축으로 다시 분리되어 기록됐다.
+- `2026-04-29` false-Go 조사 이후에는 native RAW partial approximation을 official truth로 승격하지 않는다. 선택한 다음 방향은 실제 full preset 결과를 만드는 `resident/long-lived darktable-compatible` engine path를 제품 후보로 다시 세우는 것이다.
 
 ---
 
@@ -332,6 +333,69 @@
 
 ---
 
+## Phase 7. 2026-04-29 false-Go 이후 방향 재선택
+
+### 이 문서에 이미 있던 내용
+
+- 과거 문서에는 `resident first-visible` line이 historically better product feel candidate였다는 기록이 있다.
+- Phase 5에는 `darktable-compatible path`를 parity/fallback/final reference로 유지한다는 판단이 있다.
+- 즉, resident/darktable 계열의 재료는 이미 있었다. 다만 그것을 Story `1.26`의 다음 primary 제품 경로로 다시 선택한다는 결론은 아직 명시되어 있지 않았다.
+
+### 새로 확정한 판단
+
+- native RAW partial approximation은 충분히 빠를 수 있지만, 실제 full preset 결과가 아니면 official truth가 아니다.
+- 2026-04-29 false-Go에서 over-white output과 비현실적으로 낮은 timing이 같은 원인에서 나왔다. 원인은 native approximation을 `original-full-preset`처럼 승격한 것이다.
+- 따라서 다음 제품 방향은 작은 native operation 일부를 더 흉내 내는 쪽이 아니다.
+- 선택한 2번 방법은 실제 preset engine을 계속 살아 있게 만드는 `resident/long-lived darktable-compatible` close path다.
+- 이 방향은 per-capture `darktable-cli` fallback tail을 반복 튜닝하자는 뜻이 아니다. 목표는 실제 full preset fidelity를 유지한 채 cold start, process spawn, queue jitter를 줄이는 것이다.
+- host-owned native/GPU path는 full preset parity를 검증할 수 있을 때만 다시 official truth 후보가 된다. 그 전에는 comparison evidence로만 남긴다.
+
+### 다음 에이전트 지침
+
+- `inputSourceAsset=fast-preview-raster`, `profile=operation-derived`, darktable-backed preview fallback, parity 없는 native output은 official truth로 승격하지 말 것.
+- `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`을 주장하려면 실제 preset engine ownership이나 동등한 parity proof가 필요하다.
+- 우선 구현 후보는 resident/long-lived darktable-compatible worker, libdarktable-style in-process owner, 또는 같은 제품 의미를 만족하는 장기 실행 preset renderer다.
+- 이번 방향은 과거의 "darktable fallback 튜닝"과 다르다. fallback 결과를 더 빨리 보이게 하는 것이 아니라, 실제 preset result owner를 제품 hot path로 만드는 것이 목표다.
+- 구현은 바로 release path로 보지 말고 bounded spike로 시작한다. resident engine이 full preset fidelity, same-capture ownership, approved-hardware timing을 동시에 증명해야 다음 gate로 간다.
+- current `darktable-cli` output은 reference/fallback/final correctness evidence로 남긴다. per-capture fallback이 빠른 run 하나를 만들더라도 새 reserve path 성공으로 세지 않는다.
+
+---
+
+## Phase 8. 2026-04-29 option 2 구현 결과
+
+### 현재 정답
+
+- Story `1.26`의 현재 정답은 option 2다.
+- 실제 preset engine을 booth hot path 안에 두는 `resident/long-lived darktable-compatible full-preset` 경로다.
+- 이 경로는 원본 RAW를 입력으로 받아 같은 촬영본의 `preset-applied-preview`를 만든다.
+- 최신 approved hardware run `hardware-validation-run-1777434275752`가 `5/5` 통과했다.
+
+### 왜 정답으로 보는가
+
+- accepted route가 `inputSourceAsset=raw-original`을 갖는다.
+- accepted route가 `sourceAsset=preset-applied-preview`를 갖는다.
+- accepted route가 `truthOwner=display-sized-preset-applied`를 갖는다.
+- accepted route가 `truthProfile=original-full-preset`을 갖는다.
+- accepted route가 `engineMode=resident-full-preset`과 `engineAdapter=darktable-compatible`을 갖는다.
+- official timing은 `2316ms ~ 2338ms`로 3초 안이다.
+
+### 계속 금지할 것
+
+- native RAW partial approximation을 official truth로 승격하지 않는다.
+- fast-preview-raster 기반 결과를 official truth로 승격하지 않는다.
+- operation-derived profile을 official truth로 승격하지 않는다.
+- per-capture darktable fallback을 Story `1.26` 성공으로 세지 않는다.
+- full-preset parity proof가 없는 host-owned output을 성공으로 세지 않는다.
+
+### 다음 변경 시 확인할 것
+
+- route fields가 유지되는지 먼저 본다.
+- timing만 나빠졌다면 resident owner, path reuse, warm state를 먼저 본다.
+- route fields가 사라졌다면 fallback 튜닝이 아니라 resident full-preset generation/promotion path를 복구한다.
+- 자세한 current answer record는 `_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md`와 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`를 따른다.
+
+---
+
 ## 지금까지 조사하고 시도한 방법 목록
 
 아래는 에이전트가 "무엇을 이미 해봤는지"를 빠르게 훑기 위한 압축 목록이다.
@@ -351,6 +415,8 @@
 | dedicated renderer | sidecar close owner | same-slot truthful replacement 가속 | activation 성공, KPI 실패 | baseline only |
 | speculative close 제거 | happy path 중복 렌더 차단 | 경쟁 제거 | 적용 성공 | 유지 |
 | close cap 축소 | smaller display cap | close 비용 축소 | 개선 제한적 | 미세조정 축 |
+| native RAW approximation | host-owned native 비교 출력 | reserve path 후보 검토 | false-Go/over-white 확인 | official truth 금지 |
+| resident/long-lived preset engine | darktable-compatible engine을 계속 살려 실제 preset 결과 생성 | full preset fidelity 유지 + process/cold cost 제거 | 2026-04-29 approved hardware `5/5` Go | 현재 Story 1.26 정답 |
 | manifest serialization | session truth 보존 | 세션 소실 방지 | 성공 | 유지 |
 | timeout 확대 | helper/host timeout 증가 | follow-up capture 실패 완화 | 일부 완화, 근본 해결 아님 | 보조 |
 | evidence/governance reset | 1.21~1.25 | KPI, trace, canary, default/rollback 재정렬 | 문서/계약 잠금 성공 | 유지 |
