@@ -7,15 +7,15 @@ use crate::{
         helper_supervisor::try_ensure_helper_running,
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
-            delete_capture_in_dir, get_capture_readiness_in_dir,
+            delete_capture_in_dir, export_captures_in_dir, get_capture_readiness_in_dir,
             request_capture_in_dir_with_fast_preview,
         },
     },
     contracts::dto::{
-        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureFastPreviewUpdateDto,
-        CaptureReadinessDto, CaptureReadinessInputDto, CaptureReadinessUpdateDto,
-        CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
-        PresetSelectionInputDto,
+        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureExportInputDto,
+        CaptureExportResultDto, CaptureFastPreviewUpdateDto, CaptureReadinessDto,
+        CaptureReadinessInputDto, CaptureReadinessUpdateDto, CaptureRequestInputDto,
+        CaptureRequestResultDto, HostErrorEnvelope, PresetSelectionInputDto,
     },
     render::{
         prime_preview_worker_runtime_in_dir, schedule_preview_renderer_warmup_in_dir,
@@ -90,6 +90,19 @@ pub fn delete_capture(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
 
     delete_capture_in_dir(&base_dir, input)
+}
+
+#[tauri::command]
+pub fn export_captures(
+    app: tauri::AppHandle,
+    input: CaptureExportInputDto,
+) -> Result<CaptureExportResultDto, HostErrorEnvelope> {
+    let app_local_data_dir = app.path().app_local_data_dir().map_err(|error| {
+        HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
+    })?;
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+
+    export_captures_in_dir(&base_dir, input)
 }
 
 #[tauri::command]

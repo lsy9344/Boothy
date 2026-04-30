@@ -10,9 +10,10 @@ use crate::{
     capture::{
         helper_supervisor::{shutdown_helper_process, try_ensure_helper_running},
         ingest_pipeline::{
-            complete_preview_render_in_dir, persist_capture_in_dir,
-            promote_pending_fast_preview_in_dir, reconcile_saved_capture_fast_preview_in_dir,
-            should_start_speculative_preview_render, start_speculative_preview_render_in_dir,
+            complete_active_session_final_render_in_dir, complete_preview_render_in_dir,
+            persist_capture_in_dir, promote_pending_fast_preview_in_dir,
+            reconcile_saved_capture_fast_preview_in_dir, should_start_speculative_preview_render,
+            start_speculative_preview_render_in_dir,
         },
         sidecar_client::{
             is_retryable_capture_helper_error, latest_helper_status_is_fresh,
@@ -26,9 +27,9 @@ use crate::{
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
     },
     contracts::dto::{
-        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureReadinessDto,
-        CaptureReadinessInputDto, CaptureRequestInputDto, CaptureRequestResultDto,
-        HostErrorEnvelope, LiveCaptureTruthDto,
+        CaptureDeleteInputDto, CaptureDeleteResultDto, CaptureExportInputDto,
+        CaptureExportResultDto, CaptureReadinessDto, CaptureReadinessInputDto,
+        CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope, LiveCaptureTruthDto,
     },
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     handoff::{project_post_end_state_in_dir, sync_post_end_state_in_dir},
@@ -1178,6 +1179,110 @@ pub fn delete_capture_in_dir(
         readiness: normalize_capture_readiness(base_dir, &manifest),
         manifest,
     })
+}
+
+pub fn export_captures_in_dir(
+    base_dir: &Path,
+    input: CaptureExportInputDto,
+) -> Result<CaptureExportResultDto, HostErrorEnvelope> {
+    let paths = SessionPaths::try_new(base_dir, &input.session_id)?;
+    let manifest = read_session_manifest(&paths.manifest_path)?;
+    let manifest = project_session_timing(manifest, std::time::SystemTime::now())?;
+    let manifest = project_post_end_state_in_dir(base_dir, manifest, std::time::SystemTime::now())?;
+    let readiness = normalize_capture_readiness(base_dir, &manifest);
+
+    if timing_phase(manifest.timing.as_ref()) == TimingPhase::Ended
+        || manifest.post_end.is_some()
+        || matches!(
+            manifest.lifecycle.stage.as_str(),
+            "export-waiting" | "completed" | "phone-required"
+        )
+    {
+        return Err(HostErrorEnvelope::capture_not_ready(
+            "촬영 시간이 끝난 뒤에는 결과 준비를 자동으로 이어갈게요.",
+            readiness,
+        ));
+    }
+
+    if has_in_flight_capture(base_dir) {
+        return Err(HostErrorEnvelope::capture_not_ready(
+            "방금 찍은 사진을 먼저 불러오고 있어요. 잠시 후 다시 눌러 주세요.",
+            readiness,
+        ));
+    }
+
+    let export_targets: Vec<(String, bool)> = manifest
+        .captures
+        .iter()
+        .filter_map(|capture| {
+            if capture_has_session_scoped_final_truth(&paths, capture) {
+                Some((capture.capture_id.clone(), true))
+            } else if capture.render_status == "previewReady" {
+                Some((capture.capture_id.clone(), false))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut exported_count = 0;
+    let mut skipped_count = 0;
+
+    for (capture_id, already_ready) in export_targets {
+        if already_ready {
+            skipped_count += 1;
+            continue;
+        }
+
+        let rendered_capture =
+            complete_active_session_final_render_in_dir(base_dir, &input.session_id, &capture_id)?;
+        if capture_has_session_scoped_final_truth(&paths, &rendered_capture) {
+            exported_count += 1;
+        }
+    }
+
+    let manifest = read_session_manifest(&paths.manifest_path)?;
+    let readiness = normalize_capture_readiness(base_dir, &manifest);
+
+    Ok(CaptureExportResultDto {
+        schema_version: "capture-export-result/v1".into(),
+        session_id: input.session_id,
+        exported_count,
+        skipped_count,
+        manifest,
+        readiness,
+    })
+}
+
+fn capture_has_session_scoped_final_truth(
+    paths: &SessionPaths,
+    capture: &SessionCaptureRecord,
+) -> bool {
+    capture.render_status == "finalReady"
+        && capture.final_asset.ready_at_ms.is_some()
+        && capture
+            .final_asset
+            .asset_path
+            .as_deref()
+            .map(|asset_path| is_existing_session_scoped_asset(&paths.session_root, asset_path))
+            .unwrap_or(false)
+}
+
+fn is_existing_session_scoped_asset(session_root: &Path, asset_path: &str) -> bool {
+    let asset_path = Path::new(asset_path);
+
+    if !asset_path.is_file() {
+        return false;
+    }
+
+    let Ok(canonical_asset_path) = fs::canonicalize(asset_path) else {
+        return false;
+    };
+    let Ok(canonical_session_root) = fs::canonicalize(session_root) else {
+        return false;
+    };
+
+    canonical_asset_path.starts_with(canonical_session_root)
 }
 
 pub fn normalize_capture_readiness(

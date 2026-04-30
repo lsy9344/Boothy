@@ -7,6 +7,7 @@ type LatestPhotoRailProps = {
   previews: CurrentSessionPreview[]
   isPreviewWaiting: boolean
   isExplicitPostEnd: boolean
+  isPhotoActionDisabled: boolean
   deletingCaptureId: string | null
   pendingDeleteCaptureId: string | null
   onDeleteCancel(): void
@@ -33,6 +34,7 @@ export function LatestPhotoRail({
   previews,
   isPreviewWaiting,
   isExplicitPostEnd,
+  isPhotoActionDisabled,
   deletingCaptureId,
   pendingDeleteCaptureId,
   onDeleteCancel,
@@ -153,7 +155,7 @@ export function LatestPhotoRail({
                       type="button"
                       className="latest-photo-rail__action latest-photo-rail__action--secondary"
                       onClick={onDeleteCancel}
-                      disabled={deletingCaptureId === preview.captureId}
+                      disabled={isPhotoActionDisabled || deletingCaptureId === preview.captureId}
                     >
                       취소
                     </button>
@@ -163,7 +165,7 @@ export function LatestPhotoRail({
                       onClick={() => {
                         onDeleteConfirm(preview.captureId)
                       }}
-                      disabled={deletingCaptureId === preview.captureId}
+                      disabled={isPhotoActionDisabled || deletingCaptureId === preview.captureId}
                     >
                       {deletingCaptureId === preview.captureId
                         ? '정리 중'
@@ -178,7 +180,7 @@ export function LatestPhotoRail({
                   onClick={() => {
                     onDeleteIntent(preview.captureId)
                   }}
-                  disabled={deletingCaptureId !== null}
+                  disabled={isPhotoActionDisabled || deletingCaptureId !== null}
                 >
                   사진 정리
                 </button>

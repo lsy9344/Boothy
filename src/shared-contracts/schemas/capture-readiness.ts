@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { sessionIdSchema } from './ids'
 import {
   captureEventTimeMsSchema,
+  captureExportResultSchemaVersion,
   captureFastPreviewUpdateSchemaVersion,
   captureIdSchema,
   captureDeleteResultSchemaVersion,
@@ -231,6 +232,10 @@ export const captureDeleteInputSchema = z.object({
   captureId: z.string().trim().min(1),
 })
 
+export const captureExportInputSchema = z.object({
+  sessionId: sessionIdSchema,
+})
+
 const captureRequestResultInputSchema = z.object({
   schemaVersion: z.literal(captureRequestResultSchemaVersion).optional(),
   sessionId: sessionIdSchema,
@@ -264,6 +269,26 @@ export const captureDeleteResultSchema = captureDeleteResultInputSchema.transfor
     sessionId: result.sessionId,
     captureId: result.captureId,
     status: 'capture-deleted' as const,
+    manifest: result.manifest,
+    readiness: result.readiness,
+  }),
+)
+
+const captureExportResultInputSchema = z.object({
+  schemaVersion: z.literal(captureExportResultSchemaVersion).optional(),
+  sessionId: sessionIdSchema,
+  exportedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  manifest: sessionManifestSchema,
+  readiness: captureReadinessSnapshotSchema,
+})
+
+export const captureExportResultSchema = captureExportResultInputSchema.transform(
+  (result) => ({
+    schemaVersion: result.schemaVersion ?? captureExportResultSchemaVersion,
+    sessionId: result.sessionId,
+    exportedCount: result.exportedCount,
+    skippedCount: result.skippedCount,
     manifest: result.manifest,
     readiness: result.readiness,
   }),

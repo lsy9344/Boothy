@@ -16,9 +16,13 @@ type ReadinessScreenProps = {
   actionLabel: string
   canCapture: boolean
   isBusy: boolean
+  exportLabel: string
+  canExport: boolean
+  isExportDisabled: boolean
   isExplicitPostEnd: boolean
   isChangePresetDisabled: boolean
   onPrimaryAction(): void
+  onExport(): void
   onChangePreset(): void
 }
 
@@ -34,9 +38,13 @@ export function ReadinessScreen({
   actionLabel,
   canCapture,
   isBusy,
+  exportLabel,
+  canExport,
+  isExportDisabled,
   isExplicitPostEnd,
   isChangePresetDisabled,
   onPrimaryAction,
+  onExport,
   onChangePreset,
 }: ReadinessScreenProps) {
   const shouldHidePrimaryAction =
@@ -89,14 +97,26 @@ export function ReadinessScreen({
             <p className="readiness-screen__post-end-label">{stateLabel}</p>
           </div>
         ) : (
-          <button
-            type="button"
-            className="latest-photo-rail__action latest-photo-rail__action--secondary"
-            disabled={isChangePresetDisabled}
-            onClick={onChangePreset}
-          >
-            다음 촬영 룩 바꾸기
-          </button>
+          <>
+            <button
+              type="button"
+              className="latest-photo-rail__action latest-photo-rail__action--secondary"
+              disabled={isChangePresetDisabled}
+              onClick={onChangePreset}
+            >
+              다음 촬영 룩 바꾸기
+            </button>
+            {canExport ? (
+              <button
+                type="button"
+                className="latest-photo-rail__action latest-photo-rail__action--secondary"
+                disabled={isExportDisabled}
+                onClick={onExport}
+              >
+                {exportLabel}
+              </button>
+            ) : null}
+          </>
         )}
         {!shouldHidePrimaryAction ? (
           <button

@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event'
 import {
   captureDeleteInputSchema,
   captureDeleteResultSchema,
+  captureExportInputSchema,
+  captureExportResultSchema,
   captureFastPreviewUpdateEvent,
   captureFastPreviewUpdateSchema,
   captureReadinessUpdateEvent,
@@ -15,6 +17,8 @@ import {
   hostErrorEnvelopeSchema,
   type CaptureDeleteInput,
   type CaptureDeleteResult,
+  type CaptureExportInput,
+  type CaptureExportResult,
   type CaptureFastPreviewUpdate,
   type CaptureReadinessInput,
   type CaptureReadinessSnapshot,
@@ -95,6 +99,7 @@ export type PrimePreviewRuntimeInput = {
 export interface CaptureRuntimeGateway {
   getCaptureReadiness(input: CaptureReadinessInput): Promise<unknown>
   deleteCapture?(input: CaptureDeleteInput): Promise<unknown>
+  exportCaptures?(input: CaptureExportInput): Promise<unknown>
   requestCapture(input: CaptureRequestInput): Promise<unknown>
   primePreviewRuntime?(input: PrimePreviewRuntimeInput): Promise<unknown>
   subscribeToCaptureReadiness(
@@ -110,6 +115,7 @@ export interface CaptureRuntimeService {
     input: CaptureReadinessInput,
   ): Promise<CaptureReadinessSnapshot>
   deleteCapture?(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
+  exportCaptures?(input: CaptureExportInput): Promise<CaptureExportResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
   primePreviewRuntime?(input: PrimePreviewRuntimeInput): Promise<void>
   subscribeToCaptureReadiness(input: {
@@ -337,6 +343,35 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
     return parsedResponse
   }
 
+  async exportCaptures(input: CaptureExportInput) {
+    const parsedInput = captureExportInputSchema.parse(input)
+    const parsedResponse = await (async () => {
+      try {
+        const exportCaptures = this.gateway.exportCaptures
+
+        if (exportCaptures === undefined) {
+          throw buildSessionMismatchHostError()
+        }
+
+        const response = await exportCaptures(parsedInput)
+
+        return captureExportResultSchema.parse(response)
+      } catch (error) {
+        throw normalizeHostError(error, parsedInput.sessionId, 'export-captures')
+      }
+    })()
+
+    if (
+      parsedResponse.sessionId !== parsedInput.sessionId ||
+      parsedResponse.manifest.sessionId !== parsedInput.sessionId ||
+      parsedResponse.readiness.sessionId !== parsedInput.sessionId
+    ) {
+      throw buildSessionMismatchHostError()
+    }
+
+    return parsedResponse
+  }
+
   async requestCapture(input: CaptureRequestInput) {
     const parsedInput = captureRequestInputSchema.parse(input)
     const requestId = parsedInput.requestId ?? generateCaptureRequestId()
@@ -494,7 +529,11 @@ class DefaultCaptureRuntimeService implements CaptureRuntimeService {
 function normalizeHostError(
   error: unknown,
   requestedSessionId?: string,
-  operation: 'readiness' | 'request-capture' | 'delete-capture' = 'readiness',
+  operation:
+    | 'readiness'
+    | 'request-capture'
+    | 'delete-capture'
+    | 'export-captures' = 'readiness',
 ): HostErrorEnvelope {
   const parsed = hostErrorEnvelopeSchema.safeParse(error)
 
@@ -690,6 +729,13 @@ export function createBrowserCaptureRuntimeGateway(): CaptureRuntimeGateway {
         readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
       } satisfies HostErrorEnvelope
     },
+    async exportCaptures(input) {
+      throw {
+        code: 'host-unavailable',
+        message: '브라우저 미리보기에서는 실제 내보내기를 실행하지 않아요.',
+        readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
+      } satisfies HostErrorEnvelope
+    },
     async requestCapture(input) {
       throw {
         code: 'host-unavailable',
@@ -713,6 +759,9 @@ export function createTauriCaptureRuntimeGateway(): CaptureRuntimeGateway {
     },
     async deleteCapture(input) {
       return invoke<unknown>('delete_capture', { input })
+    },
+    async exportCaptures(input) {
+      return invoke<unknown>('export_captures', { input })
     },
     async requestCapture(input) {
       return invoke<unknown>('request_capture', { input })
@@ -785,6 +834,23 @@ export function createDefaultCaptureRuntimeGateway(): CaptureRuntimeGateway {
       }
 
       return gateway.deleteCapture(input)
+    },
+    async exportCaptures(input: CaptureExportInput) {
+      const { gateway, mode } = resolveActiveCaptureRuntimeGateway()
+      logCaptureRuntimeDebug('gateway-export-captures', {
+        sessionId: input.sessionId,
+        mode,
+      })
+
+      if (gateway.exportCaptures === undefined) {
+        throw {
+          code: 'host-unavailable',
+          message: '브라우저 미리보기에서는 실제 내보내기를 실행하지 않아요.',
+          readiness: withSessionId(buildBrowserPreviewCaptureReadiness(), input.sessionId),
+        } satisfies HostErrorEnvelope
+      }
+
+      return gateway.exportCaptures(input)
     },
     async requestCapture(input: CaptureRequestInput) {
       const { gateway, mode } = resolveActiveCaptureRuntimeGateway()

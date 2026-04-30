@@ -13,6 +13,7 @@ import {
 } from '../../preset-catalog/services/preset-catalog-service'
 import type {
   CaptureDeleteResult,
+  CaptureExportResult,
   CaptureReadinessSnapshot,
   CaptureRequestResult,
   PresetCatalogResult,
@@ -218,6 +219,62 @@ function createCaptureDeleteResult(
   }
 }
 
+function createCaptureExportResult(
+  overrides: Partial<CaptureExportResult> = {},
+): CaptureExportResult {
+  const sessionId =
+    overrides.sessionId ?? 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+  const capture = createCaptureRecord({
+    sessionId,
+    preview: {
+      assetPath: 'fixtures/capture-preview.jpg',
+      enqueuedAtMs: 100,
+      readyAtMs: 180,
+    },
+    final: {
+      assetPath: 'fixtures/capture-final.jpg',
+      readyAtMs: 320,
+    },
+    renderStatus: 'finalReady',
+    postEndState: 'activeSession',
+  })
+
+  return {
+    schemaVersion: 'capture-export-result/v1',
+    sessionId,
+    exportedCount: 1,
+    skippedCount: 0,
+    manifest: {
+      schemaVersion: 'session-manifest/v1',
+      sessionId,
+      boothAlias: 'Kim 4821',
+      customer: {
+        name: 'Kim',
+        phoneLastFour: '4821',
+      },
+      createdAt: '2026-03-20T00:00:00.000Z',
+      updatedAt: '2026-03-20T00:00:10.000Z',
+      lifecycle: {
+        status: 'active',
+        stage: 'capture-ready',
+      },
+      activePreset: {
+        presetId: 'preset_soft-glow',
+        publishedVersion: '2026.03.20',
+      },
+      activePresetId: 'preset_soft-glow',
+      activePresetDisplayName: 'Soft Glow',
+      captures: [capture],
+      postEnd: null,
+    },
+    readiness: createReadinessSnapshot({
+      sessionId,
+      latestCapture: capture,
+    }),
+    ...overrides,
+  }
+}
+
 function SessionStateProbe({
   onChange,
 }: {
@@ -233,6 +290,119 @@ function SessionStateProbe({
 }
 
 describe('SessionProvider', () => {
+  it('merges active-session export results without completing the session', async () => {
+    let latestState: SessionStateContextValue | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const exportedCapture = createCaptureRecord({
+      sessionId,
+      preview: {
+        assetPath: 'fixtures/capture-preview.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 180,
+      },
+      final: {
+        assetPath: 'fixtures/capture-final.jpg',
+        readyAtMs: 320,
+      },
+      renderStatus: 'finalReady',
+      postEndState: 'activeSession',
+    })
+    const exportCaptures = vi
+      .fn<NonNullable<CaptureRuntimeService['exportCaptures']>>()
+      .mockResolvedValue(
+        createCaptureExportResult({
+          sessionId,
+          manifest: {
+            ...createCaptureExportResult({ sessionId }).manifest,
+            captures: [exportedCapture],
+          },
+          readiness: createReadinessSnapshot({
+            sessionId,
+            latestCapture: exportedCapture,
+          }),
+        }),
+      )
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+                captures: [
+                  createCaptureRecord({
+                    sessionId,
+                    preview: {
+                      assetPath: 'fixtures/capture-preview.jpg',
+                      enqueuedAtMs: 100,
+                      readyAtMs: 180,
+                    },
+                    renderStatus: 'previewReady',
+                  }),
+                ],
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
+          exportCaptures,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockResolvedValue(() => undefined),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await latestState!.exportCaptures({ sessionId })
+    })
+
+    expect(exportCaptures).toHaveBeenCalledWith({ sessionId })
+    expect(latestState!.isExportingCaptures).toBe(false)
+    expect(latestState!.sessionDraft.manifest?.lifecycle.stage).toBe('capture-ready')
+    expect(latestState!.sessionDraft.manifest?.postEnd).toBeNull()
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('ready')
+    expect(latestState!.sessionDraft.manifest?.captures[0]?.renderStatus).toBe(
+      'finalReady',
+    )
+    expect(latestState!.sessionDraft.manifest?.captures[0]?.postEndState).toBe(
+      'activeSession',
+    )
+  })
+
   it('reconstructs completed fallback readiness for local deliverable captures', async () => {
     let latestState: SessionStateContextValue | null = null
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'

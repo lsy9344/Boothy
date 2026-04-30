@@ -17,6 +17,8 @@ export const captureRequestResultSchemaVersion =
   'capture-request-result/v1' as const
 export const captureDeleteResultSchemaVersion =
   'capture-delete-result/v1' as const
+export const captureExportResultSchemaVersion =
+  'capture-export-result/v1' as const
 
 export const captureIdSchema = z.string().trim().min(1)
 export const captureRequestIdSchema = z.string().trim().min(1)

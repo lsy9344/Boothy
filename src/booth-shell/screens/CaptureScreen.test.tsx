@@ -143,6 +143,7 @@ function renderCaptureScreen(
     isSelectingPreset: false,
     isLoadingCaptureReadiness: false,
     isDeletingCapture: false,
+    isExportingCaptures: false,
     isRequestingCapture: false,
     sessionDraft: {
       ...DEFAULT_SESSION_DRAFT,
@@ -234,6 +235,14 @@ function renderCaptureScreen(
         timing: createTimingSnapshot(),
       },
     }),
+    exportCaptures: vi.fn().mockResolvedValue({
+      schemaVersion: 'capture-export-result/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      exportedCount: 1,
+      skippedCount: 0,
+      manifest: defaultManifest,
+      readiness: defaultCaptureReadiness,
+    }),
     requestCapture: vi.fn().mockResolvedValue({
       schemaVersion: 'capture-request-result/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -299,6 +308,81 @@ describe('CaptureScreen', () => {
     expect(button).toBeEnabled()
 
     await user.click(button)
+
+    expect(value.requestCapture).toHaveBeenCalledWith({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+    })
+  })
+
+  it('offers active-session export when a preview-ready photo exists', async () => {
+    const user = userEvent.setup()
+    const previewReadyCapture = createCaptureRecord({
+      preview: {
+        assetPath:
+          'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 180,
+      },
+      renderStatus: 'previewReady',
+    })
+    const value = renderCaptureScreen(
+      {},
+      {
+        captureReadiness: {
+          latestCapture: previewReadyCapture,
+          surfaceState: 'previewReady',
+        },
+        manifest: {
+          captures: [previewReadyCapture],
+        },
+      },
+    )
+
+    const exportButton = await screen.findByRole('button', { name: /^내보내기$/i })
+
+    expect(exportButton).toBeEnabled()
+
+    await user.click(exportButton)
+
+    expect(value.exportCaptures).toHaveBeenCalledWith({
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+    })
+  })
+
+  it('keeps capture available but locks export and photo cleanup while export is running', async () => {
+    const user = userEvent.setup()
+    const previewReadyCapture = createCaptureRecord({
+      preview: {
+        assetPath:
+          'C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 180,
+      },
+      renderStatus: 'previewReady',
+    })
+    const value = renderCaptureScreen(
+      {
+        isExportingCaptures: true,
+      },
+      {
+        captureReadiness: {
+          latestCapture: previewReadyCapture,
+          surfaceState: 'previewReady',
+        },
+        manifest: {
+          captures: [previewReadyCapture],
+        },
+      },
+    )
+
+    const captureButton = await screen.findByRole('button', { name: /사진 찍기/i })
+
+    expect(captureButton).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^내보내는 중$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /다음 촬영 룩 바꾸기/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^사진 정리$/i })).toBeDisabled()
+
+    await user.click(captureButton)
 
     expect(value.requestCapture).toHaveBeenCalledWith({
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
@@ -1084,6 +1168,7 @@ describe('CaptureScreen', () => {
       isSelectingPreset: false,
       isLoadingCaptureReadiness: false,
       isDeletingCapture: false,
+      isExportingCaptures: false,
       isRequestingCapture: false,
       sessionDraft: {
         ...DEFAULT_SESSION_DRAFT,
@@ -1148,6 +1233,7 @@ describe('CaptureScreen', () => {
       selectActivePreset: vi.fn(),
       getCaptureReadiness: vi.fn(),
       deleteCapture: vi.fn(),
+      exportCaptures: vi.fn(),
       requestCapture: vi.fn(),
     } satisfies SessionStateContextValue
 

@@ -14,8 +14,8 @@ use boothy_lib::{
             mark_final_render_failed_in_dir, mark_preview_render_failed_in_dir,
         },
         normalized_state::{
-            delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
-            request_capture_in_dir_with_fast_preview,
+            delete_capture_in_dir, export_captures_in_dir, get_capture_readiness_in_dir,
+            request_capture_in_dir, request_capture_in_dir_with_fast_preview,
         },
         sidecar_client::{
             read_capture_request_messages, write_capture_request_message,
@@ -33,8 +33,8 @@ use boothy_lib::{
         append_capture_client_timing_event_in_dir, CaptureClientDebugLogInputDto,
     },
     contracts::dto::{
-        CaptureDeleteInputDto, CaptureReadinessInputDto, CaptureRequestInputDto,
-        CaptureRequestResultDto, SessionStartInputDto,
+        CaptureDeleteInputDto, CaptureExportInputDto, CaptureReadinessInputDto,
+        CaptureRequestInputDto, CaptureRequestResultDto, SessionStartInputDto,
     },
     preset::default_catalog::ensure_default_preset_catalog_in_dir,
     preset::preset_catalog::resolve_published_preset_catalog_dir,
@@ -4383,6 +4383,390 @@ fn final_render_waits_for_preview_ready_not_pending_fast_preview() {
         error.message.contains("확인용 사진"),
         "customer-safe error should explain preview is not ready: {}",
         error.message
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn active_session_export_prepares_ready_captures_without_post_end_completion() {
+    let base_dir = unique_test_root("active-session-export-ready-captures");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("second preview should complete");
+
+    let result = export_captures_in_dir(
+        &base_dir,
+        CaptureExportInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("active session export should complete");
+
+    assert_eq!(result.schema_version, "capture-export-result/v1");
+    assert_eq!(result.exported_count, 2);
+    assert_eq!(result.skipped_count, 0);
+    assert_eq!(result.readiness.reason_code, "ready");
+    assert!(result.readiness.can_capture);
+    assert_ne!(result.manifest.lifecycle.stage, "completed");
+    assert_ne!(result.manifest.lifecycle.stage, "export-waiting");
+    assert!(result.manifest.post_end.is_none());
+
+    for capture_id in [
+        first_capture.capture.capture_id.as_str(),
+        second_capture.capture.capture_id.as_str(),
+    ] {
+        let capture = result
+            .manifest
+            .captures
+            .iter()
+            .find(|candidate| candidate.capture_id == capture_id)
+            .expect("exported capture should remain in manifest");
+        assert_eq!(capture.render_status, "finalReady");
+        assert_eq!(capture.post_end_state, "activeSession");
+        assert_valid_jpeg(
+            capture
+                .final_asset
+                .asset_path
+                .as_deref()
+                .expect("final asset path should be recorded"),
+        );
+        assert!(
+            capture.final_asset.ready_at_ms.is_some(),
+            "final readiness time should be recorded"
+        );
+    }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn active_session_export_does_not_block_new_capture_or_include_late_preview() {
+    let base_dir = unique_test_root("active-session-export-overlap-capture");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+
+    let fake_delay_path = base_dir
+        .join(".boothy-darktable")
+        .join("fake-darktable-sleep-ms.txt");
+    fs::create_dir_all(
+        fake_delay_path
+            .parent()
+            .expect("delay path should have parent"),
+    )
+    .expect("fake delay directory should exist");
+    fs::write(&fake_delay_path, "900").expect("fake delay should write");
+
+    let export_base_dir = base_dir.clone();
+    let export_session_id = session.session_id.clone();
+    let export_thread = thread::spawn(move || {
+        export_captures_in_dir(
+            &export_base_dir,
+            CaptureExportInputDto {
+                session_id: export_session_id,
+            },
+        )
+        .expect("active session export should complete")
+    });
+
+    thread::sleep(Duration::from_millis(120));
+
+    let capture_start = Instant::now();
+    let late_capture = request_capture_with_helper_success_for_request_id(
+        &base_dir,
+        &session.session_id,
+        Some("request_export_overlap_capture"),
+    );
+    let capture_elapsed = capture_start.elapsed();
+
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let late_preview_path = paths
+        .renders_previews_dir
+        .join(format!("{}.jpg", late_capture.capture.capture_id));
+    fs::create_dir_all(&paths.renders_previews_dir).expect("preview dir should exist");
+    write_decodable_test_jpeg(&late_preview_path);
+
+    let mut manifest = read_manifest(&base_dir, &session.session_id);
+    let late_capture_record = manifest
+        .captures
+        .iter_mut()
+        .find(|capture| capture.capture_id == late_capture.capture.capture_id)
+        .expect("late capture should exist in manifest");
+    late_capture_record.preview.asset_path = Some(late_preview_path.to_string_lossy().into_owned());
+    late_capture_record.preview.ready_at_ms = Some(late_capture_record.raw.persisted_at_ms + 100);
+    late_capture_record.render_status = "previewReady".into();
+    fs::write(
+        &paths.manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should write");
+
+    let result = export_thread
+        .join()
+        .expect("export thread should finish cleanly");
+
+    assert!(
+        capture_elapsed < Duration::from_millis(1200),
+        "new capture should not wait for active export final render, elapsed={capture_elapsed:?}"
+    );
+    assert_eq!(result.exported_count, 1);
+    let late_capture_from_export = result
+        .manifest
+        .captures
+        .iter()
+        .find(|capture| capture.capture_id == late_capture.capture.capture_id)
+        .expect("late capture should be preserved in export result manifest");
+    assert_ne!(
+        late_capture_from_export.render_status, "finalReady",
+        "same export run must not include captures created after export started"
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn post_end_final_render_skips_precreated_session_scoped_final_files() {
+    let base_dir = unique_test_root("post-end-skips-precreated-final");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("second preview should complete");
+
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let precreated_final_path = paths
+        .renders_finals_dir
+        .join(format!("{}.jpg", first_capture.capture.capture_id));
+    fs::create_dir_all(&paths.renders_finals_dir).expect("finals directory should exist");
+    write_decodable_test_jpeg(&precreated_final_path);
+
+    let mut manifest = read_manifest(&base_dir, &session.session_id);
+    let precreated_capture = manifest
+        .captures
+        .iter_mut()
+        .find(|candidate| candidate.capture_id == first_capture.capture.capture_id)
+        .expect("first capture should exist");
+    precreated_capture.render_status = "finalReady".into();
+    precreated_capture.post_end_state = "activeSession".into();
+    precreated_capture.final_asset.asset_path =
+        Some(precreated_final_path.to_string_lossy().into_owned());
+    precreated_capture.final_asset.ready_at_ms = Some(precreated_capture.raw.persisted_at_ms + 100);
+    fs::write(
+        &paths.manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should write");
+
+    let alternate_final_path = paths
+        .renders_finals_dir
+        .join(format!("{}_01.jpg", first_capture.capture.capture_id));
+
+    complete_final_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("post-end final render should skip the precreated final");
+    assert!(
+        !alternate_final_path.exists(),
+        "skip path must not ask darktable to render a duplicate final"
+    );
+
+    complete_final_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &second_capture.capture.capture_id,
+    )
+    .expect("post-end final render should create the missing final");
+    update_timing(
+        &base_dir,
+        &session.session_id,
+        &timestamp_offset(-60),
+        &timestamp_offset(-10),
+        "active",
+    );
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("post-end readiness should resolve");
+
+    assert_eq!(readiness.reason_code, "completed");
+    let manifest = read_manifest(&base_dir, &session.session_id);
+    let first_saved = manifest
+        .captures
+        .iter()
+        .find(|candidate| candidate.capture_id == first_capture.capture.capture_id)
+        .expect("first capture should remain present");
+    let second_saved = manifest
+        .captures
+        .iter()
+        .find(|candidate| candidate.capture_id == second_capture.capture.capture_id)
+        .expect("second capture should remain present");
+    assert_eq!(first_saved.render_status, "finalReady");
+    assert_eq!(second_saved.render_status, "finalReady");
+    assert_valid_jpeg(first_saved.final_asset.asset_path.as_deref().unwrap());
+    assert_valid_jpeg(second_saved.final_asset.asset_path.as_deref().unwrap());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn post_end_final_render_reuses_precreated_final_without_touching_file() {
+    let base_dir = unique_test_root("post-end-reuses-precreated-final");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
+        .expect("preview should complete");
+
+    let paths = SessionPaths::new(&base_dir, &session.session_id);
+    let precreated_final_path = paths
+        .renders_finals_dir
+        .join(format!("{}.jpg", capture.capture.capture_id));
+    fs::create_dir_all(&paths.renders_finals_dir).expect("finals directory should exist");
+    write_decodable_test_jpeg(&precreated_final_path);
+    let precreated_bytes =
+        fs::read(&precreated_final_path).expect("precreated final should be readable");
+
+    let mut manifest = read_manifest(&base_dir, &session.session_id);
+    let precreated_capture = manifest
+        .captures
+        .iter_mut()
+        .find(|candidate| candidate.capture_id == capture.capture.capture_id)
+        .expect("capture should exist");
+    precreated_capture.render_status = "finalReady".into();
+    precreated_capture.post_end_state = "activeSession".into();
+    precreated_capture.final_asset.asset_path =
+        Some(precreated_final_path.to_string_lossy().into_owned());
+    precreated_capture.final_asset.ready_at_ms = Some(precreated_capture.raw.persisted_at_ms + 100);
+    fs::write(
+        &paths.manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should write");
+
+    complete_final_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
+        .expect("post-end final render should reuse the precreated final");
+
+    let saved_bytes = fs::read(&precreated_final_path).expect("final should remain readable");
+    assert_eq!(
+        saved_bytes, precreated_bytes,
+        "post-end final render must not rewrite a session-scoped final that is already ready"
     );
 
     let _ = fs::remove_dir_all(base_dir);

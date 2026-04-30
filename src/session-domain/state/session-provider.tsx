@@ -3,6 +3,8 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type {
   CaptureDeleteResult,
+  CaptureExportInput,
+  CaptureExportResult,
   CaptureRequestInput,
   CaptureRequestResult,
   HostErrorEnvelope,
@@ -497,6 +499,19 @@ function sanitizeCaptureDeleteResultForSession(
   }
 }
 
+function sanitizeCaptureExportResultForSession(
+  sessionId: string,
+  result: CaptureExportResult,
+) {
+  const safeManifest = sanitizeManifestForSession(sessionId, result.manifest)
+
+  return {
+    ...result,
+    manifest: safeManifest ?? result.manifest,
+    readiness: sanitizeCaptureReadinessForSession(sessionId, result.readiness),
+  }
+}
+
 function sanitizeHostErrorForSession(
   sessionId: string,
   hostError: HostErrorEnvelope,
@@ -716,6 +731,7 @@ export function SessionProvider({
   const activePresetSelectionVersionRef = useRef(0)
   const captureReadinessRequestVersionRef = useRef(0)
   const deleteCaptureRequestVersionRef = useRef(0)
+  const exportCapturesRequestVersionRef = useRef(0)
   const requestCaptureRequestVersionRef = useRef(0)
   const deletedCaptureIdsRef = useRef<Set<string>>(new Set())
   const activeCaptureRequestIdRef = useRef<string | null>(null)
@@ -730,11 +746,13 @@ export function SessionProvider({
   const [isSelectingPreset, setIsSelectingPreset] = useState(false)
   const [isLoadingCaptureReadiness, setIsLoadingCaptureReadiness] = useState(false)
   const [isDeletingCapture, setIsDeletingCapture] = useState(false)
+  const [isExportingCaptures, setIsExportingCaptures] = useState(false)
   const [isRequestingCapture, setIsRequestingCapture] = useState(false)
   const isStartingRef = useRef(false)
   const isLoadingPresetCatalogRef = useRef(false)
   const isSelectingPresetRef = useRef(false)
   const isDeletingCaptureRef = useRef(false)
+  const isExportingCapturesRef = useRef(false)
   const isRequestingCaptureRef = useRef(false)
 
   useEffect(() => {
@@ -752,13 +770,16 @@ export function SessionProvider({
   function invalidateCaptureRequests() {
     captureReadinessRequestVersionRef.current += 1
     deleteCaptureRequestVersionRef.current += 1
+    exportCapturesRequestVersionRef.current += 1
     requestCaptureRequestVersionRef.current += 1
     activeCaptureRequestIdRef.current = null
     activeCaptureIdRef.current = null
     isDeletingCaptureRef.current = false
+    isExportingCapturesRef.current = false
     isRequestingCaptureRef.current = false
     setIsLoadingCaptureReadiness(false)
     setIsDeletingCapture(false)
+    setIsExportingCaptures(false)
     setIsRequestingCapture(false)
   }
 
@@ -1704,6 +1725,147 @@ export function SessionProvider({
     }
   }
 
+  async function exportCaptures(input: CaptureExportInput) {
+    if (isExportingCapturesRef.current) {
+      throw {
+        code: 'host-unavailable',
+        message: '이미 내보내는 중이에요. 잠시만 기다려 주세요.',
+      } satisfies HostErrorEnvelope
+    }
+
+    const requestVersion = exportCapturesRequestVersionRef.current + 1
+
+    exportCapturesRequestVersionRef.current = requestVersion
+    isExportingCapturesRef.current = true
+    setIsExportingCaptures(true)
+
+    try {
+      const exportCaptures = captureRuntimeServiceRef.current.exportCaptures
+
+      if (exportCaptures === undefined) {
+        throw {
+          code: 'host-unavailable',
+          message: '지금은 내보내기를 실행할 수 없어요.',
+        } satisfies HostErrorEnvelope
+      }
+
+      const result = await exportCaptures(input)
+      const hasMatchingActiveSession = hasActiveSession(input.sessionId)
+      const staleReadiness = hasMatchingActiveSession
+        ? buildCurrentCaptureFallbackReadiness()
+        : undefined
+
+      if (
+        result.sessionId !== input.sessionId ||
+        result.manifest.sessionId !== input.sessionId ||
+        result.readiness.sessionId !== input.sessionId
+      ) {
+        throw createStaleSessionError(
+          '현재 세션 상태를 다시 확인할게요.',
+          staleReadiness,
+        )
+      }
+
+      const safeResult = sanitizeCaptureExportResultForSession(
+        input.sessionId,
+        result,
+      )
+
+      if (
+        !hasMatchingActiveSession ||
+        exportCapturesRequestVersionRef.current !== requestVersion
+      ) {
+        throw createStaleSessionError(
+          '이전 세션의 내보내기 응답이 늦게 도착했어요. 현재 세션에서 다시 확인해 주세요.',
+          staleReadiness,
+        )
+      }
+
+      setSessionDraft((current) => {
+        const safeReadiness = lockStablePostEndReadiness(
+          current.captureReadiness,
+          sanitizeCaptureReadinessForSession(
+            current.manifest?.sessionId ?? current.sessionId,
+            safeResult.readiness,
+          ),
+        )
+        const safeManifest =
+          sanitizeManifestForSession(
+            current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
+            safeResult.manifest,
+          ) ?? safeResult.manifest
+        const manifestWithTiming = mergeTimingIntoManifest(
+          safeManifest,
+          safeReadiness,
+        )
+        const manifestWithPostEnd = mergePostEndIntoManifest(
+          manifestWithTiming,
+          safeReadiness,
+        )
+
+        return {
+          ...current,
+          captureReadiness: safeReadiness,
+          pendingFastPreview: prunePendingFastPreview(
+            current.manifest?.sessionId ?? current.sessionId ?? input.sessionId,
+            current.pendingFastPreview,
+            safeReadiness.latestCapture ?? null,
+          ),
+          manifest: {
+            ...(manifestWithPostEnd ?? safeManifest),
+            lifecycle: {
+              ...(manifestWithPostEnd ?? safeManifest).lifecycle,
+              stage: deriveLifecycleStage(
+                safeReadiness,
+                (manifestWithPostEnd ?? safeManifest).lifecycle.stage,
+              ),
+            },
+          },
+        }
+      })
+
+      return safeResult
+    } catch (error) {
+      const rawHostError = error as HostErrorEnvelope
+      const hostError = sanitizeHostErrorForSession(
+        input.sessionId,
+        rawHostError,
+      )
+      const hadForeignReadiness = hasForeignReadinessForSession(
+        input.sessionId,
+        rawHostError,
+      )
+
+      if (
+        !hasActiveSession(input.sessionId) ||
+        exportCapturesRequestVersionRef.current !== requestVersion
+      ) {
+        throw hostError
+      }
+
+      if (hostError.readiness?.sessionId === input.sessionId) {
+        applyReadinessState(hostError.readiness)
+      } else if (
+        hostError.code === 'session-not-found' &&
+        !hadForeignReadiness
+      ) {
+        resetToSessionStart()
+      } else if (
+        hostError.code === 'preset-not-available' &&
+        !hadForeignReadiness
+      ) {
+        resetToPresetSelection()
+      }
+
+      throw hostError
+    } finally {
+      if (exportCapturesRequestVersionRef.current === requestVersion) {
+        isExportingCapturesRef.current = false
+        setIsExportingCaptures(false)
+      }
+    }
+  }
+
   const applyCaptureReadiness = useEffectEvent((sessionId: string) => {
     void getCaptureReadiness({ sessionId }).catch(() => undefined)
   })
@@ -2012,6 +2174,7 @@ export function SessionProvider({
         isSelectingPreset,
         isLoadingCaptureReadiness,
         isDeletingCapture,
+        isExportingCaptures,
         isRequestingCapture,
         sessionDraft,
         startSession,
@@ -2021,6 +2184,7 @@ export function SessionProvider({
         selectActivePreset,
         getCaptureReadiness,
         deleteCapture,
+        exportCaptures,
         requestCapture,
       }}
     >

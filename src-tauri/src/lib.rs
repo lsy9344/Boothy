@@ -79,6 +79,7 @@ pub fn run() {
             commands::branch_rollout_commands::apply_branch_rollback,
             commands::capture_commands::get_capture_readiness,
             commands::capture_commands::delete_capture,
+            commands::capture_commands::export_captures,
             commands::capture_commands::request_capture,
             commands::capture_commands::prime_preview_runtime,
             commands::operator_commands::load_operator_session_summary,

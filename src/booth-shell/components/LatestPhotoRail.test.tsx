@@ -39,6 +39,7 @@ describe('LatestPhotoRail', () => {
         previews={[buildPreview()]}
         isPreviewWaiting
         isExplicitPostEnd={false}
+        isPhotoActionDisabled={false}
         deletingCaptureId={null}
         pendingDeleteCaptureId={null}
         onDeleteCancel={() => {}}
@@ -70,6 +71,7 @@ describe('LatestPhotoRail', () => {
         ]}
         isPreviewWaiting
         isExplicitPostEnd={false}
+        isPhotoActionDisabled={false}
         deletingCaptureId={null}
         pendingDeleteCaptureId={null}
         onDeleteCancel={() => {}}

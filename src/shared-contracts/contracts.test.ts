@@ -6,6 +6,7 @@ import {
   catalogStateSummarySchema,
   catalogVersionHistoryItemSchema,
   captureDeleteResultSchema,
+  captureExportResultSchema,
   activePresetBindingSchema,
   boothSessionStubSchema,
   captureReadinessSnapshotSchema,
@@ -1249,6 +1250,93 @@ describe('shared contracts baseline', () => {
     expect(captureResult.readiness.timing?.adjustedEndAt).toBe(
       '2026-03-20T00:15:00.000Z',
     )
+  })
+
+  it('parses capture export result without marking the session completed', () => {
+    const capture = sessionCaptureRecordSchema.parse({
+      schemaVersion: 'session-capture/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      boothAlias: 'Kim 4821',
+      activePresetId: 'preset_soft-glow',
+      activePresetVersion: '2026.03.20',
+      activePresetDisplayName: 'Soft Glow',
+      captureId: 'capture_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      raw: {
+        assetPath:
+          'C:/boothy/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture.jpg',
+        persistedAtMs: 100,
+      },
+      preview: {
+        assetPath:
+          'C:/boothy/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 180,
+      },
+      final: {
+        assetPath:
+          'C:/boothy/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/finals/capture.jpg',
+        readyAtMs: 320,
+      },
+      renderStatus: 'finalReady',
+      postEndState: 'activeSession',
+      timing: {
+        captureAcknowledgedAtMs: 100,
+        previewVisibleAtMs: 180,
+        captureBudgetMs: 1000,
+        previewBudgetMs: 5000,
+        previewBudgetState: 'withinBudget',
+      },
+    })
+    const readiness = captureReadinessSnapshotSchema.parse({
+      schemaVersion: 'capture-readiness/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      surfaceState: 'captureReady',
+      customerState: 'Ready',
+      canCapture: true,
+      primaryAction: 'capture',
+      customerMessage: '지금 촬영할 수 있어요.',
+      supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
+      reasonCode: 'ready',
+      latestCapture: capture,
+      postEnd: null,
+    })
+    const result = captureExportResultSchema.parse({
+      schemaVersion: 'capture-export-result/v1',
+      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+      exportedCount: 1,
+      skippedCount: 0,
+      manifest: {
+        schemaVersion: 'session-manifest/v1',
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        boothAlias: 'Kim 4821',
+        customer: {
+          name: 'Kim',
+          phoneLastFour: '4821',
+        },
+        createdAt: '2026-03-20T00:00:00.000Z',
+        updatedAt: '2026-03-20T00:00:10.000Z',
+        lifecycle: {
+          status: 'active',
+          stage: 'capture-ready',
+        },
+        activePreset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.03.20',
+        },
+        activePresetId: 'preset_soft-glow',
+        activePresetDisplayName: 'Soft Glow',
+        captures: [capture],
+        postEnd: null,
+      },
+      readiness,
+    })
+
+    expect(result.exportedCount).toBe(1)
+    expect(result.manifest.lifecycle.stage).toBe('capture-ready')
+    expect(result.manifest.postEnd).toBeNull()
+    expect(result.manifest.captures[0]?.postEndState).toBe('activeSession')
+    expect(result.readiness.reasonCode).toBe('ready')
   })
 
   it('parses pending same-capture fast preview timing without treating it as preview ready', () => {

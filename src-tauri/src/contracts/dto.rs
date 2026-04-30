@@ -1180,6 +1180,12 @@ pub struct CaptureDeleteInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CaptureExportInputDto {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaptureReadinessDto {
     pub schema_version: String,
     pub session_id: String,
@@ -1586,6 +1592,17 @@ pub struct CaptureDeleteResultDto {
     pub session_id: String,
     pub capture_id: String,
     pub status: String,
+    pub manifest: SessionManifest,
+    pub readiness: CaptureReadinessDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureExportResultDto {
+    pub schema_version: String,
+    pub session_id: String,
+    pub exported_count: usize,
+    pub skipped_count: usize,
     pub manifest: SessionManifest,
     pub readiness: CaptureReadinessDto,
 }

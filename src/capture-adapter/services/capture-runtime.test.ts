@@ -9,6 +9,7 @@ import {
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
 } from './capture-runtime'
+import type { CaptureRuntimeGateway } from './capture-runtime'
 
 function createCaptureRecord(
   overrides: Partial<SessionCaptureRecord> = {},
@@ -895,8 +896,11 @@ describe('capture runtime adapter', () => {
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       onFastPreview,
     })
+    const dispatchFastPreview = emitFastPreview as unknown as (
+      payload: unknown,
+    ) => void
 
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
       requestId: 'request_foreign',
@@ -906,7 +910,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 320,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_local',
@@ -950,8 +954,11 @@ describe('capture runtime adapter', () => {
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       onFastPreview,
     })
+    const dispatchFastPreview = emitFastPreview as unknown as (
+      payload: unknown,
+    ) => void
 
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_other',
       requestId: 'request_other',
@@ -960,7 +967,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 120,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    dispatchFastPreview({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',

@@ -64,6 +64,18 @@ const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
 const LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND: &str = "legacy-canonical-scan";
 const TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND: &str = "preset-applied-preview";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalRenderCompletionMode {
+    ActiveSessionExport,
+    PostEnd,
+}
+
+#[derive(Debug, Clone)]
+enum FinalRenderCaptureSnapshot {
+    AlreadyReady(SessionCaptureRecord),
+    NeedsRender(SessionCaptureRecord),
+}
+
 #[derive(Debug, Clone)]
 struct FastPreviewPromotionResult {
     asset_path: String,
@@ -1552,53 +1564,38 @@ pub fn complete_final_render_in_dir(
     session_id: &str,
     capture_id: &str,
 ) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
+    complete_final_render_in_dir_with_mode(
+        base_dir,
+        session_id,
+        capture_id,
+        FinalRenderCompletionMode::PostEnd,
+    )
+}
+
+pub fn complete_active_session_final_render_in_dir(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
+    complete_final_render_in_dir_with_mode(
+        base_dir,
+        session_id,
+        capture_id,
+        FinalRenderCompletionMode::ActiveSessionExport,
+    )
+}
+
+fn complete_final_render_in_dir_with_mode(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    mode: FinalRenderCompletionMode,
+) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
     let paths = SessionPaths::try_new(base_dir, session_id)?;
-    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
-        HostErrorEnvelope::persistence(
-            "최종 결과 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.",
-        )
-    })?;
-    let mut manifest = read_session_manifest(&paths.manifest_path)?;
-    let capture_index = manifest
-        .captures
-        .iter()
-        .position(|capture| capture.capture_id == capture_id)
-        .ok_or_else(|| {
-            HostErrorEnvelope::session_not_found("방금 저장된 촬영 기록을 찾지 못했어요.")
-        })?;
-
-    let existing_final_file_is_ready = manifest.captures[capture_index]
-        .final_asset
-        .asset_path
-        .as_deref()
-        .map(|asset_path| std::path::Path::new(asset_path).is_file())
-        .unwrap_or(false);
-
-    if existing_final_file_is_ready
-        && manifest.captures[capture_index]
-            .final_asset
-            .ready_at_ms
-            .is_some()
-        && manifest.captures[capture_index].render_status == "finalReady"
-    {
-        return Ok(manifest.captures[capture_index].clone());
-    }
-
-    if manifest.captures[capture_index]
-        .preview
-        .ready_at_ms
-        .is_none()
-        || !matches!(
-            manifest.captures[capture_index].render_status.as_str(),
-            "previewReady" | "finalReady"
-        )
-    {
-        return Err(HostErrorEnvelope::persistence(
-            "최종 결과를 만들기 전에 확인용 사진이 먼저 준비되어야 해요.",
-        ));
-    }
-
-    let capture_snapshot = manifest.captures[capture_index].clone();
+    let capture_snapshot = match snapshot_final_render_capture(&paths, capture_id)? {
+        FinalRenderCaptureSnapshot::AlreadyReady(capture) => return Ok(capture),
+        FinalRenderCaptureSnapshot::NeedsRender(capture) => capture,
+    };
     log_render_start_in_dir(
         base_dir,
         session_id,
@@ -1633,25 +1630,128 @@ pub fn complete_final_render_in_dir(
         }
     };
 
+    merge_final_render_result(&paths, capture_snapshot, rendered_final, mode)
+}
+
+fn snapshot_final_render_capture(
+    paths: &SessionPaths,
+    capture_id: &str,
+) -> Result<FinalRenderCaptureSnapshot, HostErrorEnvelope> {
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence(
+            "최종 결과 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.",
+        )
+    })?;
+    let manifest = read_session_manifest(&paths.manifest_path)?;
+    let capture = manifest
+        .captures
+        .iter()
+        .find(|capture| capture.capture_id == capture_id)
+        .ok_or_else(|| {
+            HostErrorEnvelope::session_not_found("방금 저장된 촬영 기록을 찾지 못했어요.")
+        })?;
+
+    let existing_final_file_is_ready = capture
+        .final_asset
+        .asset_path
+        .as_deref()
+        .map(|asset_path| is_existing_session_scoped_final_asset(paths, asset_path))
+        .unwrap_or(false);
+
+    if existing_final_file_is_ready
+        && capture.final_asset.ready_at_ms.is_some()
+        && capture.render_status == "finalReady"
+    {
+        return Ok(FinalRenderCaptureSnapshot::AlreadyReady(capture.clone()));
+    }
+
+    if capture.preview.ready_at_ms.is_none()
+        || !matches!(
+            capture.render_status.as_str(),
+            "previewReady" | "finalReady"
+        )
+    {
+        return Err(HostErrorEnvelope::persistence(
+            "최종 결과를 만들기 전에 확인용 사진이 먼저 준비되어야 해요.",
+        ));
+    }
+
+    Ok(FinalRenderCaptureSnapshot::NeedsRender(capture.clone()))
+}
+
+fn merge_final_render_result(
+    paths: &SessionPaths,
+    capture_snapshot: SessionCaptureRecord,
+    rendered_final: crate::render::RenderedCaptureAsset,
+    mode: FinalRenderCompletionMode,
+) -> Result<SessionCaptureRecord, HostErrorEnvelope> {
+    let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence(
+            "최종 결과 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.",
+        )
+    })?;
+    let mut manifest = read_session_manifest(&paths.manifest_path)?;
+    let Some(capture_index) = manifest.captures.iter().position(|capture| {
+        capture.capture_id == capture_snapshot.capture_id
+            && capture.request_id == capture_snapshot.request_id
+            && capture.session_id == capture_snapshot.session_id
+    }) else {
+        if mode == FinalRenderCompletionMode::ActiveSessionExport {
+            return Ok(capture_snapshot);
+        }
+
+        return Err(HostErrorEnvelope::session_not_found(
+            "방금 저장된 촬영 기록을 찾지 못했어요.",
+        ));
+    };
+
     let capture = {
         let capture = manifest
             .captures
             .get_mut(capture_index)
             .expect("capture index already resolved");
 
+        if capture.preview.ready_at_ms.is_none()
+            || !matches!(
+                capture.render_status.as_str(),
+                "previewReady" | "finalReady"
+            )
+        {
+            return Ok(capture.clone());
+        }
+
         capture.final_asset.asset_path = Some(rendered_final.asset_path);
         capture.final_asset.ready_at_ms = Some(rendered_final.ready_at_ms);
         capture.render_status = "finalReady".into();
-        capture.post_end_state = "handoffReady".into();
+        if mode == FinalRenderCompletionMode::PostEnd {
+            capture.post_end_state = "handoffReady".into();
+        }
 
         capture.clone()
     };
 
     manifest.updated_at = current_timestamp(SystemTime::now())?;
-    manifest.lifecycle.stage = "capture-ready".into();
+    manifest.lifecycle.stage = derive_capture_lifecycle_stage(&manifest);
     write_session_manifest(&paths.manifest_path, &manifest)?;
 
     Ok(capture)
+}
+
+fn is_existing_session_scoped_final_asset(paths: &SessionPaths, asset_path: &str) -> bool {
+    let asset_path = Path::new(asset_path);
+
+    if !asset_path.is_file() {
+        return false;
+    }
+
+    let Ok(canonical_asset_path) = fs::canonicalize(asset_path) else {
+        return false;
+    };
+    let Ok(canonical_session_root) = fs::canonicalize(&paths.session_root) else {
+        return false;
+    };
+
+    canonical_asset_path.starts_with(canonical_session_root)
 }
 
 pub fn mark_preview_render_failed_in_dir(
@@ -2817,8 +2917,7 @@ mod tests {
             .join(format!("{capture_id}.windows-shell-thumbnail.jpg"));
         fs::create_dir_all(source_path.parent().expect("source should have a parent"))
             .expect("source parent should be created");
-        fs::write(&source_path, [0xff, 0xd8, 0xff, 0xd9])
-            .expect("source preview should write");
+        fs::write(&source_path, [0xff, 0xd8, 0xff, 0xd9]).expect("source preview should write");
         let source_visible_at_ms =
             preview_asset_visible_at_ms(&source_path).expect("source mtime should resolve");
         thread::sleep(Duration::from_millis(80));

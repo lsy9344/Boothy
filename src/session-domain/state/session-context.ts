@@ -3,6 +3,8 @@ import { createContext } from 'react'
 import type {
   CaptureDeleteInput,
   CaptureDeleteResult,
+  CaptureExportInput,
+  CaptureExportResult,
   CaptureReadinessInput,
   CaptureReadinessSnapshot,
   CaptureRequestInput,
@@ -22,6 +24,7 @@ export type SessionStateContextValue = {
   isSelectingPreset: boolean
   isLoadingCaptureReadiness: boolean
   isDeletingCapture: boolean
+  isExportingCaptures: boolean
   isRequestingCapture: boolean
   sessionDraft: SessionDraft
   startSession(input: SessionStartInput): Promise<SessionStartResult>
@@ -33,6 +36,7 @@ export type SessionStateContextValue = {
     input: CaptureReadinessInput,
   ): Promise<CaptureReadinessSnapshot>
   deleteCapture(input: CaptureDeleteInput): Promise<CaptureDeleteResult>
+  exportCaptures(input: CaptureExportInput): Promise<CaptureExportResult>
   requestCapture(input: CaptureRequestInput): Promise<CaptureRequestResult>
 }
 

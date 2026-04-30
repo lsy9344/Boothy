@@ -22,6 +22,8 @@ const CUSTOMER_SAFE_CAPTURE_FALLBACK_ERROR =
   '현재 세션 상태를 다시 확인하고 있어요. 잠시 후 다시 시도해 주세요.'
 const CUSTOMER_SAFE_DELETE_FALLBACK_ERROR =
   '사진을 정리하는 중에 다시 확인이 필요해요. 잠시 후 다시 시도해 주세요.'
+const CUSTOMER_SAFE_EXPORT_FALLBACK_ERROR =
+  '내보내기 준비 중에 다시 확인이 필요해요. 잠시 후 다시 시도해 주세요.'
 
 function mergePendingFastPreview(
   previews: CurrentSessionPreview[],
@@ -141,7 +143,9 @@ export function CaptureScreen() {
   const {
     beginPresetSwitch,
     deleteCapture,
+    exportCaptures,
     isDeletingCapture,
+    isExportingCaptures,
     isLoadingPresetCatalog,
     isRequestingCapture,
     isSelectingPreset,
@@ -254,6 +258,13 @@ export function CaptureScreen() {
     )
       ? pendingDeleteCaptureId
       : null
+  const hasExportableCaptures =
+    sessionDraft.manifest?.captures.some(
+      (capture) =>
+        capture.sessionId === sessionDraft.manifest?.sessionId &&
+        capture.renderStatus === 'previewReady' &&
+        capture.preview.readyAtMs !== null,
+    ) ?? false
 
   const playCue = useEffectEvent((phase: 'warning' | 'ended') => {
     void playTimingCue(phase)
@@ -330,6 +341,33 @@ export function CaptureScreen() {
     }
   }
 
+  async function handleExportCaptures() {
+    if (
+      sessionDraft.sessionId === null ||
+      inFlightCaptureCopy.isExportWaiting ||
+      inFlightCaptureCopy.isPostEndFinalized ||
+      !hasExportableCaptures
+    ) {
+      return
+    }
+
+    setFallbackError(null)
+
+    try {
+      await exportCaptures({
+        sessionId: sessionDraft.sessionId,
+      })
+    } catch (error) {
+      const hostError = error as HostErrorEnvelope
+
+      if (hostError.readiness?.sessionId === sessionDraft.sessionId) {
+        return
+      }
+
+      setFallbackError(hostError.message ?? CUSTOMER_SAFE_EXPORT_FALLBACK_ERROR)
+    }
+  }
+
   return (
     <SurfaceLayout
       eyebrow={inFlightCaptureCopy.stateLabel}
@@ -357,6 +395,14 @@ export function CaptureScreen() {
         actionLabel={inFlightCaptureCopy.actionLabel}
         canCapture={inFlightCaptureCopy.canCapture}
         isBusy={isRequestingCapture || isDeletingCapture}
+        exportLabel={isExportingCaptures ? '내보내는 중' : '내보내기'}
+        canExport={hasExportableCaptures}
+        isExportDisabled={
+          !hasExportableCaptures ||
+          isExportingCaptures ||
+          isRequestingCapture ||
+          isDeletingCapture
+        }
         isExplicitPostEnd={
           inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
         }
@@ -368,9 +414,11 @@ export function CaptureScreen() {
           isLoadingPresetCatalog ||
           isSelectingPreset ||
           isDeletingCapture ||
+          isExportingCaptures ||
           isRequestingCapture
         }
         onPrimaryAction={handlePrimaryAction}
+        onExport={handleExportCaptures}
         onChangePreset={() => {
           setFallbackError(null)
           beginPresetSwitch()
@@ -383,6 +431,7 @@ export function CaptureScreen() {
         isExplicitPostEnd={
           inFlightCaptureCopy.isExportWaiting || inFlightCaptureCopy.isPostEndFinalized
         }
+        isPhotoActionDisabled={isExportingCaptures}
         deletingCaptureId={isDeletingCapture ? activePendingDeleteCaptureId : null}
         pendingDeleteCaptureId={activePendingDeleteCaptureId}
         onDeleteCancel={() => {
