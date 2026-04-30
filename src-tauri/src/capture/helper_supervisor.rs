@@ -203,16 +203,6 @@ fn resolve_helper_launch_target_from(
         candidates.push(path.to_path_buf());
     }
 
-    let helper_project_path = helper_dir.join("src/CanonHelper/CanonHelper.csproj");
-    let can_launch_dotnet_project = helper_project_path.is_file() && dotnet_is_available;
-
-    if can_launch_dotnet_project {
-        return Some(HelperLaunchTarget::DotnetProject {
-            project_path: helper_project_path,
-            sdk_root: resolve_canon_sdk_root(&helper_dir),
-        });
-    }
-
     candidates.push(helper_dir.join("canon-helper.exe"));
     candidates.push(
         helper_dir.join("src/CanonHelper/bin/Release/net8.0/win-x64/publish/canon-helper.exe"),
@@ -227,6 +217,16 @@ fn resolve_helper_launch_target_from(
 
     if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
         return Some(HelperLaunchTarget::Executable(path));
+    }
+
+    let helper_project_path = helper_dir.join("src/CanonHelper/CanonHelper.csproj");
+    let can_launch_dotnet_project = helper_project_path.is_file() && dotnet_is_available;
+
+    if can_launch_dotnet_project {
+        return Some(HelperLaunchTarget::DotnetProject {
+            project_path: helper_project_path,
+            sdk_root: resolve_canon_sdk_root(&helper_dir),
+        });
     }
 
     None
@@ -560,7 +560,7 @@ fn helper_status_age_seconds(status: &CanonHelperStatusMessage) -> Option<u64> {
     let observed_at_seconds = rfc3339_to_unix_seconds(&status.observed_at).ok()?;
     let now_duration = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
 
-    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
+    now_duration.as_secs().checked_sub(observed_at_seconds)
 }
 
 fn startup_phase_stall_detail_code(
@@ -832,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_helper_source_is_preferred_over_stale_local_executable() {
+    fn packaged_helper_executable_is_preferred_over_source_project() {
         let helper_dir = std::env::temp_dir().join(format!(
             "boothy-helper-launch-target-{}",
             std::process::id()
@@ -859,13 +859,10 @@ mod tests {
             .expect("helper launch target should resolve");
 
         match target {
-            HelperLaunchTarget::Executable(path) => {
-                panic!("stale helper executable should not win over current source: {path:?}")
+            HelperLaunchTarget::Executable(path) => assert_eq!(path, helper_exe_path),
+            HelperLaunchTarget::DotnetProject { project_path, .. } => {
+                panic!("source project should not win over packaged helper executable: {project_path:?}")
             }
-            HelperLaunchTarget::DotnetProject {
-                project_path: resolved_project_path,
-                ..
-            } => assert_eq!(resolved_project_path, project_path),
         }
 
         let _ = fs::remove_dir_all(&helper_dir);

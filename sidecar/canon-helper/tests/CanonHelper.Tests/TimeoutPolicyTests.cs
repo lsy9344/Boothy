@@ -193,6 +193,60 @@ public sealed class TimeoutPolicyTests
     }
 
     [Fact]
+    public void ParentProcessMonitor_rejects_a_reused_parent_pid()
+    {
+        var expectedStartTime = DateTimeOffset.Parse("2026-03-29T00:00:00Z");
+        var reusedStartTime = expectedStartTime.AddMinutes(1);
+        var observedStarts = new Queue<DateTimeOffset>([expectedStartTime, reusedStartTime]);
+        var trackedStarts = new Dictionary<int, DateTimeOffset>();
+
+        Assert.True(
+            ParentProcessMonitor.IsAlive(
+                42,
+                trackedStarts,
+                _ => new ParentProcessSnapshot(true, observedStarts.Dequeue())
+            )
+        );
+        Assert.False(
+            ParentProcessMonitor.IsAlive(
+                42,
+                trackedStarts,
+                _ => new ParentProcessSnapshot(true, observedStarts.Dequeue())
+            )
+        );
+    }
+
+    [Fact]
+    public async Task CompleteCaptureIfFinishedAsync_records_unexpected_capture_faults()
+    {
+        var runtimeRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"boothy-helper-unexpected-fault-{Guid.NewGuid():N}"
+        );
+        var sessionId = $"session_{Guid.NewGuid():N}";
+        var options = new CanonHelperOptions(RuntimeRoot: runtimeRoot, SessionId: sessionId);
+        using var service = new CanonHelperService(options);
+
+        SetField(
+            service,
+            "_activeCaptureTask",
+            Task.FromException<CaptureDownloadResult>(new InvalidOperationException("boom"))
+        );
+
+        var method = typeof(CanonHelperService).GetMethod(
+            "CompleteCaptureIfFinishedAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        await (Task)method!.Invoke(service, [])!;
+
+        var paths = new SessionPaths(runtimeRoot, sessionId);
+        var events = File.ReadAllLines(paths.EventsLogPath);
+        Assert.Contains(events, line => line.Contains("\"detailCode\":\"capture-unexpected-failure\""));
+    }
+
+    [Fact]
     public async Task EnsureConnectedAsync_escalates_to_an_explicit_error_after_connect_timeout()
     {
         var camera = new CanonSdkCamera();

@@ -116,7 +116,8 @@ internal sealed record HelperErrorMessage(
     string? SessionId,
     string? ObservedAt,
     string DetailCode,
-    string? Message
+    string? Message,
+    string? RequestId = null
 );
 
 internal sealed record SelfCheckReport(

@@ -233,6 +233,206 @@ function SessionStateProbe({
 }
 
 describe('SessionProvider', () => {
+  it('reconstructs completed fallback readiness for local deliverable captures', async () => {
+    let latestState: SessionStateContextValue | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const localDeliverableCapture = createCaptureRecord({
+      sessionId,
+      renderStatus: 'finalReady',
+      postEndState: 'localDeliverableReady',
+      final: {
+        assetPath: 'fixtures/capture-final.jpg',
+        readyAtMs: 250,
+      },
+    })
+    const requestCapture = vi
+      .fn<CaptureRuntimeService['requestCapture']>()
+      .mockResolvedValue(
+        createCaptureRequestResult({
+          sessionId,
+          capture: localDeliverableCapture,
+          readiness: createReadinessSnapshot({
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+            latestCapture: localDeliverableCapture,
+          }),
+        }),
+      )
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockResolvedValue(() => undefined),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await latestState!.requestCapture({ sessionId })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness).toMatchObject({
+        sessionId,
+        reasonCode: 'completed',
+        canCapture: false,
+      })
+    })
+  })
+
+  it('does not let a late same-session ready update overwrite local deliverable fallback completion', async () => {
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null = null
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const localDeliverableCapture = createCaptureRecord({
+      sessionId,
+      renderStatus: 'finalReady',
+      postEndState: 'localDeliverableReady',
+      final: {
+        assetPath: 'fixtures/capture-final.jpg',
+        readyAtMs: 250,
+      },
+    })
+    const requestCapture = vi
+      .fn<CaptureRuntimeService['requestCapture']>()
+      .mockResolvedValue(
+        createCaptureRequestResult({
+          sessionId,
+          capture: localDeliverableCapture,
+          readiness: createReadinessSnapshot({
+            sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
+            latestCapture: localDeliverableCapture,
+          }),
+        }),
+      )
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession: vi.fn<StartSessionGateway['startSession']>().mockResolvedValue({
+              ...createSessionStartResult(sessionId, 'Kim 4821'),
+              manifest: {
+                ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+                lifecycle: {
+                  status: 'active',
+                  stage: 'capture-ready',
+                },
+                activePreset: {
+                  presetId: 'preset_soft-glow',
+                  publishedVersion: '2026.03.20',
+                },
+                activePresetId: 'preset_soft-glow',
+                activePresetDisplayName: 'Soft Glow',
+              },
+            }),
+          },
+        })}
+        captureRuntimeService={{
+          getCaptureReadiness: vi
+            .fn<CaptureRuntimeService['getCaptureReadiness']>()
+            .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+          requestCapture,
+          subscribeToCaptureReadiness: vi
+            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+            .mockImplementation(async ({ onReadiness }) => {
+              emitReadiness = onReadiness
+              return () => undefined
+            }),
+        }}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await latestState!.requestCapture({ sessionId })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    act(() => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'captureReady',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '버튼을 누르면 바로 시작돼요.',
+          reasonCode: 'ready',
+          postEnd: null,
+        }),
+      )
+    })
+
+    expect(latestState!.sessionDraft.captureReadiness?.reasonCode).toBe('completed')
+    expect(latestState!.sessionDraft.captureReadiness?.latestCapture?.postEndState).toBe(
+      'localDeliverableReady',
+    )
+  })
+
   it('primes the preview runtime when an active-preset session enters capture flow', async () => {
     let latestState: SessionStateContextValue | null = null
     const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'

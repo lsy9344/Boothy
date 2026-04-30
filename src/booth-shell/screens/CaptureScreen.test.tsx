@@ -413,7 +413,7 @@ describe('CaptureScreen', () => {
     expect(screen.queryByText(/darktable|sdk|helper/i)).not.toBeInTheDocument()
   })
 
-  it('shows handoff-ready guidance with approved destination and booth alias in story 3.3', async () => {
+  it('keeps handoff-ready details hidden in the story 3.2 readiness surface', async () => {
     renderCaptureScreen(
       {},
       {
@@ -476,13 +476,15 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /부스 준비가 끝났어요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /안내 확인/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/인계 안내/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: /승인된 수령 대상/i })).toBeInTheDocument()
-    expect(screen.getByText(/front desk/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: /다음 행동/i })).toBeInTheDocument()
-    expect(screen.getByText(/안내된 직원에게 이름을 말씀해 주세요\./i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: /확인할 이름/i })).toBeInTheDocument()
-    expect(screen.getAllByText(/kim 4821/i)).toHaveLength(2)
+    expect(screen.queryByText(/인계 안내/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { level: 2, name: /승인된 수령 대상/i }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/front desk/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 2, name: /다음 행동/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/안내된 직원에게 이름을 말씀해 주세요\./i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 2, name: /확인할 이름/i })).not.toBeInTheDocument()
+    expect(screen.getAllByText(/kim 4821/i)).toHaveLength(1)
     expect(
       screen.getByText(/이번 세션에서 사용된 룩이 그대로 반영돼요\./i),
     ).toBeInTheDocument()
@@ -495,7 +497,7 @@ describe('CaptureScreen', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('shows phone-required protection guidance while booth-loop actions stay blocked', async () => {
+  it('keeps phone-required protection details hidden in the story 3.2 readiness surface', async () => {
     renderCaptureScreen(
       {},
       {
@@ -584,13 +586,15 @@ describe('CaptureScreen', () => {
       await screen.findByRole('heading', { name: /지금은 도움이 필요해요/i }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /도움 요청/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/보호 안내/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: /지금 해야 할 일/i })).toBeInTheDocument()
-    expect(screen.getAllByText(/가까운 직원에게 알려 주세요\./i)).toHaveLength(2)
-    expect(screen.getByText(/직원에게 도움을 요청해 주세요\./i)).toBeInTheDocument()
+    expect(screen.queryByText(/보호 안내/i)).not.toBeInTheDocument()
     expect(
-      screen.getByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
-    ).toBeInTheDocument()
+      screen.queryByRole('heading', { level: 2, name: /지금 해야 할 일/i }),
+    ).not.toBeInTheDocument()
+    expect(screen.getAllByText(/가까운 직원에게 알려 주세요\./i)).toHaveLength(1)
+    expect(screen.queryByText(/직원에게 도움을 요청해 주세요\./i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/다시 찍기나 기기 조작은 잠시 멈춰 주세요\./i),
+    ).not.toBeInTheDocument()
     expect(
       screen.getByText(/이번 세션에서 사용된 룩이 그대로 반영돼요\./i),
     ).toBeInTheDocument()

@@ -1032,12 +1032,14 @@ fn preview_route_satisfies_host_owned_boundary(detail: &str) -> bool {
         && detail.contains("sourceAsset=preset-applied-preview")
         && detail.contains("truthOwner=display-sized-preset-applied")
         && detail.contains("truthProfile=original-full-preset")
-        && !preview_route_uses_darktable_engine(detail)
+        && !detail.contains("truthBlocker=")
+        && !preview_route_uses_self_labeled_resident_darktable_engine(detail)
         && !preview_route_uses_operation_derived_raster_approximation(detail)
 }
 
-fn preview_route_uses_darktable_engine(detail: &str) -> bool {
-    if preview_route_uses_resident_darktable_compatible_full_preset_engine(detail) {
+fn preview_route_uses_self_labeled_resident_darktable_engine(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    if !normalized.contains("enginemode=resident-full-preset") {
         return false;
     }
 
@@ -1046,15 +1048,9 @@ fn preview_route_uses_darktable_engine(detail: &str) -> bool {
         (normalized_part.starts_with("enginebinary=") && normalized_part.contains("darktable-cli"))
             || (normalized_part.starts_with("enginesource=")
                 && normalized_part.contains("program-files-bin"))
+            || (normalized_part.starts_with("engineadaptersource=")
+                && normalized_part.contains("program-files-bin"))
     })
-}
-
-fn preview_route_uses_resident_darktable_compatible_full_preset_engine(detail: &str) -> bool {
-    let normalized = detail.to_ascii_lowercase();
-    normalized.contains("enginemode=resident-full-preset")
-        && normalized.contains("engineadapter=darktable-compatible")
-        && normalized.contains("inputsourceasset=raw-original")
-        && normalized.contains("truthprofile=original-full-preset")
 }
 
 fn preview_route_uses_operation_derived_raster_approximation(detail: &str) -> bool {
@@ -1112,10 +1108,10 @@ fn preview_route_owner_gate_failure(problem: String) -> RunFailure {
     run_failure(
         "preview-route-owner-gate-failed",
         problem,
-        "공식 hardware Go는 darktable per-capture close가 아니라 host-owned reserve path evidence로만 닫혀야 합니다.",
+        "공식 hardware Go는 raw-original full-preset route evidence로만 닫혀야 합니다.",
         vec![
             "timing-events.log의 preview-render-ready detail에서 binary/source가 fast-preview-handoff인지 확인하세요.",
-            "darktable-cli elapsed pass나 XMP trimming pass는 comparison evidence로만 기록하고 official Go로 승격하지 마세요.",
+            "metadata-only preview, fast-preview-raster, operation-derived profile, self-labeled resident route는 official Go로 승격하지 마세요.",
         ],
     )
 }
@@ -2136,6 +2132,19 @@ mod tests {
     }
 
     #[test]
+    fn preview_truth_gate_rejects_truth_blocked_full_preset_labels() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=1000;detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;truthBlocker=renderer-proof-missing;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=metadata-only"),
+        )
+        .expect_err("truth-blocked labels must not satisfy the official hardware gate");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
+    }
+
+    #[test]
     fn preview_truth_gate_accepts_fast_preview_handoff_route_inside_latency_budget() {
         let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
 
@@ -2148,15 +2157,29 @@ mod tests {
     }
 
     #[test]
-    fn preview_truth_gate_accepts_resident_darktable_compatible_full_preset_engine() {
+    fn preview_truth_gate_accepts_explicit_per_capture_darktable_full_preset_route() {
         let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
 
         validate_preview_truth_gate(
             &capture,
             1,
+            Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=1000;detail=widthCap=384;heightCap=384;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineMode=per-capture-cli;engineAdapter=darktable-compatible;engineAdapterSource=program-files-bin;engineBinary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;engineSource=host-owned-native;args=none;status=0"),
+        )
+        .expect("explicit per-capture full-preset route should satisfy the current product boundary");
+    }
+
+    #[test]
+    fn preview_truth_gate_rejects_self_labeled_resident_darktable_compatible_route() {
+        let capture = truth_gate_capture("preset-applied-preview", Some(1_000), Some(2_000));
+
+        let failure = validate_preview_truth_gate(
+            &capture,
+            1,
             Some("presetId=preset_test;publishedVersion=2026.04.10;binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs=1000;detail=widthCap=384;heightCap=384;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineMode=resident-full-preset;engineAdapter=darktable-compatible;engineAdapterSource=program-files-bin;engineBinary=C:\\Program Files\\darktable\\bin\\darktable-cli.exe;engineSource=host-owned-native;args=none;status=0"),
         )
-        .expect("resident full-preset darktable-compatible engine should satisfy the official host-owned boundary");
+        .expect_err("self-labeled resident darktable-cli route must not satisfy the official host-owned boundary");
+
+        assert_eq!(failure.diagnostic.code, "preview-route-owner-gate-failed");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-04-28 15:39:20 +09:00
+# last_updated: 2026-04-30 17:00:00 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-04-29 12:45:00 +09:00"
+last_updated: "2026-04-30 17:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -47,7 +47,7 @@ hardware_validation_ledger: "{project-root}/_bmad-output/implementation-artifact
 preview_route_status:
   current_release_judgment: "originalVisibleToPresetAppliedVisibleMs <= 3000ms (`preset-applied visible <= 3000ms`)"
   newer_actual_primary_lane: "bounded No-Go"
-  current_worktree_role: "Story 1.26 reserve path has fresh resident full-preset Go evidence"
+  current_worktree_role: "Story 1.8 is closed with two-preset preview/final hardware Go evidence; Story 1.26 reserve path remains Go"
   gpu_acceleration_scope: "old-line comparison evidence only"
   official_verdict_owner: "{project-root}/_bmad-output/implementation-artifacts/hardware-validation-ledger.md"
   route_story_status:
@@ -68,8 +68,10 @@ preview_route_status:
     - "treat extra fast-preview XMP trimming as rejected for official truth when it removes look-affecting operations"
     - "treat fast-preview cached XMP iop-order trimming as historical comparison evidence only"
     - "latest requested high-priority preview process rerun passed 5/5 with direct band 2825ms~2873ms, but keep it as latency evidence only"
-    - "latest requested validation hardware-validation-run-1777434275752 passed 5/5 with resident full-preset route evidence; official band 2316ms~2338ms"
-    - "keep partial native approximation comparison-only; latest Go belongs to raw-original resident darktable-compatible full-preset ownership"
+    - "latest requested validation hardware-validation-run-1777442288984 passed 5/5 with engineMode=per-capture-cli and official band 2387ms~2480ms"
+    - "Story 1.9 requested validation hardware-validation-run-1777514449927 passed 5/5 with same-capture fast preview, raw-original preset-applied preview truth, and official band 2882ms~2979ms"
+    - "Story 1.8 hardware close package passed with look2 session_000000000018aac3004bc9a1f4 and Mono Pop session_000000000018aac34258cf3c8c; both have preview/final outputs and completed handoff truth"
+    - "keep partial native approximation and metadata-only preset-applied previews comparison-only; explicit per-capture full-preset output is accepted when route evidence is honest"
     - "do not count operation-derived raster artifacts as original/full-preset truth"
     - "keep Story 1.31 unopened until Story 1.26 has a fresh official Go"
 
@@ -80,12 +82,12 @@ development_status:
   1-3-승인된-프리셋-카탈로그-표시와-활성-프리셋-선택: done
   1-4-준비-상태-안내와-유효-상태에서만-촬영-허용: done
   1-5-현재-세션-촬영-저장과-truthful-preview-waiting-피드백: done
-  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: review
+  1-6-실카메라-helper-readiness-truth-연결과-false-ready-차단: done
   1-7-실카메라-capture-round-trip과-raw-handoff-correlation: done
-  1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: review
-  1-9-fast-preview-handoff와-xmp-preview-교체: review
+  1-8-게시된-프리셋-xmp-적용-preview-final-render-worker-연결: done
+  1-9-fast-preview-handoff와-xmp-preview-교체: done
   1-10-known-good-preview-lane-복구와-상주형-first-visible-worker-도입: done
-  1-26-host-owned-local-native-gpu-resident-preview-lane-검증: in-progress
+  1-26-host-owned-local-native-gpu-resident-preview-lane-검증: done
   epic-1-retrospective: optional
 
   epic-2: in-progress

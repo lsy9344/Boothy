@@ -77,6 +77,33 @@ public sealed class JsonFileProtocolTests : IDisposable
     }
 
     [Fact]
+    public void ReadProcessedRequestIds_backfills_helper_error_requests_from_existing_event_log()
+    {
+        var paths = CreateSessionPaths();
+        var failedRequest = CreateRequest("request_failed_event_1");
+        AppendRequest(paths, failedRequest);
+        AppendEvent(
+            paths.EventsLogPath,
+            new
+            {
+                schemaVersion = CanonHelperSchemas.HelperError,
+                type = "helper-error",
+                sessionId = failedRequest.SessionId,
+                requestId = failedRequest.RequestId,
+                observedAt = DateTimeOffset.UtcNow.ToString("O"),
+                detailCode = "camera-not-ready",
+                message = "Camera was not ready.",
+            }
+        );
+
+        var protocol = new JsonFileProtocol(paths, echoJsonToStdout: false);
+        var processedRequestIds = protocol.ReadProcessedRequestIds();
+
+        Assert.Contains(failedRequest.RequestId, processedRequestIds);
+        Assert.Empty(protocol.ReadRequests(processedRequestIds));
+    }
+
+    [Fact]
     public void ReadRequests_buffers_incomplete_trailing_lines_until_the_json_line_is_finished()
     {
         var paths = CreateSessionPaths();

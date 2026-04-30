@@ -1,6 +1,6 @@
 # Story 1.9: fast preview handoff와 XMP preview 교체
 
-Status: review
+Status: done
 
 Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Story 1.8은 render-backed `previewReady` / `finalReady` truth owner로 유지하고, Story 1.9는 blank waiting을 줄이기 위한 first-visible same-capture preview latency 보정을 별도 corrective follow-up으로 소유한다. 이 스토리의 목적은 "정식 preview truth를 빠르게 만든다"가 아니라 "정식 preview truth를 느슨하게 만들지 않으면서도 고객이 방금 찍은 shot을 더 빨리 보게 한다"이다.
 
@@ -15,7 +15,7 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
   - pending fast preview가 보여도 booth state가 계속 truthful `Preview Waiting`으로 남는다는 증거
   - later XMP preview가 같은 canonical path를 교체하고 그때만 `previewReady`가 올라간다는 증거
   - burst capture와 cross-session 상황에서도 잘못된 이미지가 섞이지 않는다는 증거
-- Current hardware gate: `No-Go`
+- Current hardware gate: `Go`
 - Official verdict owner:
   - `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview, later XMP replacement, timing split, cross-session isolation을 한 패키지로 묶어야 한다. 다만 preview-track official `Go / No-Go`는 이 story note가 아니라 ledger에서 `preset-applied visible <= 3000ms`로 판정한다.
@@ -28,6 +28,12 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
   - 같은 세션의 `timing-events.log`에는 `fast-preview-promoted`가 없었고, 첫 capture `preview-render-ready`만 `2026-04-02T22:25:54Z`, 두 번째 capture `preview-render-ready`만 `2026-04-02T22:26:02Z`에 기록됐다.
   - 같은 세션의 `session.json`에는 각 capture의 `timing.fastPreviewVisibleAtMs`가 비어 있었고 `timing.xmpPreviewReadyAtMs`만 각각 `1775168754531`, `1775168762126`으로 채워져 있었다.
   - 따라서 이번 실장비 증거는 "저장 완료 경계 분리"는 확인했지만 Story 1.9의 핵심 목표인 blank waiting 완화와 same-slot replacement는 아직 미달이며, 남은 병목은 host/UI 이전 helper fast preview 생성 경로다. 동시에 observed `preset-applied visible`도 약 `3.3초 ~ 3.4초`여서 current official gate(`<= 3000ms`)를 넘는다. 하드웨어 판정은 계속 `No-Go`다.
+- Latest close evidence (2026-04-30, Codex-executed approved hardware validation):
+  - `hardware-validation-run-1777514449927` passed `5/5` on session `session_000000000018aafff97b2bb744` with preset `look2` / `preset_new-draft-2` / `2026.04.10`.
+  - Helper emitted same-capture `fast-preview-ready` for all five captures using `windows-shell-thumbnail`, and each capture kept `previewWaiting` until the later preset-applied preview became `previewReady`.
+  - `originalVisibleToPresetAppliedVisibleMs` closed at `2882ms`, `2979ms`, `2932ms`, `2978ms`, and `2952ms`, all inside the official `<= 3000ms` gate.
+  - Render evidence used `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthProfile=original-full-preset`, `engineMode=per-capture-cli`, and `truthOwner=display-sized-preset-applied`.
+  - Official verdict owner `_bmad-output/implementation-artifacts/hardware-validation-ledger.md` records this story as `Go`.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -95,6 +101,17 @@ booth customer로서,
 - [x] [Review][Patch] Pending fast preview is cleared before manifest-owned preview becomes visible, reopening the blank waiting gap this story is meant to close [src/session-domain/state/session-provider.tsx:850]
 - [x] [Review][Patch] Helper thumbnail extraction still blocks `file-arrived` completion, so fast-preview diagnostics remain on the RAW save critical path [sidecar/canon-helper/src/CanonHelper/Runtime/CanonSdkCamera.cs:777]
 - [x] [Review][Patch] Pending fast preview inherits the current active preset label, so switching looks during `Preview Waiting` can mislabel the just-shot image with the wrong look [src/booth-shell/screens/CaptureScreen.tsx:167]
+- [x] [Review][Patch] Speculative fast-preview raster can close truthful `previewReady` before raw-backed preset preview [src-tauri/src/capture/ingest_pipeline.rs:427]
+- [x] [Review][Patch] Speculative close can steal `xmpPreviewReadyAtMs` from the later raw-backed render [src-tauri/src/capture/ingest_pipeline.rs:435]
+- [x] [Review][Patch] Final render can start while preview is still only pending fast preview [src-tauri/src/capture/ingest_pipeline.rs:747]
+- [x] [Review][Patch] Refined preview readiness event can time out before refinement is allowed to start [src-tauri/src/commands/capture_commands.rs:197]
+- [x] [Review][Patch] Late helper fast-preview polling holds the global capture pipeline lock [src-tauri/src/capture/ingest_pipeline.rs:305]
+- [x] [Review][Patch] `fastPreviewVisibleAtMs` uses host promotion time instead of first-visible asset time [src-tauri/src/capture/ingest_pipeline.rs:1146]
+- [x] [Review][Patch] `preset-applied-preview` metadata-only fast preview can still close `previewReady` before renderer proof [src-tauri/src/capture/ingest_pipeline.rs:167]
+- [x] [Review][Patch] Hardware gate still accepts truth-blocked route detail [src-tauri/src/automation/hardware_validation.rs:1027]
+- [x] [Review][Patch] Final-ready idempotent return can leave post-end completion stuck [src-tauri/src/capture/ingest_pipeline.rs:1550]
+- [x] [Review][Patch] Synchronous raw-original preview handoff can emit ready evidence without a matching render-start diagnostic [src-tauri/src/capture/ingest_pipeline.rs:810]
+- [x] [Review][Patch] Failed synchronous raw-original handoff records an extra preview render start before fallback [src-tauri/src/capture/ingest_pipeline.rs:801]
 
 ## Dev Notes
 
@@ -274,7 +291,7 @@ GPT-5 Codex
 - pending fast preview가 보여도 booth truth는 계속 `Preview Waiting`으로 유지되고, later render-backed preview만 `previewReady`와 `readyAtMs`를 올리도록 Story 1.8 truth owner를 그대로 유지했다.
 - `fastPreviewVisibleAtMs`, `xmpPreviewReadyAtMs`, `fast-preview-*`, `preview-render-*` 진단을 추가해 first-visible과 later render-ready를 분리 기록했다.
 - Rust integration, frontend contract/UI regression, helper test, lint/full Vitest/full Cargo validation은 통과했다.
-- approved booth hardware evidence와 burst queue canonical proof는 아직 없으므로 Story 1.9 상태는 `review`로 유지한다.
+- approved booth hardware evidence is now recorded as `Go`; Story 1.9 is closed.
 - code review에서 나온 3개 patch finding을 모두 수정했고, 기존 canonical preview 보존/allowed-path 축소/canonical same-path 유지 회귀를 테스트로 잠갔다.
 - capture 요청 시작점을 frontend가 생성한 `requestId`로 고정하고 `button-pressed`와 `recent-session-pending-visible`을 같은 상관키로 잇도록 정리했다.
 - helper는 `fast-thumbnail-ready`뿐 아니라 `fast-thumbnail-attempted`와 `fast-thumbnail-failed`도 남기고, host는 이 진단 이벤트를 받아도 capture success를 깨지 않도록 유지했다.
@@ -282,6 +299,7 @@ GPT-5 Codex
 - 최신 실장비 세션 `session_000000000018a2aa911a1263d8` 증거로 `file-arrived -> fast-thumbnail-attempted -> fast-thumbnail-failed -> preview-render-ready` 순서를 확인했고, 남은 원인을 helper fast preview 생성 실패로 좁혔다.
 - helper는 이제 camera thumbnail이 실패해도 RAW 파일에서 fast preview를 다시 만들도록 시도하고, fallback까지 실패하면 `fast-preview-fallback-failed`로 남겨 다음 하드웨어 검증에서 root cause를 더 빠르게 구분할 수 있게 했다.
 - 2026-04-19 - historical first-visible / replacement measurements는 그대로 보존하되, 이 story의 official 해석을 `preset-applied visible <= 3000ms` 단일 게이트와 ledger-owned verdict에 맞춰 다시 정렬했다.
+- 2026-04-30 11:02 +09:00 - Codex가 요청된 hardware validation을 직접 실행했고 `hardware-validation-run-1777514449927`이 `5/5` 통과했다. official timing band는 `2882ms ~ 2979ms`로 `<= 3000ms` gate 안에 들었고, helper same-capture fast preview와 later raw-original preset-applied preview truth가 함께 기록됐다.
 
 ### File List
 
@@ -324,3 +342,4 @@ GPT-5 Codex
 - 2026-04-02 16:06:16 +09:00 - recent-session thumbnail speed brief 후속 반영: client-generated `requestId`와 `button-pressed` correlation, helper `fast-thumbnail-attempted`/`fast-thumbnail-failed`, pending recent-session visible `requestId` join, 관련 Rust/UI/helper 회귀 테스트를 추가하고 targeted 검증을 재통과시킴
 - 2026-04-03 00:54:00 +09:00 - Story 1.9 follow-up review patch 적용: fast preview customer-visible update를 capture success 이후 canonical preview path로 제한하고, canonicalized path 검증/duplicate `requestId` 거부/diagnostic telemetry 무해화/thumbnail RAW ordering 복구/`120ms` preview render separation을 수정했다. `cargo test --manifest-path src-tauri/Cargo.toml --test capture_readiness --test operator_audit --test operator_recovery`와 `dotnet test sidecar/canon-helper/tests/CanonHelper.Tests/CanonHelper.Tests.csproj` 재통과, hardware evidence 미수집으로 상태는 계속 `review`
 - 2026-04-03 08:26:54 +09:00 - 실장비 재현 세션 `session_000000000018a2aa911a1263d8` 로그/데이터를 스토리 증거에 추가했다. `file-arrived`는 fast preview 시도보다 먼저 닫혔지만 customer-visible fast preview는 여전히 비어 있었고, 원인을 helper camera thumbnail 실패 뒤 RAW fallback 부재로 확정했다. helper는 이제 Windows shell thumbnail -> EDSDK RAW preview fallback을 시도하고, 실패 시 `fast-preview-fallback-failed`로 남기도록 보강했다. 자동화 검증은 다시 통과했지만 hardware gate는 재실행 전까지 계속 `No-Go`다.
+- 2026-04-30 11:02 +09:00 - 요청된 hardware validation을 직접 실행해 `hardware-validation-run-1777514449927` / `session_000000000018aafff97b2bb744`에서 `5/5` 통과를 확인했다. official `originalVisibleToPresetAppliedVisibleMs` band는 `2882ms ~ 2979ms`이며 ledger에 `Go`로 반영했다.

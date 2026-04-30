@@ -154,20 +154,18 @@ pub fn persist_capture_in_dir(
         capture.preview.kind = seed_result.kind.clone();
     }
     capture.timing.fast_preview_visible_at_ms = first_visible_at_ms;
-
-    let promoted_fast_preview_kind = selected_fast_preview
-        .as_ref()
-        .or(seeded_fast_preview.as_ref())
-        .and_then(|promoted| promoted.kind.as_deref());
-    let truthful_fast_preview_ready_at_ms = selected_fast_preview
-        .as_ref()
-        .or(seeded_fast_preview.as_ref())
-        .and_then(|promoted| promoted.visible_at_ms)
-        .or(Some(persisted_at_ms))
-        .filter(|_| is_truthful_fast_preview_kind(promoted_fast_preview_kind));
-    let truthful_fast_preview_closed = truthful_fast_preview_ready_at_ms
-        .map(|ready_at_ms| close_preview_truth(&mut capture, ready_at_ms))
-        .unwrap_or(false);
+    if should_close_truthful_same_canonical_upgrade(
+        selected_fast_preview.as_ref(),
+        promoted_fast_preview.as_ref(),
+        reused_early_fast_preview.as_ref(),
+    ) {
+        let preview_ready_at_ms = selected_fast_preview
+            .as_ref()
+            .and_then(|preview| preview.visible_at_ms)
+            .or(first_visible_at_ms)
+            .unwrap_or(persisted_at_ms);
+        close_preview_truth(&mut capture, preview_ready_at_ms);
+    }
 
     let fast_preview_update = promoted_fast_preview.as_ref().and_then(|promoted| {
         should_emit_promoted_fast_preview_after_persist(selected_fast_preview.as_ref(), promoted)
@@ -186,32 +184,6 @@ pub fn persist_capture_in_dir(
     manifest.lifecycle.stage = derive_capture_lifecycle_stage(&manifest);
 
     write_session_manifest(&paths.manifest_path, &manifest)?;
-
-    if truthful_fast_preview_closed {
-        let preview_ready_at_ms = capture
-            .preview
-            .ready_at_ms
-            .expect("truthful fast preview close should set ready timestamp");
-        log_render_ready_in_dir(
-            base_dir,
-            &manifest.session_id,
-            &capture.capture_id,
-            &capture.request_id,
-            RenderIntent::Preview,
-            &truthful_fast_preview_render_detail(
-                &active_preset.preset_id,
-                &active_preset.published_version,
-                preview_ready_at_ms,
-                capture.timing.capture_acknowledged_at_ms,
-            ),
-        );
-        append_capture_preview_ready_event(
-            base_dir,
-            &manifest.session_id,
-            &capture,
-            preview_ready_at_ms,
-        );
-    }
 
     if capture.preview.ready_at_ms.is_none() {
         start_host_owned_raw_original_preview_handoff_in_dir(
@@ -643,9 +615,32 @@ pub fn complete_preview_render_in_dir(
             return Ok(existing_capture);
         }
 
-        let promoted_late_fast_preview_kind =
-            sync_helper_fast_preview_before_render(base_dir, &paths, &mut manifest, capture_index)?;
-        if promoted_late_fast_preview_kind.is_some() {
+        let capture = manifest.captures[capture_index].clone();
+        drop(_pipeline_guard);
+
+        if let Some(promoted_late_fast_preview) =
+            wait_for_helper_fast_preview_before_render(&paths, &capture)
+        {
+            let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+                HostErrorEnvelope::persistence(
+                    "프리뷰 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.",
+                )
+            })?;
+            let mut manifest = read_session_manifest(&paths.manifest_path)?;
+            let capture_index = manifest
+                .captures
+                .iter()
+                .position(|capture| capture.capture_id == capture_id)
+                .ok_or_else(|| {
+                    HostErrorEnvelope::session_not_found("방금 저장된 촬영 기록을 찾지 못했어요.")
+                })?;
+            let promoted_late_fast_preview_kind = apply_helper_fast_preview_before_render(
+                base_dir,
+                &paths,
+                &mut manifest,
+                capture_index,
+                promoted_late_fast_preview,
+            )?;
             let capture = manifest
                 .captures
                 .get(capture_index)
@@ -658,20 +653,23 @@ pub fn complete_preview_render_in_dir(
                 capture.active_preset_id.as_deref(),
                 capture.preview.asset_path.as_deref(),
             ) {
-                if should_start_speculative_preview_render(
+                if !should_start_speculative_preview_render(
                     promoted_late_fast_preview_kind.as_deref(),
                 ) {
-                    start_speculative_preview_render_in_dir(
-                        base_dir,
-                        session_id,
-                        &capture.request_id,
-                        capture_id,
-                        preset_id,
-                        &capture.active_preset_version,
-                        first_visible_asset_path,
-                        promoted_late_fast_preview_kind.as_deref(),
-                    );
+                    drop(_pipeline_guard);
+                    break capture;
                 }
+
+                start_speculative_preview_render_in_dir(
+                    base_dir,
+                    session_id,
+                    &capture.request_id,
+                    capture_id,
+                    preset_id,
+                    &capture.active_preset_version,
+                    first_visible_asset_path,
+                    promoted_late_fast_preview_kind.as_deref(),
+                );
                 let request_id = capture.request_id.clone();
                 drop(_pipeline_guard);
                 wait_for_speculative_preview_completion_for_request_in_dir(
@@ -685,7 +683,7 @@ pub fn complete_preview_render_in_dir(
             break capture;
         }
 
-        break manifest.captures[capture_index].clone();
+        break capture;
     };
 
     wait_for_active_speculative_preview_close_before_direct_render_in_dir(
@@ -857,6 +855,14 @@ fn try_complete_host_owned_raw_original_preview_handoff_in_dir(
             return Ok(None);
         }
     }
+
+    log_render_start_in_dir(
+        base_dir,
+        &capture.session_id,
+        &capture.capture_id,
+        &capture.request_id,
+        RenderIntent::Preview,
+    );
 
     let _ = fs::remove_file(&lock_path);
 
@@ -1169,26 +1175,17 @@ fn read_promotable_speculative_preview_detail(speculative_detail_path: &Path) ->
 }
 
 fn speculative_preview_detail_is_promotable(render_detail: &str) -> bool {
-    if is_host_owned_preview_handoff_detail(render_detail) {
-        return is_host_owned_original_full_preset_truth_detail(render_detail);
-    }
-
-    true
+    is_original_full_preset_truth_detail(render_detail)
 }
 
-fn is_host_owned_preview_handoff_detail(render_detail: &str) -> bool {
-    render_detail.contains("binary=fast-preview-handoff")
-        && render_detail.contains("source=fast-preview-handoff")
-        && render_detail.contains("engineSource=host-owned-native")
-}
-
-fn is_host_owned_original_full_preset_truth_detail(render_detail: &str) -> bool {
+fn is_original_full_preset_truth_detail(render_detail: &str) -> bool {
     render_detail.contains("inputSourceAsset=raw-original")
         && render_detail.contains("sourceAsset=preset-applied-preview")
         && render_detail.contains("truthOwner=display-sized-preset-applied")
         && render_detail.contains("truthProfile=original-full-preset")
         && !render_detail.contains("inputSourceAsset=fast-preview-raster")
         && !render_detail.contains("profile=operation-derived")
+        && !render_detail.contains("truthBlocker=")
 }
 
 fn speculative_preview_output_is_ready_to_promote(
@@ -1302,15 +1299,8 @@ fn finish_preview_render_in_dir(
 }
 
 fn should_close_existing_preview_without_render(capture: &SessionCaptureRecord) -> bool {
-    capture.preview.ready_at_ms.is_none()
-        && capture
-            .preview
-            .asset_path
-            .as_deref()
-            .map(Path::new)
-            .map(is_valid_render_preview_asset)
-            .unwrap_or(false)
-        && is_truthful_fast_preview_kind(capture.preview.kind.as_deref())
+    let _ = capture;
+    false
 }
 
 fn has_displayable_existing_preview(paths: &SessionPaths, capture: &SessionCaptureRecord) -> bool {
@@ -1474,65 +1464,35 @@ fn try_close_existing_preview_without_render_in_manifest(
     .map(Some)
 }
 
-fn sync_helper_fast_preview_before_render(
-    base_dir: &Path,
+fn wait_for_helper_fast_preview_before_render(
     paths: &SessionPaths,
-    manifest: &mut SessionManifest,
-    capture_index: usize,
-) -> Result<Option<String>, HostErrorEnvelope> {
-    let Some(capture) = manifest.captures.get_mut(capture_index) else {
-        return Ok(None);
-    };
-
+    capture: &SessionCaptureRecord,
+) -> Option<FastPreviewPromotionResult> {
     if capture.preview.ready_at_ms.is_some() {
-        return Ok(None);
-    }
-
-    if let Some(promoted_fast_preview) =
-        seed_truthful_fast_preview_asset_path(paths, &capture.capture_id, &capture.request_id)
-    {
-        let preview_kind = promoted_fast_preview.kind.clone();
-        let _ = close_truthful_preview_in_manifest(
-            base_dir,
-            paths,
-            manifest,
-            capture_index,
-            promoted_fast_preview,
-        )?;
-        return Ok(preview_kind);
-    }
-
-    if capture.preview.asset_path.is_some() {
-        return Ok(None);
+        return None;
     }
 
     let wait_cycles = (HELPER_FAST_PREVIEW_WAIT_MS / HELPER_FAST_PREVIEW_POLL_MS).max(1);
-    for _ in 0..=wait_cycles {
+    for attempt in 0..=wait_cycles {
+        if let Some(promoted_fast_preview) =
+            seed_truthful_fast_preview_asset_path(paths, &capture.capture_id, &capture.request_id)
+        {
+            return Some(promoted_fast_preview);
+        }
+
+        if capture.preview.asset_path.is_some() {
+            return None;
+        }
+
         if let Some(promoted_fast_preview) =
             seed_pending_preview_asset_path(paths, &capture.capture_id, &capture.request_id)
         {
-            let preview_kind = promoted_fast_preview.kind.clone();
-            if is_truthful_fast_preview_kind(preview_kind.as_deref()) {
-                let _ = close_truthful_preview_in_manifest(
-                    base_dir,
-                    paths,
-                    manifest,
-                    capture_index,
-                    promoted_fast_preview,
-                )?;
-            } else {
-                capture.preview.asset_path = Some(promoted_fast_preview.asset_path);
-                capture.preview.kind = promoted_fast_preview.kind.clone();
-                if capture.timing.fast_preview_visible_at_ms.is_none() {
-                    capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
-                }
-                manifest.updated_at = current_timestamp(SystemTime::now())?;
-                write_session_manifest(&paths.manifest_path, manifest)?;
-            }
-            return Ok(preview_kind);
+            return Some(promoted_fast_preview);
         }
 
-        thread::sleep(Duration::from_millis(HELPER_FAST_PREVIEW_POLL_MS));
+        if attempt < wait_cycles {
+            thread::sleep(Duration::from_millis(HELPER_FAST_PREVIEW_POLL_MS));
+        }
     }
 
     log::info!(
@@ -1543,7 +1503,48 @@ fn sync_helper_fast_preview_before_render(
         HELPER_FAST_PREVIEW_WAIT_MS
     );
 
-    Ok(None)
+    None
+}
+
+fn apply_helper_fast_preview_before_render(
+    base_dir: &Path,
+    paths: &SessionPaths,
+    manifest: &mut SessionManifest,
+    capture_index: usize,
+    promoted_fast_preview: FastPreviewPromotionResult,
+) -> Result<Option<String>, HostErrorEnvelope> {
+    let Some(capture) = manifest.captures.get_mut(capture_index) else {
+        return Ok(None);
+    };
+
+    if capture.preview.ready_at_ms.is_some() {
+        return Ok(None);
+    }
+
+    if let Some(current_asset_path) = capture.preview.asset_path.as_deref() {
+        let current = FastPreviewPromotionResult {
+            asset_path: current_asset_path.into(),
+            kind: capture.preview.kind.clone(),
+            visible_at_ms: capture.timing.fast_preview_visible_at_ms,
+        };
+
+        if !should_promoted_fast_preview_override_saved_baseline(&current, &promoted_fast_preview) {
+            return Ok(None);
+        }
+    }
+
+    let _ = base_dir;
+    let preview_kind = promoted_fast_preview.kind.clone();
+
+    capture.preview.asset_path = Some(promoted_fast_preview.asset_path);
+    capture.preview.kind = preview_kind.clone();
+    if capture.timing.fast_preview_visible_at_ms.is_none() {
+        capture.timing.fast_preview_visible_at_ms = promoted_fast_preview.visible_at_ms;
+    }
+    manifest.updated_at = current_timestamp(SystemTime::now())?;
+    write_session_manifest(&paths.manifest_path, manifest)?;
+
+    Ok(preview_kind)
 }
 
 pub fn complete_final_render_in_dir(
@@ -1566,10 +1567,18 @@ pub fn complete_final_render_in_dir(
             HostErrorEnvelope::session_not_found("방금 저장된 촬영 기록을 찾지 못했어요.")
         })?;
 
-    if manifest.captures[capture_index]
+    let existing_final_file_is_ready = manifest.captures[capture_index]
         .final_asset
         .asset_path
-        .is_some()
+        .as_deref()
+        .map(|asset_path| std::path::Path::new(asset_path).is_file())
+        .unwrap_or(false);
+
+    if existing_final_file_is_ready
+        && manifest.captures[capture_index]
+            .final_asset
+            .ready_at_ms
+            .is_some()
         && manifest.captures[capture_index].render_status == "finalReady"
     {
         return Ok(manifest.captures[capture_index].clone());
@@ -1577,8 +1586,12 @@ pub fn complete_final_render_in_dir(
 
     if manifest.captures[capture_index]
         .preview
-        .asset_path
+        .ready_at_ms
         .is_none()
+        || !matches!(
+            manifest.captures[capture_index].render_status.as_str(),
+            "previewReady" | "finalReady"
+        )
     {
         return Err(HostErrorEnvelope::persistence(
             "최종 결과를 만들기 전에 확인용 사진이 먼저 준비되어야 해요.",
@@ -1680,7 +1693,7 @@ fn mark_render_failed_in_dir(
         return Ok(manifest);
     };
 
-    if latest_capture.capture_id != capture_id {
+    if matches!(intent, RenderIntent::Preview) && latest_capture.capture_id != capture_id {
         return Ok(manifest);
     }
 
@@ -1813,7 +1826,8 @@ fn seed_pending_preview_asset_path(
     Some(FastPreviewPromotionResult {
         asset_path,
         kind: Some(LEGACY_CANONICAL_SCAN_FAST_PREVIEW_KIND.into()),
-        visible_at_ms: current_time_ms().ok(),
+        visible_at_ms: preview_asset_visible_at_ms(&preview_path)
+            .or_else(|| current_time_ms().ok()),
     })
 }
 
@@ -1896,6 +1910,27 @@ fn should_emit_promoted_fast_preview_after_persist(
             && selected_fast_preview.kind == promoted_fast_preview.kind
             && selected_fast_preview.visible_at_ms == promoted_fast_preview.visible_at_ms
     })
+}
+
+fn should_close_truthful_same_canonical_upgrade(
+    selected_fast_preview: Option<&FastPreviewPromotionResult>,
+    promoted_fast_preview: Option<&FastPreviewPromotionResult>,
+    reused_early_fast_preview: Option<&FastPreviewPromotionResult>,
+) -> bool {
+    let Some(selected_fast_preview) = selected_fast_preview else {
+        return false;
+    };
+    let Some(promoted_fast_preview) = promoted_fast_preview else {
+        return false;
+    };
+    let Some(reused_early_fast_preview) = reused_early_fast_preview else {
+        return false;
+    };
+
+    selected_fast_preview.asset_path == promoted_fast_preview.asset_path
+        && selected_fast_preview.asset_path == reused_early_fast_preview.asset_path
+        && is_truthful_fast_preview_kind(selected_fast_preview.kind.as_deref())
+        && !is_truthful_fast_preview_kind(reused_early_fast_preview.kind.as_deref())
 }
 
 fn promoted_fast_preview_ready_update(
@@ -1987,6 +2022,7 @@ fn promote_fast_preview_asset(
             return None;
         }
     };
+    let candidate_visible_at_ms = preview_asset_visible_at_ms(&candidate_path);
     let resolved_kind = resolve_fast_preview_kind(handoff.kind.as_deref(), &candidate_path);
 
     let canonical_path = paths.renders_previews_dir.join(format!("{capture_id}.jpg"));
@@ -2094,11 +2130,14 @@ fn promote_fast_preview_asset(
         resolved_kind.as_deref(),
         Some(&format!("assetPath={asset_path}")),
     );
+    let promotion_visible_at_ms = current_time_ms().ok();
 
     Some(FastPreviewPromotionResult {
         asset_path,
         kind: resolved_kind,
-        visible_at_ms: current_time_ms().ok(),
+        visible_at_ms: promotion_visible_at_ms
+            .or_else(|| preview_asset_visible_at_ms(&canonical_path))
+            .or(candidate_visible_at_ms),
     })
 }
 
@@ -2389,13 +2428,12 @@ fn resolve_fast_preview_kind(kind: Option<&str>, candidate_path: &Path) -> Optio
         .map(str::to_string)
         .or_else(|| {
             candidate_path
-                .file_name()
+                .file_stem()
                 .and_then(|value| value.to_str())
-                .map(|value| value.to_ascii_lowercase())
-                .filter(|value| {
-                    value.contains(&format!(".{TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND}."))
+                .filter(|stem| {
+                    stem.ends_with(&format!(".{TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND}"))
                 })
-                .map(|_| TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.to_string())
+                .map(|_| TRUTHFUL_PRESET_APPLIED_FAST_PREVIEW_KIND.into())
         })
 }
 
@@ -2441,7 +2479,7 @@ fn truthful_fast_preview_render_detail(
     capture_acknowledged_at_ms: u64,
 ) -> String {
     format!(
-        "presetId={};publishedVersion={};binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;inputSourceAsset=raw-original;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=original-full-preset;engineBinary=host-owned-native-preview;engineSource=host-owned-native;args=none;status=ready",
+        "presetId={};publishedVersion={};binary=fast-preview-handoff;source=fast-preview-handoff;elapsedMs={};detail=widthCap=display;heightCap=display;hq=false;sourceAsset=preset-applied-preview;truthOwner=display-sized-preset-applied;truthProfile=metadata-only-not-renderer-proof;truthBlocker=renderer-proof-missing;requiredInputSourceAsset=raw-original;engineBinary=metadata-only-fast-preview;engineSource=helper-metadata;args=none;status=metadata-only",
         preset_id,
         preset_version,
         preview_ready_at_ms.saturating_sub(capture_acknowledged_at_ms)
@@ -2505,6 +2543,13 @@ fn append_capture_preview_ready_event(
             detail: Some(&detail),
         },
     );
+}
+
+fn preview_asset_visible_at_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_to_ms)
 }
 
 fn system_time_to_ms(value: SystemTime) -> Option<u64> {
@@ -2722,6 +2767,85 @@ mod tests {
             speculative_preview_ready_at_ms(&output_path, adoption_time_ms),
             file_ready_at_ms,
             "truthful close should use artifact ready time, not later manifest adoption time"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn pending_preview_scan_uses_asset_mtime_for_first_visible_time() {
+        let base_dir = unique_temp_dir("pending-preview-mtime");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture_id = "capture_test";
+        let request_id = "request_test";
+        let preview_path = paths.renders_previews_dir.join(format!("{capture_id}.jpg"));
+        fs::create_dir_all(&paths.renders_previews_dir)
+            .expect("preview directory should be created");
+        fs::write(&preview_path, [0xff, 0xd8, 0xff, 0xd9]).expect("preview file should write");
+        let asset_visible_at_ms = fs::metadata(&preview_path)
+            .expect("metadata should be readable")
+            .modified()
+            .ok()
+            .and_then(system_time_to_ms)
+            .expect("mtime should be available");
+
+        thread::sleep(Duration::from_millis(80));
+
+        let promoted = seed_pending_preview_asset_path(&paths, capture_id, request_id)
+            .expect("pending preview should be discovered");
+
+        assert_eq!(
+            promoted.visible_at_ms,
+            Some(asset_visible_at_ms),
+            "first-visible timing should use the preview asset mtime, not later host scan time"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn promoted_fast_preview_uses_promotion_time_for_first_visible_time() {
+        let base_dir = unique_temp_dir("promoted-fast-preview-visible-time");
+        let session_id = "session_000000000000000000000001";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        let capture_id = "capture_test";
+        let request_id = "request_test";
+        let source_path = paths
+            .handoff_dir
+            .join("fast-preview")
+            .join(format!("{capture_id}.windows-shell-thumbnail.jpg"));
+        fs::create_dir_all(source_path.parent().expect("source should have a parent"))
+            .expect("source parent should be created");
+        fs::write(&source_path, [0xff, 0xd8, 0xff, 0xd9])
+            .expect("source preview should write");
+        let source_visible_at_ms =
+            preview_asset_visible_at_ms(&source_path).expect("source mtime should resolve");
+        thread::sleep(Duration::from_millis(80));
+        let promotion_started_at_ms = current_time_ms().expect("clock should resolve");
+
+        let promoted = promote_fast_preview_asset(
+            &paths,
+            capture_id,
+            request_id,
+            None,
+            &CompletedCaptureFastPreview {
+                asset_path: source_path.to_string_lossy().into_owned(),
+                kind: Some("windows-shell-thumbnail".into()),
+            },
+        )
+        .expect("fast preview should promote");
+
+        let visible_at_ms = promoted
+            .visible_at_ms
+            .expect("promoted preview should have a visible time");
+        assert!(
+            visible_at_ms >= promotion_started_at_ms,
+            "first visible should be the screen promotion time, not the earlier source file mtime"
+        );
+        assert!(
+            visible_at_ms > source_visible_at_ms,
+            "promotion should not backdate first visible to the handoff artifact mtime"
         );
 
         let _ = fs::remove_dir_all(base_dir);

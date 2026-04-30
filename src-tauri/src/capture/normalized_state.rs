@@ -31,7 +31,7 @@ use crate::{
         HostErrorEnvelope, LiveCaptureTruthDto,
     },
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
-    handoff::sync_post_end_state_in_dir,
+    handoff::{project_post_end_state_in_dir, sync_post_end_state_in_dir},
     preset::preset_catalog::{find_published_preset_summary, resolve_published_preset_catalog_dir},
     render::is_valid_render_preview_asset,
     session::{
@@ -43,8 +43,8 @@ use crate::{
         session_repository::{read_session_manifest, write_session_manifest},
     },
     timing::{
-        append_session_timing_event_in_dir, sync_session_timing_in_dir, SessionTimingEventInput,
-        TimingPhase,
+        append_session_timing_event_in_dir, project_session_timing, sync_session_timing_in_dir,
+        SessionTimingEventInput, TimingPhase,
     },
 };
 
@@ -1124,7 +1124,10 @@ pub fn delete_capture_in_dir(
     let _pipeline_guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
         HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 시도해 주세요.")
     })?;
-    let mut manifest = read_session_manifest_with_timing(base_dir, &input.session_id)?;
+    let manifest = read_session_manifest(&paths.manifest_path)?;
+    let manifest = project_session_timing(manifest, std::time::SystemTime::now())?;
+    let mut manifest =
+        project_post_end_state_in_dir(base_dir, manifest, std::time::SystemTime::now())?;
     let capture_index = manifest
         .captures
         .iter()
@@ -1641,7 +1644,7 @@ fn session_age_seconds_since(timestamp: &str) -> Option<u64> {
     let observed_at_seconds = rfc3339_to_unix_seconds(timestamp).ok()?;
     let now_duration = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
 
-    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
+    now_duration.as_secs().checked_sub(observed_at_seconds)
 }
 
 fn is_fresh_helper_status(status: &CanonHelperStatusMessage) -> bool {
@@ -1658,7 +1661,7 @@ fn helper_status_age_seconds(observed_at: Option<&str>) -> Option<u64> {
         return None;
     };
 
-    Some(now_duration.as_secs().saturating_sub(observed_at_seconds))
+    now_duration.as_secs().checked_sub(observed_at_seconds)
 }
 
 fn should_replace_fast_preview_update(

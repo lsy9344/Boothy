@@ -8,7 +8,7 @@ use crate::{
             current_timestamp, rfc3339_to_unix_seconds, SessionManifest, SessionTiming,
         },
         session_paths::SessionPaths,
-        session_repository::write_session_manifest,
+        session_repository::{read_session_manifest, write_session_manifest},
     },
 };
 
@@ -39,6 +39,16 @@ impl TimingPhase {
 }
 
 pub fn sync_session_timing_in_dir(
+    base_dir: &Path,
+    manifest_path: &Path,
+    _manifest: SessionManifest,
+    now: SystemTime,
+) -> Result<SessionManifest, HostErrorEnvelope> {
+    let manifest = read_session_manifest(manifest_path)?;
+    sync_session_timing_locked(base_dir, manifest_path, manifest, now)
+}
+
+fn sync_session_timing_locked(
     base_dir: &Path,
     manifest_path: &Path,
     mut manifest: SessionManifest,
@@ -279,4 +289,91 @@ fn append_timing_log(
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::session_manifest::{
+        SessionCustomer, SessionLifecycle, SESSION_MANIFEST_SCHEMA_VERSION,
+        SESSION_TIMING_SCHEMA_VERSION,
+    };
+    use crate::session::session_paths::SessionPaths;
+
+    fn temp_dir(test_name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("boothy-timing-{test_name}-{unique}"))
+    }
+
+    fn stale_manifest() -> SessionManifest {
+        let session_id = "session_00000000000000000000000001".to_string();
+
+        SessionManifest {
+            schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+            session_id: session_id.clone(),
+            booth_alias: "Kim 4821".into(),
+            customer: SessionCustomer {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            created_at: "2026-04-30T00:00:00Z".into(),
+            updated_at: "2026-04-30T00:00:00Z".into(),
+            lifecycle: SessionLifecycle {
+                status: "active".into(),
+                stage: "capture-ready".into(),
+            },
+            catalog_revision: None,
+            catalog_snapshot: None,
+            active_preset: None,
+            active_preset_id: None,
+            active_preset_display_name: None,
+            timing: Some(SessionTiming {
+                schema_version: SESSION_TIMING_SCHEMA_VERSION.into(),
+                session_id,
+                adjusted_end_at: "2000-01-01T00:00:00Z".into(),
+                warning_at: "1999-12-31T23:55:00Z".into(),
+                phase: "active".into(),
+                capture_allowed: true,
+                approved_extension_minutes: 0,
+                approved_extension_audit_ref: None,
+                warning_triggered_at: None,
+                ended_triggered_at: None,
+            }),
+            captures: vec![],
+            post_end: None,
+        }
+    }
+
+    #[test]
+    fn timing_sync_fails_closed_when_live_manifest_cannot_be_reloaded() {
+        let base_dir = temp_dir("reload-failure");
+        let paths = SessionPaths::new(&base_dir, "session_00000000000000000000000001");
+        std::fs::create_dir_all(&paths.diagnostics_dir).expect("diagnostics dir should exist");
+        let manifest_path = paths.manifest_path.clone();
+        let corrupted_manifest = "{ this is not valid session json";
+        std::fs::write(&manifest_path, corrupted_manifest)
+            .expect("corrupted manifest should be writable");
+
+        let result = sync_session_timing_in_dir(
+            &base_dir,
+            &manifest_path,
+            stale_manifest(),
+            SystemTime::now(),
+        );
+
+        assert!(
+            result.is_err(),
+            "timing sync should fail closed when live manifest cannot be reloaded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&manifest_path).expect("manifest should remain readable"),
+            corrupted_manifest,
+            "stale in-memory timing state must not overwrite the live manifest"
+        );
+
+        let _ = std::fs::remove_dir_all(base_dir);
+    }
 }

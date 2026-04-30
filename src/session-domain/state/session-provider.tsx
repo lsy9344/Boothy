@@ -18,6 +18,7 @@ import {
 } from '../../capture-adapter/services/capture-runtime'
 import {
   getPostEndStrength,
+  isFinalizedCapturePostEndState,
   isHostOwnedPostEndReason,
 } from '../../completion-handoff/post-end'
 import {
@@ -101,7 +102,10 @@ function mergePreservedPostEndReadiness(
   }
 
   const shouldPreserveCurrentPostEnd =
-    current.postEnd !== null && current.postEnd !== undefined
+    (current.postEnd !== null && current.postEnd !== undefined) ||
+    (current.reasonCode === 'completed' &&
+      current.latestCapture !== null &&
+      isFinalizedCapturePostEndState(current.latestCapture.postEndState))
   const currentStrength = getPostEndStrength(current.reasonCode)
   const nextStrength = getPostEndStrength(next.reasonCode)
 
@@ -380,10 +384,7 @@ function buildCaptureFallbackReadiness(
   sessionId: string,
   capture: SessionScopedCapture,
 ): SessionScopedReadiness {
-  if (
-    capture.postEndState === 'handoffReady' ||
-    capture.postEndState === 'completed'
-  ) {
+  if (isFinalizedCapturePostEndState(capture.postEndState)) {
     return {
       schemaVersion: 'capture-readiness/v1',
       sessionId,

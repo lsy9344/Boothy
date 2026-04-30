@@ -69,9 +69,6 @@ internal sealed class CanonHelperService : IDisposable
                         continue;
                     }
 
-                    _protocol.AppendProcessedRequestId(request.RequestId);
-                    _processedRequestIds.Add(request.RequestId);
-
                     if (request.SessionId != _paths.SessionId)
                     {
                         _protocol.AppendEvent(
@@ -81,9 +78,11 @@ internal sealed class CanonHelperService : IDisposable
                                 request.SessionId,
                                 UtcNow(),
                                 "session-mismatch",
-                                "현재 helper가 바인딩된 세션과 요청 세션이 다릅니다."
+                                "현재 helper가 바인딩된 세션과 요청 세션이 다릅니다.",
+                                request.RequestId
                             )
                         );
+                        MarkRequestProcessed(request.RequestId);
                         continue;
                     }
 
@@ -97,9 +96,11 @@ internal sealed class CanonHelperService : IDisposable
                                 request.SessionId,
                                 UtcNow(),
                                 snapshot.DetailCode ?? "camera-not-ready",
-                                "카메라가 아직 촬영 가능한 상태가 아니에요."
+                                "카메라가 아직 촬영 가능한 상태가 아니에요.",
+                                request.RequestId
                             )
                         );
+                        MarkRequestProcessed(request.RequestId);
                         continue;
                     }
 
@@ -113,6 +114,7 @@ internal sealed class CanonHelperService : IDisposable
                             "capture-in-flight"
                         )
                     );
+                    MarkRequestProcessed(request.RequestId);
                     _activeCaptureTask = _camera.CaptureAsync(
                         _paths,
                         request,
@@ -228,7 +230,32 @@ internal sealed class CanonHelperService : IDisposable
                     _paths.SessionId,
                     UtcNow(),
                     error.DetailCode,
-                    error.Message
+                    error.Message,
+                    _activeRequest?.RequestId
+                )
+            );
+        }
+        catch (Exception error)
+        {
+            _protocol.AppendEvent(
+                new RecoveryStatusMessage(
+                    CanonHelperSchemas.RecoveryStatus,
+                    "recovery-status",
+                    _paths.SessionId,
+                    "recovering",
+                    UtcNow(),
+                    "capture-unexpected-failure"
+                )
+            );
+            _protocol.AppendEvent(
+                new HelperErrorMessage(
+                    CanonHelperSchemas.HelperError,
+                    "helper-error",
+                    _paths.SessionId,
+                    UtcNow(),
+                    "capture-unexpected-failure",
+                    error.Message,
+                    _activeRequest?.RequestId
                 )
             );
         }
@@ -238,6 +265,12 @@ internal sealed class CanonHelperService : IDisposable
             _activeRequest = null;
             WriteStatus();
         }
+    }
+
+    private void MarkRequestProcessed(string requestId)
+    {
+        _protocol.AppendProcessedRequestId(requestId);
+        _processedRequestIds.Add(requestId);
     }
 
     private void WriteStatus()

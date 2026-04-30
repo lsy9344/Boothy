@@ -171,6 +171,7 @@ internal sealed class JsonFileProtocol
                 || (
                     messageType != "capture-accepted"
                     && messageType != "file-arrived"
+                    && messageType != "helper-error"
                 )
             )
             {

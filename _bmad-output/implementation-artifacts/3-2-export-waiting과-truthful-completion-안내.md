@@ -2,13 +2,16 @@
 
 Status: review
 
-Correct Course Note: false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다. Story 6.2 canonical ledger 기준으로 end-of-session hardware evidence가 아직 없으므로 Story 3.2는 `review`를 유지한다.
+Correct Course Note: 2026-04-30 코드 리뷰는 추가 제품 리스크 없이 통과했지만, false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다. Hardware gate가 `Go`가 될 때까지 Story 3.2는 `review`를 유지한다.
+
+Latest Hardware Validation Note: 2026-04-30 16:58 +09:00 요청 명령은 5/5 capture validation으로 `passed`였지만, 생성된 세션이 `postEnd=null` 및 timing `active` 상태라 HV-08/HV-11의 종료 후 truth close evidence로는 부족하다. 따라서 제품 status는 `review`를 유지한다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Required HV checklist IDs: `HV-08`, `HV-11`
 - Current hardware gate: `No-Go`
+- Status decision: `review` 유지
 - Close policy: `automated pass` alone does not close this story; a ledger row with `Go` is required before `done`.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
@@ -254,6 +257,9 @@ GPT-5 Codex
 
 ### Review Findings
 
+- [x] [Review][Patch] 동일 preview 경로가 truthful preview로 승격될 때 고객 화면이 계속 대기 상태로 남음 [src-tauri/src/capture/ingest_pipeline.rs:147]
+- [x] [Review][Patch] post-end 동기화가 manifest 재읽기 실패 시 오래된 세션 truth를 다시 저장할 수 있음 [src-tauri/src/handoff/mod.rs:72]
+
 - [x] [Review][Patch] `finalReady`가 handoff metadata 파일 상태에 따라 `local-deliverable-ready`로 강등됨 [src-tauri/src/handoff/mod.rs:179]
 - [x] [Review][Patch] Story 3.3로 미뤄 둔 handoff/phone-required 상세 패널이 Story 3.2 화면에 이미 노출됨 [src/booth-shell/screens/CaptureScreen.tsx:163]
 - [x] [Review][Patch] `nextLocationLabel`만 있는 handoff 안내가 잘못된 제목(`승인된 수령 대상`)으로 렌더링됨 [src/booth-shell/components/HandoffReadyPanel.tsx:12]
@@ -265,3 +271,32 @@ GPT-5 Codex
 - [x] [Review][Patch] finalized post-end를 보존하는 프런트 병합 로직이 `completed`와 `phone-required` 사이의 host 정정을 무시함 [src/session-domain/state/session-provider.tsx:66]
 - [x] [Review][Patch] 기존 `handoff-ready` 레코드에 목적지 라벨이 비어 있어도 그대로 재사용해 schema-invalid truth가 유지됨 [src-tauri/src/handoff/mod.rs:331]
 - [x] [Review][Patch] handoff 안내 JSON의 blank string 라벨을 정규화하지 않아 schema-invalid post-end payload를 만들 수 있음 [src-tauri/src/handoff/mod.rs:381]
+
+#### 2026-04-30 Chunked Review
+
+- [x] [Review][Patch] `SessionPostEnd`가 untagged enum이라 `completed`/`phone-required` 저장값이 다시 읽힐 때 `ExportWaiting` variant로 먼저 매칭될 수 있음 [src-tauri/src/session/session_manifest.rs:87]
+- [x] [Review][Patch] `postEnd`가 없는 `lifecycle.stage = completed` 값을 durable truth처럼 잠가 final truth 없이 completed를 기록할 수 있음 [src-tauri/src/handoff/mod.rs:233]
+- [x] [Review][Patch] completed 판정이 final asset path/timestamp만 보고 실제 final 파일 존재를 확인하지 않아 누락된 결과물도 완료로 안내할 수 있음 [src-tauri/src/handoff/mod.rs:342]
+
+#### 2026-04-30 Code Review
+
+- [x] [Review][Patch] post-end 동기화가 readiness 조회 중 최종 렌더를 동기로 실행해, 렌더가 느린 경우 `Export Waiting`을 10초 안에 보여주지 못하고 고객 화면이 대기할 수 있음 [src-tauri/src/handoff/mod.rs:129]
+- [x] [Review][Patch] 삭제 경로가 `CAPTURE_PIPELINE_LOCK`을 잡은 뒤 post-end 동기화를 호출하고, 그 안에서 최종 렌더가 같은 락을 다시 잡아 종료 후 삭제 시도가 멈출 수 있음 [src-tauri/src/capture/normalized_state.rs:1124]
+- [x] [Review][Patch] handoff 목적지 증거가 없을 때 `안내된 곳`을 만들어 `handoff-ready`로 저장해, 실제 인계 안내 없이 완료 인계 흐름을 노출할 수 있음 [src-tauri/src/handoff/mod.rs:83]
+- [x] [Review][Patch] Story 3.3로 남긴 handoff/phone-required 상세 패널이 Story 3.2 화면에서 직접 렌더링됨 [src/booth-shell/screens/ReadinessScreen.tsx:51]
+- [x] [Review][Patch] handoff 안내 문자열을 길이 제한 없이 manifest에 저장해, 프런트 계약의 80/120자 제한을 넘는 순간 완료 상태 파싱이 실패할 수 있음 [src-tauri/src/handoff/mod.rs:50]
+- [x] [Review][Patch] final asset이 실제 파일인지 확인할 때 세션 스코프를 검증하지 않아, 외부/오래된 파일 경로도 완료 근거가 될 수 있음 [src-tauri/src/handoff/mod.rs:357]
+- [x] [Review][Patch] 프런트 fallback readiness가 `localDeliverableReady`를 완료 상태로 보지 않아, 로컬 결과물 완료 세션을 일반 대기 상태로 낮춰 보일 수 있음 [src/session-domain/state/session-provider.tsx:383]
+
+#### 2026-04-30 Host/Post-End Chunk Re-review
+
+- [x] [Review][Patch] readiness 조회 중 manifest 전체 쓰기가 render 완료/실패 기록을 덮어써 종료 후 결과 상태가 되돌아갈 수 있음 [src-tauri/src/capture/normalized_state.rs:2345]
+- [x] [Review][Patch] post-end sync가 terminal 상태에서도 캡처/파일 검사를 반복해 종료 후 안내가 세션 크기에 따라 느려질 수 있음 [src-tauri/src/handoff/mod.rs:248]
+
+#### 2026-04-30 Timing Sync Re-review
+
+- [x] [Review][Patch] timing sync가 live manifest 재읽기 실패 시 오래된 manifest 인자를 그대로 써서 종료 시점의 최신 캡처/렌더 상태를 덮어쓸 수 있음 [src-tauri/src/timing/mod.rs:43]
+
+#### 2026-04-30 Local Deliverable Fallback Re-review
+
+- [x] [Review][Patch] `localDeliverableReady` fallback 완료 상태가 `postEnd: null`이라 늦은 same-session non-post-end readiness에 다시 밀려 완료 화면이 되돌아갈 수 있음 [src/session-domain/state/session-provider.tsx:96]

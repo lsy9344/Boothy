@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    capture::ingest_pipeline::{complete_final_render_in_dir, mark_final_render_failed_in_dir},
+    capture::CAPTURE_PIPELINE_LOCK,
     contracts::dto::HostErrorEnvelope,
     diagnostics::audit_log::{try_append_operator_audit_record, OperatorAuditRecordInput},
     session::{
@@ -25,6 +25,7 @@ use crate::{
 
 const POST_END_PENDING_CAPTURE_STATE: &str = "postEndPending";
 const HANDOFF_GUIDANCE_FILE: &str = "customer-guidance.json";
+const POST_END_LABEL_MAX_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PostEndEvaluation {
@@ -51,7 +52,7 @@ fn normalize_optional_label(value: Option<String>) -> Option<String> {
     value.and_then(|label| {
         let trimmed = label.trim();
 
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed.chars().count() > POST_END_LABEL_MAX_CHARS {
             None
         } else {
             Some(trimmed.to_string())
@@ -59,46 +60,20 @@ fn normalize_optional_label(value: Option<String>) -> Option<String> {
     })
 }
 
-fn build_safe_handoff_ready_post_end(
-    evaluated_at: &str,
-    guidance: Option<&HandoffGuidanceFile>,
-    existing_completed: Option<&CompletedPostEnd>,
-) -> CompletedPostEnd {
-    let existing_handoff = existing_completed
-        .filter(|record| record.completion_variant == SESSION_POST_END_HANDOFF_READY);
-    let approved_recipient_label = guidance
-        .and_then(|value| value.approved_recipient_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.approved_recipient_label.clone()));
-    let next_location_label = guidance
-        .and_then(|value| value.next_location_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.next_location_label.clone()))
-        .or_else(|| Some("안내된 곳".into()));
-    let primary_action_label = guidance
-        .and_then(|value| value.primary_action_label.clone())
-        .or_else(|| existing_handoff.map(|value| value.primary_action_label.clone()))
-        .unwrap_or_else(|| "안내된 곳으로 이동해 주세요.".into());
-    let support_action_label = guidance
-        .and_then(|value| value.support_action_label.clone())
-        .or_else(|| existing_handoff.and_then(|value| value.support_action_label.clone()));
-    let show_booth_alias = guidance
-        .and_then(|value| value.show_booth_alias)
-        .or_else(|| existing_handoff.map(|value| value.show_booth_alias))
-        .unwrap_or(false);
-
-    CompletedPostEnd {
-        state: SESSION_POST_END_COMPLETED.into(),
-        evaluated_at: evaluated_at.into(),
-        completion_variant: SESSION_POST_END_HANDOFF_READY.into(),
-        approved_recipient_label,
-        next_location_label,
-        primary_action_label,
-        support_action_label,
-        show_booth_alias,
-        handoff: existing_handoff.and_then(|value| value.handoff.clone()),
-    }
+pub fn sync_post_end_state_in_dir(
+    base_dir: &Path,
+    manifest_path: &Path,
+    _manifest: SessionManifest,
+    now: SystemTime,
+) -> Result<SessionManifest, HostErrorEnvelope> {
+    let _guard = CAPTURE_PIPELINE_LOCK.lock().map_err(|_| {
+        HostErrorEnvelope::persistence("촬영 상태를 잠그지 못했어요. 잠시 후 다시 확인해 주세요.")
+    })?;
+    let manifest = read_session_manifest(manifest_path)?;
+    sync_post_end_state_locked(base_dir, manifest_path, manifest, now)
 }
 
-pub fn sync_post_end_state_in_dir(
+fn sync_post_end_state_locked(
     base_dir: &Path,
     manifest_path: &Path,
     mut manifest: SessionManifest,
@@ -114,9 +89,7 @@ pub fn sync_post_end_state_in_dir(
         return Ok(manifest);
     }
 
-    manifest = attempt_final_render_if_needed(base_dir, manifest_path, manifest)?;
-
-    let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
+    let Some(evaluation) = resolve_explicit_post_end(base_dir, &manifest) else {
         return Ok(manifest);
     };
     let current = manifest.post_end.as_ref().map(|record| PostEndEvaluation {
@@ -182,7 +155,7 @@ pub fn project_post_end_state_in_dir(
         return Ok(manifest);
     }
 
-    let Some(evaluation) = resolve_explicit_post_end(&manifest) else {
+    let Some(evaluation) = resolve_explicit_post_end(base_dir, &manifest) else {
         return Ok(manifest);
     };
     let current = manifest.post_end.as_ref().map(|record| PostEndEvaluation {
@@ -228,13 +201,19 @@ pub fn project_post_end_state_in_dir(
     Ok(manifest)
 }
 
-fn resolve_explicit_post_end(manifest: &SessionManifest) -> Option<PostEndEvaluation> {
-    let evaluation = evaluate_post_end(manifest);
+fn resolve_explicit_post_end(
+    base_dir: &Path,
+    manifest: &SessionManifest,
+) -> Option<PostEndEvaluation> {
+    if let Some(evaluation) = reusable_terminal_post_end_evaluation(manifest) {
+        return Some(evaluation);
+    }
+
+    let evaluation = evaluate_post_end(base_dir, manifest);
     let explicit_state =
         manifest.post_end.as_ref().map(|record| record.state()).or(
             match manifest.lifecycle.stage.as_str() {
                 SESSION_POST_END_EXPORT_WAITING => Some(SESSION_POST_END_EXPORT_WAITING),
-                SESSION_POST_END_COMPLETED => Some(SESSION_POST_END_COMPLETED),
                 SESSION_POST_END_PHONE_REQUIRED => Some(SESSION_POST_END_PHONE_REQUIRED),
                 _ => None,
             },
@@ -252,6 +231,36 @@ fn resolve_explicit_post_end(manifest: &SessionManifest) -> Option<PostEndEvalua
             }),
         },
         None => Some(evaluation),
+        _ => None,
+    }
+}
+
+fn reusable_terminal_post_end_evaluation(manifest: &SessionManifest) -> Option<PostEndEvaluation> {
+    let post_end = manifest.post_end.as_ref()?;
+
+    match post_end {
+        SessionPostEnd::Completed(value)
+            if value.completion_variant == SESSION_POST_END_LOCAL_DELIVERABLE_READY =>
+        {
+            Some(PostEndEvaluation {
+                state: SESSION_POST_END_COMPLETED.into(),
+                completion_variant: Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY.into()),
+            })
+        }
+        SessionPostEnd::Completed(value)
+            if value.completion_variant == SESSION_POST_END_HANDOFF_READY
+                && (value.approved_recipient_label.is_some()
+                    || value.next_location_label.is_some()) =>
+        {
+            Some(PostEndEvaluation {
+                state: SESSION_POST_END_COMPLETED.into(),
+                completion_variant: Some(SESSION_POST_END_HANDOFF_READY.into()),
+            })
+        }
+        SessionPostEnd::PhoneRequired(_) => Some(PostEndEvaluation {
+            state: SESSION_POST_END_PHONE_REQUIRED.into(),
+            completion_variant: None,
+        }),
         _ => None,
     }
 }
@@ -276,63 +285,110 @@ fn resolve_locked_post_end(
     evaluation
 }
 
-fn evaluate_post_end(manifest: &SessionManifest) -> PostEndEvaluation {
-    let Some(latest_capture) = manifest.captures.last() else {
+fn evaluate_post_end(base_dir: &Path, manifest: &SessionManifest) -> PostEndEvaluation {
+    if manifest.captures.is_empty() {
         return PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
         };
-    };
+    }
 
-    match latest_capture.render_status.as_str() {
-        "previewWaiting" | "captureSaved" => PostEndEvaluation {
-            state: SESSION_POST_END_EXPORT_WAITING.into(),
-            completion_variant: None,
-        },
-        "previewReady" => PostEndEvaluation {
-            state: SESSION_POST_END_EXPORT_WAITING.into(),
-            completion_variant: None,
-        },
-        "finalReady" => PostEndEvaluation {
-            state: SESSION_POST_END_COMPLETED.into(),
-            completion_variant: Some(SESSION_POST_END_HANDOFF_READY.into()),
-        },
-        "renderFailed" => PostEndEvaluation {
+    if manifest
+        .captures
+        .iter()
+        .any(|capture| capture.render_status == "renderFailed")
+    {
+        return PostEndEvaluation {
             state: SESSION_POST_END_PHONE_REQUIRED.into(),
             completion_variant: None,
-        },
-        _ => PostEndEvaluation {
+        };
+    }
+
+    if manifest
+        .captures
+        .iter()
+        .all(|capture| capture_has_final_truth(base_dir, &manifest.session_id, capture))
+    {
+        let completion_variant = if has_handoff_destination(base_dir, manifest) {
+            SESSION_POST_END_HANDOFF_READY
+        } else {
+            SESSION_POST_END_LOCAL_DELIVERABLE_READY
+        };
+
+        PostEndEvaluation {
+            state: SESSION_POST_END_COMPLETED.into(),
+            completion_variant: Some(completion_variant.into()),
+        }
+    } else {
+        PostEndEvaluation {
             state: SESSION_POST_END_EXPORT_WAITING.into(),
             completion_variant: None,
-        },
+        }
     }
 }
 
-fn attempt_final_render_if_needed(
+fn capture_has_final_truth(
     base_dir: &Path,
-    manifest_path: &Path,
-    manifest: SessionManifest,
-) -> Result<SessionManifest, HostErrorEnvelope> {
-    let Some(latest_capture) = manifest.captures.last() else {
-        return Ok(manifest);
+    session_id: &str,
+    capture: &crate::session::session_manifest::SessionCaptureRecord,
+) -> bool {
+    capture.render_status == "finalReady"
+        && capture
+            .final_asset
+            .asset_path
+            .as_deref()
+            .map(|asset_path| is_existing_session_scoped_asset(base_dir, session_id, asset_path))
+            .unwrap_or(false)
+        && capture.final_asset.ready_at_ms.is_some()
+}
+
+fn is_existing_session_scoped_asset(base_dir: &Path, session_id: &str, asset_path: &str) -> bool {
+    let Ok(paths) = SessionPaths::try_new(base_dir, session_id) else {
+        return false;
+    };
+    let asset_path = Path::new(asset_path);
+
+    if !asset_path.is_file() {
+        return false;
+    }
+
+    let Ok(canonical_asset_path) = fs::canonicalize(asset_path) else {
+        return false;
+    };
+    let Ok(canonical_session_root) = fs::canonicalize(paths.session_root) else {
+        return false;
     };
 
-    if latest_capture.render_status != "previewReady"
-        || latest_capture.final_asset.asset_path.is_some()
+    canonical_asset_path.starts_with(canonical_session_root)
+}
+
+fn has_handoff_destination(base_dir: &Path, manifest: &SessionManifest) -> bool {
+    if read_handoff_guidance_file(base_dir, &manifest.session_id)
+        .ok()
+        .flatten()
+        .map(|guidance| {
+            guidance.approved_recipient_label.is_some() || guidance.next_location_label.is_some()
+        })
+        .unwrap_or(false)
     {
-        return Ok(manifest);
+        return true;
     }
 
-    let capture_id = latest_capture.capture_id.clone();
-    let session_id = manifest.session_id.clone();
-
-    match complete_final_render_in_dir(base_dir, &session_id, &capture_id) {
-        Ok(_) => read_session_manifest(manifest_path),
-        Err(_) => {
-            let _ = mark_final_render_failed_in_dir(base_dir, &session_id, &capture_id);
-            read_session_manifest(manifest_path)
-        }
-    }
+    manifest
+        .post_end
+        .as_ref()
+        .and_then(|record| match record {
+            SessionPostEnd::Completed(value)
+                if value.completion_variant == SESSION_POST_END_HANDOFF_READY =>
+            {
+                Some(value)
+            }
+            _ => None,
+        })
+        .map(|record| {
+            record.approved_recipient_label.is_some() || record.next_location_label.is_some()
+        })
+        .unwrap_or(false)
 }
 
 fn capture_post_end_state_for(evaluation: &PostEndEvaluation) -> &'static str {
@@ -390,7 +446,7 @@ fn build_completed_post_end(
     evaluated_at: &str,
     existing_completed: Option<CompletedPostEnd>,
 ) -> Result<CompletedPostEnd, HostErrorEnvelope> {
-    let variant = completion_variant.unwrap_or(SESSION_POST_END_LOCAL_DELIVERABLE_READY);
+    let mut variant = completion_variant.unwrap_or(SESSION_POST_END_LOCAL_DELIVERABLE_READY);
 
     if variant == SESSION_POST_END_HANDOFF_READY {
         let file_guidance = read_handoff_guidance_file(base_dir, session_id)?;
@@ -414,12 +470,6 @@ fn build_completed_post_end(
                     handoff: None,
                 });
             }
-
-            return Ok(build_safe_handoff_ready_post_end(
-                evaluated_at,
-                Some(file_guidance),
-                existing_completed.as_ref(),
-            ));
         }
 
         if let Some(existing) = existing_completed.as_ref() {
@@ -434,11 +484,7 @@ fn build_completed_post_end(
             }
         }
 
-        return Ok(build_safe_handoff_ready_post_end(
-            evaluated_at,
-            None,
-            existing_completed.as_ref(),
-        ));
+        variant = SESSION_POST_END_LOCAL_DELIVERABLE_READY;
     }
 
     if let Some(existing) = existing_completed {
@@ -584,4 +630,195 @@ fn append_post_end_audit_record(
             reason_code,
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::session_manifest::{
+        CompletedPostEnd, SessionLifecycle, SessionPostEnd, SessionTiming,
+        SESSION_MANIFEST_SCHEMA_VERSION, SESSION_TIMING_SCHEMA_VERSION,
+    };
+
+    fn temp_dir(test_name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("boothy-{test_name}-{unique}"))
+    }
+
+    fn manifest_with_post_end(post_end: SessionPostEnd) -> SessionManifest {
+        SessionManifest {
+            schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+            session_id: "session_terminal".into(),
+            booth_alias: "Booth".into(),
+            customer: crate::session::session_manifest::SessionCustomer {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            lifecycle: SessionLifecycle {
+                status: "closed".into(),
+                stage: post_end.state().into(),
+            },
+            active_preset_id: None,
+            active_preset_display_name: None,
+            active_preset: None,
+            catalog_revision: None,
+            catalog_snapshot: None,
+            timing: None,
+            post_end: Some(post_end),
+            captures: vec![],
+            created_at: "2026-04-30T00:00:00Z".into(),
+            updated_at: "2026-04-30T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn reusable_terminal_completed_post_end_returns_cached_evaluation() {
+        let manifest = manifest_with_post_end(SessionPostEnd::Completed(CompletedPostEnd {
+            state: SESSION_POST_END_COMPLETED.into(),
+            evaluated_at: "2026-04-30T00:00:00Z".into(),
+            completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
+            approved_recipient_label: None,
+            next_location_label: None,
+            primary_action_label: "안내가 끝났어요. 천천히 이동해 주세요.".into(),
+            support_action_label: None,
+            show_booth_alias: false,
+            handoff: None,
+        }));
+
+        let evaluation = reusable_terminal_post_end_evaluation(&manifest)
+            .expect("local deliverable completion should be reusable");
+
+        assert_eq!(evaluation.state, SESSION_POST_END_COMPLETED);
+        assert_eq!(
+            evaluation.completion_variant.as_deref(),
+            Some(SESSION_POST_END_LOCAL_DELIVERABLE_READY)
+        );
+    }
+
+    #[test]
+    fn post_end_sync_reloads_manifest_before_persisting() {
+        let base_dir = temp_dir("post-end-reload-before-write");
+        std::fs::create_dir_all(&base_dir).expect("test dir should exist");
+        let manifest_path = base_dir.join("manifest.json");
+        let stale_manifest = SessionManifest {
+            schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+            session_id: "session_terminal".into(),
+            booth_alias: "Booth".into(),
+            customer: crate::session::session_manifest::SessionCustomer {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            lifecycle: SessionLifecycle {
+                status: "closed".into(),
+                stage: "ended".into(),
+            },
+            active_preset_id: None,
+            active_preset_display_name: None,
+            active_preset: None,
+            catalog_revision: None,
+            catalog_snapshot: None,
+            timing: Some(SessionTiming {
+                schema_version: SESSION_TIMING_SCHEMA_VERSION.into(),
+                session_id: "session_terminal".into(),
+                adjusted_end_at: "2000-01-01T00:00:00Z".into(),
+                warning_at: "1999-12-31T23:55:00Z".into(),
+                phase: "ended".into(),
+                capture_allowed: false,
+                approved_extension_minutes: 0,
+                approved_extension_audit_ref: None,
+                warning_triggered_at: None,
+                ended_triggered_at: Some("2026-04-30T00:00:00Z".into()),
+            }),
+            post_end: None,
+            captures: vec![],
+            created_at: "2026-04-30T00:00:00Z".into(),
+            updated_at: "2026-04-30T00:00:00Z".into(),
+        };
+        let current_manifest =
+            manifest_with_post_end(SessionPostEnd::Completed(CompletedPostEnd {
+                state: SESSION_POST_END_COMPLETED.into(),
+                evaluated_at: "2026-04-30T00:00:00Z".into(),
+                completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
+                approved_recipient_label: None,
+                next_location_label: None,
+                primary_action_label: "안내가 끝났어요. 천천히 이동해 주세요.".into(),
+                support_action_label: None,
+                show_booth_alias: false,
+                handoff: None,
+            }));
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&current_manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should be writable");
+
+        let projected = sync_post_end_state_in_dir(
+            &base_dir,
+            &manifest_path,
+            stale_manifest,
+            SystemTime::now(),
+        )
+        .expect("post-end projection should succeed");
+
+        assert_eq!(projected.lifecycle.stage, SESSION_POST_END_COMPLETED);
+        assert_eq!(
+            projected.post_end.as_ref().map(|post_end| post_end.state()),
+            Some(SESSION_POST_END_COMPLETED)
+        );
+
+        let persisted: SessionManifest = serde_json::from_slice(
+            &std::fs::read(&manifest_path).expect("manifest should remain readable"),
+        )
+        .expect("manifest should deserialize");
+        assert_eq!(
+            persisted.post_end.as_ref().map(|post_end| post_end.state()),
+            Some(SESSION_POST_END_COMPLETED)
+        );
+        assert_eq!(persisted.lifecycle.stage, SESSION_POST_END_COMPLETED);
+
+        let _ = std::fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn post_end_sync_does_not_overwrite_when_manifest_reload_fails() {
+        let base_dir = temp_dir("post-end-reload-failure");
+        std::fs::create_dir_all(&base_dir).expect("test dir should exist");
+        let manifest_path = base_dir.join("manifest.json");
+        let stale_manifest = manifest_with_post_end(SessionPostEnd::Completed(CompletedPostEnd {
+            state: SESSION_POST_END_COMPLETED.into(),
+            evaluated_at: "2026-04-30T00:00:00Z".into(),
+            completion_variant: SESSION_POST_END_LOCAL_DELIVERABLE_READY.into(),
+            approved_recipient_label: None,
+            next_location_label: None,
+            primary_action_label: "안내가 끝났어요. 천천히 이동해 주세요.".into(),
+            support_action_label: None,
+            show_booth_alias: false,
+            handoff: None,
+        }));
+        let corrupted_manifest = "{ this is not valid session json";
+        std::fs::write(&manifest_path, corrupted_manifest)
+            .expect("corrupted manifest should be writable");
+
+        let result = sync_post_end_state_in_dir(
+            &base_dir,
+            &manifest_path,
+            stale_manifest,
+            SystemTime::now(),
+        );
+
+        assert!(
+            result.is_err(),
+            "post-end sync should fail closed when live manifest cannot be reloaded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&manifest_path).expect("manifest should remain readable"),
+            corrupted_manifest,
+            "stale in-memory post-end truth must not overwrite the live manifest"
+        );
+
+        let _ = std::fs::remove_dir_all(base_dir);
+    }
 }

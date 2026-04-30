@@ -1,6 +1,6 @@
 # Story 1.8: 게시된 프리셋 XMP 적용과 preview/final render worker 연결
 
-Status: review
+Status: done
 
 Correct Course Note: 아키텍처와 Epic 공통 요구사항은 이미 `darktable-cli` 기반 render worker를 프리셋 적용의 권위 경로로 고정했지만, Story 1.5/1.7/3.2/4.3 분해 과정에서는 "preview/final 상태가 존재한다"와 "선택된 프리셋이 실제로 적용된 preview/final이 생성된다"가 같은 것으로 취급되며 구현 책임이 빠졌다. 이 스토리는 그 누락을 메우는 corrective follow-up이며, Story 1.7 직후의 host-owned render truth를 닫는 최초의 직접 구현 소유자다.
 
@@ -30,17 +30,17 @@ Correct Course Note: 아키텍처와 Epic 공통 요구사항은 이미 `darktab
 - chosen path: Direct Adjustment
 - rationale: 기존 PRD/Architecture가 이미 약속한 권위 경로가 있었고, 누락된 연결만 실제 구현으로 닫는 편이 가장 작은 변경으로 제품 truth를 회복한다.
 - scope: moderate
-- remaining risk: hardware canonical evidence는 아직 없으므로 story close는 `review`에서 유지한다.
+- remaining risk: 2026-04-29 승인된 booth hardware에서 서로 다른 두 published preset(`look2`, `Mono Pop`)으로 preview/final truth와 bundle correlation을 수집해 story close gate를 닫았다.
 
 ### Validation Gate Reference
 
 - Reused supporting evidence families: `HV-05`, `HV-07`, `HV-08`, `HV-11`, `HV-12`
-- Missing canonical close proof:
-  - booth runtime가 게시된 preset bundle의 `xmpTemplatePath`를 실제로 소비한다는 증거
-  - 서로 다른 preset을 고르면 촬영 직후 preview와 종료 후 final이 실제로 다르게 렌더된다는 증거
-  - `previewReady`/`finalReady`가 darktable apply 결과물 없이 먼저 올라가지 않는다는 증거
-- Current hardware gate: `No-Go`
-- Close policy: automated pass만으로 닫지 않는다. 실제 부스 장비에서 "선택된 preset -> XMP apply -> preview/final output"까지 한 패키지로 검증한 canonical evidence가 필요하다.
+- Canonical close proof:
+  - `look2` 세션 `session_000000000018aac3004bc9a1f4`와 `Mono Pop` 세션 `session_000000000018aac34258cf3c8c`가 승인된 booth hardware에서 각각 5/5 capture를 통과했다.
+  - 두 세션 모두 `session.json` capture binding, `bundle.json`의 `xmpTemplatePath`, preview/final render output, diagnostics timing log가 같은 evidence set에 남았다.
+  - 두 preset의 preview/final output SHA-256이 달라 selected preset apply 차이가 확인됐다.
+- Current hardware gate: `Go`
+- Close policy: automated pass와 canonical hardware evidence가 함께 충족되어 story close 가능.
 
 ## Story
 
@@ -91,12 +91,22 @@ booth customer로서,
   - [x] contract test: published bundle runtime loader가 `xmpTemplatePath`, `previewProfile`, `finalProfile`, `darktableVersion`을 loss 없이 읽는지 검증한다.
   - [x] Rust integration test: previewReady gating, finalReady gating, drift protection, post-end completion gating을 검증한다.
   - [x] UI/provider contract 영향은 host DTO shape 유지로 흡수했다.
-- [ ] hardware validation: 같은 세션 또는 동일 검증 세트에서 서로 다른 published preset 두 개로 실제 촬영해 `renders/previews/`와 `renders/finals/` 산출물 차이, `session.json` preset binding, `bundle.json`의 `xmpTemplatePath`, operator diagnostics를 함께 남긴다. (AC: 6)
+- [x] hardware validation: 같은 세션 또는 동일 검증 세트에서 서로 다른 published preset 두 개로 실제 촬영해 `renders/previews/`와 `renders/finals/` 산출물 차이, `session.json` preset binding, `bundle.json`의 `xmpTemplatePath`, operator diagnostics를 함께 남긴다. (AC: 6)
 
 ### Review Findings
 
 - [x] [Review][Pass] blocking findings 없음. preview rail remount, helper-freshness regression fixture 정렬, governance status sync 변경이 이번 스토리 acceptance criteria와 충돌하지 않는다.
 - [x] [Review][Pass] code review는 clean이지만, AC 6과 hardware validation ledger 기준 canonical booth evidence가 아직 없으므로 Story 1.8 status는 계속 `review`, hardware gate는 계속 `No-Go`로 유지한다.
+- [x] [Review][Patch] Post-end final render closes only the latest capture [`src-tauri/src/handoff/mod.rs:353`] — 종료 시 `attempt_final_render_if_needed`와 `evaluate_post_end`가 `manifest.captures.last()` 하나만 기준으로 final render와 completed 판정을 수행한다. 여러 장을 촬영한 세션에서는 마지막 capture만 `finalReady`가 될 수 있는데, 이후 모든 capture의 post-end state가 완료 계열로 맞춰져 이전 capture들의 `renders/finals/{captureId}.jpg`가 없는 상태에서도 세션이 완료처럼 보일 수 있다. 이는 Story 1.8 AC 3의 capture-bound final truth와 AC 4의 capture별 preset binding 보존 의도에 맞지 않는다. Fixed: 종료 후 모든 preview-ready capture의 final 산출물이 준비될 때만 완료되도록 회귀 테스트와 함께 보강했다.
+- [x] [Review][Patch] Non-latest final render failure is swallowed [`src-tauri/src/handoff/mod.rs:333`] — 종료 후 여러 capture의 final render를 순회하면서 앞쪽 capture가 실패하면 `mark_final_render_failed_in_dir`가 호출되지만, 내부 실패 기록 경로는 latest capture가 아니면 조용히 return한다. 그 결과 해당 capture는 `renderFailed`가 아니라 `previewReady`로 남고, 세션은 `phone-required` bounded failure 대신 `export-waiting`에 계속 머물 수 있다. 이는 Story 1.8 AC 5의 bounded render failure truth와 AC 3의 final completion gating 의도에 맞지 않는다. Fixed: final render 실패는 capture 순서와 무관하게 기록하고, 비최신 capture 실패 시 phone-required로 전환되는 회귀 테스트를 추가했다.
+
+### Hardware Validation Close Evidence
+
+- 2026-04-29 16:30 +09:00 - Story 1.8 hardware gate closed as `Go`.
+- `look2` / `preset_new-draft-2` / `2026.04.10`: `session_000000000018aac3004bc9a1f4`, runner `hardware-validation-run-1777447408988`, capture `5/5`, post-end `completed`, preview `5/5`, final `5/5`.
+- `Mono Pop` / `preset_mono-pop` / `2026.03.27`: `session_000000000018aac34258cf3c8c`, runner `hardware-validation-run-1777447692673`, capture `5/5`, post-end `completed`, preview `5/5`, final `5/5`.
+- Bundle correlation: `preset_new-draft-2/2026.04.10/xmp/look2.xmp`; `preset_mono-pop/2026.03.27/xmp/template.xmp`.
+- Output difference proof: preview SHA-256 differs (`BDE8EA...` vs `740A41...`); final SHA-256 differs (`44A456...` vs `C07806...`).
 
 ## Dev Notes
 
@@ -293,3 +303,4 @@ GPT-5 Codex
 
 - 2026-04-01 01:53:48 +09:00 - Story 1.8 follow-up stabilization: helper freshness-aware regression fixture 보강, operator recovery runtime bundle fixture 정렬, sprint-status/ledger에서 Story 1.8 hardware gate 정합화, full lint/Vitest/Cargo validation 재통과
 - 2026-04-01 02:10:07 +09:00 - code review 재실행 결과 blocking findings 없음 확인; Story 1.8은 canonical hardware evidence 부재로 `review` / `No-Go` 상태를 유지
+- 2026-04-29 16:30 +09:00 - 승인된 booth hardware에서 `look2`와 `Mono Pop` 두 published preset의 preview/final output, session binding, bundle xmpTemplatePath, diagnostics evidence를 수집해 Story 1.8을 `done`으로 전환

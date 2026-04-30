@@ -134,12 +134,21 @@ Story `1.26`의 목표는 old line을 더 깎는 것이 아니다.
 
 ## Latest Route Note - 2026-04-29 12:45 Current Answer
 
-- The direction above is now implemented and has approved-hardware `Go` evidence.
-- Requested validation `hardware-validation-run-1777434275752` passed `5/5` on session `session_000000000018aab70e79e5baa8`.
-- The accepted path is option 2: resident/long-lived darktable-compatible full-preset ownership.
-- Accepted route evidence: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`.
+- Retracted by the 2026-04-29 14:38 review patch.
+- Requested validation `hardware-validation-run-1777434275752` passed `5/5` on session `session_000000000018aab70e79e5baa8`, but it is not official `Go` evidence.
+- The route could still be per-capture `darktable-cli` output self-labeled as resident full-preset ownership.
+- Option 2 remains the target path: real resident/long-lived darktable-compatible full-preset ownership.
+- Required route evidence remains: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`, backed by runtime proof rather than labels alone.
 - Official timing band: `2316ms ~ 2338ms`.
 - Resident render elapsed band: `3188ms ~ 3234ms`.
 - The earlier native approximation path remains comparison-only and is not part of the official product truth.
 - The earlier per-capture darktable fallback path remains fallback/comparison evidence and is not the official Story `1.26` answer.
-- Future changes should preserve the accepted route fields above. If those fields disappear, treat the resident full-preset product path as broken rather than tuning fallback.
+- Future changes must prove the route fields above from a real resident owner. If proof is missing, Story `1.26` stays `in-progress / No-Go`.
+
+## Latest Route Note - 2026-04-29 14:59 Current Answer
+
+- Requested validation `hardware-validation-run-1777442288984` passed `5/5` on session `session_000000000018aabe5833c11d8c`.
+- The accepted path is honest per-capture full-preset ownership, not resident relabeling.
+- Accepted route evidence: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=per-capture-cli`, `engineAdapter=darktable-compatible`.
+- Official timing band: `2387ms ~ 2480ms`.
+- Prior resident-labeled evidence remains retracted; the current Go depends on naming the runtime honestly.

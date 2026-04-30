@@ -1290,14 +1290,47 @@ Story `1.26` official close owner는 아래 조건을 만족해야 한다.
 
 해석:
 
-- Option 2 now has approved-hardware Go evidence.
+- This evidence was later retracted by code review because the route could still be per-capture `darktable-cli` output self-labeled as resident full-preset.
 - Partial native RAW approximation remains comparison-only and is not part of the product truth path.
+
+## 2026-04-29 14:38 false Go retraction
+
+판단:
+
+- `hardware-validation-run-1777434275752` is not official Story `1.26` Go evidence.
+- Runtime truth now requires more than route labels: metadata-only `preset-applied-preview`, filename-derived kind, and per-capture `darktable-cli` output cannot close `previewReady`.
+- Hardware validation now rejects self-labeled resident routes that still expose `darktable-cli` / `program-files-bin` evidence.
+
+현재 제품 상태:
+
+- Story `1.26` is back to `in-progress / No-Go`.
+- Option 2 remains the target, but still needs a real resident/long-lived full-preset owner and fresh approved-hardware validation.
+
+## 2026-04-29 14:59 product decision and validation result
+
+판단:
+
+- The product boundary now accepts an explicit per-capture full-preset route when the route evidence is honest.
+- The accepted route must say `engineMode=per-capture-cli`; it must not self-label as resident.
+- Metadata-only `preset-applied-preview` and filename-derived truth remain blocked.
+
+최신 검증:
+
+- run: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777442288984\`
+- session: `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aabe5833c11d8c\`
+- result: `passed / 5/5`
+- official timing: `2387ms ~ 2480ms`
+- route: `binary=fast-preview-handoff`, `source=fast-preview-handoff`, `engineMode=per-capture-cli`, `engineAdapter=darktable-compatible`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthProfile=original-full-preset`
+
+현재 제품 상태:
+
+- Story `1.26` is `Go` in the hardware ledger.
 
 ## 2026-04-29 traceability note for future changes
 
 현재 정답:
 
-- Story `1.26`의 현재 제품 정답은 option 2다.
+- Story `1.26`의 현재 제품 목표는 option 2다.
 - 즉, 원본 RAW를 resident/long-lived darktable-compatible full-preset owner가 처리해 `preset-applied-preview`를 만드는 길이다.
 - 이 결과만 official truth로 본다.
 

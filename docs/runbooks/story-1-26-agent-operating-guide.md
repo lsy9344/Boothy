@@ -33,31 +33,32 @@ Story `1.26` 파일은 과거 로그 저장소가 아니라 현재 작업 지시
 
 ## 최신 제품 판단
 
-Story `1.26`은 현재 latest approved-hardware package 기준 fresh `Go` evidence가 있다. Story close 자체는 human/product review policy를 따른다.
+Story `1.26`은 현재 latest approved-hardware package 기준 `Go` evidence가 있다.
 
-최신 blocker는 카메라 저장 실패, `Preview Waiting` cleanup 실패, native RAW over-white false Go, full-preset truthful artifact 부재가 아니다.
+최신 blocker는 카메라 저장 실패나 `Preview Waiting` cleanup 실패가 아니다. 남은 제품 판단은 per-capture full-preset route를 정직하게 기록하고 metadata/self-label false Go를 계속 차단하는 것이다.
 
 Latest approved-hardware evidence:
 
-- hardware-validation-run `1777434275752` passed `5/5`.
-- session `session_000000000018aab70e79e5baa8` produced same-capture resident full-preset route evidence.
-- route evidence includes `binary=fast-preview-handoff`, `source=fast-preview-handoff`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`.
-- official `originalVisibleToPresetAppliedVisibleMs` band was `2316ms ~ 2338ms`.
+- hardware-validation-run `1777442288984` passed `5/5`.
+- session `session_000000000018aabe5833c11d8c` produced honest per-capture full-preset route evidence.
+- route evidence includes `binary=fast-preview-handoff`, `source=fast-preview-handoff`, `engineMode=per-capture-cli`, `engineAdapter=darktable-compatible`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`.
+- official `originalVisibleToPresetAppliedVisibleMs` band was `2387ms ~ 2480ms`.
+- hardware-validation-run `1777434275752` remains retracted because it self-labeled per-capture `darktable-cli` output as resident full-preset evidence.
 - the prior 11:38 native approximation pass remains retracted as false Go.
+- metadata-only `preset-applied-preview` kind or filename must not close `previewReady` or emit raw-original/full-preset proof.
 
 Current answer to track:
 
-- The correct Story `1.26` product path is option 2: a resident/long-lived darktable-compatible full-preset owner.
-- The accepted preview is a same-capture artifact generated from the original RAW input, not a thumbnail, fast raster, or native approximation.
-- The accepted preview must keep these route fields together: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `engineAdapter=darktable-compatible`.
-- The latest pass proves the route can meet the official customer-visible window on approved hardware. It does not make partial native RAW approximation an official product path.
-- The next product work is hardening this resident owner and preserving route evidence, not tuning per-capture fallback.
+- The correct Story `1.26` product path is an honest raw-original full-preset close owner.
+- The accepted preview must be a same-capture artifact generated from the original RAW input, not a thumbnail, fast raster, metadata label, or native approximation.
+- The accepted preview must keep route fields together only when the runtime path proves them: `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, `engineMode=per-capture-cli`, `engineAdapter=darktable-compatible`.
+- The next product work is hardening this accepted route, not calling it resident.
 
 Current direction:
 
 - Do not continue partial native approximation as the product path.
-- Option 2 is now the implemented active route: resident/long-lived darktable-compatible engine ownership that produces the actual full preset result.
-- This is not per-capture darktable fallback tail tuning. Product follow-up should harden the resident engine owner and keep route evidence honest.
+- The accepted route is product-closed for Story `1.26` when approved hardware passes.
+- This is not resident relabeling. Product follow-up should keep route evidence honest.
 - Native RAW output remains comparison-only unless it can honestly prove `truthProfile=original-full-preset`.
 
 ## 검증 데이터 기록 규칙
@@ -73,7 +74,7 @@ Current direction:
 
 추천 문장:
 
-> 최신 run은 resident darktable-compatible full-preset route로 `5/5` 통과했다. Official timing은 `2316ms ~ 2338ms`였고 route evidence는 `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`를 포함한다.
+> 최신 run은 honest per-capture full-preset route로 `5/5` 통과했다. Official timing은 `2387ms ~ 2480ms`였고 route evidence는 `truthProfile=original-full-preset`, `engineMode=per-capture-cli`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`를 포함한다.
 
 ## 사용자 기본 프롬프트
 
@@ -106,9 +107,9 @@ powershell -ExecutionPolicy Bypass -File C:\Code\Project\Boothy_lrc_first_visibl
 다음 조건이면 긴 탐색을 멈추고 최신 상태를 바로 요약한다.
 
 - latest requested run이 `passed / 5/5`다.
-- route evidence가 `truthProfile=original-full-preset`, `engineMode=resident-full-preset`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`를 포함한다.
+- route evidence가 self-label이 아니라 actual runtime proof와 함께 `truthProfile=original-full-preset`, `engineMode=per-capture-cli`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`를 포함한다.
 - official timing band is inside `3000ms`.
 
-이 경우 결론은 새 추측이 아니라 option 2 latest approved-hardware `Go` evidence다.
+이 경우에만 결론은 option 2 latest approved-hardware `Go` evidence다.
 
 다음 실제 개선은 partial native tuning이 아니라 resident/long-lived actual preset engine hardening이다.

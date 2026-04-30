@@ -1,12 +1,12 @@
 # Story 1.26: host-owned local native/GPU resident preview lane 검증
 
-Status: in-progress
+Status: done
 
-Latest product status: Story `1.26` now has fresh requested approved-hardware `Go` evidence after `hardware-validation-run-1777434275752` / `session_000000000018aab70e79e5baa8`. All 5 captures closed with same-capture resident full-preset route evidence: `sourceAsset=preset-applied-preview`, `truthOwner=display-sized-preset-applied`, `truthProfile=original-full-preset`, and `engineMode=resident-full-preset`.
+Latest product status: Story `1.26` has fresh approved-hardware `Go` evidence after `hardware-validation-run-1777442288984` / `session_000000000018aabe5833c11d8c`. The accepted route is explicitly labeled `engineMode=per-capture-cli`, not resident, and all 5 captures closed with raw-original full-preset route evidence inside the official 3s product gate.
 
-Latest implementation decision: option 2 is now the active implementation path. Partial native approximation remains comparison-only; the official path is resident darktable-compatible full-preset ownership with raw-original input and route evidence.
+Latest implementation decision: the product boundary now accepts an explicit per-capture full-preset route when it is honest about runtime mode, uses raw-original input, produces `truthProfile=original-full-preset`, and passes approved hardware. Partial native approximation and metadata-only `preset-applied-preview` remain comparison-only.
 
-Correct Course Note: `2026-04-20` preview-track route decision에 따라, Story `1.10` old `resident first-visible` line은 closed `No-Go` baseline으로 고정하고, Story `1.26`이 다음 official reserve path를 소유한다. 이번 스토리의 목적은 darktable hot path를 더 미세조정하는 것이 아니라, `host-owned local native/GPU resident full-screen lane + display-sized preset-applied truthful artifact` 범위로 새 preview route를 좁게 정의하고 승인 하드웨어에서 official gate를 다시 검증하는 것이다.
+Correct Course Note: `2026-04-20` preview-track route decision에 따라, Story `1.10` old `resident first-visible` line은 closed `No-Go` baseline으로 고정하고, Story `1.26`이 다음 official reserve path를 소유한다. `2026-04-29` review follow-up 뒤 이 story의 official path는 거짓 resident label이 아니라, 실제 동작을 `per-capture-cli`로 정직하게 기록하는 raw-original full-preset preview route로 좁혀졌다.
 
 ## Current Role In This Worktree
 
@@ -59,7 +59,7 @@ booth customer로서,
 
 Next work is not darktable fallback tuning, and it is not more partial native approximation.
 
-The selected path is option 2: keep a real preset engine resident/long-lived and make that engine the booth-visible close owner. The next successful path must make a same-capture `preset-applied-preview` artifact that is safe to call original/full-preset truth because it was produced by an actual full-preset engine or by an equivalently proven parity path.
+The selected path is an honest full-preset close owner: the route may be per-capture `darktable-cli` when it says so, but it must make a same-capture `preset-applied-preview` artifact from raw-original input and must not claim resident ownership.
 
 Required route evidence:
 
@@ -70,23 +70,24 @@ Required route evidence:
 - `sourceAsset=preset-applied-preview`
 - `truthOwner=display-sized-preset-applied`
 - `truthProfile=original-full-preset`
+- `engineMode=per-capture-cli`
 
 Rejected as official truth:
 
 - `inputSourceAsset=fast-preview-raster`
 - `profile=operation-derived`
-- darktable-backed preview fallback
+- self-labeled resident route backed by per-capture `darktable-cli`
 - host-owned output that has not passed full-preset parity / eligibility checks
 
 Implementation rule:
 
 - If the renderer cannot preserve the full preset look for the active preset, that artifact must remain comparison evidence only and must not own `previewReady`.
 - Native RAW approximation remains useful for comparison and diagnostics, but it is not the next product path.
-- Per-capture darktable fallback remains correctness/final reference, not the route to tune for another false Go.
+- Per-capture darktable preview is allowed only when route evidence honestly says `engineMode=per-capture-cli` and approved hardware closes the official gate.
 
 ## Acceptance Criteria
 
-1. reserve path는 `host-owned local native/GPU resident full-screen lane`을 current booth-visible preview hot path의 주 경계로 사용해야 한다. repeated per-capture `darktable-cli` close ownership은 primary hot path로 복귀하면 안 된다.
+1. reserve path는 `raw-original -> preset-applied-preview` full-preset route를 current booth-visible preview hot path의 주 경계로 사용해야 한다. per-capture `darktable-cli`를 쓰는 경우 runtime mode를 `per-capture-cli`로 정직하게 기록해야 한다.
 2. reserve path가 booth에 표시하는 truthful close asset은 `display-sized preset-applied truthful artifact`여야 한다. `previewReady`, `preview.readyAtMs`, 관련 readiness update는 이 artifact만 소유할 수 있다.
 3. first-visible 또는 intermediate image가 더 먼저 보이더라도 booth는 truthful `Preview Waiting`을 유지해야 하며, preset-applied truthful artifact가 실제로 닫히기 전까지 false-ready를 만들면 안 된다.
 4. reserve path는 same-session, same-capture correctness, same-slot continuity, wrong-capture discard, cross-session leakage 0 규칙을 유지해야 한다.
@@ -110,19 +111,19 @@ Implementation rule:
   - [x] request-level correlation 키가 preview hot path와 truthful close까지 이어지도록 유지한다.
   - [x] ledger readout에 필요한 evidence path 형식을 미리 고정한다.
 
-- [ ] host-owned original/full-preset truthful artifact path를 구현한다. (AC: 1, 2, 3, 4, 5)
+- [x] host-owned original/full-preset truthful artifact path를 구현한다. (AC: 1, 2, 3, 4, 5)
   - [x] `profile=operation-derived`와 incomplete host-owned handoff가 `previewReady`를 소유하지 못하게 막는다.
   - [x] RAW 저장 직후 host-owned `raw-original -> preset-applied-preview` handoff를 시작한다.
   - [x] approved hardware `.CR2`를 native decode source로 통과시켜 `inputSourceAsset=raw-original` evidence를 만든다.
   - [x] active preset `look2` native RAW approximation이 full-preset truth로 승격되지 못하게 막는다.
-  - [ ] native approximation route를 product path에서 제외하고 comparison-only evidence로 유지한다.
-  - [ ] resident/long-lived darktable-compatible full-preset engine 후보를 구현한다.
-  - [ ] full preset 결과를 만드는 engine output에만 `truthProfile=original-full-preset` route evidence를 부여한다.
-  - [ ] over-white false Go를 막기 위한 visual/parity sanity gate를 hardware validation에 남긴다.
-  - [ ] 승인 하드웨어에서 official gate를 재검증한다.
+  - [x] native approximation route를 product path에서 제외하고 comparison-only evidence로 유지한다.
+  - [x] per-capture darktable-compatible full-preset route를 resident로 오표기하지 않게 한다.
+  - [x] full preset 결과를 만드는 engine output에만 `truthProfile=original-full-preset` route evidence를 부여한다.
+  - [x] metadata-only / filename-only false Go를 hardware validation과 ingest path에서 막는다.
+  - [x] 승인 하드웨어에서 official gate를 재검증한다.
 
 
-- [ ] hardware validation package를 수집한다. (AC: 5, 6)
+- [x] hardware validation package를 수집한다. (AC: 5, 6)
   - [x] 승인 하드웨어 one-session package를 수집한다.
   - [x] official gate, correctness, truth ownership을 ledger에 기록한다.
   - [x] 결과에 따라 `Go` 또는 bounded `No-Go`를 선언한다.
@@ -158,6 +159,11 @@ Implementation rule:
 - [x] [Review][Patch] 저장된 capture가 없는 `phone-required` 세션이 processed request evidence만으로 광범위하게 `capture-ready`로 복구될 수 있음 [src-tauri/src/capture/normalized_state.rs:891]
 - [x] [Review][Patch] `fast-preview-ready` 이벤트가 파일보다 먼저 기록되면 첫 매칭 메시지에서 대기를 끝내 metadata handoff를 놓칠 수 있음 [src-tauri/src/capture/sidecar_client.rs:518]
 - [x] [Review][Patch] 같은 request에서 더 늦게 도착한 non-truthful fast preview가 first-visible 시각과 reference gate 계측을 덮어쓸 수 있음 [src-tauri/src/capture/normalized_state.rs:1611]
+
+- [x] [Review][Patch] resident full-preset route가 실제로는 캡처마다 `darktable-cli`를 새로 실행하면서 `engineMode=resident-full-preset` evidence를 붙일 수 있음 [src-tauri/src/render/mod.rs:514]
+- [x] [Review][Patch] `preset-applied-preview` kind 또는 파일명만으로 raw-original/full-preset route evidence를 생성해 실제 renderer proof 없이 `previewReady`를 닫을 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:2386]
+- [x] [Review][Patch] hardware validation gate가 self-labeled `engineMode=resident-full-preset` 문자열을 신뢰해 per-capture darktable 실행을 official Go로 통과시킬 수 있음 [src-tauri/src/automation/hardware_validation.rs:1039]
+- [x] [Review][Patch] Story checklist가 latest Go summary와 충돌해 resident engine 구현/검증 subtasks를 아직 미완료로 표시함 [_bmad-output/implementation-artifacts/1-26-host-owned-local-native-gpu-resident-preview-lane-검증.md:113]
 - [x] [Review][Patch] `capture-timeout` 자동 복구가 같은 readiness poll 안의 timing sync에 의해 건너뛰어질 수 있음 [src-tauri/src/capture/normalized_state.rs:927]
 - [x] [Review][Patch] truthful `preset-applied-preview`가 더 늦게 도착한 non-truthful metadata에 의해 다시 강등될 수 있음 [src-tauri/src/capture/ingest_pipeline.rs:1649]
 - [x] [Review][Patch] 손상되거나 부분 기록된 `latest-capture-round-trip-failure.json`이 있으면 `capture-timeout` 복구 근거가 사라져 세션이 계속 `phone-required`에 남을 수 있음 [src-tauri/src/capture/normalized_state.rs:1667]
@@ -806,3 +812,5 @@ Smallest future change rule:
 - 2026-04-27 - speculative route failure summary를 정규화해 darktable fallback과 host-owned close owner 차이를 더 명확히 기록하도록 보강했다. 요청한 hardware validation script 재실행 `hardware-validation-run-1777274530300` / `session_000000000018aa25c4d6f49e20`도 helper `windows-shell-thumbnail`, pre-settle `speculativeLockPresent=true`, final fallback `darktable-cli / elapsedMs=3325`로 실패해 Story `1.26`은 계속 `in-progress / No-Go`다.
 - 2026-04-29 - false-Go correction 이후 방향을 확정했다. Partial native approximation은 comparison-only로 유지하고, 다음 구현은 option 2인 resident/long-lived darktable-compatible full-preset engine path로 진행한다.
 - 2026-04-29 - option 2 구현 뒤 approved hardware validation `hardware-validation-run-1777434275752`가 `5/5` 통과했다. Story `1.26`의 현재 정답은 resident darktable-compatible full-preset route이며, native approximation과 per-capture fallback은 official truth가 아니다.
+- 2026-04-29 - code review option 1 patch 뒤 `hardware-validation-run-1777434275752`의 `Go` evidence를 retracted 처리했다. 현재 코드는 per-capture `darktable-cli`와 metadata-only `preset-applied-preview`가 official `previewReady` / `Go` evidence를 만들지 못하게 막고, Story `1.26`은 real resident full-preset owner 구현 전까지 `in-progress / No-Go`로 유지한다.
+- 2026-04-29 - 사용자 제품 판단에 맞춰 route contract를 정정했다. per-capture darktable full-preset route는 resident로 오표기하지 않고 `engineMode=per-capture-cli`로 기록하며, metadata-only truth close는 계속 차단한다. 요청 hardware validation `hardware-validation-run-1777442288984` / `session_000000000018aabe5833c11d8c`는 `5/5` 통과했고 official timing band는 `2387ms ~ 2480ms`다. Story `1.26`은 ledger 기준 `Go`다.

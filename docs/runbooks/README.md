@@ -15,7 +15,7 @@
 - [Story 1.26 Agent Operating Guide](./story-1-26-agent-operating-guide.md)
   - Story `1.26` 작업 시 AI agent가 읽을 범위, 기록 위치, 반복 실패 요약 방식을 정한 효율 작업 가이드
 - [Story 1.26 Review Root Cause And Improvement Direction](./story-1-26-review-root-cause-and-improvement-direction-20260427.md)
-  - native approximation false Go correction과 option 2 resident full-preset route의 latest `Go` evidence를 정리한 current root-cause 문서
+  - native approximation false Go와 self-labeled resident route false Go를 정리하고, honest per-capture full-preset route의 latest `Go` evidence를 기록한 current root-cause 문서
 - [Preview Latency Next Steps Checklist](./preview-latency-next-steps-checklist-20260422.md)
   - latest field session 이후 무엇이 이미 닫혔고, 지금 어떤 순서로 다음 시도를 진행해야 하는지 적어 둔 current execution checklist
 

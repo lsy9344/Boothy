@@ -13,7 +13,8 @@ use boothy_lib::{
     session::{
         session_manifest::{
             build_session_manifest_at, current_timestamp, normalize_legacy_manifest,
-            rfc3339_to_unix_seconds, SessionManifest, SESSION_MANIFEST_SCHEMA_VERSION,
+            rfc3339_to_unix_seconds, SessionManifest, SessionPostEnd,
+            SESSION_MANIFEST_SCHEMA_VERSION,
         },
         session_paths::SessionPaths,
         session_repository::{select_active_preset_in_dir, start_session_in_dir},
@@ -637,6 +638,89 @@ fn legacy_phone_required_post_end_without_evaluated_at_still_deserializes() {
 
     assert_eq!(post_end.state(), "phone-required");
     assert_eq!(post_end.evaluated_at(), "1970-01-01T00:00:00Z");
+}
+
+#[test]
+fn post_end_deserialization_keeps_completed_and_phone_required_variants() {
+    let completed_manifest: SessionManifest = serde_json::from_value(serde_json::json!({
+      "schemaVersion": "session-manifest/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "customer": {
+        "name": "Kim",
+        "phoneLastFour": "4821"
+      },
+      "createdAt": "2026-03-20T00:00:00Z",
+      "updatedAt": "2026-03-20T00:00:00Z",
+      "lifecycle": {
+        "status": "active",
+        "stage": "completed"
+      },
+      "activePresetId": null,
+      "captures": [],
+      "postEnd": {
+        "state": "completed",
+        "evaluatedAt": "2026-03-20T00:01:00Z",
+        "completionVariant": "handoff-ready",
+        "approvedRecipientLabel": "Front Desk",
+        "nextLocationLabel": null,
+        "primaryActionLabel": "안내된 직원에게 이름을 말씀해 주세요.",
+        "supportActionLabel": null,
+        "showBoothAlias": true
+      }
+    }))
+    .expect("completed post-end should deserialize");
+
+    match completed_manifest
+        .post_end
+        .expect("completed post-end should exist")
+    {
+        SessionPostEnd::Completed(value) => {
+            assert_eq!(value.completion_variant, "handoff-ready");
+            assert_eq!(
+                value.approved_recipient_label.as_deref(),
+                Some("Front Desk")
+            );
+        }
+        other => panic!("expected completed post-end, got {other:?}"),
+    }
+
+    let phone_required_manifest: SessionManifest = serde_json::from_value(serde_json::json!({
+      "schemaVersion": "session-manifest/v1",
+      "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+      "boothAlias": "Kim 4821",
+      "customer": {
+        "name": "Kim",
+        "phoneLastFour": "4821"
+      },
+      "createdAt": "2026-03-20T00:00:00Z",
+      "updatedAt": "2026-03-20T00:00:00Z",
+      "lifecycle": {
+        "status": "active",
+        "stage": "phone-required"
+      },
+      "activePresetId": null,
+      "captures": [],
+      "postEnd": {
+        "state": "phone-required",
+        "evaluatedAt": "2026-03-20T00:01:00Z",
+        "primaryActionLabel": "가까운 직원에게 알려 주세요.",
+        "supportActionLabel": "직원에게 도움을 요청해 주세요.",
+        "unsafeActionWarning": "다시 찍기나 기기 조작은 잠시 멈춰 주세요.",
+        "showBoothAlias": false
+      }
+    }))
+    .expect("phone-required post-end should deserialize");
+
+    match phone_required_manifest
+        .post_end
+        .expect("phone-required post-end should exist")
+    {
+        SessionPostEnd::PhoneRequired(value) => {
+            assert_eq!(value.primary_action_label, "가까운 직원에게 알려 주세요.");
+        }
+        other => panic!("expected phone-required post-end, got {other:?}"),
+    }
 }
 
 #[test]

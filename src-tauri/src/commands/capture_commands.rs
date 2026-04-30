@@ -26,7 +26,7 @@ use crate::{
 
 const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
 const CAPTURE_FAST_PREVIEW_UPDATE_EVENT: &str = "capture-fast-preview-update";
-const PREVIEW_REFINEMENT_WAIT_MS: u64 = 2000;
+const PREVIEW_REFINEMENT_WAIT_MS: u64 = 8_000;
 const PREVIEW_REFINEMENT_POLL_MS: u64 = 40;
 const PREVIEW_RUNTIME_PRIME_SETTLE_TIMEOUT_MS: u64 = 20_000;
 
@@ -349,5 +349,18 @@ fn emit_refined_preview_readiness_when_available(
         }
 
         thread::sleep(Duration::from_millis(PREVIEW_REFINEMENT_POLL_MS));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refinement_wait_budget_covers_idle_and_queue_window() {
+        assert!(
+            PREVIEW_REFINEMENT_WAIT_MS >= 8_000,
+            "refinement watcher should outlive the render idle and queue wait windows"
+        );
     }
 }

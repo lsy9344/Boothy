@@ -25,7 +25,7 @@
 ### 1. 현재 방향
 
 - [Story 1.26 Review Root Cause And Improvement Direction](./runbooks/story-1-26-review-root-cause-and-improvement-direction-20260427.md)
-  - native approximation false Go correction과 option 2 resident full-preset route의 latest `Go` evidence를 정리한 current root-cause 문서
+  - native approximation false Go와 self-labeled resident route false Go를 정리하고, honest per-capture full-preset route의 latest `Go` evidence를 기록한 current root-cause 문서
 - [Preview Latency Next Steps Checklist](./runbooks/preview-latency-next-steps-checklist-20260422.md)
   - latest field session 기준으로 무엇이 이미 닫혔고, 지금 어떤 순서로 다음 시도를 진행해야 하는지 정리한 current execution checklist
 - [Story 1.26 Reserve Path Opening](./runbooks/story-1-26-reserve-path-opening-20260420.md)

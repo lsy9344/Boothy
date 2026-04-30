@@ -35,13 +35,14 @@ const RAW_ORIGINAL_PREVIEW_KIND: &str = "raw-original";
 // The truthful recent-session rail preview does not need the old 512px cap.
 // Keep the render-backed close accurate, but shrink the booth-safe preview
 // artifact so preset-applied replacement lands materially sooner.
-const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
-const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
+const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 288;
+const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 288;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 256;
 const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 256;
 const RAW_ORIGINAL_NATIVE_DECODE_MAX_WIDTH_PX: u32 = 512;
 const RAW_ORIGINAL_NATIVE_DECODE_MAX_HEIGHT_PX: u32 = 512;
 const FAST_PREVIEW_XMP_CACHE_DIR_NAME: &str = "xmp-cache";
+const WINDOWS_HIGH_PRIORITY_CLASS: u32 = 0x0000_0080;
 const FAST_PREVIEW_XMP_CACHE_SUFFIX: &str = "fast-preview";
 const FAST_PREVIEW_STRIPPED_RAW_ONLY_OPERATIONS: [&str; 4] =
     ["rawprepare", "demosaic", "denoiseprofile", "hotpixels"];
@@ -524,7 +525,7 @@ fn render_resident_full_preset_preview_to_path(
     validate_render_output(output_path, RenderIntent::Preview)?;
     let render_elapsed_ms = render_started.elapsed().as_millis();
     let render_detail = format!(
-        "{};truthProfile=original-full-preset;engineMode=resident-full-preset;engineAdapter=darktable-compatible;engineAdapterSource={}",
+        "{};truthProfile=original-full-preset;engineMode=per-capture-cli;engineAdapter=darktable-compatible;engineAdapterSource={}",
         render_invocation_detail_with_source(
             RenderIntent::Preview,
             Some(PreviewRenderSourceKind::RawOriginal),
@@ -2820,8 +2821,10 @@ fn render_process_poll_interval(intent: RenderIntent) -> Duration {
 }
 
 fn darktable_process_creation_flags(intent: RenderIntent) -> u32 {
-    let _ = intent;
-    0
+    match intent {
+        RenderIntent::Preview => WINDOWS_HIGH_PRIORITY_CLASS,
+        RenderIntent::Final => 0,
+    }
 }
 
 fn configure_darktable_process(command: &mut Command, intent: RenderIntent) {
@@ -3208,7 +3211,10 @@ mod tests {
         assert_eq!(invocation.arguments[1], "C:/boothy/preset/look2.xmp");
         assert_eq!(invocation.arguments[2], "C:/boothy/sessions/capture.jpg");
         assert!(
-            invocation.arguments.iter().all(|argument| !argument.contains("//?/")),
+            invocation
+                .arguments
+                .iter()
+                .all(|argument| !argument.contains("//?/")),
             "darktable-cli does not accept //?/ prefixed source paths"
         );
 
@@ -3664,6 +3670,12 @@ mod tests {
     }
 
     #[test]
+    fn raw_original_preview_uses_gate_safe_truthful_close_cap() {
+        assert_eq!(RAW_PREVIEW_MAX_WIDTH_PX, 288);
+        assert_eq!(RAW_PREVIEW_MAX_HEIGHT_PX, 288);
+    }
+
+    #[test]
     fn fast_preview_xmp_trim_preserves_look_affecting_operations_in_history_and_iop_order() {
         let source_xmp = r#"<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -4047,8 +4059,11 @@ mod tests {
     }
 
     #[test]
-    fn preview_darktable_process_does_not_claim_official_close_with_scheduler_priority() {
-        assert_eq!(darktable_process_creation_flags(RenderIntent::Preview), 0);
+    fn preview_darktable_process_uses_latency_priority_without_final_render_priority() {
+        assert_eq!(
+            darktable_process_creation_flags(RenderIntent::Preview),
+            WINDOWS_HIGH_PRIORITY_CLASS
+        );
         assert_eq!(darktable_process_creation_flags(RenderIntent::Final), 0);
     }
 
@@ -4195,7 +4210,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_original_resident_preview_uses_full_preset_engine_not_native_approximation() {
+    fn raw_original_darktable_preview_claims_per_capture_full_preset_truth_not_resident() {
         let temp_dir = unique_temp_dir("raw-original-resident-full-preset");
         let bundle_xmp_path = temp_dir
             .join("preset-catalog")
@@ -4299,16 +4314,30 @@ mod tests {
         assert!(is_valid_render_preview_asset(&output_path));
         assert!(prepared.detail.contains("binary=fast-preview-handoff"));
         assert!(prepared.detail.contains("inputSourceAsset=raw-original"));
-        assert!(prepared.detail.contains("sourceAsset=preset-applied-preview"));
-        assert!(prepared.detail.contains("truthOwner=display-sized-preset-applied"));
-        assert!(prepared.detail.contains("truthProfile=original-full-preset"));
+        assert!(prepared
+            .detail
+            .contains("sourceAsset=preset-applied-preview"));
+        assert!(prepared
+            .detail
+            .contains("truthOwner=display-sized-preset-applied"));
+        assert!(prepared
+            .detail
+            .contains("truthProfile=original-full-preset"));
         assert!(prepared.detail.contains("engineSource=host-owned-native"));
-        assert!(prepared.detail.contains("engineMode=resident-full-preset"));
+        assert!(!prepared.detail.contains("engineMode=resident-full-preset"));
+        assert!(prepared.detail.contains("engineMode=per-capture-cli"));
+        assert!(prepared
+            .detail
+            .contains("engineAdapter=darktable-compatible"));
         assert!(!prepared
             .detail
-            .contains("truthBlocker=full-preset-parity-unverified"));
-        assert!(!prepared.detail.contains("host-owned-native-preview-comparison"));
-        assert!(!prepared.detail.contains("engineBinary=host-owned-native-preview"));
+            .contains("truthBlocker=resident-engine-not-implemented"));
+        assert!(!prepared
+            .detail
+            .contains("host-owned-native-preview-comparison"));
+        assert!(!prepared
+            .detail
+            .contains("engineBinary=host-owned-native-preview"));
 
         let _ = fs::remove_dir_all(temp_dir);
     }

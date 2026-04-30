@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::contracts::dto::{HostErrorEnvelope, HostFieldErrors, SessionStartInputDto};
 
@@ -84,12 +84,40 @@ pub struct PhoneRequiredPostEnd {
     pub show_booth_alias: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum SessionPostEnd {
     ExportWaiting(ExportWaitingPostEnd),
     Completed(CompletedPostEnd),
     PhoneRequired(PhoneRequiredPostEnd),
+}
+
+impl<'de> Deserialize<'de> for SessionPostEnd {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let state = value
+            .get("state")
+            .and_then(|state| state.as_str())
+            .ok_or_else(|| serde::de::Error::custom("postEnd.state is required"))?;
+
+        match state {
+            SESSION_POST_END_EXPORT_WAITING => serde_json::from_value(value)
+                .map(Self::ExportWaiting)
+                .map_err(serde::de::Error::custom),
+            SESSION_POST_END_COMPLETED => serde_json::from_value(value)
+                .map(Self::Completed)
+                .map_err(serde::de::Error::custom),
+            SESSION_POST_END_PHONE_REQUIRED => serde_json::from_value(value)
+                .map(Self::PhoneRequired)
+                .map_err(serde::de::Error::custom),
+            _ => Err(serde::de::Error::custom(format!(
+                "unknown postEnd.state: {state}"
+            ))),
+        }
+    }
 }
 
 impl SessionPostEnd {
