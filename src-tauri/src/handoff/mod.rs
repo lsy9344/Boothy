@@ -134,7 +134,16 @@ fn sync_post_end_state_locked(
 
     manifest.updated_at = evaluated_at.clone();
     write_session_manifest(manifest_path, &manifest)?;
-    append_post_end_log(base_dir, &manifest.session_id, &evaluation, &evaluated_at)?;
+    if let Err(error) =
+        append_post_end_log(base_dir, &manifest.session_id, &evaluation, &evaluated_at)
+    {
+        log::warn!(
+            "post_end_log_append_failed session={} code={} message={}",
+            manifest.session_id,
+            error.code,
+            error.message
+        );
+    }
     append_post_end_audit_record(base_dir, &manifest, &evaluation, &evaluated_at);
 
     Ok(manifest)
@@ -639,6 +648,7 @@ mod tests {
         CompletedPostEnd, SessionLifecycle, SessionPostEnd, SessionTiming,
         SESSION_MANIFEST_SCHEMA_VERSION, SESSION_TIMING_SCHEMA_VERSION,
     };
+    use crate::session::session_paths::SessionPaths;
 
     fn temp_dir(test_name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -817,6 +827,78 @@ mod tests {
             std::fs::read_to_string(&manifest_path).expect("manifest should remain readable"),
             corrupted_manifest,
             "stale in-memory post-end truth must not overwrite the live manifest"
+        );
+
+        let _ = std::fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn post_end_sync_succeeds_when_diagnostics_log_append_fails_after_manifest_write() {
+        let base_dir = temp_dir("post-end-log-failure");
+        let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1m";
+        let paths = SessionPaths::new(&base_dir, session_id);
+        std::fs::create_dir_all(&paths.session_root).expect("session root should exist");
+        std::fs::write(&paths.diagnostics_dir, "not a directory")
+            .expect("diagnostics path should be blocked");
+        let manifest = SessionManifest {
+            schema_version: SESSION_MANIFEST_SCHEMA_VERSION.into(),
+            session_id: session_id.into(),
+            booth_alias: "Booth".into(),
+            customer: crate::session::session_manifest::SessionCustomer {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+            lifecycle: SessionLifecycle {
+                status: "closed".into(),
+                stage: "ended".into(),
+            },
+            active_preset_id: None,
+            active_preset_display_name: None,
+            active_preset: None,
+            catalog_revision: None,
+            catalog_snapshot: None,
+            timing: Some(SessionTiming {
+                schema_version: SESSION_TIMING_SCHEMA_VERSION.into(),
+                session_id: session_id.into(),
+                adjusted_end_at: "2000-01-01T00:00:00Z".into(),
+                warning_at: "1999-12-31T23:55:00Z".into(),
+                phase: "ended".into(),
+                capture_allowed: false,
+                approved_extension_minutes: 0,
+                approved_extension_audit_ref: None,
+                warning_triggered_at: None,
+                ended_triggered_at: Some("2026-04-30T00:00:00Z".into()),
+            }),
+            post_end: None,
+            captures: vec![],
+            created_at: "2026-04-30T00:00:00Z".into(),
+            updated_at: "2026-04-30T00:00:00Z".into(),
+        };
+        std::fs::write(
+            &paths.manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should be writable");
+
+        let projected = sync_post_end_state_in_dir(
+            &base_dir,
+            &paths.manifest_path,
+            manifest,
+            SystemTime::now(),
+        )
+        .expect("diagnostics log failure should not fail persisted post-end state");
+
+        assert_eq!(
+            projected.post_end.as_ref().map(|post_end| post_end.state()),
+            Some(SESSION_POST_END_EXPORT_WAITING)
+        );
+        let persisted: SessionManifest = serde_json::from_slice(
+            &std::fs::read(&paths.manifest_path).expect("manifest should remain readable"),
+        )
+        .expect("manifest should deserialize");
+        assert_eq!(
+            persisted.post_end.as_ref().map(|post_end| post_end.state()),
+            Some(SESSION_POST_END_EXPORT_WAITING)
         );
 
         let _ = std::fs::remove_dir_all(base_dir);

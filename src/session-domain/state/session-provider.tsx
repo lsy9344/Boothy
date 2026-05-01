@@ -95,6 +95,109 @@ function hasDisplayablePreviewAsset(
   )
 }
 
+function getPostEndEvaluatedAtMs(readiness: SessionScopedReadiness) {
+  const evaluatedAt = readiness.postEnd?.evaluatedAt
+
+  if (evaluatedAt === undefined) {
+    return null
+  }
+
+  const parsed = Date.parse(evaluatedAt)
+
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isOlderPostEndUpdate(
+  current: SessionScopedReadiness,
+  next: SessionScopedReadiness,
+) {
+  const currentEvaluatedAtMs = getPostEndEvaluatedAtMs(current)
+  const nextEvaluatedAtMs = getPostEndEvaluatedAtMs(next)
+
+  return (
+    currentEvaluatedAtMs !== null &&
+    nextEvaluatedAtMs !== null &&
+    nextEvaluatedAtMs < currentEvaluatedAtMs
+  )
+}
+
+function isSameTimePostEndUpdate(
+  current: SessionScopedReadiness,
+  next: SessionScopedReadiness,
+) {
+  const currentEvaluatedAtMs = getPostEndEvaluatedAtMs(current)
+  const nextEvaluatedAtMs = getPostEndEvaluatedAtMs(next)
+
+  return (
+    currentEvaluatedAtMs !== null &&
+    nextEvaluatedAtMs !== null &&
+    nextEvaluatedAtMs === currentEvaluatedAtMs
+  )
+}
+
+function isHostRecoveryFromPhoneRequiredToWaiting(
+  current: SessionScopedReadiness,
+  next: SessionScopedReadiness,
+) {
+  return (
+    current.reasonCode === 'phone-required' &&
+    next.reasonCode === 'export-waiting' &&
+    !isOlderPostEndUpdate(current, next)
+  )
+}
+
+function isHostCorrectionFromCompletionToWaiting(
+  current: SessionScopedReadiness,
+  next: SessionScopedReadiness,
+) {
+  return (
+    current.reasonCode === 'completed' &&
+    next.reasonCode === 'export-waiting' &&
+    next.postEnd !== null &&
+    next.postEnd !== undefined &&
+    !isOlderPostEndUpdate(current, next)
+  )
+}
+
+function getCompletedPostEndVariantStrength(readiness: SessionScopedReadiness) {
+  if (readiness.postEnd?.state !== 'completed') {
+    return 0
+  }
+
+  return readiness.postEnd.completionVariant === 'handoff-ready' ? 2 : 1
+}
+
+function shouldPreserveTerminalPostEndReadiness(
+  current: SessionScopedReadiness,
+  next: SessionScopedReadiness,
+  currentStrength: number,
+  nextStrength: number,
+) {
+  if (currentStrength !== 2 || nextStrength !== 2) {
+    return false
+  }
+
+  if (isOlderPostEndUpdate(current, next)) {
+    return true
+  }
+
+  if (
+    isSameTimePostEndUpdate(current, next) &&
+    current.reasonCode === 'phone-required' &&
+    next.reasonCode === 'completed'
+  ) {
+    return true
+  }
+
+  return (
+    isSameTimePostEndUpdate(current, next) &&
+    current.reasonCode === 'completed' &&
+    next.reasonCode === 'completed' &&
+    getCompletedPostEndVariantStrength(current) >
+      getCompletedPostEndVariantStrength(next)
+  )
+}
+
 function mergePreservedPostEndReadiness(
   current: SessionScopedReadiness | null,
   next: SessionScopedReadiness,
@@ -112,6 +215,22 @@ function mergePreservedPostEndReadiness(
   const nextStrength = getPostEndStrength(next.reasonCode)
 
   if (shouldPreserveCurrentPostEnd && currentStrength >= 1 && nextStrength === 0) {
+    return current
+  }
+
+  if (
+    shouldPreserveCurrentPostEnd &&
+    currentStrength > nextStrength &&
+    !isHostRecoveryFromPhoneRequiredToWaiting(current, next) &&
+    !isHostCorrectionFromCompletionToWaiting(current, next)
+  ) {
+    return current
+  }
+
+  if (
+    shouldPreserveCurrentPostEnd &&
+    shouldPreserveTerminalPostEndReadiness(current, next, currentStrength, nextStrength)
+  ) {
     return current
   }
 

@@ -300,3 +300,30 @@ GPT-5 Codex
 #### 2026-04-30 Local Deliverable Fallback Re-review
 
 - [x] [Review][Patch] `localDeliverableReady` fallback 완료 상태가 `postEnd: null`이라 늦은 same-session non-post-end readiness에 다시 밀려 완료 화면이 되돌아갈 수 있음 [src/session-domain/state/session-provider.tsx:96]
+
+#### 2026-05-01 Subagent Host/Post-End Review
+
+- [x] [Review][Patch] finalized post-end truth가 늦은 `export-waiting` 응답에 의해 대기 상태로 되돌아갈 수 있음 [src/session-domain/state/session-provider.tsx:114]
+- [x] [Review][Patch] post-end 상태 저장 뒤 진단 로그 쓰기 실패가 고객 상태 전환 실패처럼 반환될 수 있음 [src-tauri/src/handoff/mod.rs:136]
+
+#### 2026-05-01 Subagent Re-review
+
+- [x] [Review][Patch] equal-strength terminal post-end update가 오래된 `completed` 응답으로 `phone-required` 보호 상태나 최신 handoff 안내를 덮을 수 있음 [src/session-domain/state/session-provider.tsx:118]
+- [x] [Review][Patch] Story 3.2 `done` 전환과 governance baseline 테스트의 hard-coded `review` / `No-Go` 기대값이 불일치함 [src/governance/hardware-validation-governance.test.ts:28]
+
+#### 2026-05-01 Code Review
+
+- [x] [Review][Patch] `phone-required`가 최신 host 복구 상태까지 막아 고객 화면이 지원 필요 상태에 고정될 수 있음 [src/session-domain/state/session-provider.tsx:134]
+- [x] [Review][Patch] `phone-required`가 최신 `export-waiting` 복구 상태도 막아 고객 화면이 지원 필요 상태에 고정될 수 있음 [src/session-domain/state/session-provider.tsx:157]
+- [x] [Review][Patch] fallback `completed`가 최신 host `export-waiting` 정정을 막아 완료를 너무 오래 주장할 수 있음 [src/session-domain/state/session-provider.tsx:182]
+- [x] [Review][Patch] 같은 `evaluatedAt` terminal update가 기존 `phone-required` 또는 handoff 안내를 덮을 수 있음 [src/session-domain/state/session-provider.tsx:159]
+
+#### 2026-05-01 BMad Code Review
+
+- [x] [Review][Patch] 명시적인 최신 `export-waiting` 정정이 기존 `completed`에 막혀 완료 화면이 유지될 수 있음 [src/session-domain/state/session-provider.tsx:217]
+- [x] [Review][Patch] 초 단위 `evaluatedAt` 비교가 같은 초의 실제 복구 또는 인계 안내 갱신을 오래된 응답처럼 버릴 수 있음 [src/session-domain/state/session-provider.tsx:124]
+- [x] [Review][Patch] `postEnd`가 생략된 fallback `completed`를 fallback으로 인식하지 못해 host `export-waiting` 정정이 막힐 수 있음 [src/session-domain/state/session-provider.tsx:152]
+
+#### 2026-05-01 BMad Code Review Follow-up
+
+- [ ] [Review][Patch] 같은 세션의 `completed` readiness가 `postEnd` 필드 없이 도착하면 기존 handoff-ready 안내가 사라질 수 있음 [src/session-domain/state/session-provider.tsx:237]

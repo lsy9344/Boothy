@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-05-01 15:51 +09:00
+Last Updated: 2026-05-01 17:23 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -68,7 +68,7 @@ Supporting regression / follow-up notes:
 | 1.26 | Pass | Pass | Go | `2026-04-29 14:59 +09:00` requested validation passed `5/5`. Route evidence is now honest: `engineMode=per-capture-cli`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthProfile=original-full-preset`; official timing band was `2387ms ~ 2480ms`. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aabe5833c11d8c\`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777442288984\run-summary.json` |
 | 3.2 | Pass | Pass | Go | Closed 2026-05-01 15:51 +09:00. `HV-08` is proven by the 1-minute 5/5 validation that entered `Export Waiting` with `captureAllowed=false` and durable `postEnd.state=export-waiting`. `HV-11` is proven by the induced final render failure isolation run: failed capture stayed `renderFailed`, RAW/preview evidence stayed preserved, final output was not promoted, and the customer state ended in `Phone Required` with `canCapture=false`. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777617321176\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5d890f750058\session.json`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777618189818\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5e534e82d688\session.json` |
 | 4.2 | Pass | Pass | Go | Closed 2026-05-01 14:03 +09:00. `HV-09` failure isolation was already observed, and the requested hardware run `hardware-validation-run-1777611703953` passed `5/5` with the published `look2` preset. Session catalogSnapshot, activePreset binding, published bundle, and live catalog state all point to `preset_new-draft-2` / `2026.04.10`, keeping draft/validated artifacts outside the booth catalog. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777611703953\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab586d32ec06b0\session.json`; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json` |
-| 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
+| 4.3 | Pass | Pass | Go | Closed 2026-05-01 17:23 +09:00. `HV-01` and `HV-07` are backed by the 5/5 `look2` hardware run; `HV-12` is backed by the publication-drift proof showing the active session snapshot, active preset, and captures stayed unchanged while a future session saw and captured with the newly published preset. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777622204463\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\hv12-close-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777623773295\run-summary.json` |
 
 ## Evidence Registry
 
@@ -488,22 +488,31 @@ Supporting regression / follow-up notes:
 
 - story key: `4-3-승인과-불변-게시-아티팩트-생성`
 - HV checklist ID: `HV-01`, `HV-07`, `HV-12`
-- evidence package path: `TBD`
-- executedAt: `TBD`
-- validator: `TBD`
-- booth PC: `TBD`
-- camera model: `TBD`
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777622204463\ ; C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\ ; C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777623773295\`
+- executedAt: `2026-05-01 17:23 +09:00`
+- validator: `Codex hardware validation runner + publication drift evidence inspection`
+- booth PC: `NOAHLEE`
+- camera model: `Canon EOS 700D`
 - darktable pin: `release-5.4.1 / c3f96ca`
-- helper identifier: `TBD`
-- Go / No-Go result: `No-Go`
-- release blocker: `Immutable publish and catalogSnapshot drift hardware proof are not yet recorded.`
+- helper identifier: `canon-helper-status/v1 + camera-helper-events.jsonl + timing-events.log`
+- Go / No-Go result: `Go`
+- release blocker: `None. HV-01/HV-07/HV-12 close evidence is recorded.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Finish Story 4.3 implementation and capture immutable publish, darktable differentiation, and active-session drift evidence.`
-- target rerun date: `TBD`
+- rerun prerequisite: `None for Story 4.3 close. Rerun only if publication, catalog snapshot, or preset render contract changes.`
+- target rerun date: `Closed 2026-05-01`
 - core evidence paths:
-  - `TBD/session.json`
-  - `TBD/published/bundle.json`
-  - `TBD/preset-catalog/catalog-state.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777622204463\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab61fa0a062654\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\hv12-close-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\active-session-before-publish.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\active-session-after-publish.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\hv12-drift-check.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\published-bundle.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777623773295\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab63674fb9101c\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\catalog-state-before-publish.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hv12-publication-drift-1777622204463-v4\catalog-state-after-publish.json`
 
 ## Evidence Row Template
 
