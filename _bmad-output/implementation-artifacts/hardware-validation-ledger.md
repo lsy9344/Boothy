@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-05-01 14:03 +09:00
+Last Updated: 2026-05-01 15:51 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -66,7 +66,7 @@ Supporting regression / follow-up notes:
 | 1.9 | Pass | Pass | Go | Closed 2026-04-30 11:02 +09:00. Requested validation passed `5/5`; helper same-capture fast preview was observed for all captures, later preset-applied preview truth stayed renderer-owned, and official timing band was `2882ms ~ 2979ms`. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aafff97b2bb744\`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777514449927\run-summary.json` |
 | 1.10 | Pass | Pass | No-Go for release judgment | Latest one-session rerun package closed helper correlation, same-session replacement, and `capture-ready` recovery on approved hardware, but official `preset-applied visible <= 3000ms` timing still landed at `8972ms`, `7942ms`, and `7967ms`. `sameCaptureFullScreenVisibleMs` (`4685ms`, `3587ms`, `3270ms`) remains comparison evidence only. Official `Go / No-Go` ownership remains in this ledger. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018a7c3f52370b574\` |
 | 1.26 | Pass | Pass | Go | `2026-04-29 14:59 +09:00` requested validation passed `5/5`. Route evidence is now honest: `engineMode=per-capture-cli`, `inputSourceAsset=raw-original`, `sourceAsset=preset-applied-preview`, `truthProfile=original-full-preset`; official timing band was `2387ms ~ 2480ms`. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018aabe5833c11d8c\`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777442288984\run-summary.json` |
-| 3.2 | Pass | Partial pass | No-Go | 2026-04-30 requested hardware command passed 5/5 generic capture validation, but the run did not enter post-end truth (`postEnd=null`, timing `active`), so `HV-08/HV-11` close evidence is still missing. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777535901457\run-summary.json` |
+| 3.2 | Pass | Pass | Go | Closed 2026-05-01 15:51 +09:00. `HV-08` is proven by the 1-minute 5/5 validation that entered `Export Waiting` with `captureAllowed=false` and durable `postEnd.state=export-waiting`. `HV-11` is proven by the induced final render failure isolation run: failed capture stayed `renderFailed`, RAW/preview evidence stayed preserved, final output was not promoted, and the customer state ended in `Phone Required` with `canCapture=false`. | Noah Lee | `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777617321176\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5d890f750058\session.json`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777618189818\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5e534e82d688\session.json` |
 | 4.2 | Pass | Pass | Go | Closed 2026-05-01 14:03 +09:00. `HV-09` failure isolation was already observed, and the requested hardware run `hardware-validation-run-1777611703953` passed `5/5` with the published `look2` preset. Session catalogSnapshot, activePreset binding, published bundle, and live catalog state all point to `preset_new-draft-2` / `2026.04.10`, keeping draft/validated artifacts outside the booth catalog. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777611703953\run-summary.json`; `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab586d32ec06b0\session.json`; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\published\preset_new-draft-2\2026.04.10\bundle.json`; `C:\Users\KimYS\Pictures\dabi_shoot\preset-catalog\catalog-state.json` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
 
@@ -438,23 +438,27 @@ Supporting regression / follow-up notes:
 
 - story key: `3-2-export-waiting과-truthful-completion-안내`
 - HV checklist ID: `HV-08`, `HV-11`
-- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777535901457`
-- executedAt: `2026-04-30 16:58 +09:00`
-- validator: `Noah Lee`
+- evidence package path: `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777617321176`; `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777618189818`
+- executedAt: `2026-05-01 15:36 +09:00; HV-11 rerun 2026-05-01 15:50 +09:00`
+- validator: `Codex hardware validation runner + post-end evidence inspection`
 - booth PC: `NOAHLEE`
-- camera model: `TBD`
+- camera model: `Canon EOS 700D`
 - darktable pin: `release-5.4.1 / c3f96ca`
-- helper identifier: `TBD`
-- Go / No-Go result: `No-Go`
-- release blocker: `Requested command passed 5/5 capture validation, but the generated session remained active with postEnd null and did not prove Export Waiting / Completed truth for HV-08/HV-11.`
+- helper identifier: `hardware-validation-runner.ps1 capture flow + validate-render-failure-isolation mode`
+- Go / No-Go result: `Go`
+- release blocker: `None. HV-08 is proven by 5/5 capture validation plus durable Export Waiting post-end truth. HV-11 is proven by induced final render failure isolation ending in Phone Required without promoting a failed capture to Completed.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `Run an end-of-session hardware pass that records postEnd truth, timing ended/export-waiting or completed transition, and diagnostics evidence.`
-- target rerun date: `TBD`
+- rerun prerequisite: `None for Story 3.2 close. Rerun only if post-end completion truth, render failure handling, or customer help copy changes.`
+- target rerun date: `Closed 2026-05-01`
 - core evidence paths:
-  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777535901457\run-summary.json`
-  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777535901457\run-steps.jsonl`
-  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab137c0dfb81f4\session.json`
-  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab137c0dfb81f4\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777617321176\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777617321176\run-steps.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5d890f750058\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5d890f750058\diagnostics\timing-events.log`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777618189818\run-summary.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\hardware-validation-runs\hardware-validation-run-1777618189818\run-steps.jsonl`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5e534e82d688\session.json`
+  - `C:\Users\KimYS\Pictures\dabi_shoot\sessions\session_000000000018ab5e534e82d688\diagnostics\timing-events.log`
 
 ### Story 4.2
 

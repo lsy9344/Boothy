@@ -24,6 +24,8 @@ struct CliConfig {
     base_dir: PathBuf,
     output_dir: PathBuf,
     app_launch_mode: AppLaunchMode,
+    post_end_wait_timeout_ms: Option<u64>,
+    validate_render_failure_isolation: bool,
 }
 
 fn run(config: CliConfig) -> ExitCode {
@@ -36,6 +38,8 @@ fn run(config: CliConfig) -> ExitCode {
             capture_count: config.capture_count,
             app_launch_mode: config.app_launch_mode,
             phone_last_four: config.phone_last_four,
+            post_end_wait_timeout_ms: config.post_end_wait_timeout_ms,
+            validate_render_failure_isolation: config.validate_render_failure_isolation,
         },
     );
 
@@ -69,6 +73,8 @@ fn parse_args(args: Vec<String>) -> Result<CliConfig, String> {
     let mut base_dir = None;
     let mut output_dir = None;
     let mut app_launch_mode = AppLaunchMode::LaunchSiblingExe;
+    let mut post_end_wait_timeout_ms = None;
+    let mut validate_render_failure_isolation = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -123,6 +129,22 @@ fn parse_args(args: Vec<String>) -> Result<CliConfig, String> {
             "--launch-app" => {
                 app_launch_mode = AppLaunchMode::LaunchSiblingExe;
             }
+            "--post-end-timeout-seconds" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--post-end-timeout-seconds requires a value".to_string())?;
+                let seconds = value
+                    .parse::<u64>()
+                    .map_err(|_| {
+                        "--post-end-timeout-seconds must be a positive integer".to_string()
+                    })?
+                    .max(1);
+                post_end_wait_timeout_ms = Some(seconds.saturating_mul(1_000));
+            }
+            "--validate-render-failure-isolation" => {
+                validate_render_failure_isolation = true;
+            }
             "--help" | "-h" => {
                 print_usage();
                 std::process::exit(0);
@@ -146,11 +168,13 @@ fn parse_args(args: Vec<String>) -> Result<CliConfig, String> {
         base_dir,
         output_dir,
         app_launch_mode,
+        post_end_wait_timeout_ms,
+        validate_render_failure_isolation,
     })
 }
 
 fn print_usage() {
     eprintln!(
-        "Usage: hardware-validation-runner --prompt <text> [--preset look2] [--capture-count 5] [--phone-last-four 4821] [--base-dir <path>] [--output-dir <path>] [--skip-app-launch]"
+        "Usage: hardware-validation-runner --prompt <text> [--preset look2] [--capture-count 5] [--phone-last-four 4821] [--base-dir <path>] [--output-dir <path>] [--skip-app-launch] [--post-end-timeout-seconds 120] [--validate-render-failure-isolation]"
     );
 }

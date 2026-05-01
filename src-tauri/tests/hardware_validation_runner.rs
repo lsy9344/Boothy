@@ -52,6 +52,8 @@ fn hardware_validation_runner_records_a_full_five_capture_pass_with_artifacts() 
             capture_count: 5,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should finish");
@@ -120,6 +122,8 @@ fn hardware_validation_runner_fails_when_host_owned_reserve_input_is_missing() {
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should finish with a failed result");
@@ -208,6 +212,8 @@ fn hardware_validation_runner_waits_for_delayed_host_owned_reserve_input() {
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should finish");
@@ -250,6 +256,8 @@ fn hardware_validation_runner_waits_past_early_non_host_owned_preview_for_truthf
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should finish");
@@ -296,6 +304,8 @@ fn hardware_validation_runner_accepts_late_host_handoff_when_product_gate_passes
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should finish");
@@ -331,6 +341,8 @@ fn hardware_validation_runner_writes_failure_report_when_look2_preset_is_missing
             capture_count: 5,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: Some("4821".into()),
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should emit a failed result instead of crashing");
@@ -370,6 +382,8 @@ fn hardware_validation_runner_splits_compact_name_and_last_four_prompt() {
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should emit a failed result instead of crashing");
@@ -410,6 +424,8 @@ fn hardware_validation_runner_captures_failure_diagnostics_for_readiness_timeout
             capture_count: 1,
             app_launch_mode: AppLaunchMode::Skip,
             phone_last_four: None,
+            post_end_wait_timeout_ms: None,
+            validate_render_failure_isolation: false,
         },
     )
     .expect("runner should emit a failed result instead of crashing");

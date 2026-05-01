@@ -1,17 +1,17 @@
 # Story 3.2: Export Waiting과 truthful completion 안내
 
-Status: review
+Status: done
 
-Correct Course Note: 2026-04-30 코드 리뷰는 추가 제품 리스크 없이 통과했지만, false-complete 방지 evidence(HV-08, HV-11)가 닫히기 전까지 제품 관점 완료로 보지 않는다. Hardware gate가 `Go`가 될 때까지 Story 3.2는 `review`를 유지한다.
+Correct Course Note: 2026-04-30 코드 리뷰는 추가 제품 리스크 없이 통과했다. 2026-05-01 15:51 +09:00 기준 false-complete 방지 evidence(`HV-08`, `HV-11`)가 모두 닫혀 제품 관점 완료로 전환한다.
 
-Latest Hardware Validation Note: 2026-04-30 16:58 +09:00 요청 명령은 5/5 capture validation으로 `passed`였지만, 생성된 세션이 `postEnd=null` 및 timing `active` 상태라 HV-08/HV-11의 종료 후 truth close evidence로는 부족하다. 따라서 제품 status는 `review`를 유지한다.
+Latest Hardware Validation Note: 2026-05-01 15:36 +09:00 요청 명령에 post-end 대기를 추가하고 검증용 세션 시간을 1분으로 줄여 재실행했다. 5/5 capture validation과 종료 후 `Export Waiting` truth, `captureAllowed=false`, `postEnd.state=export-waiting`을 확인해 HV-08은 통과했다. 이어 2026-05-01 15:50 +09:00 HV-11 전용 검증에서 final render failure를 의도적으로 만들고, 실패 컷이 `renderFailed`로 남으며 RAW/preview가 보존되고, 최종 고객 상태가 `Phone Required` / `canCapture=false`로 닫히는 것을 확인했다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 - Required HV checklist IDs: `HV-08`, `HV-11`
-- Current hardware gate: `No-Go`
-- Status decision: `review` 유지
+- Current hardware gate: `Go`
+- Status decision: `done`
 - Close policy: `automated pass` alone does not close this story; a ledger row with `Go` is required before `done`.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->

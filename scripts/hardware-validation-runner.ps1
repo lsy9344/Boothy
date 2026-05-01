@@ -12,7 +12,11 @@ param(
 
     [string]$OutputDir = "",
 
-    [switch]$SkipAppLaunch
+    [switch]$SkipAppLaunch,
+
+    [int]$PostEndTimeoutSeconds = 0,
+
+    [switch]$ValidateRenderFailureIsolation
 )
 
 $ErrorActionPreference = "Stop"
@@ -141,6 +145,14 @@ try {
 
     if ($OutputDir -ne "") {
         $arguments += @("--output-dir", $OutputDir)
+    }
+
+    if ($PostEndTimeoutSeconds -gt 0) {
+        $arguments += @("--post-end-timeout-seconds", $PostEndTimeoutSeconds.ToString())
+    }
+
+    if ($ValidateRenderFailureIsolation) {
+        $arguments += @("--validate-render-failure-isolation")
     }
 
     & $runnerExe @arguments

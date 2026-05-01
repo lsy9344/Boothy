@@ -13,7 +13,7 @@ use serde_json::json;
 use crate::{
     capture::{
         helper_supervisor::try_ensure_helper_running,
-        ingest_pipeline::complete_preview_render_in_dir,
+        ingest_pipeline::{complete_preview_render_in_dir, mark_final_render_failed_in_dir},
         normalized_state::{get_capture_readiness_in_dir, request_capture_in_dir},
         sidecar_client::{
             read_latest_helper_error_message, read_latest_status_message, CanonHelperErrorMessage,
@@ -36,7 +36,8 @@ use crate::{
         session_manifest::{current_timestamp, normalize_customer_name, SessionCaptureRecord},
         session_paths::SessionPaths,
         session_repository::{
-            resolve_app_session_base_dir, select_active_preset_in_dir, start_session_in_dir,
+            read_session_manifest, resolve_app_session_base_dir, select_active_preset_in_dir,
+            start_session_in_dir,
         },
     },
 };
@@ -44,6 +45,7 @@ use crate::{
 const PREVIEW_RUNTIME_WARMUP_SETTLE_TIMEOUT_MS: u64 = 20_000;
 const HOST_OWNED_RESERVE_INPUT_SETTLE_TIMEOUT_MS: u64 = 3_000;
 const HOST_OWNED_RESERVE_INPUT_POLL_INTERVAL_MS: u64 = 50;
+const POST_END_WAIT_POLL_INTERVAL_MS: u64 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppLaunchMode {
@@ -58,6 +60,8 @@ pub struct HardwareValidationRunInput {
     pub capture_count: u32,
     pub app_launch_mode: AppLaunchMode,
     pub phone_last_four: Option<String>,
+    pub post_end_wait_timeout_ms: Option<u64>,
+    pub validate_render_failure_isolation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +217,8 @@ struct RunContext {
     app_launch_mode: String,
     app_launched: bool,
     captures_passed: u32,
+    first_capture_id: Option<String>,
+    latest_capture_id: Option<String>,
     session_id: Option<String>,
     booth_alias: Option<String>,
     preset: Option<ResolvedPresetRecord>,
@@ -253,6 +259,8 @@ impl RunContext {
             },
             app_launched: false,
             captures_passed: 0,
+            first_capture_id: None,
+            latest_capture_id: None,
             session_id: None,
             booth_alias: None,
             preset: None,
@@ -320,6 +328,7 @@ pub fn run_hardware_validation_in_dir(
             "prompt": input.prompt,
             "presetQuery": input.preset_query,
             "captureCount": input.capture_count.max(1),
+            "validateRenderFailureIsolation": input.validate_render_failure_isolation,
         }),
     )?;
 
@@ -667,6 +676,10 @@ fn execute_validation_run(
         )?;
 
         context.captures_passed += 1;
+        if context.first_capture_id.is_none() {
+            context.first_capture_id = Some(preview_capture.capture_id.clone());
+        }
+        context.latest_capture_id = Some(preview_capture.capture_id.clone());
         context
             .append_step(
                 "capture-preview-ready",
@@ -702,7 +715,367 @@ fn execute_validation_run(
             .map_err(internal_run_failure)?;
     }
 
+    if input.validate_render_failure_isolation {
+        let timeout_ms = input.post_end_wait_timeout_ms.ok_or_else(|| {
+            run_failure(
+                "post-end-wait-required",
+                "렌더 실패 격리 검증에는 종료 후 상태 대기 시간이 필요해요.",
+                "HV-11은 Phone Required post-end truth까지 확인해야 하므로 timeout을 지정해야 합니다.",
+                vec![
+                    "hardware-validation-runner.ps1에 -PostEndTimeoutSeconds 값을 지정하세요.",
+                    "1분 검증에서는 보통 120초면 충분합니다.",
+                ],
+            )
+        })?;
+        induce_final_render_failure_isolation(base_dir, context, &session.session_id)?;
+        let Some(capture_id) = context.first_capture_id.clone() else {
+            return Err(run_failure(
+                "render-failure-target-missing",
+                "렌더 실패를 만들 검증 촬영을 찾지 못했어요.",
+                "HV-11은 최소 한 장의 preview-ready 촬영물에 실패 상태를 만들어야 합니다.",
+                vec!["run-steps.jsonl에서 capture-preview-ready 단계가 있는지 확인하세요."],
+            ));
+        };
+        wait_for_post_end_state(
+            base_dir,
+            context,
+            &session.session_id,
+            timeout_ms,
+            PostEndWaitExpectation::RenderFailureIsolation {
+                capture_id: capture_id.as_str(),
+            },
+        )?;
+    } else if let Some(timeout_ms) = input.post_end_wait_timeout_ms {
+        wait_for_post_end_state(
+            base_dir,
+            context,
+            &session.session_id,
+            timeout_ms,
+            PostEndWaitExpectation::ExportReady,
+        )?;
+    }
+
     Ok(())
+}
+
+fn induce_final_render_failure_isolation(
+    base_dir: &Path,
+    context: &mut RunContext,
+    session_id: &str,
+) -> Result<(), RunFailure> {
+    let Some(capture_id) = context.first_capture_id.clone() else {
+        return Err(run_failure(
+            "render-failure-target-missing",
+            "렌더 실패를 만들 검증 촬영을 찾지 못했어요.",
+            "HV-11은 preview-ready 촬영물에 실패 상태를 만들어야 합니다.",
+            vec!["run-steps.jsonl에서 capture-preview-ready 단계가 있는지 확인하세요."],
+        ));
+    };
+
+    if context.latest_capture_id.as_deref() == Some(capture_id.as_str()) {
+        return Err(run_failure(
+            "render-failure-target-needs-non-latest",
+            "렌더 실패 격리 검증에는 최소 2장의 촬영이 필요해요.",
+            "최신 촬영 실패는 active session recovery 대상이 될 수 있어, HV-11은 안정적인 non-latest final render failure로 검증합니다.",
+            vec![
+                "hardware-validation-runner.ps1의 -CaptureCount 값을 2 이상으로 지정하세요.",
+                "기본 5컷 검증에서는 첫 번째 촬영을 실패 격리 대상으로 사용합니다.",
+            ],
+        ));
+    }
+
+    let manifest =
+        mark_final_render_failed_in_dir(base_dir, session_id, &capture_id).map_err(|error| {
+            run_failure(
+                "render-failure-induction-failed",
+                format!(
+                    "HV-11용 final render failure를 만들지 못했어요: {}",
+                    error.message
+                ),
+                "검증 대상 capture가 manifest에 없거나 render failure 상태를 기록하지 못했습니다.",
+                vec![
+                    "run-steps.jsonl에서 첫 capture-preview-ready의 captureId를 확인하세요.",
+                    "session.json에 해당 capture가 남아 있는지 확인하세요.",
+                ],
+            )
+        })?;
+
+    let capture = manifest
+        .captures
+        .iter()
+        .find(|capture| capture.capture_id == capture_id)
+        .ok_or_else(|| {
+            run_failure(
+                "render-failure-target-missing",
+                "렌더 실패를 기록한 촬영물이 session.json에서 사라졌어요.",
+                "HV-11은 실패 촬영과 원본 증적이 세션에 보존되어야 합니다.",
+                vec!["session.json의 captures 배열과 originals 폴더를 확인하세요."],
+            )
+        })?;
+    let raw_preserved = Path::new(&capture.raw.asset_path).is_file();
+    let preview_preserved = capture
+        .preview
+        .asset_path
+        .as_deref()
+        .map(Path::new)
+        .is_some_and(Path::is_file);
+
+    if capture.render_status != "renderFailed" || !raw_preserved || !preview_preserved {
+        return Err(run_failure(
+            "render-failure-evidence-incomplete",
+            "렌더 실패 격리 증적이 충분하지 않아요.",
+            "실패 상태, RAW 원본, 확인용 preview가 모두 남아 있어야 고객 화면을 안전하게 보호했다고 볼 수 있습니다.",
+            vec![
+                "session.json의 renderStatus와 raw.assetPath를 확인하세요.",
+                "captures/originals와 renders/previews 파일 존재 여부를 확인하세요.",
+            ],
+        ));
+    }
+
+    context
+        .append_step(
+            "final-render-failure-induced",
+            "passed",
+            "Final render failure was induced for HV-11 isolation validation.",
+            None,
+            Some(&capture_id),
+            Some(&capture.request_id),
+            json!({
+                "sessionId": session_id,
+                "captureId": capture.capture_id,
+                "requestId": capture.request_id,
+                "renderStatus": capture.render_status,
+                "lifecycleStage": manifest.lifecycle.stage,
+                "rawPath": capture.raw.asset_path,
+                "previewPath": capture.preview.asset_path,
+                "rawPreserved": raw_preserved,
+                "previewPreserved": preview_preserved,
+            }),
+        )
+        .map_err(internal_run_failure)?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PostEndWaitExpectation<'a> {
+    ExportReady,
+    RenderFailureIsolation { capture_id: &'a str },
+}
+
+fn wait_for_post_end_state(
+    base_dir: &Path,
+    context: &mut RunContext,
+    session_id: &str,
+    timeout_ms: u64,
+    expectation: PostEndWaitExpectation<'_>,
+) -> Result<(), RunFailure> {
+    let started_at = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let mut last_readiness: Option<CaptureReadinessDto> = None;
+
+    while started_at.elapsed() <= timeout {
+        let readiness = get_capture_readiness_in_dir(
+            base_dir,
+            CaptureReadinessInputDto {
+                session_id: session_id.into(),
+            },
+        )
+        .map_err(|error| {
+            run_failure(
+                "post-end-readiness-refresh-failed",
+                format!("종료 후 readiness를 새로 읽지 못했어요: {}", error.message),
+                "post-end truth 확인 중 manifest 또는 diagnostics sync가 실패했습니다.",
+                vec![
+                    "session.json의 timing/postEnd 값을 확인하세요.",
+                    "timing-events.log에 ended/post-end 이벤트가 남았는지 확인하세요.",
+                ],
+            )
+        })?;
+
+        if readiness.post_end.is_some() {
+            match expectation {
+                PostEndWaitExpectation::ExportReady => {
+                    if matches!(
+                        readiness.reason_code.as_str(),
+                        "export-waiting" | "completed"
+                    ) {
+                        context
+                            .append_step(
+                                "post-end-state-ready",
+                                "passed",
+                                "Post-end state was observed after the validation captures.",
+                                None,
+                                None,
+                                None,
+                                json!({
+                                    "sessionId": session_id,
+                                    "reasonCode": readiness.reason_code,
+                                    "customerState": readiness.customer_state,
+                                    "canCapture": readiness.can_capture,
+                                    "waitElapsedMs": started_at.elapsed().as_millis(),
+                                }),
+                            )
+                            .map_err(internal_run_failure)?;
+                        return Ok(());
+                    }
+
+                    if readiness.reason_code == "phone-required" {
+                        return Err(run_failure(
+                            "post-end-phone-required",
+                            "종료 후 상태가 직원 확인 필요로 전환됐어요.",
+                            "post-end truth는 생성됐지만 결과 준비 성공 상태가 아니라 보호 상태입니다.",
+                            vec![
+                                "session.json의 postEnd와 capture renderStatus를 확인하세요.",
+                                "final render failure 또는 missing asset 근거를 확인하세요.",
+                            ],
+                        ));
+                    }
+                }
+                PostEndWaitExpectation::RenderFailureIsolation { capture_id } => {
+                    if matches!(
+                        readiness.reason_code.as_str(),
+                        "export-waiting" | "completed"
+                    ) {
+                        return Err(run_failure(
+                            "render-failure-isolation-not-protected",
+                            "렌더 실패가 종료 후 완료/결과 대기 상태처럼 보였어요.",
+                            "HV-11은 실패 촬영을 성공처럼 승격하지 않고 직원 확인 필요 상태로 격리해야 합니다.",
+                            vec![
+                                "session.json의 failed capture renderStatus를 확인하세요.",
+                                "postEnd.state가 completed/export-waiting으로 잘못 닫혔는지 확인하세요.",
+                            ],
+                        ));
+                    }
+
+                    if readiness.reason_code == "phone-required" {
+                        let detail = render_failure_isolation_detail(
+                            base_dir, session_id, capture_id, &readiness,
+                        )
+                        .map_err(internal_run_failure)?;
+                        context
+                            .append_step(
+                                "post-end-render-failure-isolated",
+                                "passed",
+                                "Post-end render failure stayed isolated behind staff help guidance.",
+                                None,
+                                Some(capture_id),
+                                None,
+                                detail,
+                            )
+                            .map_err(internal_run_failure)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        last_readiness = Some(readiness);
+        thread::sleep(Duration::from_millis(POST_END_WAIT_POLL_INTERVAL_MS));
+    }
+
+    let last_reason_code = last_readiness
+        .as_ref()
+        .map(|readiness| readiness.reason_code.as_str())
+        .unwrap_or("unknown");
+    let last_customer_state = last_readiness
+        .as_ref()
+        .map(|readiness| readiness.customer_state.as_str())
+        .unwrap_or("unknown");
+
+    Err(run_failure(
+        "post-end-readiness-timeout",
+        format!(
+            "종료 후 postEnd truth가 제한 시간 안에 보이지 않았어요. 마지막 상태는 `{last_reason_code}` / `{last_customer_state}`입니다."
+        ),
+        "세션 종료 시각에 도달하지 않았거나 post-end evaluator가 durable truth를 기록하지 못했습니다.",
+        vec![
+            "session.json의 timing.adjustedEndAt, timing.phase, postEnd를 확인하세요.",
+            "timing-events.log의 ended/post-end 이벤트 순서를 확인하세요.",
+        ],
+    ))
+}
+
+fn render_failure_isolation_detail(
+    base_dir: &Path,
+    session_id: &str,
+    capture_id: &str,
+    readiness: &CaptureReadinessDto,
+) -> Result<serde_json::Value, HardwareValidationRunnerError> {
+    let paths = SessionPaths::try_new(base_dir, session_id).map_err(|error| {
+        HardwareValidationRunnerError::new(format!(
+            "render failure isolation path resolution failed: {}",
+            error.message
+        ))
+    })?;
+    let manifest = read_session_manifest(&paths.manifest_path).map_err(|error| {
+        HardwareValidationRunnerError::new(format!(
+            "render failure isolation manifest read failed: {}",
+            error.message
+        ))
+    })?;
+    let capture = manifest
+        .captures
+        .iter()
+        .find(|capture| capture.capture_id == capture_id)
+        .ok_or_else(|| {
+            HardwareValidationRunnerError::new(format!(
+                "render failure target capture was missing: {capture_id}"
+            ))
+        })?;
+
+    let raw_preserved = Path::new(&capture.raw.asset_path).is_file();
+    let preview_preserved = capture
+        .preview
+        .asset_path
+        .as_deref()
+        .map(Path::new)
+        .is_some_and(Path::is_file);
+    let final_ready = capture
+        .final_asset
+        .asset_path
+        .as_deref()
+        .map(Path::new)
+        .is_some_and(Path::is_file)
+        && capture.final_asset.ready_at_ms.is_some();
+
+    if capture.render_status != "renderFailed"
+        || !raw_preserved
+        || !preview_preserved
+        || final_ready
+        || readiness.can_capture
+        || manifest.lifecycle.stage != "phone-required"
+    {
+        return Err(HardwareValidationRunnerError::new(format!(
+            "render failure isolation evidence incomplete: renderStatus={}, rawPreserved={}, previewPreserved={}, finalReady={}, canCapture={}, lifecycleStage={}",
+            capture.render_status,
+            raw_preserved,
+            preview_preserved,
+            final_ready,
+            readiness.can_capture,
+            manifest.lifecycle.stage
+        )));
+    }
+
+    Ok(json!({
+        "sessionId": session_id,
+        "captureId": capture.capture_id,
+        "requestId": capture.request_id,
+        "reasonCode": readiness.reason_code,
+        "customerState": readiness.customer_state,
+        "canCapture": readiness.can_capture,
+        "primaryAction": readiness.primary_action,
+        "customerMessage": readiness.customer_message,
+        "supportMessage": readiness.support_message,
+        "lifecycleStage": manifest.lifecycle.stage,
+        "postEndState": manifest.post_end.as_ref().map(|post_end| post_end.state()),
+        "renderStatus": capture.render_status,
+        "rawPath": capture.raw.asset_path,
+        "previewPath": capture.preview.asset_path,
+        "rawPreserved": raw_preserved,
+        "previewPreserved": preview_preserved,
+        "finalReady": final_ready,
+    }))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1786,6 +2159,162 @@ mod tests {
         let readiness = CaptureReadinessDto::warning("session_000000000000000000000001", None);
 
         assert!(readiness_satisfies_capture_gate(&readiness));
+    }
+
+    #[test]
+    fn post_end_wait_accepts_export_waiting_truth() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-post-end-wait-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let output_dir = base_dir.join("validation-output");
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should start");
+        let paths = SessionPaths::new(&base_dir, &session.session_id);
+        let mut manifest =
+            crate::session::session_repository::read_session_manifest(&paths.manifest_path)
+                .expect("manifest should read");
+        let timing = manifest.timing.as_mut().expect("timing should exist");
+        timing.adjusted_end_at = "2000-01-01T00:00:00Z".into();
+        timing.warning_at = "1999-12-31T23:55:00Z".into();
+        crate::session::session_repository::write_session_manifest(&paths.manifest_path, &manifest)
+            .expect("manifest should be writable");
+
+        let mut context = RunContext::new(&output_dir, "Kim4821", "look2", 1, &AppLaunchMode::Skip)
+            .expect("run context should be created");
+        context.session_id = Some(session.session_id.clone());
+
+        wait_for_post_end_state(
+            &base_dir,
+            &mut context,
+            &session.session_id,
+            1_000,
+            PostEndWaitExpectation::ExportReady,
+        )
+        .expect("post-end wait should observe export waiting");
+
+        let steps = fs::read_to_string(context.steps_path).expect("step log should exist");
+        assert!(steps.contains("\"eventType\":\"post-end-state-ready\""));
+        assert!(steps.contains("\"reasonCode\":\"export-waiting\""));
+
+        let manifest =
+            crate::session::session_repository::read_session_manifest(&paths.manifest_path)
+                .expect("manifest should read after wait");
+        assert_eq!(
+            manifest.post_end.as_ref().map(|post_end| post_end.state()),
+            Some("export-waiting")
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn post_end_wait_accepts_render_failure_isolation_truth() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "boothy-post-end-render-failure-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let output_dir = base_dir.join("validation-output");
+        let session = start_session_in_dir(
+            &base_dir,
+            SessionStartInputDto {
+                name: "Kim".into(),
+                phone_last_four: "4821".into(),
+            },
+        )
+        .expect("session should start");
+        let paths = SessionPaths::new(&base_dir, &session.session_id);
+        fs::create_dir_all(&paths.captures_originals_dir).expect("originals dir should exist");
+        fs::create_dir_all(&paths.renders_previews_dir).expect("previews dir should exist");
+
+        let first_raw = paths.captures_originals_dir.join("capture_01.CR2");
+        let second_raw = paths.captures_originals_dir.join("capture_02.CR2");
+        let first_preview = paths.renders_previews_dir.join("capture_01.jpg");
+        let second_preview = paths.renders_previews_dir.join("capture_02.jpg");
+        fs::write(&first_raw, b"raw-1").expect("first raw should exist");
+        fs::write(&second_raw, b"raw-2").expect("second raw should exist");
+        fs::write(&first_preview, b"preview-1").expect("first preview should exist");
+        fs::write(&second_preview, b"preview-2").expect("second preview should exist");
+
+        let mut first_capture =
+            truth_gate_capture("preset-applied-preview", Some(1_000), Some(1_500));
+        first_capture.session_id = session.session_id.clone();
+        first_capture.booth_alias = session.booth_alias.clone();
+        first_capture.capture_id = "capture_01".into();
+        first_capture.request_id = "request_01".into();
+        first_capture.raw.asset_path = first_raw.to_string_lossy().into_owned();
+        first_capture.preview.asset_path = Some(first_preview.to_string_lossy().into_owned());
+        let mut second_capture = first_capture.clone();
+        second_capture.capture_id = "capture_02".into();
+        second_capture.request_id = "request_02".into();
+        second_capture.raw.asset_path = second_raw.to_string_lossy().into_owned();
+        second_capture.preview.asset_path = Some(second_preview.to_string_lossy().into_owned());
+
+        let mut manifest =
+            crate::session::session_repository::read_session_manifest(&paths.manifest_path)
+                .expect("manifest should read");
+        let timing = manifest.timing.as_mut().expect("timing should exist");
+        timing.adjusted_end_at = "2000-01-01T00:00:00Z".into();
+        timing.warning_at = "1999-12-31T23:55:00Z".into();
+        manifest.captures = vec![first_capture, second_capture];
+        crate::session::session_repository::write_session_manifest(&paths.manifest_path, &manifest)
+            .expect("manifest should be writable");
+
+        crate::capture::ingest_pipeline::mark_final_render_failed_in_dir(
+            &base_dir,
+            &session.session_id,
+            "capture_01",
+        )
+        .expect("final render failure should be marked");
+
+        let mut context = RunContext::new(&output_dir, "Kim4821", "look2", 2, &AppLaunchMode::Skip)
+            .expect("run context should be created");
+        context.session_id = Some(session.session_id.clone());
+
+        wait_for_post_end_state(
+            &base_dir,
+            &mut context,
+            &session.session_id,
+            1_000,
+            PostEndWaitExpectation::RenderFailureIsolation {
+                capture_id: "capture_01",
+            },
+        )
+        .expect("post-end wait should observe phone-required render failure isolation");
+
+        let steps = fs::read_to_string(context.steps_path).expect("step log should exist");
+        assert!(steps.contains("\"eventType\":\"post-end-render-failure-isolated\""));
+        assert!(steps.contains("\"reasonCode\":\"phone-required\""));
+
+        let manifest =
+            crate::session::session_repository::read_session_manifest(&paths.manifest_path)
+                .expect("manifest should read after wait");
+        let failed_capture = manifest
+            .captures
+            .iter()
+            .find(|capture| capture.capture_id == "capture_01")
+            .expect("failed capture should remain");
+        assert_eq!(failed_capture.render_status, "renderFailed");
+        assert_eq!(manifest.lifecycle.stage, "phone-required");
+        assert_eq!(
+            manifest.post_end.as_ref().map(|post_end| post_end.state()),
+            Some("phone-required")
+        );
+        assert!(first_raw.is_file());
+
+        let _ = fs::remove_dir_all(base_dir);
     }
 
     #[test]
