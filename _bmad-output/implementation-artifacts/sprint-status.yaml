@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-05-01 14:03:00 +09:00
+# last_updated: 2026-05-01 15:14:00 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -38,7 +38,7 @@
 # - preview-track route resets may intentionally keep a story in `review` while the worktree is being used as a validation lane rather than an active implementation branch
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-05-01 14:03 +09:00"
+last_updated: "2026-05-01 15:14 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -114,7 +114,7 @@ development_status:
   5-1-운영자용-현재-세션-문맥과-장애-진단-가시화: done
   5-2-정책-기반-복구-액션과-phone-required-라우팅: done
   5-3-라이프사이클-개입-복구-감사-로그-기록: done
-  5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: review
+  5-4-운영자용-카메라-연결-상태-전용-항목과-helper-readiness-가시화: done
   epic-5-retrospective: optional
 
   epic-6: in-progress

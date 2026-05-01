@@ -1,6 +1,6 @@
 # Story 5.4: 운영자용 카메라 연결 상태 전용 항목과 helper readiness 가시화
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -38,6 +38,11 @@ remote operator로서,
   - [x] `src-tauri/tests/operator_diagnostics.rs`에 `미연결`, `연결 중`, `연결됨`, `복구 필요` 시나리오를 각각 추가한다.
   - [x] `src/operator-console/screens/OperatorSummaryScreen.test.tsx`에서 dedicated item 노출, operator-safe copy, 기존 blocked-state/경계 카드와의 공존을 검증한다.
   - [x] customer booth copy 테스트는 기존처럼 internal helper 용어 비노출을 유지해야 한다.
+
+### Review Findings
+
+- [x] [Review][Patch] 이미 연결됐던 세션의 카메라 이탈이 `복구 필요`가 아니라 `미연결`로 보일 수 있다 [src-tauri/src/diagnostics/mod.rs:304]
+- [x] [Review][Patch] helper 상태 파일을 읽지 못한 첫 연결 실패가 `복구 필요`가 아니라 `연결 중`으로 보일 수 있다 [src-tauri/src/diagnostics/mod.rs:278]
 
 ## Dev Notes
 
@@ -218,6 +223,7 @@ remote operator로서,
 - scoped validation은 통과했다: `pnpm test:run src/shared-contracts/contracts.test.ts src/operator-console/services/operator-diagnostics-service.test.ts src/operator-console/screens/OperatorSummaryScreen.test.tsx`, `cargo test --test operator_diagnostics`, `cargo test`.
 - 전체 `pnpm test:run`은 저장소의 기존 `src/governance/hardware-validation-governance.test.ts`가 현재 `sprint-status.yaml`의 다른 스토리 상태 기대값과 어긋나 실패했다.
 - 전체 `pnpm lint`는 이번 변경과 무관한 기존 파일(`src/booth-shell/components/SessionPreviewImage.tsx`, `src/session-domain/selectors/current-session-previews.ts`, `src/session-domain/state/session-provider.tsx`) 이슈로 실패했다.
+- code review follow-up에서 연결 이탈과 helper 상태 읽기 실패가 모두 operator card에 `복구 필요`로 보이도록 보강했고, `cargo test --test operator_diagnostics` 통과를 확인했다.
 
 ## File List
 

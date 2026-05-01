@@ -275,6 +275,14 @@ fn derive_camera_connection_state(
         };
     };
 
+    if live_capture_truth
+        .detail_code
+        .as_deref()
+        .is_some_and(is_camera_connection_recovery_detail_code)
+    {
+        return "recovery-required";
+    }
+
     if live_capture_truth.freshness != "fresh" || live_capture_truth.session_match != "matched" {
         return if has_connected_context {
             "recovery-required"
@@ -288,6 +296,10 @@ fn derive_camera_connection_state(
         .as_deref()
         .and_then(map_camera_connection_state_from_detail_code)
     {
+        if connection_state == "disconnected" && has_connected_context {
+            return "recovery-required";
+        }
+
         return connection_state;
     }
 
@@ -302,7 +314,11 @@ fn derive_camera_connection_state(
     }
 
     if live_capture_truth.camera_state == "disconnected" {
-        return "disconnected";
+        return if has_connected_context {
+            "recovery-required"
+        } else {
+            "disconnected"
+        };
     }
 
     if matches!(
@@ -353,6 +369,25 @@ fn map_camera_connection_state_from_detail_code(detail_code: &str) -> Option<&'s
         | "session-open-failed" => Some("recovery-required"),
         _ => None,
     }
+}
+
+fn is_camera_connection_recovery_detail_code(detail_code: &str) -> bool {
+    matches!(
+        detail_code,
+        "reconnect-pending"
+            | "sdk-init-failed"
+            | "sdk-init-timeout"
+            | "session-open-timeout"
+            | "camera-connect-timeout"
+            | "camera-open-failed"
+            | "session-open-failed"
+            | "invalid-status"
+            | "status-unreadable"
+            | "helper-unavailable"
+            | "helper-binary-missing"
+            | "helper-supervisor-unavailable"
+            | "helper-launch-failed"
+    )
 }
 
 fn is_startup_connect_failure_truth(live_capture_truth: Option<&LiveCaptureTruthDto>) -> bool {

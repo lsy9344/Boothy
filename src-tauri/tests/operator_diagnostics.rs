@@ -374,6 +374,91 @@ fn operator_diagnostics_projects_recovery_required_camera_connection_state() {
 }
 
 #[test]
+fn operator_diagnostics_projects_recovery_required_when_connected_session_disconnects() {
+    let base_dir = unique_test_root("camera-connection-disconnect-after-ready");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1z";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "capture-ready".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    write_helper_status(
+        &base_dir,
+        session_id,
+        &current_timestamp(SystemTime::now()).expect("helper timestamp should serialize"),
+        "disconnected",
+        "healthy",
+        Some("camera-not-found"),
+    );
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("disconnect after ready summary should load");
+
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn operator_diagnostics_projects_recovery_required_when_helper_status_is_invalid() {
+    let base_dir = unique_test_root("camera-connection-invalid-helper-status");
+    let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
+    let session_id = "session_01hs6n1r8b8zc5v4ey2x7b9g1h";
+    create_published_bundle(&base_dir, "preset_soft-glow", "2026.03.26", "Soft Glow");
+    let manifest = SessionManifest {
+        lifecycle: SessionLifecycle {
+            status: "active".into(),
+            stage: "helper-preparing".into(),
+        },
+        active_preset: Some(ActivePresetBinding {
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.26".into(),
+        }),
+        active_preset_id: Some("preset_soft-glow".into()),
+        active_preset_display_name: Some("Soft Glow".into()),
+        ..base_manifest(session_id)
+    };
+
+    write_manifest(&base_dir, &manifest);
+    let status_path = SessionPaths::new(&base_dir, session_id)
+        .diagnostics_dir
+        .join("camera-helper-status.json");
+    fs::create_dir_all(
+        status_path
+            .parent()
+            .expect("helper status should have a diagnostics directory"),
+    )
+    .expect("diagnostics directory should exist");
+    fs::write(status_path, "{ invalid json").expect("invalid helper status should write");
+
+    let summary = load_operator_session_summary_in_dir(&base_dir, &capability_snapshot)
+        .expect("invalid helper status summary should load");
+
+    assert_eq!(summary.camera_connection.state, "recovery-required");
+    assert_eq!(
+        summary
+            .live_capture_truth
+            .as_ref()
+            .and_then(|truth| truth.detail_code.as_deref()),
+        Some("invalid-status")
+    );
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
 fn operator_diagnostics_describes_startup_connect_failures_without_claiming_capture_saved() {
     let base_dir = unique_test_root("startup-connect-timeout-diagnostics");
     let capability_snapshot = capability_snapshot_for_profile("operator-enabled", true);
