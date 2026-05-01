@@ -8,8 +8,8 @@ use crate::session::session_manifest::{
 
 const SESSION_ID_PREFIX: &str = "session_";
 const PRESET_ID_PREFIX: &str = "preset_";
-const ACTOR_LABEL_MAX_CHARS: usize = 120;
-const OPTIONAL_TEXT_MAX_CHARS: usize = 2000;
+pub(crate) const ACTOR_LABEL_MAX_CHARS: usize = 120;
+pub(crate) const OPTIONAL_TEXT_MAX_CHARS: usize = 2000;
 
 pub fn is_valid_session_id(session_id: &str) -> bool {
     let suffix = match session_id.strip_prefix(SESSION_ID_PREFIX) {
@@ -793,6 +793,10 @@ pub enum RollbackPresetCatalogResultDto {
 pub struct CapabilitySnapshotDto {
     pub is_admin_authenticated: bool,
     pub allowed_surfaces: Vec<String>,
+    #[serde(default)]
+    pub authenticated_actor_id: Option<String>,
+    #[serde(default)]
+    pub authenticated_actor_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

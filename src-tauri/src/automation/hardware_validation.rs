@@ -1318,6 +1318,8 @@ fn build_artifacts_index(
             &crate::contracts::dto::CapabilitySnapshotDto {
                 is_admin_authenticated: true,
                 allowed_surfaces: vec!["operator".into()],
+                authenticated_actor_id: None,
+                authenticated_actor_label: None,
             },
             crate::contracts::dto::OperatorAuditQueryFilterDto {
                 session_id: context.session_id.clone(),
@@ -1477,6 +1479,8 @@ fn collect_failure_diagnostics(
     let capability_snapshot = CapabilitySnapshotDto {
         is_admin_authenticated: true,
         allowed_surfaces: vec!["operator".into()],
+        authenticated_actor_id: None,
+        authenticated_actor_label: None,
     };
     let (operator_session_summary, operator_session_summary_error) =
         match load_operator_session_summary_in_dir(base_dir, &capability_snapshot) {

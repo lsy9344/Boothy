@@ -11,6 +11,8 @@ use crate::{
 
 const RUNTIME_PROFILE_ENV: &str = "BOOTHY_RUNTIME_PROFILE";
 const ADMIN_AUTHENTICATED_ENV: &str = "BOOTHY_ADMIN_AUTHENTICATED";
+const ADMIN_ACTOR_ID_ENV: &str = "BOOTHY_ADMIN_ACTOR_ID";
+const ADMIN_ACTOR_LABEL_ENV: &str = "BOOTHY_ADMIN_ACTOR_LABEL";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,14 +60,28 @@ pub fn capability_snapshot_for_profile(
     CapabilitySnapshotDto {
         is_admin_authenticated,
         allowed_surfaces,
+        authenticated_actor_id: None,
+        authenticated_actor_label: None,
     }
 }
 
 pub fn resolve_runtime_capability_snapshot() -> CapabilitySnapshotDto {
     let profile = env::var(RUNTIME_PROFILE_ENV).unwrap_or_else(|_| "booth".into());
     let is_admin_authenticated = read_bool_env(ADMIN_AUTHENTICATED_ENV);
+    let mut snapshot = capability_snapshot_for_profile(&profile, is_admin_authenticated);
 
-    capability_snapshot_for_profile(&profile, is_admin_authenticated)
+    snapshot.authenticated_actor_id = env::var(ADMIN_ACTOR_ID_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(snapshot.authenticated_actor_id);
+    snapshot.authenticated_actor_label = env::var(ADMIN_ACTOR_LABEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(snapshot.authenticated_actor_label);
+
+    snapshot
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -39,6 +40,7 @@ const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
 const VALIDATION_RENDER_PROBE_MAX_WIDTH_PX: u32 = 64;
 const VALIDATION_RENDER_PROBE_MAX_HEIGHT_PX: u32 = 64;
+const DRAFT_MUTATION_LOCK_DIR: &str = ".draft-lock";
 
 pub fn resolve_draft_authoring_root(base_dir: &Path) -> PathBuf {
     base_dir.join("preset-authoring").join("drafts")
@@ -184,6 +186,7 @@ pub fn save_draft_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
+    let _lock = acquire_draft_mutation_lock(&draft_path)?;
     let existing_draft = load_required_draft_summary(
         base_dir,
         &draft_path,
@@ -214,6 +217,7 @@ pub fn validate_draft_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
+    let _lock = acquire_draft_mutation_lock(&draft_path)?;
     let existing_draft = load_required_draft_summary(
         base_dir,
         &draft_path,
@@ -254,7 +258,7 @@ pub fn validate_draft_preset_in_dir(
 pub fn publish_validated_preset_in_dir(
     base_dir: &Path,
     capability_snapshot: &CapabilitySnapshotDto,
-    input: PublishValidatedPresetInputDto,
+    mut input: PublishValidatedPresetInputDto,
 ) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
     ensure_authoring_access(capability_snapshot)?;
     validate_publish_validated_preset_input(&input)?;
@@ -262,6 +266,11 @@ pub fn publish_validated_preset_in_dir(
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
     ensure_draft_file_path_within_root(&drafts_root, &draft_path)?;
+    let _lock = acquire_draft_mutation_lock(&draft_path)?;
+    let (host_actor_id, host_actor_label) =
+        ensure_publication_actor_identity(capability_snapshot, &input)?;
+    input.actor_id = host_actor_id;
+    input.actor_label = host_actor_label;
     let existing_draft = load_required_draft_summary(
         base_dir,
         &draft_path,
@@ -475,7 +484,7 @@ pub fn publish_validated_preset_in_dir(
     let preview_asset_path =
         build_absolute_asset_path(&final_bundle_dir, "preview", &preview_source)?;
     let previous_publication_history =
-        load_publication_history(base_dir, &existing_draft.preset_id);
+        load_publication_history(base_dir, &existing_draft.preset_id)?;
     let approved_record = build_publication_audit_record(
         &existing_draft,
         &input,
@@ -614,7 +623,7 @@ fn reject_publication(
     noted_at: String,
 ) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
     let previous_draft = draft.clone();
-    let previous_publication_history = load_publication_history(base_dir, &draft.preset_id);
+    let previous_publication_history = load_publication_history(base_dir, &draft.preset_id)?;
     let audit_record = build_publication_audit_record(
         &draft,
         input,
@@ -699,19 +708,31 @@ fn build_publication_audit_record(
 fn load_publication_history(
     base_dir: &Path,
     preset_id: &str,
-) -> Vec<PresetPublicationAuditRecordDto> {
+) -> Result<Vec<PresetPublicationAuditRecordDto>, HostErrorEnvelope> {
     let audit_path = resolve_publication_audit_path(base_dir, preset_id);
-    let Ok(bytes) = fs::read_to_string(audit_path) else {
-        return Vec::new();
-    };
-    let Ok(history) = serde_json::from_str::<Vec<PresetPublicationAuditRecordDto>>(&bytes) else {
-        return Vec::new();
-    };
+    if !audit_path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read_to_string(audit_path).map_err(|_| {
+        HostErrorEnvelope::validation_message(
+            "publication audit history를 읽지 못해 authoring 작업을 계속할 수 없어요. 수동 점검 후 다시 시도해 주세요.",
+        )
+    })?;
+    let history = serde_json::from_str::<Vec<PresetPublicationAuditRecordDto>>(&bytes).map_err(
+        |_| {
+            HostErrorEnvelope::validation_message(
+                "publication audit history가 손상되어 authoring 작업을 계속할 수 없어요. 수동 점검 후 다시 시도해 주세요.",
+            )
+        },
+    )?;
 
-    history
-        .into_iter()
-        .filter(is_valid_publication_audit_record)
-        .collect()
+    if !history.iter().all(is_valid_publication_audit_record) {
+        return Err(HostErrorEnvelope::validation_message(
+            "publication audit history가 현재 계약과 맞지 않아 authoring 작업을 계속할 수 없어요. 수동 점검 후 다시 시도해 주세요.",
+        ));
+    }
+
+    Ok(history)
 }
 
 fn resolve_publication_audit_path(base_dir: &Path, preset_id: &str) -> PathBuf {
@@ -728,10 +749,20 @@ fn is_valid_publication_audit_record(record: &PresetPublicationAuditRecordDto) -
         && crate::contracts::dto::is_valid_published_version(&record.published_version)
         && crate::contracts::dto::is_valid_actor_id(&record.actor_id)
         && crate::contracts::dto::is_non_blank(&record.actor_label)
+        && crate::contracts::dto::is_trimmed_length_within(
+            &record.actor_label,
+            crate::contracts::dto::ACTOR_LABEL_MAX_CHARS,
+        )
         && record
             .review_note
             .as_ref()
-            .map(|note| crate::contracts::dto::is_non_blank(note))
+            .map(|note| {
+                crate::contracts::dto::is_non_blank(note)
+                    && crate::contracts::dto::is_trimmed_length_within(
+                        note,
+                        crate::contracts::dto::OPTIONAL_TEXT_MAX_CHARS,
+                    )
+            })
             .unwrap_or(true)
         && matches!(
             record.action.as_str(),
@@ -989,6 +1020,40 @@ pub fn ensure_authoring_access(
     ))
 }
 
+fn ensure_publication_actor_identity(
+    capability_snapshot: &CapabilitySnapshotDto,
+    input: &PublishValidatedPresetInputDto,
+) -> Result<(String, String), HostErrorEnvelope> {
+    let Some(actor_id) = capability_snapshot
+        .authenticated_actor_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(HostErrorEnvelope::capability_denied(
+            "host가 확인한 승인자 신원이 있어야 preset을 게시할 수 있어요.",
+        ));
+    };
+    let Some(actor_label) = capability_snapshot
+        .authenticated_actor_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(HostErrorEnvelope::capability_denied(
+            "host가 확인한 승인자 신원이 있어야 preset을 게시할 수 있어요.",
+        ));
+    };
+
+    if input.actor_id.trim() == actor_id && input.actor_label.trim() == actor_label {
+        return Ok((actor_id.to_string(), actor_label.to_string()));
+    }
+
+    Err(HostErrorEnvelope::capability_denied(
+        "게시 승인자 신원이 현재 authoring 세션과 맞지 않아요.",
+    ))
+}
+
 pub fn ensure_authoring_window_label(window_label: &str) -> Result<(), HostErrorEnvelope> {
     if window_label == AUTHORING_WINDOW_LABEL {
         return Ok(());
@@ -1046,7 +1111,12 @@ fn load_required_draft_summary(
         return Err(HostErrorEnvelope::validation_message(malformed_message));
     }
 
-    summary.publication_history = load_publication_history(base_dir, &trusted_preset_id);
+    summary.publication_history =
+        load_publication_history(base_dir, &trusted_preset_id).map_err(|_| {
+            HostErrorEnvelope::validation_message(
+                "저장된 publication audit history가 손상되어 게시를 이어갈 수 없어요. 수동 점검 후 다시 시도해 주세요.",
+            )
+        })?;
 
     if !is_valid_draft_summary(draft_path, &summary) {
         return Err(HostErrorEnvelope::validation_message(malformed_message));
@@ -1121,7 +1191,20 @@ fn inspect_draft_artifact(
     }
 
     let mut summary = summary;
-    summary.publication_history = load_publication_history(base_dir, &trusted_preset_id);
+    let publication_history = match load_publication_history(base_dir, &trusted_preset_id) {
+        Ok(history) => history,
+        Err(_) => {
+            return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
+                draft_folder,
+                message: "publication audit history가 손상되어 작업공간에서 열 수 없어요.".into(),
+                guidance:
+                    "자동 삭제 대신 publication audit 파일을 수동 점검해 주세요. 기존 승인/거절 이력을 보존한 뒤 다시 불러오면 계속 진행할 수 있어요."
+                        .into(),
+                can_repair: false,
+            })
+        }
+    };
+    summary.publication_history = publication_history;
 
     if !is_valid_draft_summary(draft_path, &summary) {
         return DraftArtifactInspection::Invalid(InvalidDraftArtifactDto {
@@ -1918,6 +2001,34 @@ fn write_json_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), HostErro
     }
 
     Ok(())
+}
+
+struct DraftMutationLock {
+    path: PathBuf,
+}
+
+impl Drop for DraftMutationLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn acquire_draft_mutation_lock(draft_path: &Path) -> Result<DraftMutationLock, HostErrorEnvelope> {
+    let draft_dir = draft_path
+        .parent()
+        .ok_or_else(|| HostErrorEnvelope::persistence("draft 저장 위치를 준비하지 못했어요."))?;
+    fs::create_dir_all(draft_dir).map_err(map_fs_error)?;
+    let lock_path = draft_dir.join(DRAFT_MUTATION_LOCK_DIR);
+
+    match fs::create_dir(&lock_path) {
+        Ok(()) => Ok(DraftMutationLock { path: lock_path }),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            Err(HostErrorEnvelope::validation_message(
+                "다른 authoring 작업이 이 draft를 처리 중이에요. 잠시 후 다시 시도해 주세요.",
+            ))
+        }
+        Err(error) => Err(map_fs_error(error)),
+    }
 }
 
 fn ensure_draft_file_path_within_root(

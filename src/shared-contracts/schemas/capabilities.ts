@@ -15,10 +15,14 @@ export const capabilitySnapshotSchema = z
   .object({
     isAdminAuthenticated: z.boolean().default(false),
     allowedSurfaces: z.array(surfaceCapabilitySchema).default(['booth']),
+    authenticatedActorId: z.string().trim().min(1).nullable().optional(),
+    authenticatedActorLabel: z.string().trim().min(1).nullable().optional(),
   })
   .transform((snapshot) => ({
     ...snapshot,
     allowedSurfaces: normalizeAllowedSurfaces(snapshot.allowedSurfaces),
+    authenticatedActorId: snapshot.authenticatedActorId ?? null,
+    authenticatedActorLabel: snapshot.authenticatedActorLabel ?? null,
   }))
 
 export type CapabilitySnapshot = z.output<typeof capabilitySnapshotSchema>

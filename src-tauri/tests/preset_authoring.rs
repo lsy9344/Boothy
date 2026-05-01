@@ -9,13 +9,14 @@ use std::{
 use std::os::windows::fs::symlink_file;
 
 use boothy_lib::{
-    commands::runtime_commands::capability_snapshot_for_profile,
+    commands::runtime_commands::capability_snapshot_for_profile as runtime_capability_snapshot_for_profile,
     contracts::dto::{
-        DraftNoisePolicyDto, DraftPresetEditPayloadDto, DraftPresetPreviewReferenceDto,
-        DraftRenderProfileDto, LoadPresetCatalogInputDto, PresetCatalogStateResultDto,
-        PresetPublicationAuditRecordDto, PresetSelectionInputDto, PublishValidatedPresetInputDto,
-        PublishValidatedPresetResultDto, RepairInvalidDraftInputDto, RollbackPresetCatalogInputDto,
-        RollbackPresetCatalogResultDto, SessionStartInputDto, ValidateDraftPresetInputDto,
+        CapabilitySnapshotDto, DraftNoisePolicyDto, DraftPresetEditPayloadDto,
+        DraftPresetPreviewReferenceDto, DraftRenderProfileDto, LoadPresetCatalogInputDto,
+        PresetCatalogStateResultDto, PresetPublicationAuditRecordDto, PresetSelectionInputDto,
+        PublishValidatedPresetInputDto, PublishValidatedPresetResultDto,
+        RepairInvalidDraftInputDto, RollbackPresetCatalogInputDto, RollbackPresetCatalogResultDto,
+        SessionStartInputDto, ValidateDraftPresetInputDto,
     },
     preset::{
         authoring_pipeline::{
@@ -46,6 +47,20 @@ fn setup_fake_darktable() {
             .join("fake-darktable-cli.cmd");
         std::env::set_var("BOOTHY_DARKTABLE_CLI_BIN", script_path);
     });
+}
+
+fn capability_snapshot_for_profile(
+    profile: &str,
+    is_admin_authenticated: bool,
+) -> CapabilitySnapshotDto {
+    let mut snapshot = runtime_capability_snapshot_for_profile(profile, is_admin_authenticated);
+
+    if profile == "authoring-enabled" && is_admin_authenticated {
+        snapshot.authenticated_actor_id = Some("manager-kim".into());
+        snapshot.authenticated_actor_label = Some("Kim Manager".into());
+    }
+
+    snapshot
 }
 
 fn unique_test_root(test_name: &str) -> PathBuf {
@@ -636,6 +651,140 @@ fn publication_rejects_actor_label_and_review_note_that_exceed_host_contract_lim
     assert_eq!(review_note_error.code, "validation-error");
     assert!(actor_label_error.message.contains("게시 승인자"));
     assert!(review_note_error.message.contains("2000자"));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn publication_rejects_actor_identity_that_does_not_match_host_owned_identity() {
+    let base_dir = unique_test_root("publish-actor-identity");
+    let capability_snapshot = CapabilitySnapshotDto {
+        is_admin_authenticated: true,
+        allowed_surfaces: vec!["booth".into(), "authoring".into()],
+        authenticated_actor_id: Some("manager-kim".into()),
+        authenticated_actor_label: Some("Kim Manager".into()),
+    };
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_soft-glow-draft");
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should pass before publish");
+
+    let error = publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-lee".into(),
+            actor_label: "Lee Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect_err("host-owned actor identity should reject spoofed approver input");
+
+    assert_eq!(error.code, "capability-denied");
+    assert!(error.message.contains("승인자 신원"));
+    assert!(!resolve_published_preset_catalog_dir(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join("2026.03.26")
+        .exists());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn publication_rejects_while_draft_lock_is_held() {
+    let base_dir = unique_test_root("publish-draft-lock");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    scaffold_valid_draft_assets(&base_dir, "preset_soft-glow-draft");
+    let validation_result = validate_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        ValidateDraftPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+        },
+    )
+    .expect("validation should pass before publish");
+    let draft_lock = resolve_draft_authoring_root(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join(".draft-lock");
+    fs::create_dir_all(&draft_lock).expect("test should hold draft lock");
+
+    let error = publish_validated_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        PublishValidatedPresetInputDto {
+            preset_id: "preset_soft-glow-draft".into(),
+            draft_version: validation_result.draft.draft_version,
+            validation_checked_at: validation_result.report.checked_at.clone(),
+            expected_display_name: "Soft Glow Draft".into(),
+            published_version: "2026.03.26".into(),
+            actor_id: "manager-kim".into(),
+            actor_label: "Kim Manager".into(),
+            scope: "future-sessions-only".into(),
+            review_note: None,
+        },
+    )
+    .expect_err("busy draft should not publish from a stale writer");
+
+    assert_eq!(error.code, "validation-error");
+    assert!(error.message.contains("다른 authoring 작업"));
+    assert!(!resolve_published_preset_catalog_dir(&base_dir)
+        .join("preset_soft-glow-draft")
+        .join("2026.03.26")
+        .exists());
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn malformed_publication_audit_blocks_workspace_load_instead_of_dropping_history() {
+    let base_dir = unique_test_root("malformed-publication-audit");
+    let capability_snapshot = capability_snapshot_for_profile("authoring-enabled", true);
+    create_draft_preset_in_dir(
+        &base_dir,
+        &capability_snapshot,
+        sample_draft_payload("preset_soft-glow-draft", "Soft Glow Draft"),
+    )
+    .expect("draft creation should succeed");
+    let audit_path = base_dir
+        .join("preset-authoring")
+        .join("publication-audit")
+        .join("preset_soft-glow-draft.json");
+    fs::create_dir_all(audit_path.parent().expect("audit directory should exist"))
+        .expect("audit directory should write");
+    fs::write(&audit_path, "{ not-valid-json").expect("malformed audit should write");
+
+    let workspace = load_authoring_workspace_in_dir(&base_dir, &capability_snapshot)
+        .expect("workspace should still return repair guidance");
+
+    assert!(workspace.drafts.is_empty());
+    assert_eq!(workspace.invalid_drafts.len(), 1);
+    assert!(!workspace.invalid_drafts[0].can_repair);
+    assert!(workspace.invalid_drafts[0]
+        .message
+        .contains("publication audit"));
 
     let _ = fs::remove_dir_all(base_dir);
 }

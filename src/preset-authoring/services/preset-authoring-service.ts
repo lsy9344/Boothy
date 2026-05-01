@@ -249,6 +249,7 @@ function ensureMatchingPublicationResult(
 
   if (response.status === 'published') {
     if (
+      input.scope !== 'future-sessions-only' ||
       response.publishedPreset.publishedVersion !== input.publishedVersion ||
       response.draft.lifecycleState !== 'published' ||
       response.auditRecord.action !== 'published' ||
