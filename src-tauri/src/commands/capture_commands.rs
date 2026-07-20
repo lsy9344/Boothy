@@ -144,18 +144,31 @@ pub fn request_capture(
             &preview_capture_id,
         ) {
             Ok(capture) => {
-                let preview_elapsed_ms = capture
-                    .timing
-                    .preview_visible_at_ms
-                    .unwrap_or(capture.raw.persisted_at_ms)
-                    .saturating_sub(capture.timing.capture_acknowledged_at_ms);
-                log::info!(
-                    "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={}",
-                    preview_session_id,
-                    preview_capture_id,
-                    preview_elapsed_ms,
-                    capture.timing.preview_budget_state
-                );
+                if let Some(preview_ready_at_ms) = capture.timing.xmp_preview_ready_at_ms {
+                    let preview_elapsed_ms = preview_ready_at_ms
+                        .saturating_sub(capture.timing.capture_acknowledged_at_ms);
+                    log::info!(
+                        "capture_preview_ready session={} capture_id={} elapsed_ms={} budget_state={}",
+                        preview_session_id,
+                        preview_capture_id,
+                        preview_elapsed_ms,
+                        capture.timing.preview_budget_state
+                    );
+                } else {
+                    let first_visible_at_ms = capture
+                        .timing
+                        .fast_preview_visible_at_ms
+                        .unwrap_or(capture.raw.persisted_at_ms);
+                    let first_visible_elapsed_ms = first_visible_at_ms
+                        .saturating_sub(capture.timing.capture_acknowledged_at_ms);
+                    log::info!(
+                        "capture_first_visible_pending session={} capture_id={} elapsed_ms={} render_status={}",
+                        preview_session_id,
+                        preview_capture_id,
+                        first_visible_elapsed_ms,
+                        capture.render_status
+                    );
+                }
                 capture
             }
             Err(_) => {
@@ -183,10 +196,17 @@ pub fn request_capture(
         };
         let readiness = read_current_capture_readiness(&preview_base_dir, &preview_session_id)
             .unwrap_or_else(|| {
-                CaptureReadinessDto::preview_ready(
-                    preview_session_id.clone(),
-                    initial_capture.clone(),
-                )
+                if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
+                    CaptureReadinessDto::preview_ready(
+                        preview_session_id.clone(),
+                        initial_capture.clone(),
+                    )
+                } else {
+                    CaptureReadinessDto::preview_waiting(
+                        preview_session_id.clone(),
+                        Some(initial_capture.clone()),
+                    )
+                }
             });
 
         let _ = preview_app.emit(
@@ -202,7 +222,7 @@ pub fn request_capture(
                 &preview_capture_id,
                 initial_capture
                     .timing
-                    .preview_visible_at_ms
+                    .fast_preview_visible_at_ms
                     .unwrap_or(initial_capture.raw.persisted_at_ms),
             );
         }

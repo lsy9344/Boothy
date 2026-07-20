@@ -21,8 +21,8 @@ const PINNED_DARKTABLE_VERSION: &str = "5.4.1";
 const MAX_IN_FLIGHT_RENDER_JOBS: usize = 2;
 const DEFAULT_RENDER_TIMEOUT: Duration = Duration::from_secs(45);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
-const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 512;
-const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 512;
+const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
+const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_HEIGHT_PX: u32 = 384;
 const DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED: &str = "false";
@@ -890,7 +890,6 @@ fn build_darktable_invocation_from_source(
     if matches!(intent, RenderIntent::Preview) {
         arguments.push("--apply-custom-presets".into());
         arguments.push(DARKTABLE_APPLY_CUSTOM_PRESETS_DISABLED.into());
-        arguments.push("--disable-opencl".into());
         let (width_cap, height_cap) = preview_render_dimensions(render_source_kind);
         arguments.push("--width".into());
         arguments.push(width_cap.to_string());
