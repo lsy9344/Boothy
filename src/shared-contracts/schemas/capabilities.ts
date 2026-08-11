@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-const surfaceCapabilities = ['booth', 'operator', 'authoring', 'settings'] as const
+const surfaceCapabilities = [
+  'booth',
+  'viewer',
+  'operator',
+  'authoring',
+  'settings',
+] as const
 
 export const surfaceCapabilitySchema = z.enum(surfaceCapabilities)
 export type SurfaceCapability = z.infer<typeof surfaceCapabilitySchema>

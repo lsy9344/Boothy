@@ -1,0 +1,44 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - paragraph [ref=e5]: Ready
+    - heading "지금 촬영할 수 있어요." [level=1] [ref=e6]
+    - paragraph [ref=e7]: 방금 찍은 사진을 아래에서 바로 확인할 수 있어요.
+    - generic [ref=e8]:
+      - article [ref=e9]:
+        - generic [ref=e10]:
+          - paragraph [ref=e11]: 세션 진행 중
+          - generic [ref=e12]:
+            - heading "종료 시각이 고정되어 있어요." [level=2] [ref=e13]
+            - paragraph [ref=e14]: 남은 시간을 보면서 여유 있게 촬영을 마무리할 수 있어요.
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - paragraph [ref=e17]: 종료 시각
+            - paragraph [ref=e18]: 오후 2:17
+          - generic [ref=e19]:
+            - paragraph [ref=e20]: 남은 시간
+            - paragraph [ref=e21]: 14:09
+      - article [ref=e22]:
+        - generic [ref=e23]:
+          - heading "현재 세션" [level=2] [ref=e24]
+          - paragraph [ref=e25]: 홍길동 1234
+        - generic [ref=e26]:
+          - heading "현재 룩" [level=2] [ref=e27]
+          - paragraph [ref=e28]: Daylight
+          - paragraph [ref=e29]: 지금 바꾸면 다음 촬영부터만 새 룩이 적용돼요.
+        - generic [ref=e30]:
+          - heading "카메라 상태" [level=2] [ref=e31]
+          - paragraph [ref=e32]: 연결됨
+          - paragraph [ref=e33]: 카메라 연결이 확인되어 지금 촬영할 수 있어요.
+      - article [ref=e34]:
+        - button "다음 촬영 룩 바꾸기" [ref=e35] [cursor=pointer]
+        - button "사진 찍기" [ref=e36] [cursor=pointer]
+      - article [ref=e37]:
+        - generic [ref=e38]:
+          - heading "현재 세션 사진" [level=2] [ref=e39]
+          - paragraph [ref=e40]: 현재 세션에서 준비된 확인용 사진만 보여줘요.
+        - list "현재 세션 사진 레일" [ref=e41]:
+          - listitem "촬영 당시 Daylight 룩" [ref=e42]:
+            - generic [ref=e43]: 최신 사진
+            - img "현재 세션 최신 사진, 1번째, Daylight 룩" [ref=e44]
+            - paragraph [ref=e46]: 현재 룩과 같은 바인딩으로 유지돼요.
+            - button "사진 정리" [ref=e47] [cursor=pointer]

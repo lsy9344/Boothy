@@ -16,9 +16,16 @@ export interface CapabilityService {
 }
 
 const SURFACE_WINDOW_LABELS: Partial<Record<SurfaceCapability, string>> = {
+  viewer: 'viewer-window',
   operator: 'operator-window',
   authoring: 'authoring-window',
 }
+
+/**
+ * 고객 surface는 관리자 인증을 요구하지 않는다. 창 label로만 경계를 잡는다.
+ * privileged surface(operator/authoring/settings)는 계속 인증을 요구한다.
+ */
+const CUSTOMER_SURFACES: readonly SurfaceCapability[] = ['booth', 'viewer']
 
 class StaticCapabilityService implements CapabilityService {
   private readonly snapshot: CapabilitySnapshot
@@ -34,6 +41,10 @@ class StaticCapabilityService implements CapabilityService {
       return true
     }
 
+    if (surface === 'viewer') {
+      return this.currentWindowLabel === SURFACE_WINDOW_LABELS.viewer
+    }
+
     const requiredWindowLabel = SURFACE_WINDOW_LABELS[surface]
 
     if (
@@ -42,6 +53,10 @@ class StaticCapabilityService implements CapabilityService {
       this.currentWindowLabel !== requiredWindowLabel
     ) {
       return false
+    }
+
+    if (CUSTOMER_SURFACES.includes(surface)) {
+      return true
     }
 
     return (

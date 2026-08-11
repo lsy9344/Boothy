@@ -17,6 +17,7 @@ use crate::{
         CaptureRequestInputDto, CaptureRequestResultDto, HostErrorEnvelope,
     },
     session::session_repository::resolve_app_session_base_dir,
+    viewer::readiness_gate::{apply_viewer_gate, CAPTURE_REASON_VIEWER_PREPARING},
 };
 
 const CAPTURE_READINESS_UPDATE_EVENT: &str = "capture-readiness-update";
@@ -36,7 +37,14 @@ pub fn get_capture_readiness(
     try_ensure_helper_running(&base_dir, &input.session_id);
     let session_id = input.session_id.clone();
 
-    match get_capture_readiness_in_dir(&base_dir, input) {
+    // Story 7.1: 관람 창이 사라졌다면 여기서 복구한다. booth가 readiness를 주기적으로 조회하므로
+    // 창을 잃어도 자동으로 다시 열리고, 그 전까지 촬영은 `viewer-preparing`으로 정직하게 막힌다.
+    // 이 호출은 main thread에서도 안전하다. 생성은 background 스레드로 넘어가고 즉시 반환된다.
+    crate::commands::viewer_commands::ensure_viewer_window_state(&app);
+
+    match get_capture_readiness_in_dir(&base_dir, input)
+        .map(|readiness| gate_readiness_on_viewer(&app, readiness, &session_id))
+    {
         Ok(readiness) => {
             let live_truth_summary = readiness
                 .live_capture_truth
@@ -97,6 +105,26 @@ pub fn request_capture(
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
     try_ensure_helper_running(&base_dir, &input.session_id);
     let session_id = input.session_id.clone();
+
+    // Story 7.1: 관람 창이 현재 세션에 준비되기 전에는 촬영을 시작하지 않는다.
+    let readiness =
+        read_current_capture_readiness(&app, &base_dir, &session_id).ok_or_else(|| {
+            log::warn!("capture_blocked_readiness_unavailable session={session_id}");
+            HostErrorEnvelope::capture_not_ready(
+                "촬영 준비 상태를 다시 확인하고 있어요.",
+                CaptureReadinessDto::viewer_preparing(session_id.clone()),
+            )
+        })?;
+
+    if !readiness.can_capture && readiness.reason_code == CAPTURE_REASON_VIEWER_PREPARING {
+        log::warn!("capture_blocked_viewer_not_ready session={session_id}");
+
+        return Err(HostErrorEnvelope::capture_not_ready(
+            "화면을 준비하고 있어요.",
+            readiness,
+        ));
+    }
+
     let preview_session_id = session_id.clone();
     let preview_app = app.clone();
     let result = match request_capture_in_dir_with_fast_preview(&base_dir, input, move |update| {
@@ -182,11 +210,12 @@ pub fn request_capture(
                     &preview_session_id,
                     &preview_capture_id,
                 );
-                let readiness =
-                    read_current_capture_readiness(&preview_base_dir, &preview_session_id)
-                        .unwrap_or_else(|| {
-                            CaptureReadinessDto::phone_required(preview_session_id.clone())
-                        });
+                let readiness = read_current_capture_readiness(
+                    &preview_app,
+                    &preview_base_dir,
+                    &preview_session_id,
+                )
+                .unwrap_or_else(|| CaptureReadinessDto::phone_required(preview_session_id.clone()));
                 let _ = preview_app.emit(
                     CAPTURE_READINESS_UPDATE_EVENT,
                     CaptureReadinessUpdateDto::new(preview_session_id, readiness),
@@ -194,20 +223,21 @@ pub fn request_capture(
                 return;
             }
         };
-        let readiness = read_current_capture_readiness(&preview_base_dir, &preview_session_id)
-            .unwrap_or_else(|| {
-                if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
-                    CaptureReadinessDto::preview_ready(
-                        preview_session_id.clone(),
-                        initial_capture.clone(),
-                    )
-                } else {
-                    CaptureReadinessDto::preview_waiting(
-                        preview_session_id.clone(),
-                        Some(initial_capture.clone()),
-                    )
-                }
-            });
+        let readiness =
+            read_current_capture_readiness(&preview_app, &preview_base_dir, &preview_session_id)
+                .unwrap_or_else(|| {
+                    if initial_capture.timing.xmp_preview_ready_at_ms.is_some() {
+                        CaptureReadinessDto::preview_ready(
+                            preview_session_id.clone(),
+                            initial_capture.clone(),
+                        )
+                    } else {
+                        CaptureReadinessDto::preview_waiting(
+                            preview_session_id.clone(),
+                            Some(initial_capture.clone()),
+                        )
+                    }
+                });
 
         let _ = preview_app.emit(
             CAPTURE_READINESS_UPDATE_EVENT,
@@ -231,7 +261,27 @@ pub fn request_capture(
     Ok(result)
 }
 
+/// Story 7.1: viewer가 준비되지 않았으면 촬영 가능 상태를 내린다 (downgrade 전용).
+fn gate_readiness_on_viewer(
+    app: &tauri::AppHandle,
+    readiness: CaptureReadinessDto,
+    session_id: &str,
+) -> CaptureReadinessDto {
+    let snapshot = {
+        let handle = app.state::<crate::viewer::ViewerStateHandle>();
+        let state = handle.0.lock().expect("viewer state lock poisoned");
+
+        state.snapshot_with_clock(
+            crate::viewer::current_epoch_ms(),
+            crate::viewer::current_monotonic_ms(),
+        )
+    };
+
+    apply_viewer_gate(readiness, &snapshot, session_id)
+}
+
 fn read_current_capture_readiness(
+    app: &tauri::AppHandle,
     base_dir: &std::path::Path,
     session_id: &str,
 ) -> Option<CaptureReadinessDto> {
@@ -242,6 +292,7 @@ fn read_current_capture_readiness(
         },
     )
     .ok()
+    .map(|readiness| gate_readiness_on_viewer(app, readiness, session_id))
 }
 
 fn emit_refined_preview_readiness_when_available(
@@ -254,7 +305,7 @@ fn emit_refined_preview_readiness_when_available(
     let wait_cycles = (PREVIEW_REFINEMENT_WAIT_MS / PREVIEW_REFINEMENT_POLL_MS).max(1);
 
     for _ in 0..=wait_cycles {
-        let Some(readiness) = read_current_capture_readiness(base_dir, session_id) else {
+        let Some(readiness) = read_current_capture_readiness(app, base_dir, session_id) else {
             thread::sleep(Duration::from_millis(PREVIEW_REFINEMENT_POLL_MS));
             continue;
         };

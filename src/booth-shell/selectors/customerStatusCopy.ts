@@ -32,6 +32,7 @@ export function selectCustomerStatusCopy(
   manifestPostEnd: SessionPostEndRecord | null = null,
 ): CustomerStatusCopy {
   const isPreviewWaiting = readiness.reasonCode === 'preview-waiting'
+  const isViewerPreparing = readiness.reasonCode === 'viewer-preparing'
   const isExportWaiting = readiness.reasonCode === 'export-waiting'
   const isPostEndFinalized =
     readiness.reasonCode === 'completed' || readiness.reasonCode === 'phone-required'
@@ -54,7 +55,9 @@ export function selectCustomerStatusCopy(
     postEnd,
     helperText: isPreviewWaiting
       ? '사진 레일이 아직 비어 있어도 현재 세션 기준으로는 정상이에요.'
-      : null,
-    nextActionText: isPreviewWaiting ? '지금은 잠시 기다리면 돼요.' : null,
+      : isViewerPreparing
+        ? '사진이 보일 화면을 맞추는 중이에요.'
+        : null,
+    nextActionText: isPreviewWaiting || isViewerPreparing ? '지금은 잠시 기다리면 돼요.' : null,
   }
 }

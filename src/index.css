@@ -1111,3 +1111,49 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+/* Story 7.1: 전용 관람 화면 (read-only customer viewer) */
+.viewer-surface {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2.5vh;
+  padding: 3vh 3vw;
+  background: #0b0908;
+  overflow: hidden;
+}
+
+.viewer-surface__stage {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+
+/*
+ * 3:2 사진 자리를 stage 안에 contain으로 배치한다.
+ * `width = min(stage 너비, stage 높이 x 1.5)`가 contain-fit의 정확한 정의이며,
+ * `aspect-ratio` + `max-width/max-height` 조합보다 결과가 예측 가능하다.
+ * use-viewer-readiness가 이 요소를 실측해 display-fit 계약을 만든다.
+ */
+.viewer-surface__photo {
+  width: min(100cqw, calc(100cqh * 3 / 2));
+  aspect-ratio: 3 / 2;
+  flex: 0 0 auto;
+  background: #17110f;
+}
+
+.viewer-surface__standby {
+  flex: 0 0 auto;
+  margin: 0;
+  color: #f4efe6;
+  font-size: clamp(1.1rem, 2.2vh, 1.75rem);
+  letter-spacing: 0.01em;
+  text-align: center;
+}

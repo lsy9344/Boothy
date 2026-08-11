@@ -20,6 +20,9 @@ pub fn start_session(
 
     let result = start_session_in_dir(&base_dir, input)?;
     try_ensure_helper_running(&base_dir, &result.session_id);
+    // Story 7.1: 현재 세션 binding은 booth React 상태가 아니라 host가 소유한다.
+    // 관람 창은 별개 WebView이므로 host truth 없이는 현재 세션을 알 수 없다.
+    crate::commands::viewer_commands::bind_viewer_session(&app, &result.session_id);
 
     Ok(result)
 }

@@ -95,6 +95,7 @@ export const captureReasonCodeSchema = z.enum([
   'camera-preparing',
   'capture-retry-required',
   'helper-preparing',
+  'viewer-preparing',
   'preview-waiting',
   'export-waiting',
   'completed',

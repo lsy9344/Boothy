@@ -1,0 +1,6 @@
+$ErrorActionPreference = 'Stop'
+$env:BOOTHY_APPROVED_CUSTOMER_MONITOR = '\\.\DISPLAY3'
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
+$env:RUST_LOG = 'info'
+Set-Location -LiteralPath 'C:\Code\Boothy'
+& pnpm.cmd tauri dev --no-watch *> 'C:\Code\Boothy\tests\hardware\viewer-present\run-20260811-135652\logs\approved-display3.log'

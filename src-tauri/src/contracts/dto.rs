@@ -1328,6 +1328,20 @@ impl CaptureReadinessDto {
         )
     }
 
+    pub fn viewer_preparing(session_id: impl Into<String>) -> Self {
+        Self::build(
+            session_id,
+            "blocked",
+            "Preparing",
+            false,
+            "wait",
+            "화면을 준비하고 있어요.",
+            "곧 촬영을 시작할 수 있어요.",
+            "viewer-preparing",
+            None,
+        )
+    }
+
     pub fn capture_retry_required(
         session_id: impl Into<String>,
         latest_capture: Option<SessionCaptureRecord>,
@@ -1694,4 +1708,111 @@ impl HostErrorEnvelope {
             field_errors: None,
         }
     }
+}
+
+pub const VIEWER_READINESS_SCHEMA_VERSION: &str = "viewer-readiness/v1";
+pub const VIEWER_READINESS_UPDATE_SCHEMA_VERSION: &str = "viewer-readiness-update/v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerDisplayProfileDto {
+    pub profile_id: String,
+    pub monitor_name: Option<String>,
+    pub monitor_width_px: u32,
+    pub monitor_height_px: u32,
+    pub monitor_scale_factor: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerPhotoRectDto {
+    pub css_width: f64,
+    pub css_height: f64,
+    pub device_pixel_ratio: f64,
+    pub required_source_width_px: u32,
+    pub required_source_height_px: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerReadinessSnapshotDto {
+    pub schema_version: String,
+    pub session_id: Option<String>,
+    pub viewer_epoch: u64,
+    pub revision: u64,
+    pub window_state: String,
+    pub listener_ready: bool,
+    pub layout_ready: bool,
+    pub monitor_targeting: String,
+    pub display_profile: Option<ViewerDisplayProfileDto>,
+    pub photo_rect: Option<ViewerPhotoRectDto>,
+    pub viewer_ready: bool,
+    pub reason_code: String,
+    pub observed_at_ms: u64,
+    pub last_report_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerReadinessUpdateDto {
+    pub schema_version: String,
+    pub readiness: ViewerReadinessSnapshotDto,
+}
+
+impl ViewerReadinessUpdateDto {
+    pub fn new(readiness: ViewerReadinessSnapshotDto) -> Self {
+        Self {
+            schema_version: VIEWER_READINESS_UPDATE_SCHEMA_VERSION.into(),
+            readiness,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerLayoutReportDto {
+    pub viewer_epoch: u64,
+    pub session_id: Option<String>,
+    pub css_width: f64,
+    pub css_height: f64,
+    pub device_pixel_ratio: f64,
+    pub layout_ready: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerListenerReportDto {
+    pub viewer_epoch: u64,
+}
+
+pub fn validate_viewer_layout_report(
+    report: &ViewerLayoutReportDto,
+) -> Result<(), HostErrorEnvelope> {
+    if let Some(session_id) = report.session_id.as_deref() {
+        validate_session_id(session_id)?;
+    }
+
+    if !report.css_width.is_finite()
+        || !report.css_height.is_finite()
+        || !report.device_pixel_ratio.is_finite()
+        || report.css_width < 0.0
+        || report.css_height < 0.0
+        || report.device_pixel_ratio <= 0.0
+        || (report.layout_ready && (report.css_width == 0.0 || report.css_height == 0.0))
+    {
+        return Err(HostErrorEnvelope::validation_message(
+            "관람 화면 크기 정보를 다시 확인해 주세요.",
+        ));
+    }
+
+    let required_source_width = report.css_width * report.device_pixel_ratio;
+    let required_source_height = report.css_height * report.device_pixel_ratio;
+
+    if required_source_width > u32::MAX as f64 || required_source_height > u32::MAX as f64 {
+        return Err(HostErrorEnvelope::validation_message(
+            "관람 화면 크기 정보를 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
 }

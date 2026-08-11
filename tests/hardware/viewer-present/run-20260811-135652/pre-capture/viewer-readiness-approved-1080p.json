@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "viewer-readiness/v1",
+  "sessionId": "session_000000000018caa7ab126c292c",
+  "viewerEpoch": 1,
+  "revision": 6,
+  "windowState": "open",
+  "listenerReady": true,
+  "layoutReady": true,
+  "monitorTargeting": "approved-customer-monitor",
+  "displayProfile": {
+    "profileId": "1080p",
+    "monitorName": "\\\\.\\DISPLAY3",
+    "monitorWidthPx": 1920,
+    "monitorHeightPx": 1080,
+    "monitorScaleFactor": 1
+  },
+  "photoRect": {
+    "cssWidth": 1428.859375,
+    "cssHeight": 952.5625,
+    "devicePixelRatio": 1,
+    "requiredSourceWidthPx": 1429,
+    "requiredSourceHeightPx": 953
+  },
+  "viewerReady": true,
+  "reasonCode": "viewer-ready",
+  "observedAtMs": 1786424579567,
+  "lastReportAtMs": 1786424579148
+}

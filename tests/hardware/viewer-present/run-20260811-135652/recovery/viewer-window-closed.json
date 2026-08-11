@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "viewer-readiness/v1",
+  "sessionId": "session_000000000018caa7ab126c292c",
+  "viewerEpoch": 1,
+  "revision": 7,
+  "windowState": "closed",
+  "listenerReady": false,
+  "layoutReady": false,
+  "monitorTargeting": "approved-customer-monitor",
+  "displayProfile": {
+    "profileId": "1080p",
+    "monitorName": "\\\\.\\DISPLAY3",
+    "monitorWidthPx": 1920,
+    "monitorHeightPx": 1080,
+    "monitorScaleFactor": 1
+  },
+  "photoRect": null,
+  "viewerReady": false,
+  "reasonCode": "viewer-window-closed",
+  "lastReportAtMs": null
+}

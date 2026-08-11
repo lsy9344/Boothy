@@ -15,10 +15,12 @@ import { SessionStartScreen } from '../booth-shell/screens/SessionStartScreen'
 import { OperatorSummaryScreen } from '../operator-console/screens/OperatorSummaryScreen'
 import type { OperatorDiagnosticsService } from '../operator-console/services/operator-diagnostics-service'
 import { SettingsScreen } from '../settings/screens/SettingsScreen'
+import { ViewerSurface } from '../viewer-surface/ViewerSurface'
 import type { ActivePresetService } from '../session-domain/services/active-preset'
 import type { StartSessionService } from '../session-domain/services/start-session'
 import { App } from './App'
 import { SurfaceAccessGuard } from './guards/surface-access-guard'
+import { ViewerSurfaceGuard } from './guards/viewer-surface-guard'
 import {
   AppProviders,
 } from './providers/app-providers'
@@ -69,6 +71,15 @@ export function createAppRoutes({
         {
           path: 'booth',
           element: <SessionStartScreen />,
+        },
+        {
+          element: <ViewerSurfaceGuard />,
+          children: [
+            {
+              path: 'viewer',
+              element: <ViewerSurface />,
+            },
+          ],
         },
         {
           element: <SurfaceAccessGuard surface="operator" />,

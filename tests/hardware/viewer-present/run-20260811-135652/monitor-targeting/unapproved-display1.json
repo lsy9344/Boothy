@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "viewer-readiness/v1",
+  "sessionId": null,
+  "viewerEpoch": 1,
+  "revision": 4,
+  "windowState": "open",
+  "listenerReady": true,
+  "layoutReady": true,
+  "monitorTargeting": "unapproved-profile",
+  "displayProfile": null,
+  "photoRect": {
+    "cssWidth": 1353.59375,
+    "cssHeight": 902.3958740234376,
+    "devicePixelRatio": 1.5,
+    "requiredSourceWidthPx": 2031,
+    "requiredSourceHeightPx": 1354
+  },
+  "viewerReady": false,
+  "reasonCode": "monitor-not-approved"
+}

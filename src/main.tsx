@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 
-import { createCapabilityService } from './app/services/capability-service'
+import { resolveBootCapabilityService } from './app/boot/resolve-capability-service'
 import { createBrowserAppRouter } from './app/routes'
 import { createDefaultRuntimeCapabilityGateway } from './session-domain/services/runtime-capability-gateway'
 import { isTauriRuntime } from './shared/runtime/is-tauri'
@@ -25,6 +25,11 @@ function alignInitialRouteToWindow(windowLabel: string | null) {
 
   const currentPath = window.location.pathname
 
+  if (windowLabel === 'viewer-window' && currentPath !== '/viewer') {
+    window.history.replaceState({}, '', '/viewer')
+    return
+  }
+
   if (windowLabel === 'operator-window' && currentPath !== '/operator') {
     window.history.replaceState({}, '', '/operator')
     return
@@ -37,7 +42,9 @@ function alignInitialRouteToWindow(windowLabel: string | null) {
 
   if (
     windowLabel === 'booth-window' &&
-    (currentPath === '/authoring' || currentPath === '/operator')
+    (currentPath === '/authoring' ||
+      currentPath === '/operator' ||
+      currentPath === '/viewer')
   ) {
     window.history.replaceState({}, '', '/booth')
   }
@@ -47,18 +54,10 @@ async function bootstrap() {
   const currentWindowLabel = await readCurrentWindowLabel()
   alignInitialRouteToWindow(currentWindowLabel)
 
-  let capabilityService = createCapabilityService({ currentWindowLabel })
-
-  try {
-    const capabilitySnapshot =
-      await createDefaultRuntimeCapabilityGateway().readSnapshot()
-    capabilityService = createCapabilityService({
-      ...capabilitySnapshot,
-      currentWindowLabel,
-    })
-  } catch {
-    capabilityService = createCapabilityService({ currentWindowLabel })
-  }
+  const capabilityService = await resolveBootCapabilityService({
+    currentWindowLabel,
+    readSnapshot: () => createDefaultRuntimeCapabilityGateway().readSnapshot(),
+  })
 
   const router = createBrowserAppRouter({ capabilityService })
 
