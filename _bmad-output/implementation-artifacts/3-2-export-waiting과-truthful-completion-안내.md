@@ -101,7 +101,7 @@ booth customer로서,
 - FR-007의 목표 구조는 `src/completion-handoff/`와 `src-tauri/src/handoff/`이다. 이번 스토리에서 최소 구현이 기존 `capture`/`session` 경계를 일부 활용하더라도 최종 책임은 이 구조로 수렴해야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Requirements to Structure Mapping]
 - frontend-to-host post-end 흐름은 typed adapter/service를 통해 들어와야 하며, component에서 raw Tauri 호출이나 임시 state machine을 만들면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Frontend Architecture]
 - customer-facing completion copy와 operator-facing post-end truth는 같은 normalized host truth에서 파생돼야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#State Management Patterns]
-- session folder는 이미지/세션 truth를, SQLite는 timing transition과 lifecycle audit를 소유한다. post-end truth도 이 경계 안에 있어야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture]
+- session folder는 이미지/세션 truth를, versioned JSON/JSONL journal은 timing transition과 lifecycle audit truth를 소유한다. SQLite는 derived query index로만 허용되며 post-end truth도 이 경계 안에 있어야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#Data Architecture]
 
 ### 프로젝트 구조 요구사항
 

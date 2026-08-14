@@ -1069,6 +1069,93 @@ fn default_catalog_bootstraps_first_run_booth_presets() {
         .iter()
         .all(|preset| preset.preview.asset_path.ends_with(".svg")));
 
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let soft_glow_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_soft-glow")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Soft Glow XMP should exist");
+    let mono_pop_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_mono-pop")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Mono Pop XMP should exist");
+    let daylight_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_daylight")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Daylight XMP should exist");
+    assert!(soft_glow_xmp.contains("darktable:operation=\"sigmoid\""));
+    assert!(soft_glow_xmp.contains("darktable:operation=\"bloom\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"monochrome\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"sharpen\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"temperature\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"sharpen\""));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn default_catalog_upgrades_placeholder_xmp_for_seeded_filters() {
+    let base_dir = unique_test_root("default-catalog-filter-upgrade");
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("default booth presets should be created for first run");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let placeholder =
+        include_str!("../src/preset/default_catalog_assets/default-render-template.xmp");
+
+    for preset_id in ["preset_soft-glow", "preset_mono-pop", "preset_daylight"] {
+        fs::write(
+            catalog_root
+                .join(preset_id)
+                .join("2026.03.27")
+                .join("xmp")
+                .join("template.xmp"),
+            placeholder,
+        )
+        .expect("placeholder XMP should be writable");
+    }
+
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("placeholder XMP should be upgraded in place");
+
+    let soft_glow_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_soft-glow")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Soft Glow XMP should exist");
+    let mono_pop_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_mono-pop")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Mono Pop XMP should exist");
+    let daylight_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_daylight")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Daylight XMP should exist");
+    assert!(soft_glow_xmp.contains("darktable:operation=\"sigmoid\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"monochrome\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"temperature\""));
+
     let _ = fs::remove_dir_all(base_dir);
 }
 

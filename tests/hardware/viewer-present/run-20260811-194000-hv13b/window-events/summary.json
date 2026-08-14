@@ -1,0 +1,7 @@
+{
+  "result": "not-measurable",
+  "viewerPresentRows": 0,
+  "zeroEventSamples": 0,
+  "failedSamples": 0,
+  "reason": "viewerWindowEventsAfterInput is stored in viewer-present rows, but no rows were persisted"
+}

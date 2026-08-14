@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "hv-13b-integrity-check/v1",
+  "sessionId": "session_000000000018cae330831707f8",
+  "generations": [
+    {"generationSeq": 1, "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 2, "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true},
+    {"generationSeq": 3, "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 4, "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true}
+  ],
+  "passed": 4,
+  "failed": 0
+}
+

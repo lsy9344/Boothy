@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "viewer-display/v1",
+  "sessionId": "session_000000000018caba753053fe4c",
+  "revision": 3,
+  "activeGeneration": {
+    "generationId": "request_0000000000000658c332e6ad98-000002",
+    "generationSeq": 2,
+    "sessionId": "session_000000000018caba753053fe4c",
+    "requestId": "request_0000000000000658c332e6ad98",
+    "captureId": "capture_20260811104737327_15e542ab13",
+    "viewerEpoch": 1,
+    "tier": "sample",
+    "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018caba753053fe4c\\renders\\display\\request_0000000000000658c332e6ad98\\000002-b.jpg",
+    "sourceWidthPx": 3840,
+    "sourceHeightPx": 2560,
+    "byteSize": 719796,
+    "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b",
+    "sampleVariant": "b",
+    "committedAtHostMicros": 76839040
+  },
+  "requiredSourceWidthPx": 1429,
+  "requiredSourceHeightPx": 953,
+  "measurementLaneEnabled": true,
+  "observedAtHostMicros": 76839040
+}

@@ -99,6 +99,113 @@ public sealed class JsonFileProtocolTests : IDisposable
         Assert.Empty(protocol.ReadRequests());
     }
 
+    [Fact]
+    public void Source_events_serialize_the_correlation_fields_consumed_by_the_host()
+    {
+        var arrived = new SourceObjectArrivedMessage(
+            CanonHelperSchemas.SourceObjectArrived,
+            "source-object-arrived",
+            "session_1",
+            "request_1",
+            "capture_1",
+            "2026-08-12T10:15:31Z",
+            "C:\\runtime\\paired.jpg",
+            1234,
+            1,
+            42,
+            "jpeg",
+            false,
+            "sdkformat"
+        );
+        var capability = new ImageQualityCapabilityMessage(
+            CanonHelperSchemas.ImageQualityCapability,
+            "image-quality-capability",
+            "session_1",
+            "2026-08-12T10:15:30Z",
+            1_723_460_130_123_456,
+            true,
+            0x0010ff0f,
+            [0x0010ff0f, 0x00640013],
+            true
+        );
+        var fileArrived = new FileArrivedMessage(
+            CanonHelperSchemas.FileArrived,
+            "file-arrived",
+            "session_1",
+            "request_1",
+            "capture_1",
+            "2026-08-12T10:15:32Z",
+            "C:\\runtime\\capture_1.cr2",
+            null,
+            null,
+            0,
+            42,
+            "raw",
+            false
+        );
+        var rejected = new SourceObjectRejectedMessage(
+            CanonHelperSchemas.SourceObjectRejected,
+            "source-object-rejected",
+            "session_1",
+            "request_1",
+            "capture_1",
+            "2026-08-12T10:15:33Z",
+            "group-mismatch",
+            "jpeg",
+            1,
+            43,
+            false,
+            "sdkformat",
+            "IMG_0002.JPG"
+        );
+        var settingWarning = new CameraSettingWarningMessage(
+            CanonHelperSchemas.CameraSettingWarning,
+            "camera-setting-warning",
+            "session_1",
+            "request_1",
+            "capture_1",
+            "2026-08-12T10:15:34Z",
+            "image-quality-restore-failed"
+        );
+
+        using var arrivedJson = JsonDocument.Parse(JsonSerializer.Serialize(arrived, JsonOptions));
+        using var capabilityJson = JsonDocument.Parse(
+            JsonSerializer.Serialize(capability, JsonOptions)
+        );
+        using var fileArrivedJson = JsonDocument.Parse(
+            JsonSerializer.Serialize(fileArrived, JsonOptions)
+        );
+        using var rejectedJson = JsonDocument.Parse(JsonSerializer.Serialize(rejected, JsonOptions));
+        using var settingWarningJson = JsonDocument.Parse(
+            JsonSerializer.Serialize(settingWarning, JsonOptions)
+        );
+
+        Assert.Equal(1, arrivedJson.RootElement.GetProperty("objectIndex").GetInt32());
+        Assert.Equal(42u, arrivedJson.RootElement.GetProperty("groupId").GetUInt32());
+        Assert.Equal("jpeg", arrivedJson.RootElement.GetProperty("objectRole").GetString());
+        Assert.False(
+            arrivedJson.RootElement.GetProperty("usedFallbackCorrelation").GetBoolean()
+        );
+        Assert.True(
+            capabilityJson.RootElement.GetProperty("rawPlusJpegSupported").GetBoolean()
+        );
+        Assert.Equal(
+            1_723_460_130_123_456,
+            capabilityJson.RootElement.GetProperty("probedAtHostMicros").GetInt64()
+        );
+        Assert.Equal(0, fileArrivedJson.RootElement.GetProperty("objectIndex").GetInt32());
+        Assert.Equal("raw", fileArrivedJson.RootElement.GetProperty("objectRole").GetString());
+        Assert.Equal(
+            "group-mismatch",
+            rejectedJson.RootElement.GetProperty("rejectReason").GetString()
+        );
+        Assert.Equal(1, rejectedJson.RootElement.GetProperty("objectIndex").GetInt32());
+        Assert.Equal(
+            "image-quality-restore-failed",
+            settingWarningJson.RootElement.GetProperty("detailCode").GetString()
+        );
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_runtimeRoot))

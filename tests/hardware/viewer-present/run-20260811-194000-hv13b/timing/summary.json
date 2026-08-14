@@ -1,0 +1,12 @@
+{
+  "result": "no-go",
+  "visibleStandbyCaptures": 5,
+  "hiddenPrewarmCaptures": 1,
+  "committedGenerations": 12,
+  "viewerPresentRows": 0,
+  "qualifyingSamples": 0,
+  "p50Micros": null,
+  "p95Micros": null,
+  "maxMicros": null,
+  "reason": "viewer-present.jsonl was not created in either measured session"
+}

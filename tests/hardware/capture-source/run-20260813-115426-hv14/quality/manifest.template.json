@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "hv-14-quality/v1",
+  "humanApproved": false,
+  "reviewer": "<reviewer>",
+  "scenes": [
+    {
+      "kind": "bright",
+      "assets": [
+        { "route": "embedded-jpeg", "file": "<relative image>" },
+        { "route": "camera-paired-jpeg", "file": "<relative image>" },
+        { "route": "windows-shell-thumbnail", "file": "<relative image>" }
+      ]
+    },
+    {
+      "kind": "dark",
+      "assets": [
+        { "route": "embedded-jpeg", "file": "<relative image>" },
+        { "route": "camera-paired-jpeg", "file": "<relative image>" },
+        { "route": "windows-shell-thumbnail", "file": "<relative image>" }
+      ]
+    },
+    {
+      "kind": "portrait",
+      "assets": [
+        { "route": "embedded-jpeg", "file": "<relative image>" },
+        { "route": "camera-paired-jpeg", "file": "<relative image>" },
+        { "route": "windows-shell-thumbnail", "file": "<relative image>" }
+      ]
+    },
+    {
+      "kind": "high-contrast",
+      "assets": [
+        { "route": "embedded-jpeg", "file": "<relative image>" },
+        { "route": "camera-paired-jpeg", "file": "<relative image>" },
+        { "route": "windows-shell-thumbnail", "file": "<relative image>" }
+      ]
+    }
+  ]
+}

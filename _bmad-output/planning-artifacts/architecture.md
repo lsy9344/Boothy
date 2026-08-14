@@ -11,10 +11,10 @@ stepsCompleted:
 inputDocuments:
   - '_bmad-output/planning-artifacts/prd.md'
   - '_bmad-output/planning-artifacts/ux-design-specification.md'
-  - '_bmad-output/planning-artifacts/prd-validation-report-20260320-015539.md'
   - 'docs/release-baseline.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
   - 'reference/darktable/README.md'
+  - '_bmad-output/planning-artifacts/research/technical-preset-image-fast-display-research-2026-08-10.md'
 workflowType: 'architecture'
 documentType: 'architecture-decision-document'
 project_name: 'Boothy'
@@ -23,6 +23,8 @@ date: '2026-03-20'
 lastStep: 8
 status: 'complete'
 completedAt: '2026-03-20'
+lastEdited: '2026-08-11'
+correctCourseStatus: 'approved-readiness-12-issue-remediation'
 ---
 
 # Architecture Decision Document
@@ -35,42 +37,115 @@ This document defines the implementation-shaping technical decisions for Boothy 
 - [UX design specification](./ux-design-specification.md)
 - [Darktable foundation pivot brief](../../refactoring/2026-03-15-boothy-darktable-agent-foundation.md)
 - [Darktable reference](../../reference/darktable/README.md)
+- [Preset image fast-display technical research](./research/technical-preset-image-fast-display-research-2026-08-10.md)
 
 ## System Overview
 
-Boothy is a local-first Windows booth product with one packaged codebase and three capability-gated surfaces: customer booth flow, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration and darktable rendering remain isolated execution boundaries so booth UI never interprets raw helper or render-engine output directly.
+Boothy is a local-first Windows booth product with one packaged codebase and four capability-gated surfaces: customer booth controls, a pre-opened read-only customer viewer, operator console, and authorized preset authoring. The Tauri/Rust host owns normalized session, timing, capture, display-generation, render, and completion truth. The React frontend renders task-specific surfaces from that normalized state. Camera integration, display-fit preset rendering, and darktable RAW rendering remain isolated execution boundaries so customer surfaces never interpret raw helper or render-engine output directly.
 
 ```mermaid
 flowchart LR
     Customer["Booth Customer"] --> BoothUI["Booth Surface<br/>React + TypeScript"]
+    Customer --> ViewerUI["Pre-opened Viewer<br/>Read-only full-view"]
     Operator["Remote Operator"] --> OperatorUI["Operator Console<br/>React + TypeScript"]
     Author["Authorized Preset Manager"] --> AuthorUI["Authoring Surface<br/>React + TypeScript"]
 
     BoothUI --> Host["Tauri Host<br/>Rust orchestration"]
+    ViewerUI --> Host
     OperatorUI --> Host
     AuthorUI --> Host
 
     Host --> SessionFS["Session Storage<br/>session.json + captures + renders + post-end"]
-    Host --> AuditDB["SQLite Audit Store<br/>lifecycle + interventions + rollout"]
+    Host --> AuditJournal["Versioned Journal<br/>lifecycle + interventions + timing"]
     Host --> Config["Local Branch Config"]
     Host --> CameraSidecar["Camera Sidecar / Helper"]
     Host --> RenderWorker["darktable Render Worker"]
+    Host --> DisplayRenderer["Display-fit Proxy Renderer<br/>validated resident candidate"]
     AuthorUI --> PresetArtifacts["Published Preset Artifacts"]
     Host --> PresetArtifacts
     RenderWorker --> PresetArtifacts
     CameraSidecar --> SessionFS
     RenderWorker --> SessionFS
+    DisplayRenderer --> SessionFS
 ```
+
+## Approved 2026-08-11 Correct-Course Baseline
+
+This section is authoritative when an older statement elsewhere in this document conflicts with the approved low-latency viewer direction.
+
+### Product Display Pipeline
+
+```text
+trusted capture input -> immediate request acknowledgement
+  -> approved fast source candidate
+  -> immutable displayFitPresetProxy generation
+  -> pre-opened viewer qualifying monitor present
+  -> immutable rawRefinedDisplay generation
+  -> fully decoded, uninterrupted viewer swap
+  -> final output in the background
+```
+
+- `cameraSource` may support progress and render input but never counts as a qualifying preset-applied customer frame.
+- `displayFitPresetProxy`, `rawRefinedDisplay`, and `final` are distinct immutable generations. The approved design no longer overwrites one canonical JPEG path in place.
+- Every stage carries `sessionId`, `requestId`, `captureId`, `presetId`, `presetVersion`, source hash, render profile, and generation/revision.
+- The official KPI is trusted capture input to the first qualifying preset-applied frame on the pre-opened physical viewer, not file-ready, renderer-ready, event receipt, decode, or `<img onLoad>`.
+
+### Mandatory Delivery Sequence
+
+1. Build the pre-opened viewer readiness, approved monitor targeting, current-session binding, and physical display-size contract without replacing the renderer.
+2. Prove immutable sample publication, opaque double-buffer replacement, and trusted-input-to-actual-present measurement without replacing the renderer.
+3. Compare LibRaw embedded JPEG and capability-gated RAW+JPEG on real EOS 700D captures and record an approved route decision.
+4. Build the physical display-fit immutable preset proxy path.
+5. Implement a working resident-renderer spike and decide Go/No-Go from latency, parity, and stability evidence.
+6. Add RAW-refined seamless replacement and deadline scheduling.
+7. Prove the signed complete installer and clean offline Windows reproduction.
+8. Prove warm 100-shot performance plus cold, idle, reconnect, burst, and failure recovery.
+9. Prove staged rollout, active-session protection, old-session compatibility, and rollback.
+10. Aggregate every required gate into one final MVP Go/No-Go decision.
+
+### Release Position
+
+- Architecture planning is ready for Story 7.1 implementation.
+- The current product release remains No-Go until Epic 7 Story 7.10 and HV-18D record Go.
+- Darktable remains the RAW-refined/final/parity-oracle/fallback path. A resident display renderer becomes a production path only after its spike and visual gate pass.
+
+#### Story 7.2 implementation note (2026-08-11)
+
+- Story 7.1 is `done` with HV-13A `Go`. Story 7.2 is implemented and automatically verified; it stays in `review` until HV-13B records `Go`.
+- The display pointer is persisted as a dedicated versioned display manifest at `<session_root>/renders/display/pointer.json` (`viewer-display/v1`) plus an append-only `generations.jsonl`, **not** as new fields on `session.json`. This preserves the "session manifest must not drift per feature" rule and keeps a high-regression shared file untouched. Stories 7.4 and 7.6 extend this file rather than the session manifest.
+- Display generation transport uses the broadcast `viewer-display-update` event with snapshot reconciliation and a monotonic admission guard, not a Tauri Channel. Correctness comes from the guard, not from transport ordering; the Channel decision is revisited in Story 7.6 when additional tiers raise the ordering requirement.
+- Host-side generation validation is a dependency-free JPEG structural probe (SOI + SOF dimensions + EOI trailer + EXIF orientation). Full pixel decode remains the viewer's `img.decode()` gate before any swap. No new Rust crate was introduced, so the Story 7.7 offline installer inventory is unchanged.
+- The sample lane that exercises this path is measurement-only and defaults to `off` (`BOOTHY_DISPLAY_SAMPLE_MODE`). Story 7.4 replaces only the fixture source with the real display-fit preset proxy; the generation, pointer, swap, and telemetry contracts are reused unchanged.
+- Contract: `docs/contracts/viewer-display.md`. Hardware evidence procedure: `tests/hardware/viewer-present/hv-13b/README.md`.
+
+#### Story 7.3 implementation note (2026-08-12)
+
+- Story 7.3 is an Enabler/Experiment. It measures source acquisition and **does not put any source on screen** — publication stays with Story 7.4. Story 7.2's generation/pointer/swap/telemetry contracts are untouched.
+- The comparison registers **three** routes, not two. The shipped incumbent (`windows-shell-thumbnail`) is a first-class contract value because a route claim without the baseline measured under identical conditions is not a comparison. The current fast preview is a Windows Shell thumbnail, not an embedded JPEG.
+- JPEG structural judgement is **not duplicated**. `capture::source_probe` calls Story 7.2's `display::image_probe` directly and maps its errors onto source reject reasons, so Story 7.4 cannot inherit two divergent pass criteria.
+- Source samples are written to a dedicated `<session_root>/diagnostics/source-comparison.jsonl` (`source-comparison/v1`), deliberately **separate** from `viewer-present.jsonl`. No tool merges them: merging would let an unfiltered JPEG's fast arrival flatter the preset-applied KPI. Every sample carries `isPresetApplied` as a `z.literal(false)`, so a sample claiming otherwise fails to parse. `session.json` is unchanged.
+- Measurement artifacts land in `<session_root>/renders/sources/` and never in `renders/previews/`, which the booth photo rail already displays. The lane switch `BOOTHY_SOURCE_COMPARE_MODE` defaults to `off`, and unknown values fall back to `off` so a typo cannot enable it.
+- **Sidecar boundary deviation.** Multi-object correlation and paired-JPEG persistence live in the helper, slightly widening the "thin Canon adapter" boundary. Transfer objects are reachable only on the EDSDK callback path, so hoisting correlation to the host would push `EdsRelease` lifetime across a process boundary. The pure decision logic (`CaptureObjectCorrelator`, `ImageQualityValue`) is separated from SDK calls and covered by `dotnet test`; session, preset, timing, and UI truth remain outside the helper.
+- Camera capability is read at runtime, never assumed. `EdsGetPropertyDesc(PropID_ImageQuality)` is the only truth; combinations absent from the descriptor are recorded as `unsupported-combination` **without being attempted**, which is a different result from `extraction-failed`.
+- **Route A takes the dependency-free path (approved 2026-08-12).** LibRaw was rejected: it is LGPL-2.1/CDDL and would enter the Story 7.7 offline inventory. CR2 is a TIFF container, so `capture::embedded_jpeg` reads IFD#0's `StripOffsets`/`StripByteCounts` directly and hands the bytes to the same `image_probe` used by Story 7.2 — the same technique already used for JPEG structure. The route is named `embedded-jpeg`, not `libraw-embedded-jpeg`, because the contract must not name a library the implementation does not use. **No new Rust crate was introduced, so the Story 7.7 offline installer inventory is unchanged.** Extraction is read-only: it never writes, so no failure path can reach RAW truth. CR3 (ISO BMFF) is out of scope for this parser and is rejected with a distinct reason rather than failing silently; the approved EOS 700D writes CR2.
+- The original plan put extraction in the C# helper, justified by "do not pull a native RAW dependency into the host". **That justification disappeared with the dependency**, so extraction sits in the host where it can call `image_probe` directly, keeps the sidecar boundary thin, and is fully covered by `cargo test` without a camera.
+- Contract: `docs/contracts/capture-source.md`. Hardware evidence procedure: `tests/hardware/capture-source/hv-14/README.md`.
+
+### Readiness-12 Ownership Corrections
+
+- Story 1.10 is the explicit owner of local admin-password verification, protected credential storage, privileged-session issuance/revocation, capability enforcement, and authentication success/failure/denial audit. Environment flags or route hiding alone are not production authentication.
+- Versioned JSON/JSONL journals remain the MVP truth for lifecycle, intervention, publication, and rollout evidence. SQLite is allowed only as a rebuildable derived query index.
+- `UX-EV-01` owns UX-DR16 accessibility release evidence. `UX-EV-02` owns real-booth touch, standing-use, high-contrast, and unguided-success evidence. QA/Release owns collection, PM+UX review UX-EV-02, and Story 7.10/HV-18D aggregates both.
 
 ## Project Context Analysis
 
 ### Requirements Overview
 
 **Functional Requirements:**
-Boothy currently defines 9 functional requirements. Architecturally, they cluster into seven capability groups. First, the booth must support a very low-friction session start based on a customer-facing booth alias composed of name plus phone-last-four and a bounded preset choice. Second, it must normalize readiness and capture eligibility so customers only see preparation, ready, waiting, or phone-required states rather than device internals. Third, it must persist captures into the active session and show latest-photo confidence while preserving strict current-session scope. Fourth, it must support bounded in-session cleanup behavior: current-session review, deletion, and forward-only preset changes for future captures. Fifth, it must run a timing and completion model that includes adjusted end time, warning and end alerts, and explicit post-end outcome states. Sixth, it must provide an internal preset-authoring and publication workflow for authorized users. Seventh, it must expose bounded operator diagnostics, recovery, and lifecycle visibility. Architecturally, this is a booth-first, preset-driven Windows product with three distinct user surfaces: booth customer, operator, and authorized preset management.
+Boothy currently defines 10 functional requirements. Architecturally, they cluster into eight capability groups. The first seven preserve low-friction session start, bounded preset choice, normalized readiness, capture persistence, current-session review, timing/completion, preset publication, and bounded operator recovery. The eighth is a pre-opened read-only customer viewer that presents a physical display-fit preset-applied frame and upgrades to the RAW-refined display without interruption. Architecturally, this is a booth-first, preset-driven Windows product with customer controls, a dedicated customer viewer, operator diagnostics, and authorized preset management as distinct surfaces.
 
 **Non-Functional Requirements:**
-Six NFRs strongly shape the architecture. The customer surface must stay copy-light and free of technical or authoring language. Branches must remain consistent in preset catalog, timing rules, and booth journey except for tightly approved local settings. The booth must acknowledge customer actions quickly and show latest-photo feedback within a defined budget on approved hardware. Session isolation is strict: cross-session asset leakage is unacceptable. Timing rules and post-end transitions must be reliable enough to preserve customer trust. Release behavior must support staged rollout, rollback, and zero forced updates during active sessions. In addition, the loaded UX specification still contributes useful non-functional constraints around touch-friendly capture layouts, separate operator density, WCAG 2.2 AA accessibility targets, and deployment-oriented responsive behavior where those constraints do not conflict with the approved PRD and architecture baseline.
+Six NFRs strongly shape the architecture. The customer surface must stay copy-light and free of technical or authoring language. Branches must remain consistent in preset catalog, timing rules, and booth journey except for tightly approved local settings. The booth must acknowledge customer actions quickly and meet the button-to-qualifying-monitor-present p50/p95/hard-max and 100-shot reliability gates on approved hardware. Session isolation and display-generation correctness are strict: cross-session leakage, stale display, unfiltered qualifying frames, and tier downgrade are unacceptable. Timing rules and post-end transitions must preserve customer trust. Release behavior must support a signed complete installer, clean offline reproduction, staged rollout, rollback, and zero forced updates during active sessions.
 
 **Scale & Complexity:**
 The customer journey is simpler than the previously assumed capture-to-editor product, but the architectural complexity remains high because the system must coordinate local session truth, real camera state, preset lifecycle, timing policy, operator recovery, and branch-safe deployment in one booth runtime. This is not cloud-scale complexity; it is boundary and workflow complexity centered on a local Windows desktop product.
@@ -86,10 +161,13 @@ The customer journey is simpler than the previously assumed capture-to-editor pr
 - The authoritative product definition is the approved current PRD and aligned planning artifacts, not the older capture-to-full-editor assumption.
 - The product adopts name-plus-last-four booth alias entry for the customer-facing start flow, but that alias must remain separate from the durable internal session identifier and any broader legacy operational assumptions.
 - Real camera readiness, trigger, capture persistence, and latest-photo confirmation are product-critical dependencies.
+- The target customer monitor and viewer must be created and ready before capture; output size is derived from its physical photo rectangle and DPR rather than a fixed thumbnail cap.
+- The approved latency endpoint is an actual qualifying monitor frame, measured from the same monotonic clock as trusted capture input.
 - The customer sees only 1-6 approved published presets; detailed darktable-backed preset-authoring controls are restricted to authorized internal use.
 - Timing policy is a core product dependency: adjusted end time, 5-minute warning, exact-end alert, export-waiting/completed/phone-required states, and operator extensions all affect flow truth.
 - Branch variance must stay tightly controlled; active branches should differ only through approved local settings such as contact information or bounded operational toggles.
 - Staged rollout, rollback, and zero forced updates during active sessions are hard desktop-operational constraints.
+- The app, helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipe, and pinned RAW renderer must ship as one signed and verifiable installation inventory.
 - Remote operator intervention remains part of the operating model when bounded recovery cannot restore a safe booth state.
 
 ### Cross-Cutting Concerns Identified
@@ -101,6 +179,7 @@ The customer journey is simpler than the previously assumed capture-to-editor pr
 - Timing-policy calculation, warning/alert behavior, and post-end state transitions
 - Completion, export-waiting, and handoff guidance without reintroducing customer-side detailed editing
 - Operational logging, exception classification, and bounded recovery
+- Viewer readiness, immutable display generations, actual-present telemetry, and seamless tier replacement
 - Branch consistency, rollout safety, and rollback compatibility
 
 ## Starter Template Evaluation
@@ -186,8 +265,9 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 ### Decision Priority Analysis
 
 **Critical Decisions (Block Implementation):**
-- Boothy remains one packaged Tauri application, but it is split into three capability-gated surfaces: `booth customer shell`, `operator console`, and `internal preset-authoring`.
+- Boothy remains one packaged Tauri application, split into four capability-gated surfaces: `booth customer shell`, pre-opened read-only `viewer`, `operator console`, and `internal preset-authoring`.
 - The durable source of truth for active booth work is a session-scoped filesystem root, not route state, UI memory, or SQLite.
+- Display assets are immutable by generation; a manifest pointer advances only after full write, decode/dimension validation, and correlation checks. In-place overwrite of one preview filename is not the approved target.
 - The customer-facing booth alias is distinct from the durable `sessionId`; the alias is used for booth guidance and approved handoff while the filesystem and contracts rely on the opaque session identifier.
 - darktable-backed preset authoring and apply are the authoritative preset truth path; detailed module control stays only inside internal preset-authoring, not as a customer-facing editing workspace.
 - The Rust host is the single normalization point for camera/helper truth, timing truth, and post-end workflow truth before those states are translated to UI.
@@ -195,9 +275,10 @@ Fast frontend iteration, straightforward desktop packaging, explicit native boun
 - The first approved camera implementation profile is a Windows-only Canon EDSDK helper exe; generic multi-vendor abstraction is deferred until hardware evidence justifies it.
 - Session timing rules, warning alerts, exact-end behavior, and post-end state transitions are host-owned workflow rules.
 - Release behavior must preserve staged rollout, rollback, and zero forced update during active customer sessions.
+- Official performance evidence measures trusted capture input to qualifying physical monitor present. File and component callbacks remain diagnostic spans.
 
 **Important Decisions (Shape Architecture):**
-- SQLite stores lifecycle, timing, intervention, publication, and rollout audit data, but it does not own photo or session artifact truth.
+- Versioned filesystem journals store lifecycle, timing, intervention, publication, and rollout evidence for the MVP. SQLite may be added later as a derived query index but does not own photo, session, or display truth.
 - Presets are stored as versioned approved bundles and published into a bounded booth catalog; active sessions reference preset versions explicitly.
 - Tauri Store or equivalent local config keeps only minimal branch-local settings and runtime profile flags.
 - One packaged app exposes booth flow by default and unlocks operator controls, and where enabled authoring controls, only after successful admin-password authentication plus capability checks.
@@ -218,13 +299,13 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 | Darktable capability or module | Decision | Rust host and booth-safe pipeline mapping | Surface and boundary mapping |
 | --- | --- | --- | --- |
 | XMP sidecar plus history stack | Adopt | The preset manifest stores `xmpTemplatePath`, `darktableVersion`, preview/final profiles, and render policies as the authoritative preset artifact. The Rust host validates that artifact, then records `raw`, `preview`, `final`, and render status separately in the session manifest. | Authoring exports approved XMP-backed presets. Customers never see history stacks or XMP. Operators see preset version, publish status, and render status only. |
-| `darktable-cli` headless apply | Adopt | A dedicated Rust render worker invokes `darktable-cli` after raw ingest, isolates `configdir` and `library` per preview/final mode, runs jobs through a bounded queue, and translates failures into the typed host error envelope. Capture success and render success stay separate events, and render-backed `previewReady` is reserved for the later preset-applied output even when a fast same-capture preview appeared earlier. | Authoring publishes artifacts that the worker consumes. Customers see only booth-safe waiting/ready states. Operators see queue backlog, retry state, version pin health, fast-preview miss, and failure diagnostics. |
+| `darktable-cli` headless apply | Adopt for exact output | A dedicated Rust render worker invokes `darktable-cli` for RAW-refined display, final output, parity reference, and exact fallback. It isolates `configdir` and `library`, uses bounded lower-priority work, and publishes immutable generations through the typed host result. It does not define the first display-fit proxy path unless later evidence proves it meets the same deadline. | Authoring publishes artifacts that exact rendering and proxy-parity validation consume. Customers see only booth-safe waiting/display truth. Operators see source, queue, render, publish, present, fallback, and version-pin diagnostics. |
 | Core look modules: `input color profile`, `exposure`, `filmic rgb`, `color balance rgb`, `diffuse or sharpen`, and denoise modules | Adopt | Module parameters stay opaque inside approved XMP artifacts; the Rust host does not reinterpret individual slider semantics. Preview and final profiles may diverge on detail/noise policy, but both remain pinned to the same approved preset version. | Authoring uses these modules to craft and review looks. Booth customers choose preset names/previews only. Operators manage publish/rollback, not per-session grading. |
 | Geometry and optical correction: `lens correction`, `orientation`, `crop`, and `rotate and perspective` | Adopt with bounded use | These are allowed only when baked into an approved preset artifact or a host-owned normalization policy. The pipeline applies them deterministically during render and never exposes ad hoc per-session edits. | Authoring may use them to normalize lens/body output and framing. Customers never adjust geometry. Operators may inspect the active preset version but do not get live booth-floor geometry controls. |
 | Styles and `.dtstyle` | Emulate for publication UX, exclude as runtime truth | Runtime apply never depends on style names or a shared darktable `data.db`. If a style is used during authoring convenience, it must be converted into an approved XMP-backed preset artifact before publication. | Authoring may offer style-like duplication/import/export workflows. Customers and booth operators select published Boothy presets, not raw darktable styles. |
 | OpenCL/GPU capability and `--hq` quality modes | Adopt operationally | The Rust host probes capability during diagnostics, chooses preview/final execution profiles, and falls back safely when GPU support is unavailable. Preview favors latency; final export may use higher-quality settings and a heavier module path. | No GPU/OpenCL terminology reaches customers. Operators can see capability mismatches, fallback mode, and export performance diagnostics. |
 | Darkroom UI, workspaces, and per-module panels | Emulate only inside internal authoring tools | The host cares about approved artifacts, not about reproducing the full darktable GUI contract. Boothy may wrap or launch constrained authoring flows, but the booth runtime never embeds a general editor. | Rich controls belong only to authorized preset authors. Customer and operator surfaces stay task-focused around selection, diagnostics, approval, and publication. |
-| Library/lighttable asset management, collections, tagging, map/print/slideshow/book workflows | Exclude | Session filesystem roots and SQLite audit tables remain Boothy's system of record. If darktable uses its own library/config state during authoring or worker execution, that state is isolated support data and never business truth. | No customer or operator workflow relies on a darktable photo-library model. `PresetLibraryScreen` means a Boothy preset catalog, not a darktable-style asset browser. |
+| Library/lighttable asset management, collections, tagging, map/print/slideshow/book workflows | Exclude | Session filesystem roots, manifests, and versioned journals remain Boothy's system of record. If darktable uses its own library/config state during authoring or worker execution, that state is isolated support data and never business truth. | No customer or operator workflow relies on a darktable photo-library model. `PresetLibraryScreen` means a Boothy preset catalog, not a darktable-style asset browser. |
 | Tethering, import, and camera/device control in darktable | Reference candidate only, not current runtime truth | darktable and its gphoto2-backed tethering path may be evaluated as a Canon 700D camera-boundary reference, but camera detection, readiness, capture, transfer, stale-process cleanup, and recovery remain owned by the stateful camera service and Rust host boundary in the approved baseline. Darktable execution begins only after raw transfer completes unless a later validated architecture revision promotes its camera path. | Customers and operators rely on host-normalized camera truth; darktable state never becomes the booth readiness signal without a dedicated camera-boundary validation and approval pass. |
 | Watermark and export-adornment modules | Exclude from the MVP booth contract | The Rust host keeps handoff naming/packaging separate from look definition. If later approved, watermarking is an output policy layered onto final export only, not part of preview truth or customer choice. | Customers never control adornments. Operators would manage them, if ever enabled, as a bounded publication setting rather than an editing tool. |
 
@@ -236,18 +317,20 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **Capture correlation:** Each capture is tracked by stable identifiers such as `sessionId`, `captureId`, `requestId`, active preset version, and file references.
 - **Deletion model:** Approved customer deletion removes the current session’s correlated original and derived artifacts and records the deletion in manifest and audit data immediately.
 - **Preset data model:** Presets are published as immutable versioned artifacts with manifest metadata, preview assets, a pinned darktable version, an approved XMP template path, and separate preview/final render profiles. Booth sessions only consume approved published artifacts.
-- **Preview pipeline model:** The host may promote a same-capture fast preview into the session's canonical preview path before render completion, but `previewReady` and `readyAtMs` remain reserved for the later render-backed replacement.
+- **Progressive display model:** `cameraSource`, `displayFitPresetProxy`, `rawRefinedDisplay`, and `final` use distinct immutable generation paths. `activeDisplayArtifactId` advances only after full write, decode/dimension validation, tier/correlation checks, manifest commit, and then notification.
+- **Viewer readiness model:** The app-lifetime viewer reports session binding, monitor profile, physical photo rectangle, DPR, listener readiness, layout readiness, viewer epoch, and snapshot revision. Story 7.1 proves this pre-capture boundary without replacing the current renderer. Story 7.2 separately proves immutable sample decode/swap and actual-present evidence.
 - **Preset/session separation:** Preset-authoring never edits active booth session data directly. It produces future preset versions that later sessions may reference.
-- **Operational store:** SQLite stores lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history.
-- **Configuration store:** Minimal local config stores branch phone number, approved operational toggles, and runtime profile such as `booth` or `authoring-enabled`.
+- **Operational store:** Versioned JSON/JSONL journals store lifecycle events, timing transitions, operator interventions, preset publication audits, and rollout history. SQLite is deferred to a derived query index if later volume or query needs justify it.
+- **Configuration store:** Minimal versioned local config stores branch phone number, approved operational toggles, runtime profile, approved display profiles, and rollout mode.
 - **Validation strategy:** Shared boundary schemas are validated with `Zod 4` in TypeScript and revalidated in Rust.
-- **Migration strategy:** `session.json` and preset bundles carry explicit schema versions; SQLite uses forward-only migrations; no migration may mutate active session artifacts in place.
+- **Migration strategy:** `session.json`, journals, display artifacts, and preset bundles carry explicit schema versions. If a derived SQLite index is later added, it uses forward-only rebuildable migrations. No migration may mutate active session artifacts in place.
 - **Caching strategy:** In-memory caches may accelerate active screens, but no cache is allowed to outrank session folders or approved preset bundles.
 
 ### Authentication & Security
 
 - **Booth customer authentication:** None. The booth customer flow is intentionally login-free.
 - **Operator authentication:** Operator and authoring controls are unlocked with a locally managed admin password before any privileged surface or action becomes visible.
+- **Authentication ownership:** Story 1.10 owns the production implementation of password verification, privileged-session lifecycle, denial behavior, and command-boundary enforcement. The existing capability snapshot or environment-driven seam is scaffolding only and cannot satisfy this decision by itself.
 - **Authorization model:** Access is enforced through Tauri capabilities, runtime profile gating, window/surface separation, and host command boundaries.
 - **Surface restriction rule:** Booth customers cannot access diagnostics, recovery controls, helper process management, or preset-authoring capabilities.
 - **Authoring restriction rule:** Internal preset-authoring is enabled only for approved authoring profiles or installations and still requires successful admin authentication; it must not appear as part of the normal booth runtime path.
@@ -255,43 +338,45 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 - **PII protection:** Logs, diagnostics, and handoff surfaces must not expose cross-session references or unnecessary customer identifiers.
 - **Host authority:** Only the Rust host may spawn or control the helper, mutate session files, publish preset bundles, or apply rollout-sensitive actions.
 - **Credential handling:** The admin password or its verification material must live outside customer-facing branch config in an OS-appropriate secure secret store or equivalent protected host-managed location.
+- **Authentication failure behavior:** Invalid, expired, locked, or revoked privileged sessions expose no partial operator/authoring/settings access, never log raw credential material, and record a bounded audit result.
 - **Security posture:** MVP security is based on local least privilege, admin-password-gated privileged surfaces, bounded local profiles, and strict session separation rather than network-style account auth for the customer path.
 
 ### API & Communication Patterns
 
-- **Frontend to host:** Tauri commands are the request-response path for session start, preset selection, capture, delete, timing updates, completion transitions, diagnostics queries, operator actions, and preset publication.
-- **Host to frontend streaming:** Tauri channels carry ordered state changes for readiness, capture progress, latest-photo availability, timing transitions, completion state, and operator diagnostics.
+- **Frontend to host:** Tauri commands are the request-response path for session start, preset selection, capture, delete, timing updates, completion transitions, diagnostics queries, operator actions, and preset publication. `begin_capture` returns a correlated request acknowledgement immediately; camera transfer and render work continue in the background.
+- **Host to frontend streaming:** Request-scoped Tauri channels carry ordered revisions for viewer readiness, capture progress, display-generation availability, timing transitions, completion state, and operator diagnostics. A latest snapshot command reconciles reload, listener loss, and sequence gaps.
 - **Host to helper:** The camera/helper boundary uses bundled sidecar stdio with versioned JSON-line messages.
-- **Helper contract shape:** The first contract should cover session configuration, capture request, health/status, restart/recovery, correlation of file arrival back to the host, and optional fast-preview handoff metadata.
+- **Helper contract shape:** The contract covers session configuration, capture request, health/status, restart/recovery, all transfer objects correlated to one request, and candidate fast-source metadata. LibRaw embedded JPEG and capability-gated RAW+JPEG remain adapter candidates until Story 7.3 hardware evidence selects a route.
 - **Selected helper profile:** The approved first helper is `canon-helper.exe`, a Windows-targeted Canon EDSDK sidecar that owns USB camera session, capture trigger, download, and reconnect detection while the Rust host owns freshness and UI-safe projection.
 - **Boot semantics:** `helper-ready` means protocol conversation can begin; it does not mean camera `ready`, and booth `Ready` still waits on fresh `camera-status`.
 - **Image transfer rule:** Raw image bytes and derived booth files move by filesystem handoff, not by large JSON IPC payloads.
-- **Preset/render core rule:** The Rust render worker executes approved darktable-backed preset artifacts through `darktable-cli`; booth routes receive only booth-safe outputs and typed status, never module-level editing APIs. If a fast preview was already promoted, the render-backed output replaces it at the same canonical path and only then advances `previewReady`.
+- **Preset/render core rule:** Darktable executes approved RAW-refined/final artifacts and remains the parity oracle and exact fallback. A separate display-fit proxy renderer may serve only presets with an approved versioned proxy recipe. Each output is published as an immutable generation; the host advances the display pointer instead of overwriting one canonical path.
 - **Error handling standard:** All host-facing failures use one typed envelope with machine-readable code, severity, retryability, customer-safe state, and operator-facing next action.
 - **State normalization:** Camera/helper truth, timing truth, and completion truth are normalized in the host once, then translated into booth copy or operator diagnostics separately.
-- **Latency telemetry rule:** Preview instrumentation should distinguish fast-preview visibility, render-backed preview readiness, cold-start delay, and render queue delay so product latency analysis does not collapse into one metric.
+- **Latency telemetry rule:** One correlated timeline distinguishes trusted input, helper accepted, source ready, queue/render start/end, immutable publish, viewer update receipt, decode, actual monitor present, and RAW swap. Only actual qualifying monitor present closes the product KPI.
 
 ### Frontend Architecture
 
-- **Top-level app model:** One React application with top-level surfaces such as `/booth`, `/operator`, `/authoring`, and `/settings`.
+- **Top-level app model:** One React application with top-level surfaces such as `/booth`, read-only `/viewer`, `/operator`, `/authoring`, and `/settings`. `/viewer` runs in a dedicated app-lifetime window targeted to the approved customer monitor.
 - **Routing strategy:** React Router `7.x` is used only for surface entry and separation. Workflow truth remains state-driven.
 - **State management:** Use explicit reducers and React Context by domain: `session-domain`, `preset-catalog`, `capture-adapter`, `timing-policy`, `completion-handoff`, `operator-console`, and `preset-authoring`.
 - **Component architecture:** Keep a domain-first structure so booth customer flow, operator flow, and authoring flow do not blur together.
 - **Booth shell rule:** The customer UI stays low-choice, touch-friendly, and confidence-oriented. It never expands into a general editor workspace.
+- **Viewer rule:** The viewer has no editing, deletion, navigation, diagnostic, or preset-selection controls. It consumes only host-normalized immutable display generations and keeps the current image until a fully decoded higher approved tier is ready.
 - **Privilege-gating rule:** Operator navigation and any authoring or settings controls remain hidden until admin authentication succeeds and the current machine profile permits those surfaces.
 - **Authoring rule:** Internal preset-authoring may wrap or launch darktable-based editing/review flows and Boothy publication controls, but only inside the authoring surface.
-- **Performance strategy:** Keep the booth shell light, preload bounded preset previews, lazy-load operator and authoring surfaces, and use React `19.x` async patterns for non-blocking transitions.
+- **Performance strategy:** Keep the booth shell light, create and warm the viewer before capture, preload bounded preset metadata and approved proxy recipes, lazy-load operator and authoring surfaces, and use React `19.x` async patterns for non-blocking transitions. Story 7.1 validates viewer lifecycle before renderer replacement.
 - **Boundary rule:** React components do not call Tauri directly. Typed adapters and services own all `invoke`, channel subscriptions, and host orchestration.
 
 ### Infrastructure & Deployment
 
 - **Runtime hosting:** Approved Windows booth PCs run the same packaged app with the booth surface visible by default; admin authentication can unlock operator controls, and approved internal machines may additionally enable the authoring surface.
 - **Package strategy:** One package family and one codebase ship every deployment, while capability/profile differences and admin authentication together determine which privileged surfaces are enabled on a given machine and for a given session.
-- **Build and release:** GitHub Actions plus `tauri-action` handle build, packaging, and signing-ready Windows release flow.
+- **Build and release:** GitHub Actions plus `tauri-action` handle a signed Windows release inventory containing the app, self-contained camera helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipes, and pinned darktable dependency.
 - **Release safety:** Branch rollout is staged, rollback-capable, and must preserve last-approved installers plus active-session compatibility.
 - **Update policy:** No forced update may interrupt an active booth session.
 - **Environment configuration:** Branch-local configuration stays minimal, explicit, and auditable.
-- **Monitoring and logging:** Structured local logs plus SQLite audit tables provide the MVP observability base.
+- **Monitoring and logging:** Bounded structured local logs and versioned JSON/JSONL journals provide the MVP observability base, including actual-present and display-generation correlation. SQLite may be layered later as a derived query index.
 - **Scaling strategy:** The system scales by booth instance, preset publication discipline, and rollout control rather than centralized backend throughput.
 
 ## Deployment Architecture
@@ -303,10 +388,12 @@ flowchart TB
     subgraph Branch["Branch Environment"]
         subgraph BoothPC["Booth PC"]
             BoothApp["Boothy Desktop App<br/>Booth + Operator profiles"]
+            Viewer["Pre-opened Customer Viewer"]
             BoothStorage["Local Session Storage"]
-            BoothAudit["Local SQLite Audit DB"]
+            BoothJournal["Local Versioned Journals"]
             Camera["Bundled Camera Sidecar"]
-            Renderer["Bundled darktable Worker"]
+            DisplayRenderer["Validated Display Renderer"]
+            Renderer["Pinned darktable RAW Worker"]
         end
 
         subgraph AuthoringPC["Authorized Authoring PC"]
@@ -318,9 +405,12 @@ flowchart TB
     end
 
     BoothApp --> BoothStorage
-    BoothApp --> BoothAudit
+    BoothApp --> Viewer
+    BoothApp --> BoothJournal
     BoothApp --> Camera
+    BoothApp --> DisplayRenderer
     BoothApp --> Renderer
+    DisplayRenderer --> BoothStorage
     Renderer --> BoothStorage
     AuthoringApp --> PresetWorkspace
     AuthoringApp --> PresetCatalog
@@ -329,7 +419,7 @@ flowchart TB
 
 ### Deployment Responsibilities
 
-- Booth PCs host the active customer session, current-session storage, lifecycle audit data, camera sidecar, and render worker.
+- Booth PCs host the active customer session, pre-opened customer viewer, current-session storage, versioned lifecycle/timing journals, camera sidecar, validated display renderer, and pinned RAW render worker.
 - Authoring-enabled machines create and publish new preset artifacts without mutating booth sessions already in progress.
 - The preset artifact catalog is the only approved bridge between internal authoring and future booth sessions.
 - Rollout and rollback act on approved app builds plus approved preset stacks, and they must preserve active-session compatibility.
@@ -337,14 +427,17 @@ flowchart TB
 ### Decision Impact Analysis
 
 **Implementation Sequence:**
-1. Freeze the shared contracts: session manifest, preset bundle schema, error envelope, helper protocol, and runtime profile/capability model.
-2. Define the session folder structure and preset publication structure.
-3. Build the Rust host state model for readiness, capture, timing, completion, and diagnostics.
-4. Implement the booth shell against mocked host and mocked helper behavior.
-5. Implement operator diagnostics and bounded recovery against the same normalized host truth.
-6. Implement internal preset-authoring and publication on top of the darktable-backed preset artifact workflow without exposing module-level controls to booth routes.
-7. Integrate the real camera/helper boundary and prove `capture request -> file arrival -> latest-photo confirmation -> handoff state`.
-8. Add rollout, rollback, and signing-ready release guardrails.
+1. Implement Story 7.1: pre-opened viewer readiness, monitor targeting, current-session binding, and physical display-size contract.
+2. Implement Story 7.2: immutable sample generation, opaque double-buffer, and actual-present measurement.
+3. Execute Story 7.3 Enabler: compare LibRaw embedded JPEG and capability-gated RAW+JPEG on approved EOS 700D hardware and select an approved route.
+4. Implement Story 7.4: immutable physical display-fit preset proxy and capture-bound publication rules.
+5. Execute Story 7.5 Architecture Spike: working resident-renderer prototype, parity comparison, and Go/No-Go adoption decision.
+6. Implement Story 7.6: RAW-refined seamless replacement, deadline scheduler, and stale-work cancellation.
+7. Implement Story 7.7: signed complete installer and clean offline reproduction.
+8. Execute Story 7.8: 100-shot performance plus cold/idle/reconnect/burst/failure recovery validation.
+9. Execute Story 7.9: staged rollout, active-session protection, old-session compatibility, and rollback validation.
+10. Execute Story 7.10: aggregate all required evidence into the final MVP Go/No-Go decision.
+11. Preserve existing booth, operator, authoring, timing, completion, and exact RAW fallback responsibilities throughout the sequence.
 
 **Cross-Component Dependencies:**
 - Session manifest and capture correlation rules affect booth review, deletion, handoff, diagnostics, and privacy guarantees.
@@ -362,13 +455,13 @@ flowchart TB
 
 ### Naming Patterns
 
-**Database Naming Conventions:**
+**Derived Database Naming Conventions (only if the deferred query index is introduced):**
 - SQLite tables use `snake_case` plural names such as `session_events`, `preset_publications`, `operator_interventions`.
 - Columns use `snake_case` such as `session_id`, `occurred_at`, `preset_version`.
 - Indexes use `idx_<table>_<columns>` such as `idx_session_events_session_id_occurred_at`.
 
 **API Naming Conventions:**
-- Rust Tauri command identifiers use `snake_case` such as `start_session`, `select_preset`, `request_capture`.
+- Rust Tauri command identifiers use `snake_case` such as `start_session`, `select_preset`, `begin_capture`. `begin_capture` acknowledges the request immediately; it does not wait for camera transfer or render completion.
 - TypeScript never hardcodes raw command strings outside the host adapter layer; exported wrapper functions use `camelCase`.
 - Channel and event names use `dot.case` namespaces such as `session.stateChanged`, `capture.progress`, `timing.warning`, `postend.outcomeChanged`.
 - Route paths use `kebab-case` and are reserved for top-level surfaces only, such as `/booth`, `/operator`, `/authoring`, `/settings`.
@@ -392,7 +485,7 @@ flowchart TB
 - Co-locate unit tests close to domain logic where possible.
 - Keep cross-boundary contract tests under `tests/contract/`.
 - Keep e2e coverage under `tests/e2e/`.
-- Keep SQLite migrations under `src-tauri/migrations/`.
+- If the deferred SQLite query index is introduced, keep its migrations under `src-tauri/migrations/`.
 - Keep helper protocol examples and fixtures under `sidecar/protocol/`.
 
 ### Format Patterns
@@ -404,7 +497,7 @@ flowchart TB
 
 **Data Exchange Formats:**
 - TypeScript-facing JSON fields use `camelCase`.
-- Rust internal storage and SQLite schemas use `snake_case`.
+- Rust internal storage and any deferred SQLite schema use `snake_case`.
 - Session manifest files use one explicitly versioned schema and must not drift per feature.
 - Dates and timestamps use ISO 8601 / RFC3339 strings at boundaries.
 - Booleans remain `true/false`; no numeric boolean encoding.
@@ -415,7 +508,7 @@ flowchart TB
 **Event System Patterns:**
 - Use Tauri `channels` for ordered workflow/status streams and reserve generic events for coarse notifications only.
 - Event names use `dot.case` and remain domain-qualified.
-- Event payloads always include `sessionId`, `type`, and `schemaVersion` where applicable.
+- Display and capture payloads always include `sessionId`, `requestId`, `captureId`, `presetId`, `presetVersion`, `generation`, `revision`, `type`, and `schemaVersion` where applicable.
 - Version helper-facing protocol messages explicitly when they cross the sidecar boundary.
 
 **State Management Patterns:**
@@ -525,6 +618,16 @@ boothy/
 │   │   ├── selectors/
 │   │   ├── copy/
 │   │   └── tests/
+│   ├── viewer-surface/
+│   │   ├── ViewerSurface.tsx
+│   │   ├── state/
+│   │   ├── services/
+│   │   ├── telemetry/
+│   │   └── tests/
+│   ├── display-generation/
+│   │   ├── state/
+│   │   ├── services/
+│   │   └── tests/
 │   ├── operator-console/
 │   │   ├── screens/
 │   │   │   ├── OperatorSummaryScreen.tsx
@@ -617,6 +720,15 @@ boothy/
 │       │   ├── ingest_pipeline.rs
 │       │   ├── sidecar_client.rs
 │       │   └── normalized_state.rs
+│       ├── viewer/
+│       │   ├── viewer_state.rs
+│       │   ├── display_profile.rs
+│       │   └── present_telemetry.rs
+│       ├── display/
+│       │   ├── display_artifact.rs
+│       │   ├── proxy_renderer.rs
+│       │   ├── deadline_scheduler.rs
+│       │   └── generation_repository.rs
 │       ├── preset/
 │       │   ├── preset_bundle.rs
 │       │   ├── preset_catalog.rs
@@ -669,6 +781,8 @@ boothy/
 │   │   ├── booth-flow.spec.ts
 │   │   ├── operator-recovery.spec.ts
 │   │   └── authoring-flow.spec.ts
+│   ├── hardware/
+│   │   └── viewer-present/
 │   └── fixtures/
 │       ├── sessions/
 │       └── sidecar/
@@ -701,8 +815,8 @@ boothy/
 
 **Data Boundaries:**
 - Session folders own image and session truth.
-- SQLite owns logs, audits, timing transitions, and publication history.
-- Tauri Store owns minimal branch-local config only.
+- Versioned JSON/JSONL journals own logs, audits, timing transitions, publication history, and performance evidence for the MVP.
+- Minimal versioned local config owns approved branch settings, display profiles, runtime flags, and rollout mode.
 - Sidecar owns live camera truth while running, but not durable product truth.
 
 ### Requirements to Structure Mapping
@@ -735,6 +849,18 @@ boothy/
   - `src/operator-console/`
   - `src/diagnostics-log/`
   - `src-tauri/src/diagnostics/`
+- FR-010 (pre-opened full-view progressive preset display)
+  - `src/viewer-surface/`
+  - `src/display-generation/`
+  - `src-tauri/src/viewer/`
+  - `src-tauri/src/display/`
+  - `tests/hardware/viewer-present/`
+- UX-DR16 (WCAG 2.2 AA, semantic HTML, and focus behavior)
+  - `src/shared-ui/`
+  - `src/booth-shell/`
+  - `src/viewer-surface/`
+  - `tests/e2e/accessibility.spec.ts`
+  - Shared UI owns semantic primitives; customer-flow components own focus placement; modal components own focus trap, ESC close, and focus restoration verification.
 
 **Cross-Cutting Concerns:**
 - Shared contracts
@@ -765,11 +891,13 @@ boothy/
 **Data Flow:**
 - Session start creates session identity and session root.
 - Capture writes originals into the session folder and updates session manifest.
+- The selected fast source feeds an immutable display-fit preset generation while RAW transfer/refinement continues independently.
+- The viewer advances only to a fully validated, correlated, higher approved display generation.
 - Preset selection binds a preset version to the session.
 - Review and deletion operate only on current session assets.
 - Timing policy emits warning/end alerts and shifts the workflow state.
 - Post-end states transition to export-waiting, completed, or phone-required.
-- Diagnostics and operator actions are recorded into SQLite.
+- Diagnostics, performance spans, and operator actions are recorded into versioned local journals; any future SQLite index is derived and rebuildable.
 
 ### File Organization Patterns
 
@@ -818,21 +946,27 @@ The architecture is now ready to support regenerated implementation stories agai
 - Sidecar protocol contract: concrete request/response and event examples for success, retryable failure, terminal failure, and stale-helper recovery, with booth `Ready` and operator `카메라 연결 상태` both derived from the same host-normalized camera/helper truth.
 - Canon helper implementation profile: the chosen Windows-only Canon EDSDK helper packaging, ownership split, diagnostics expectations, and recovery semantics that refine the generic sidecar contract for the current product decision.
 - Authoring publication contract: required publication payload fields, approval-state transitions, immutable published artifact requirements, audit metadata, and future-session-only application rules.
+- Viewer contract: pre-capture readiness, monitor profile, physical photo rectangle, DPR, snapshot revision, decode readiness, and actual-present evidence.
+- Display artifact contract: immutable generation key, source/preset provenance, tier ordering, validation, manifest pointer commit, and stale-result rejection.
+- Proxy publication contract: `proxyCompatible`, supported operations, versioned recipe, reference renderer, visual approval, and fallback behavior.
+- Release evidence contract: trusted-input-to-monitor-present spans, warm/cold/idle/reconnect samples, 100-shot result set, installer inventory, canary, rollback evidence, `UX-EV-01` accessibility evidence, and `UX-EV-02` real-booth usability evidence.
 - Release runbooks, fixture naming conventions, and sample datasets may continue to expand, but they no longer block regeneration of the corrected implementation-story baseline for preset publication, operator recovery, and release-governance tracks.
 
 ## Initial Implementation Priorities
 
-1. Regenerate the implementation story artifacts for Epic 4-6 against the frozen contract baseline and the approved corrected epic map.
-2. Implement the authorized-user publication flow and the truthful preview/final-render outcome flow around the frozen publication, manifest, render-status, and sidecar contracts.
-3. Wire the booth, operator, and authoring surfaces through typed adapters so UI never bypasses host normalization.
-4. Implement timing/completion and release-governance work as separate downstream epic tracks with their own verification gates.
+1. Execute Epic 7 Story 7.1 without renderer replacement: viewer readiness, approved monitor targeting, current-session binding, and physical display-size contract.
+2. In parallel, execute Story 1.10 before any privileged operator, authoring, settings, publication, recovery, or rollout path is treated as release-ready.
+3. Execute Story 7.2 without renderer replacement: immutable sample publication, opaque double-buffer, and actual-present measurement.
+4. Continue Epic 7 through the approved evidence dependencies: source decision, immutable preset proxy, resident-renderer decision, RAW swap, installer, performance/recovery, rollout/rollback, UX release evidence, and final release gate.
+5. Keep Story 1.8 as exact RAW/final/fallback truth and Story 1.9 as a camera-source/progress reference; neither substitutes for Epic 7 release evidence.
+6. Keep booth, viewer, operator, and authoring surfaces behind typed adapters and host-normalized truth.
 
 ## Architecture Validation Results
 
 ### Coherence Validation
 
 **Decision Compatibility:**
-The selected architecture is internally coherent. The Tauri + React + Rust host boundary aligns with the booth-first Windows runtime requirements, and the darktable-backed preset pipeline fits the preset artifact model without conflicting with the stateful camera boundary. Session filesystem truth, SQLite audit scope, and sidecar responsibility are clearly separated.
+The selected architecture is internally coherent. The Tauri + React + Rust host boundary aligns with the booth-first Windows runtime requirements, the pre-opened viewer owns the physical customer display surface, and darktable remains the exact RAW/final boundary while the display renderer stays separately gated. Session filesystem truth, versioned journal evidence, optional derived indexing, and sidecar responsibility are clearly separated.
 
 **Pattern Consistency:**
 Implementation patterns support the architecture well. Naming rules, event rules, DTO and error-envelope rules, and host-boundary rules are consistent with the chosen technology stack and reduce the main areas where AI agents could diverge.
@@ -843,7 +977,7 @@ The project structure supports the architectural decisions directly. Domain-firs
 ### Requirements Coverage Validation
 
 **Functional Requirements Coverage:**
-All functional requirements from FR-001 through FR-009 are architecturally supported through explicit module ownership, boundary rules, or structure mapping.
+All functional requirements from FR-001 through FR-010 are architecturally supported through explicit module ownership, boundary rules, or structure mapping. FR-010 is traced directly to `viewer-surface`, `display-generation`, the Rust `viewer`/`display` boundaries, and `tests/hardware/viewer-present/`.
 
 **Non-Functional Requirements Coverage:**
 All non-functional requirements from NFR-001 through NFR-006 are supported at the architectural level through copy-safe UI boundaries, session isolation, timing policy ownership, rollout and rollback controls, and booth-runtime-safe performance and deployment constraints.
@@ -874,7 +1008,7 @@ The document defines enough consistency rules for multiple AI agents to implemen
 
 - No blocking compatibility issues were found.
 - The architecture is suitable for downstream implementation planning and story regeneration.
-- Minor source-reference cleanup remains optional but recommended.
+- The stale frontmatter reference to the excluded 2026-03-20 PRD validation report has been removed; no source-reference cleanup remains for the current baseline.
 
 ### Architecture Completeness Checklist
 
@@ -904,9 +1038,9 @@ The document defines enough consistency rules for multiple AI agents to implemen
 
 ### Architecture Readiness Assessment
 
-**Overall Status:** READY FOR IMPLEMENTATION
+**Overall Status:** READY FOR EPIC 7 STORY 7.1 IMPLEMENTATION; PRODUCT RELEASE NO-GO
 
-**Confidence Level:** High
+**Confidence Level:** High for the current-state No-Go and Story 7.1 boundary; medium for fast-source and resident-renderer feasibility pending hardware evidence
 
 **Key Strengths:**
 - Clear runtime and data-boundary separation
@@ -928,4 +1062,4 @@ The document defines enough consistency rules for multiple AI agents to implemen
 - Reuse the documented event, DTO, and error-envelope rules consistently.
 
 **First Implementation Priority:**
-Regenerate implementation stories and contract artifacts against this frozen architecture baseline, then begin with the session, preset, and sidecar contract surface.
+Implement Story 7.1's pre-opened viewer readiness, approved monitor targeting, current-session binding, and physical display-size contract without replacing the renderer. Actual-present measurement and immutable sample double-buffer belong to Story 7.2.

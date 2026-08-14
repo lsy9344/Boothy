@@ -5,6 +5,7 @@ pub mod capture;
 pub mod commands;
 pub mod contracts;
 pub mod diagnostics;
+pub mod display;
 pub mod handoff;
 pub mod preset;
 pub mod render;
@@ -16,6 +17,7 @@ pub mod viewer;
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(viewer::ViewerStateHandle::default())
+        .manage(display::DisplayStateHandle::default())
         .setup(|app| {
             // Story 7.1: window 생성이 event loop 스레드에서 일어나는지 판별하기 위한 기준점.
             viewer::record_main_thread();
@@ -79,6 +81,9 @@ pub fn run() {
             // 실패해도 앱 부팅을 막지 않고 host-normalized readiness truth로만 보고한다.
             commands::viewer_commands::ensure_viewer_window_state(app.handle());
 
+            // Story 7.2: 계측 lane이 켜져 있으면 표시 이미지는 제품 결과가 아니다. 부팅 시 경고한다.
+            commands::display_commands::log_sample_lane_mode();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -108,7 +113,12 @@ pub fn run() {
             commands::viewer_commands::get_viewer_readiness,
             commands::viewer_commands::ensure_viewer_window,
             commands::viewer_commands::report_viewer_listener_ready,
-            commands::viewer_commands::report_viewer_layout
+            commands::viewer_commands::report_viewer_layout,
+            commands::display_commands::get_viewer_display_state,
+            commands::display_commands::publish_display_sample,
+            commands::display_commands::report_display_present,
+            commands::display_commands::report_trusted_capture_input,
+            commands::display_commands::stamp_clock_probe
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

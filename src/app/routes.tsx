@@ -20,7 +20,10 @@ import type { ActivePresetService } from '../session-domain/services/active-pres
 import type { StartSessionService } from '../session-domain/services/start-session'
 import { App } from './App'
 import { SurfaceAccessGuard } from './guards/surface-access-guard'
-import { ViewerSurfaceGuard } from './guards/viewer-surface-guard'
+import {
+  BoothSurfaceGuard,
+  ViewerSurfaceGuard,
+} from './guards/viewer-surface-guard'
 import {
   AppProviders,
 } from './providers/app-providers'
@@ -69,8 +72,13 @@ export function createAppRoutes({
           element: <Navigate replace to="/booth" />,
         },
         {
-          path: 'booth',
-          element: <SessionStartScreen />,
+          element: <BoothSurfaceGuard />,
+          children: [
+            {
+              path: 'booth',
+              element: <SessionStartScreen />,
+            },
+          ],
         },
         {
           element: <ViewerSurfaceGuard />,

@@ -90,8 +90,34 @@ pub fn delete_capture(
         HostErrorEnvelope::persistence(format!("앱 데이터 경로를 확인하지 못했어요: {error}"))
     })?;
     let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    // Story 7.2: 삭제 뒤에는 manifest에서 request 상관관계를 알 수 없으므로 먼저 읽어 둔다.
+    let deleted_request_id =
+        find_capture_request_id(&base_dir, &input.session_id, &input.capture_id);
+    let session_id = input.session_id.clone();
 
-    delete_capture_in_dir(&base_dir, input)
+    let result = delete_capture_in_dir(&base_dir, input)?;
+
+    if let Some(request_id) = deleted_request_id {
+        crate::commands::display_commands::forget_display_request(&app, &session_id, &request_id)?;
+    }
+
+    Ok(result)
+}
+
+/// 삭제 대상 capture의 `requestId`를 미리 찾는다. 표시 generation은 request 단위로 보관된다.
+fn find_capture_request_id(
+    base_dir: &std::path::Path,
+    session_id: &str,
+    capture_id: &str,
+) -> Option<String> {
+    let paths = crate::session::session_paths::SessionPaths::try_new(base_dir, session_id).ok()?;
+
+    crate::session::session_repository::read_session_manifest(&paths.manifest_path)
+        .ok()?
+        .captures
+        .iter()
+        .find(|capture| capture.capture_id == capture_id)
+        .map(|capture| capture.request_id.clone())
 }
 
 #[tauri::command]
@@ -160,6 +186,15 @@ pub fn request_capture(
             return Err(error);
         }
     };
+    // Story 7.2: 계측 lane. 기본은 off이며 켜져 있을 때만 request-scoped sample generation을
+    // 게시한다. 전부 background 스레드에서 수행하므로 이 command의 반환을 지연시키지 않는다.
+    crate::commands::display_commands::spawn_sample_lane_publication(
+        &app,
+        result.session_id.clone(),
+        result.capture.request_id.clone(),
+        Some(result.capture.capture_id.clone()),
+    );
+
     let preview_base_dir = base_dir.clone();
     let preview_session_id = result.session_id.clone();
     let preview_capture_id = result.capture.capture_id.clone();

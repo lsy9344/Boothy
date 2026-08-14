@@ -1,0 +1,22 @@
+# HV-14 Environment
+
+- recordedAt: `2026-08-14T11:24:09+09:00`
+- validator: `Noah Lee`
+- booth PC: `NOAH_WIN`
+- app commit: `c390f53 + uncommitted Story 7.3 review changes`
+- OS: `Windows 11 Pro 10.0.26200 (build 26200)`
+- CPU / RAM: `Intel Core i9-9900KF / 63.9 GB`
+- GPU / driver: `NVIDIA GeForce GTX 1080 / 32.0.15.6094`
+- camera: `Canon EOS 700D`
+- camera firmware: `unknown; official latest 1.1.5, non-blocking for the EF-S 18-55mm lens`
+- lens: `Canon EF-S 18-55mm bundle lens; exact revision unknown`
+- memory card: `none; EDSDK SaveTo Host over direct PC USB`
+- power: `continuous AC power; adapter/coupler model unknown`
+- USB port / cable / hub: `Port 6 / existing working camera USB cable / direct PC connection, no hub reported`
+- Canon EDSDK: `13.19.0`
+- helper / protocol: `0.1.0 / camera-helper-sidecar/v2`
+- source comparison mode: `ab`
+- display sample mode: `off`
+- Image Quality before: `RAW; exact camera descriptor is captured by the capability event at run start`
+- Image Quality after: `RAW; helper emitted no camera-setting-warning, and post-run self-check returned camera-ready`
+- scene plan: `scene-plan.md; operator confirmation required at launch`

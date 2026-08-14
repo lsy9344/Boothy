@@ -1074,19 +1074,19 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\KimYS\\.nuget\\packages\\": {}
+    "C:\\Users\\dltnd\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
+      "projectUniqueName": "C:\\Code\\Boothy\\.claude\\worktrees\\story-7-3-hv14-fixes\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
       "projectName": "CanonHelper.Tests",
-      "projectPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
-      "packagesPath": "C:\\Users\\KimYS\\.nuget\\packages\\",
-      "outputPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\obj\\",
+      "projectPath": "C:\\Code\\Boothy\\.claude\\worktrees\\story-7-3-hv14-fixes\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\CanonHelper.Tests.csproj",
+      "packagesPath": "C:\\Users\\dltnd\\.nuget\\packages\\",
+      "outputPath": "C:\\Code\\Boothy\\.claude\\worktrees\\story-7-3-hv14-fixes\\sidecar\\canon-helper\\tests\\CanonHelper.Tests\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\KimYS\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\dltnd\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -1098,8 +1098,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
-              "projectPath": "C:\\Code\\Project\\Boothy\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj"
+            "C:\\Code\\Boothy\\.claude\\worktrees\\story-7-3-hv14-fixes\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj": {
+              "projectPath": "C:\\Code\\Boothy\\.claude\\worktrees\\story-7-3-hv14-fixes\\sidecar\\canon-helper\\src\\CanonHelper\\CanonHelper.csproj"
             }
           }
         }
@@ -1150,7 +1150,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.414/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.423/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

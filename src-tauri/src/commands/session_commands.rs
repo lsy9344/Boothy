@@ -23,6 +23,8 @@ pub fn start_session(
     // Story 7.1: 현재 세션 binding은 booth React 상태가 아니라 host가 소유한다.
     // 관람 창은 별개 WebView이므로 host truth 없이는 현재 세션을 알 수 없다.
     crate::commands::viewer_commands::bind_viewer_session(&app, &result.session_id);
+    // Story 7.2: 이전 세션의 표시 generation이 다음 고객 화면에 남지 않게 pointer를 비운다.
+    crate::commands::display_commands::bind_display_session(&app, &result.session_id)?;
 
     Ok(result)
 }

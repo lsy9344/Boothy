@@ -1,0 +1,1241 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cabd75b09d6694",
+  "boothAlias": "Codex 1601",
+  "customer": {
+    "name": "Codex",
+    "phoneLastFour": "1601"
+  },
+  "createdAt": "2026-08-11T11:41:55Z",
+  "updatedAt": "2026-08-11T11:48:05Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_mono-pop",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_mono-pop",
+  "activePresetDisplayName": "Mono Pop",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cabd75b09d6694",
+    "adjustedEndAt": "2026-08-11T11:56:55Z",
+    "warningAt": "2026-08-11T11:51:55Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114242329_1adb51e0cd",
+      "requestId": "request_0000000000000658c3f692a878",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114242329_1adb51e0cd.CR2",
+        "persistedAtMs": 1786448564045
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114242329_1adb51e0cd.jpg",
+        "enqueuedAtMs": 1786448564045,
+        "readyAtMs": 1786448569352
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448539334,
+        "previewVisibleAtMs": 1786448569352,
+        "fastPreviewVisibleAtMs": 1786448564686,
+        "xmpPreviewReadyAtMs": 1786448569352,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114351415_91c39f0a64",
+      "requestId": "request_0000000000000658c3fc026be8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114351415_91c39f0a64.CR2",
+        "persistedAtMs": 1786448633103
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114351415_91c39f0a64.jpg",
+        "enqueuedAtMs": 1786448633103,
+        "readyAtMs": 1786448637504
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448630402,
+        "previewVisibleAtMs": 1786448637504,
+        "fastPreviewVisibleAtMs": 1786448633412,
+        "xmpPreviewReadyAtMs": 1786448637504,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114418399_f070724c82",
+      "requestId": "request_0000000000000658c3fd9f6c90",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114418399_f070724c82.CR2",
+        "persistedAtMs": 1786448660083
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114418399_f070724c82.jpg",
+        "enqueuedAtMs": 1786448660083,
+        "readyAtMs": 1786448665732
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448657372,
+        "previewVisibleAtMs": 1786448665732,
+        "fastPreviewVisibleAtMs": 1786448660394,
+        "xmpPreviewReadyAtMs": 1786448665732,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114422997_95ca07eaad",
+      "requestId": "request_0000000000000658c3fde52a38",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114422997_95ca07eaad.CR2",
+        "persistedAtMs": 1786448664548
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114422997_95ca07eaad.jpg",
+        "enqueuedAtMs": 1786448664548,
+        "readyAtMs": 1786448669555
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448661948,
+        "previewVisibleAtMs": 1786448669555,
+        "fastPreviewVisibleAtMs": 1786448664693,
+        "xmpPreviewReadyAtMs": 1786448669555,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114427255_464cef2f3f",
+      "requestId": "request_0000000000000658c3fe242138",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114427255_464cef2f3f.CR2",
+        "persistedAtMs": 1786448668834
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114427255_464cef2f3f.jpg",
+        "enqueuedAtMs": 1786448668834,
+        "readyAtMs": 1786448673541
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448666227,
+        "previewVisibleAtMs": 1786448673541,
+        "fastPreviewVisibleAtMs": 1786448668981,
+        "xmpPreviewReadyAtMs": 1786448673541,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114444433_abb9280371",
+      "requestId": "request_0000000000000658c3ff2df5d0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114444433_abb9280371.CR2",
+        "persistedAtMs": 1786448685846
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114444433_abb9280371.jpg",
+        "enqueuedAtMs": 1786448685846,
+        "readyAtMs": 1786448691305
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448683423,
+        "previewVisibleAtMs": 1786448691305,
+        "fastPreviewVisibleAtMs": 1786448686348,
+        "xmpPreviewReadyAtMs": 1786448691305,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114448358_16ecb2e0a8",
+      "requestId": "request_0000000000000658c3ff6216d0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114448358_16ecb2e0a8.CR2",
+        "persistedAtMs": 1786448689707
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114448358_16ecb2e0a8.jpg",
+        "enqueuedAtMs": 1786448689707,
+        "readyAtMs": 1786448694418
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448687321,
+        "previewVisibleAtMs": 1786448694418,
+        "fastPreviewVisibleAtMs": 1786448689922,
+        "xmpPreviewReadyAtMs": 1786448694418,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114452479_8d4540fdaa",
+      "requestId": "request_0000000000000658c3ffad1d70",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114452479_8d4540fdaa.CR2",
+        "persistedAtMs": 1786448693963
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114452479_8d4540fdaa.jpg",
+        "enqueuedAtMs": 1786448693963,
+        "readyAtMs": 1786448698675
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448691445,
+        "previewVisibleAtMs": 1786448698675,
+        "fastPreviewVisibleAtMs": 1786448694135,
+        "xmpPreviewReadyAtMs": 1786448698675,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114456728_0e10a86485",
+      "requestId": "request_0000000000000658c3ffec6e48",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114456728_0e10a86485.CR2",
+        "persistedAtMs": 1786448698170
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114456728_0e10a86485.jpg",
+        "enqueuedAtMs": 1786448698170,
+        "readyAtMs": 1786448703382
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448695627,
+        "previewVisibleAtMs": 1786448703382,
+        "fastPreviewVisibleAtMs": 1786448698347,
+        "xmpPreviewReadyAtMs": 1786448703382,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114501278_ab151c2ae7",
+      "requestId": "request_0000000000000658c4002d8ff8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114501278_ab151c2ae7.CR2",
+        "persistedAtMs": 1786448703069
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114501278_ab151c2ae7.jpg",
+        "enqueuedAtMs": 1786448703069,
+        "readyAtMs": 1786448707474
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448700203,
+        "previewVisibleAtMs": 1786448707474,
+        "fastPreviewVisibleAtMs": 1786448703216,
+        "xmpPreviewReadyAtMs": 1786448707474,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114516511_39c15e55c9",
+      "requestId": "request_0000000000000658c4011b07b0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114516511_39c15e55c9.CR2",
+        "persistedAtMs": 1786448717882
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114516511_39c15e55c9.jpg",
+        "enqueuedAtMs": 1786448717882,
+        "readyAtMs": 1786448722389
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448715343,
+        "previewVisibleAtMs": 1786448722389,
+        "fastPreviewVisibleAtMs": 1786448718254,
+        "xmpPreviewReadyAtMs": 1786448722389,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114520799_a21bfd7518",
+      "requestId": "request_0000000000000658c4015e5840",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114520799_a21bfd7518.CR2",
+        "persistedAtMs": 1786448722637
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114520799_a21bfd7518.jpg",
+        "enqueuedAtMs": 1786448722637,
+        "readyAtMs": 1786448727238
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448719776,
+        "previewVisibleAtMs": 1786448727238,
+        "fastPreviewVisibleAtMs": 1786448722797,
+        "xmpPreviewReadyAtMs": 1786448727238,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114525425_a2098fe12c",
+      "requestId": "request_0000000000000658c401973e80",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114525425_a2098fe12c.CR2",
+        "persistedAtMs": 1786448726882
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114525425_a2098fe12c.jpg",
+        "enqueuedAtMs": 1786448726882,
+        "readyAtMs": 1786448731488
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448724314,
+        "previewVisibleAtMs": 1786448731488,
+        "fastPreviewVisibleAtMs": 1786448727051,
+        "xmpPreviewReadyAtMs": 1786448731488,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114529605_d83c0d6f59",
+      "requestId": "request_0000000000000658c401d5b068",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114529605_d83c0d6f59.CR2",
+        "persistedAtMs": 1786448731256
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114529605_d83c0d6f59.jpg",
+        "enqueuedAtMs": 1786448731256,
+        "readyAtMs": 1786448736365
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448728576,
+        "previewVisibleAtMs": 1786448736365,
+        "fastPreviewVisibleAtMs": 1786448731392,
+        "xmpPreviewReadyAtMs": 1786448736365,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114533973_4b91900751",
+      "requestId": "request_0000000000000658c40211e770",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114533973_4b91900751.CR2",
+        "persistedAtMs": 1786448735455
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114533973_4b91900751.jpg",
+        "enqueuedAtMs": 1786448735455,
+        "readyAtMs": 1786448740173
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448732940,
+        "previewVisibleAtMs": 1786448740173,
+        "fastPreviewVisibleAtMs": 1786448735668,
+        "xmpPreviewReadyAtMs": 1786448740173,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114548303_fc2633e0f9",
+      "requestId": "request_0000000000000658c402e98448",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114548303_fc2633e0f9.CR2",
+        "persistedAtMs": 1786448749675
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114548303_fc2633e0f9.jpg",
+        "enqueuedAtMs": 1786448749675,
+        "readyAtMs": 1786448754087
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448747280,
+        "previewVisibleAtMs": 1786448754087,
+        "fastPreviewVisibleAtMs": 1786448749959,
+        "xmpPreviewReadyAtMs": 1786448754087,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114552191_33846c4580",
+      "requestId": "request_0000000000000658c40324d998",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114552191_33846c4580.CR2",
+        "persistedAtMs": 1786448753891
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114552191_33846c4580.jpg",
+        "enqueuedAtMs": 1786448753891,
+        "readyAtMs": 1786448758194
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448751166,
+        "previewVisibleAtMs": 1786448758194,
+        "fastPreviewVisibleAtMs": 1786448754031,
+        "xmpPreviewReadyAtMs": 1786448758194,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114556545_bad16ebc5a",
+      "requestId": "request_0000000000000658c403653be0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114556545_bad16ebc5a.CR2",
+        "persistedAtMs": 1786448758211
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114556545_bad16ebc5a.jpg",
+        "enqueuedAtMs": 1786448758211,
+        "readyAtMs": 1786448762818
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448755506,
+        "previewVisibleAtMs": 1786448762818,
+        "fastPreviewVisibleAtMs": 1786448758358,
+        "xmpPreviewReadyAtMs": 1786448762818,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114600983_0831976eab",
+      "requestId": "request_0000000000000658c403aa9058",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114600983_0831976eab.CR2",
+        "persistedAtMs": 1786448762506
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114600983_0831976eab.jpg",
+        "enqueuedAtMs": 1786448762506,
+        "readyAtMs": 1786448767515
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448759912,
+        "previewVisibleAtMs": 1786448767515,
+        "fastPreviewVisibleAtMs": 1786448762653,
+        "xmpPreviewReadyAtMs": 1786448767515,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114605289_758965435c",
+      "requestId": "request_0000000000000658c403ef4890",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114605289_758965435c.CR2",
+        "persistedAtMs": 1786448767139
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114605289_758965435c.jpg",
+        "enqueuedAtMs": 1786448767139,
+        "readyAtMs": 1786448771680
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448764157,
+        "previewVisibleAtMs": 1786448771680,
+        "fastPreviewVisibleAtMs": 1786448767282,
+        "xmpPreviewReadyAtMs": 1786448771680,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114622850_03f0f9f51e",
+      "requestId": "request_0000000000000658c405131558",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114622850_03f0f9f51e.CR2",
+        "persistedAtMs": 1786448784483
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114622850_03f0f9f51e.jpg",
+        "enqueuedAtMs": 1786448784483,
+        "readyAtMs": 1786448788983
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448781808,
+        "previewVisibleAtMs": 1786448788983,
+        "fastPreviewVisibleAtMs": 1786448784759,
+        "xmpPreviewReadyAtMs": 1786448788983,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114627006_fde447139d",
+      "requestId": "request_0000000000000658c405502b98",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114627006_fde447139d.CR2",
+        "persistedAtMs": 1786448788451
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114627006_fde447139d.jpg",
+        "enqueuedAtMs": 1786448788451,
+        "readyAtMs": 1786448792861
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448785974,
+        "previewVisibleAtMs": 1786448792861,
+        "fastPreviewVisibleAtMs": 1786448788616,
+        "xmpPreviewReadyAtMs": 1786448792861,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114631479_fbb89abc7c",
+      "requestId": "request_0000000000000658c405902468",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114631479_fbb89abc7c.CR2",
+        "persistedAtMs": 1786448793261
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114631479_fbb89abc7c.jpg",
+        "enqueuedAtMs": 1786448793261,
+        "readyAtMs": 1786448798170
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448790456,
+        "previewVisibleAtMs": 1786448798170,
+        "fastPreviewVisibleAtMs": 1786448793402,
+        "xmpPreviewReadyAtMs": 1786448798170,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114635973_0a5a20abe1",
+      "requestId": "request_0000000000000658c405d5bea0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114635973_0a5a20abe1.CR2",
+        "persistedAtMs": 1786448797968
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114635973_0a5a20abe1.jpg",
+        "enqueuedAtMs": 1786448797968,
+        "readyAtMs": 1786448803830
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448794954,
+        "previewVisibleAtMs": 1786448803830,
+        "fastPreviewVisibleAtMs": 1786448797971,
+        "xmpPreviewReadyAtMs": 1786448803830,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114640931_4fddcbfc01",
+      "requestId": "request_0000000000000658c406034c48",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114640931_4fddcbfc01.CR2",
+        "persistedAtMs": 1786448802913
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114640931_4fddcbfc01.jpg",
+        "enqueuedAtMs": 1786448802913,
+        "readyAtMs": 1786448809179
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448799887,
+        "previewVisibleAtMs": 1786448809179,
+        "fastPreviewVisibleAtMs": 1786448803343,
+        "xmpPreviewReadyAtMs": 1786448809179,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114656817_fbd3719989",
+      "requestId": "request_0000000000000658c407163210",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114656817_fbd3719989.CR2",
+        "persistedAtMs": 1786448818922
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114656817_fbd3719989.jpg",
+        "enqueuedAtMs": 1786448818922,
+        "readyAtMs": 1786448823267
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448815798,
+        "previewVisibleAtMs": 1786448823267,
+        "fastPreviewVisibleAtMs": 1786448818926,
+        "xmpPreviewReadyAtMs": 1786448823267,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114701788_5d047c7b2e",
+      "requestId": "request_0000000000000658c407437d50",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114701788_5d047c7b2e.CR2",
+        "persistedAtMs": 1786448823528
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114701788_5d047c7b2e.jpg",
+        "enqueuedAtMs": 1786448823528,
+        "readyAtMs": 1786448828533
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448820750,
+        "previewVisibleAtMs": 1786448828533,
+        "fastPreviewVisibleAtMs": 1786448823669,
+        "xmpPreviewReadyAtMs": 1786448828533,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114716886_ba8f85b6f5",
+      "requestId": "request_0000000000000658c40784b6b8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114716886_ba8f85b6f5.CR2",
+        "persistedAtMs": 1786448838611
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114716886_ba8f85b6f5.jpg",
+        "enqueuedAtMs": 1786448838611,
+        "readyAtMs": 1786448843116
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448824909,
+        "previewVisibleAtMs": 1786448843116,
+        "fastPreviewVisibleAtMs": 1786448838911,
+        "xmpPreviewReadyAtMs": 1786448843116,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114721517_fdf94f0b54",
+      "requestId": "request_0000000000000658c4089ee1d8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114721517_fdf94f0b54.CR2",
+        "persistedAtMs": 1786448843399
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114721517_fdf94f0b54.jpg",
+        "enqueuedAtMs": 1786448843399,
+        "readyAtMs": 1786448847901
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448840465,
+        "previewVisibleAtMs": 1786448847901,
+        "fastPreviewVisibleAtMs": 1786448843542,
+        "xmpPreviewReadyAtMs": 1786448847901,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114726283_8cea5919d9",
+      "requestId": "request_0000000000000658c408d41a68",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114726283_8cea5919d9.CR2",
+        "persistedAtMs": 1786448847692
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114726283_8cea5919d9.jpg",
+        "enqueuedAtMs": 1786448847692,
+        "readyAtMs": 1786448852506
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448845077,
+        "previewVisibleAtMs": 1786448852506,
+        "fastPreviewVisibleAtMs": 1786448847865,
+        "xmpPreviewReadyAtMs": 1786448852506,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114740213_3eaf83315b",
+      "requestId": "request_0000000000000658c409bfcf40",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114740213_3eaf83315b.CR2",
+        "persistedAtMs": 1786448861835
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114740213_3eaf83315b.jpg",
+        "enqueuedAtMs": 1786448861835,
+        "readyAtMs": 1786448866443
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448859182,
+        "previewVisibleAtMs": 1786448866443,
+        "fastPreviewVisibleAtMs": 1786448862115,
+        "xmpPreviewReadyAtMs": 1786448866443,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114744390_0a5a44445d",
+      "requestId": "request_0000000000000658c409c152e0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114744390_0a5a44445d.CR2",
+        "persistedAtMs": 1786448866261
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114744390_0a5a44445d.jpg",
+        "enqueuedAtMs": 1786448866261,
+        "readyAtMs": 1786448871212
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448863361,
+        "previewVisibleAtMs": 1786448871212,
+        "fastPreviewVisibleAtMs": 1786448866548,
+        "xmpPreviewReadyAtMs": 1786448871212,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114749191_d1975c9569",
+      "requestId": "request_0000000000000658c40a0b5648",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114749191_d1975c9569.CR2",
+        "persistedAtMs": 1786448870684
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114749191_d1975c9569.jpg",
+        "enqueuedAtMs": 1786448870684,
+        "readyAtMs": 1786448875091
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448868169,
+        "previewVisibleAtMs": 1786448875091,
+        "fastPreviewVisibleAtMs": 1786448870844,
+        "xmpPreviewReadyAtMs": 1786448875091,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114753083_c3748ff730",
+      "requestId": "request_0000000000000658c40a4bd048",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114753083_c3748ff730.CR2",
+        "persistedAtMs": 1786448874868
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114753083_c3748ff730.jpg",
+        "enqueuedAtMs": 1786448874868,
+        "readyAtMs": 1786448881120
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448872061,
+        "previewVisibleAtMs": 1786448881120,
+        "fastPreviewVisibleAtMs": 1786448875043,
+        "xmpPreviewReadyAtMs": 1786448881120,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cabd75b09d6694",
+      "boothAlias": "Codex 1601",
+      "activePresetId": "preset_mono-pop",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Mono Pop",
+      "captureId": "capture_20260811114757304_310d3fa670",
+      "requestId": "request_0000000000000658c40a8909b0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\captures\\originals\\capture_20260811114757304_310d3fa670.CR2",
+        "persistedAtMs": 1786448878935
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cabd75b09d6694\\renders\\previews\\capture_20260811114757304_310d3fa670.jpg",
+        "enqueuedAtMs": 1786448878935,
+        "readyAtMs": 1786448885898
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786448876270,
+        "previewVisibleAtMs": 1786448885898,
+        "fastPreviewVisibleAtMs": 1786448879182,
+        "xmpPreviewReadyAtMs": 1786448885898,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": null
+}

@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-08-11 10:12:38 +09:00
+# last_updated: 2026-08-13 11:57:05 +09:00
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -37,7 +37,7 @@
 # - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-08-11 14:12:56 +09:00"
+last_updated: "2026-08-13 11:57:05 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -91,9 +91,9 @@ development_status:
   epic-6-retrospective: optional
 
   epic-7: in-progress
-  7-1-전용-관람-창-준비와-화면-크기-계약: review
-  7-2-immutable-sample과-actual-present-계측: backlog
-  7-3-libraw-embedded-jpeg와-raw-jpeg-source-비교: backlog
+  7-1-전용-관람-창-준비와-화면-크기-계약: done
+  7-2-immutable-sample과-actual-present-계측: done
+  7-3-libraw-embedded-jpeg와-raw-jpeg-source-비교: review
   7-4-화면-적합-immutable-preset-proxy: backlog
   7-5-상주-renderer-검증-spike: backlog
   7-6-raw-정밀본-무중단-교체: backlog

@@ -252,6 +252,55 @@ function mergeCaptureIntoManifest(
   }
 }
 
+function wouldRegressReadyPreview(
+  manifest: SessionManifest,
+  capture: SessionScopedCapture,
+) {
+  const existingCapture = manifest.captures.find(
+    (currentCapture) =>
+      currentCapture !== undefined &&
+      currentCapture.captureId === capture.captureId,
+  )
+
+  return (
+    existingCapture !== undefined &&
+    existingCapture.preview.readyAtMs !== null &&
+    capture.preview.readyAtMs === null
+  )
+}
+
+/**
+ * host가 함께 보낸 최근 capture 기록을 manifest에 화해시킨다.
+ *
+ * `latestCapture`만 병합하면 다음 촬영이 접수되는 순간 이전 촬영은 더 이상 latest가
+ * 아니므로 그 촬영의 렌더 완료가 클라이언트에 영원히 도달하지 못한다. 2026-08-12 실장비
+ * 검증에서 첫 사진 카드가 완료된 뒤에도 `마무리 중`에 남은 원인이 이것이다.
+ *
+ * **병합 전용이다.** 이 목록으로 기록을 지우지 않고, 이미 준비된 미리보기를 준비 전으로
+ * 되돌리지도 않는다 — 늦게 도착한 tick이 완료된 카드를 다시 대기로 만드는 것이 바로
+ * 고치려는 증상이다.
+ */
+function mergeRecentCapturesIntoManifest(
+  manifest: SessionManifest | null,
+  recentCaptures: readonly SessionScopedCapture[] | undefined,
+  isDeletedCaptureId: (captureId: string) => boolean,
+): SessionManifest | null {
+  if (manifest === null || recentCaptures === undefined) {
+    return manifest
+  }
+
+  return recentCaptures.reduce<SessionManifest>((current, capture) => {
+    if (
+      isDeletedCaptureId(capture.captureId) ||
+      wouldRegressReadyPreview(current, capture)
+    ) {
+      return current
+    }
+
+    return mergeCaptureIntoManifest(current, capture) ?? current
+  }, manifest)
+}
+
 function sanitizeManifestForSession(
   sessionId: string,
   manifest: SessionManifest | null,
@@ -929,6 +978,21 @@ export function SessionProvider({
           ),
         )
         const latestCapture = safeReadiness.latestCapture ?? null
+        const manifestWithLatestCapture =
+          latestCapture === null
+            ? current.manifest
+            : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
+              current.manifest
+        // latest를 먼저 덮고 최근 목록을 마지막에 화해시킨다.
+        // `lockStablePostEndReadiness`는 새 tick에 latest가 없으면 이전 tick의 latest를
+        // 그대로 이어붙인다. 이어붙은 기록은 이번 tick의 목록보다 오래됐으므로,
+        // 같은 capture를 두 값이 다르게 말하면 목록이 최종 판정이어야 한다.
+        const reconciledManifest =
+          mergeRecentCapturesIntoManifest(
+            manifestWithLatestCapture,
+            safeReadiness.recentCaptures,
+            (captureId) => deletedCaptureIdsRef.current.has(captureId),
+          ) ?? manifestWithLatestCapture
 
         return {
           captureReadiness: safeReadiness,
@@ -942,13 +1006,7 @@ export function SessionProvider({
               ? null
               : {
                   ...(mergePostEndIntoManifest(
-                    mergeTimingIntoManifest(
-                      latestCapture === null
-                        ? current.manifest
-                        : mergeCaptureIntoManifest(current.manifest, latestCapture) ??
-                          current.manifest,
-                      safeReadiness,
-                    ),
+                    mergeTimingIntoManifest(reconciledManifest, safeReadiness),
                     safeReadiness,
                   ) ?? current.manifest),
                   lifecycle: {
@@ -1395,8 +1453,16 @@ export function SessionProvider({
                   manifestWithCapture,
                   safeReadiness.latestCapture,
                 ) ?? manifestWithCapture
+          // 두 번째 촬영을 접수하는 순간이 첫 촬영을 화해시킬 가장 이른 기회다.
+          // 이 응답을 흘리면 첫 촬영은 다음 readiness poll까지 옛 상태로 남는다.
+          const manifestWithRecentCaptures =
+            mergeRecentCapturesIntoManifest(
+              manifestWithLatestCapture,
+              safeReadiness.recentCaptures,
+              (captureId) => deletedCaptureIdsRef.current.has(captureId),
+            ) ?? manifestWithLatestCapture
           const manifestWithTiming = mergeTimingIntoManifest(
-            manifestWithLatestCapture,
+            manifestWithRecentCaptures,
             safeReadiness,
           )
           const manifestWithPostEnd = mergePostEndIntoManifest(

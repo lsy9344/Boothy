@@ -1,0 +1,28 @@
+﻿[
+    {
+        "generationId":  "request_0000000000000658c332e6ad98-000001",
+        "generationSeq":  1,
+        "sampleVariant":  "a",
+        "path":  "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018caba753053fe4c\\renders\\display\\request_0000000000000658c332e6ad98\\000001-a.jpg",
+        "exists":  true,
+        "expectedByteSize":  701308,
+        "actualByteSize":  701308,
+        "expectedHash":  "fnv1a64:3b9de2a0d1444657",
+        "actualHash":  "fnv1a64:3b9de2a0d1444657",
+        "byteSizeMatches":  true,
+        "hashMatches":  true
+    },
+    {
+        "generationId":  "request_0000000000000658c332e6ad98-000002",
+        "generationSeq":  2,
+        "sampleVariant":  "b",
+        "path":  "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018caba753053fe4c\\renders\\display\\request_0000000000000658c332e6ad98\\000002-b.jpg",
+        "exists":  true,
+        "expectedByteSize":  719796,
+        "actualByteSize":  719796,
+        "expectedHash":  "fnv1a64:2f2a1a2f89cb8d4b",
+        "actualHash":  "fnv1a64:2f2a1a2f89cb8d4b",
+        "byteSizeMatches":  true,
+        "hashMatches":  true
+    }
+]

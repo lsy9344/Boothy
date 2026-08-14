@@ -6,7 +6,7 @@ classification:
   projectType: 'desktop_app'
   complexity: 'high'
 date: '2026-03-17'
-status: 'draft-v1.2-darktable-foundation-alignment'
+status: 'draft-v1.3-low-latency-viewer-alignment'
 documentType: 'product-requirements-document'
 inputDocuments:
   - '_bmad-output/planning-artifacts/architecture.md'
@@ -15,7 +15,7 @@ stepsCompleted:
   - 'step-e-01-discovery'
   - 'step-e-02-review'
   - 'step-e-03-edit'
-lastEdited: '2026-03-20'
+lastEdited: '2026-08-11'
 editHistory:
   - date: '2026-03-08'
     changes: 'BMAD structure, measurable FR/NFR, traceability, desktop app requirements added'
@@ -53,6 +53,10 @@ editHistory:
     changes: 'Validation-report follow-up: removed broken source references from frontmatter and source list, and normalized FR-004, FR-006, FR-007, and FR-009 to actor-first phrasing'
   - date: '2026-03-20'
     changes: 'Final cleanup pass: normalized PRD title to BMAD template convention and added a short executive digest for faster stakeholder review'
+  - date: '2026-08-11'
+    changes: 'Approved correct-course: added the pre-opened customer viewer, button-to-monitor-present KPI, progressive immutable display tiers, preset proxy compatibility, and complete installer plus 100-shot release gates'
+  - date: '2026-08-11'
+    changes: 'Approved implementation-readiness remediation: split viewer readiness from actual-present evidence, decomposed packaging/performance/rollout/final release gates, and realigned Epic 7 story traceability without changing product scope'
 ---
 
 # Product Requirements Document - Boothy
@@ -64,6 +68,7 @@ This PRD defines product behavior, product boundaries, and required operational 
 - Product shape: Boothy is a booth-first Windows desktop photo product with preset-driven capture, current-session-only review, and clearly timed completion guidance.
 - Customer boundary: customers start with a simple name-plus-phone-last-four booth alias, select one approved published preset, capture confidently, and never enter a direct editing workflow.
 - Operational boundary: capture success, preview readiness, and final completion are separate truths that must be reported honestly.
+- Viewing boundary: a pre-opened customer viewer presents the first qualifying preset-applied image at physical display-fit size and upgrades to the RAW-refined image without a blank or misleading frame.
 - Internal control: authorized staff manage preset authoring, approval, publication, and rollback outside the booth runtime.
 - Release focus: the MVP succeeds when branches deliver consistent presets, truthful state transitions, bounded operator recovery, and no cross-session privacy leaks.
 
@@ -125,7 +130,7 @@ Customers start quickly, choose a look they understand, capture photos with trut
 
 ### Core Product Modes
 
-Boothy operates across two runtime surfaces and one authorized adjacent workflow.
+Boothy operates across two customer surfaces, one operator surface, and one authorized adjacent workflow. The customer interaction surface and read-only viewing surface share the same host-owned session truth but have different responsibilities.
 
 **Mode A: Customer Booth Flow**
 - booth alias entry using name plus phone-last-four
@@ -134,6 +139,12 @@ Boothy operates across two runtime surfaces and one authorized adjacent workflow
 - preview waiting and current-session review
 - timing guidance
 - export waiting, completion, and handoff guidance
+
+**Mode A2: Customer Viewing Display**
+- a pre-opened, read-only viewer prepared before capture
+- physical display-fit presentation of the current capture's preset-applied image
+- uninterrupted upgrade from display-fit preset proxy to RAW-refined display
+- no customer editing, navigation, or diagnostic controls
 
 **Mode B: Operator Recovery Surface**
 - current session visibility
@@ -173,7 +184,9 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 | Monthly phone / remote support incidents | Approx. 500 incidents per month across all branches | 250 or fewer incidents per month | Combined support and remote assistance logs |
 | Self-start session success rate | Unknown | 85% or higher | Sessions that reach first successful current-session raw persistence without operator intervention |
 | Preset selection completion rate | New metric | 95% or higher | Sessions that reach preset selection and choose a preset within 20 seconds without operator intervention |
-| Preview-readiness latency after raw persistence | New metric | Current-session preview visible within 5 seconds for 95th-percentile successful captures after raw persistence | Lifecycle logs and pilot timing review |
+| First qualifying preset display latency | New metric | Warm p50 at or below 3 seconds, p95 at or below 4 seconds, and hard maximum at or below 5 seconds from trusted capture input to a qualifying preset-applied frame on the pre-opened viewer | QPC-aligned input timing, actual monitor-present evidence, and per-capture lifecycle spans |
+| Qualifying display reliability | New metric | 99% or higher across a 100-shot release run, with failures and timeouts retained in the result set | Approved booth hardware release report |
+| Progressive display integrity | Must be zero | 0 wrong-session, wrong-capture, wrong-preset, unfiltered qualifying, blank, stale, upscaled, or quality-downgrade frames | Frame-level viewer evidence and visual regression review |
 | Published preset reproducibility rate | New metric | 99% or higher | Same approved preset version produces expected preview and final output within approved variance across pilot branches |
 | Adjusted end-time visibility correctness | New metric | 99% or higher | Sessions where the displayed end time matches the approved timing policy from session start |
 | Warning and end alert reliability | New metric | 99% or higher | Qualifying sessions where the 5-minute warning and exact-end alert occur within +/- 5 seconds of scheduled time |
@@ -211,6 +224,8 @@ Within the first 60 days of pilot rollout, Boothy should let customers start qui
 - Customer-safe readiness guidance and capture control
 - Real camera readiness, trigger, and source-photo persistence for the required booth workflow
 - Truthful preview waiting and current-session preview confidence
+- A read-only viewing display that is created and ready before capture
+- A physical display-fit preset-applied first image followed by an uninterrupted RAW-refined upgrade
 - Current-session review only
 - Deletion of current-session captures according to the current-session deletion policy
 - In-session preset changes at any time, with changes applying from that moment forward without rewriting past captures
@@ -261,7 +276,9 @@ Each published booth preset is an approved artifact bundle, not just a display n
 - Each preset is tied to approved render compatibility for booth use.
 - Each preset includes the customer-facing look representation needed for booth selection.
 - Each preset includes the approved booth-safe preview behavior and final render behavior required for downstream use.
+- Each preset records whether it is eligible for the display-fit proxy path, the supported operation set, the versioned proxy recipe, the reference renderer version, and the approved visual-comparison result.
 - A same-capture fast preview may appear earlier to reduce blank waiting, but preset-applied preview truth still comes from the published artifact's render behavior.
+- An unfiltered camera image or review-rail thumbnail never counts as the qualifying customer-viewer success frame.
 - Only approved published preset artifacts may appear in the customer booth catalog.
 
 ### Booth-Safe Runtime Boundary
@@ -484,6 +501,7 @@ Owner and brand stakeholders are not direct on-screen users, but they need the p
 | --- | --- |
 | Customers start quickly and choose a look with confidence | FR-001, FR-002, FR-003 |
 | Customers trust that current-session capture and preview truth are honest | FR-003, FR-004, FR-005 |
+| Customers see the selected look promptly on the dedicated viewing display | FR-004, FR-010 |
 | Customers understand time remaining and end-of-session behavior | FR-006, FR-007 |
 | Internal teams control visual quality without exposing complexity to customers | FR-008 |
 | Operators remain bounded and useful | FR-009 |
@@ -519,6 +537,8 @@ This section records product decisions that later UX, architecture, epic, and st
 - Capture success means the new source photo is safely persisted to the active session.
 - Preview readiness and final completion are later booth-safe outcomes that must be communicated truthfully.
 - The booth may show a same-capture fast preview before preset-applied preview readiness, but it must stay in truthful waiting language until the render-backed preview is actually ready.
+- Viewer success is a separate product truth: it begins only when the pre-opened viewing display presents a physical display-fit image for the same capture and capture-bound preset version.
+- A later RAW-refined display may replace the first qualifying preset proxy only after full decode and without a blank, stale frame, crop or scale jump, or quality-tier downgrade.
 - Later artifacts must not collapse these states into one ambiguous success message.
 
 ### Decision 3: Internal Craft Stays Behind a Publication Boundary
@@ -699,6 +719,23 @@ Operators can identify blocked states, protect customers from unsafe recovery st
 - [Approved Operator Recovery Inventory](#approved-operator-recovery-inventory)
 - [KPI Table](#kpi-table)
 
+### FR-010 Pre-Opened Full-View Progressive Preset Display
+
+Users can see the current capture's selected look on a dedicated viewing display that is ready before capture and upgrades from the first qualifying display-fit preset image to the RAW-refined image without visual interruption.
+
+**Acceptance Criteria**
+- The read-only customer viewer is created, visible or otherwise explicitly approved as ready, layout-complete, and subscribed to the current session before capture is allowed.
+- The viewer determines the required image size from the approved photo rectangle, monitor mode, and device-pixel ratio rather than using a fixed thumbnail size.
+- The first qualifying customer-viewer frame is associated with the same session, request, capture, preset identity, and published version as the accepted capture.
+- An unfiltered camera image, review-rail thumbnail, file-ready signal, renderer-ready signal, or image-load callback alone does not satisfy viewer success.
+- A RAW-refined display replaces an earlier qualifying preset proxy only after complete decode and without a blank, spinner, prior capture, crop or scale jump, or quality-tier downgrade.
+- Reload, listener loss, delayed work, and overlapping captures cannot cause an older generation or another session's asset to replace the active display.
+
+**Sources**
+- [Technical research: preset image fast display](./research/technical-preset-image-fast-display-research-2026-08-10.md)
+- [Decision 2: Capture Truth, Preview Truth, and Final Completion Stay Separate](#decision-2-capture-truth-preview-truth-and-final-completion-stay-separate)
+- [NFR-003 Booth Responsiveness and Qualifying Viewer Readiness](#nfr-003-booth-responsiveness-and-qualifying-viewer-readiness)
+
 ## Non-Functional Requirements
 
 ### NFR-001 Customer Guidance Density and Simplicity
@@ -730,15 +767,18 @@ The system shall keep 100% of active branches on the same approved customer pres
 - [Published Preset Artifact Model](#published-preset-artifact-model)
 - [Project-Type Requirements](#project-type-requirements)
 
-### NFR-003 Booth Responsiveness and Preview Readiness
+### NFR-003 Booth Responsiveness and Qualifying Viewer Readiness
 
-The system shall acknowledge primary customer actions within 1 second, surface a truthful current-session image as early as safely possible after source-photo persistence, and show preset-applied current-session preview confirmation within 5 seconds for 95th-percentile successful captures on approved Windows hardware, as measured by performance benchmarking and pilot logs.
+The system shall acknowledge primary customer actions within 1 second and, on approved Windows hardware, present the first qualifying preset-applied image on the pre-opened customer viewer within a warm p50 of 3 seconds, warm p95 of 4 seconds, and hard maximum of 5 seconds from trusted capture input, as measured from the same monotonic clock against actual monitor presentation.
 
 **Acceptance Criteria**
 - Primary customer actions such as session start, preset selection, delete confirmation, and post-end state entry are acknowledged within 1 second.
-- When a same-capture fast preview is available, the booth may surface it before `previewReady`, but the customer state remains explicit `Preview Waiting` until the preset-applied preview is actually ready.
-- 95th-percentile successful captures show preset-applied current-session preview confirmation within 5 seconds after source-photo persistence.
-- If preset-applied preview confirmation is not yet ready, the booth remains in an explicit preview-waiting state rather than implying completion.
+- The official latency start is the trusted customer capture input and the official end is the first qualifying preset-applied monitor frame on the pre-opened viewer.
+- File-ready, renderer-ready, event receipt, image decode, image-load callbacks, unfiltered camera images, and review-rail thumbnails remain diagnostic spans rather than the success endpoint.
+- A warm 100-shot release run achieves at least 99% qualifying success, p50 at or below 3 seconds, p95 at or below 4 seconds, and hard maximum at or below 5 seconds without excluding failures or timeouts.
+- Wrong-session, wrong-request, wrong-capture, wrong-preset, unfiltered qualifying, blank, stale, upscaled, crop-jump, scale-jump, and tier-downgrade frames remain at zero.
+- Cold first-shot, 10-minute idle, and camera reconnect scenarios are reported separately and cannot silently reuse warm-only evidence.
+- If no qualifying preset-applied image is ready, the booth remains in truthful waiting guidance rather than implying viewer success.
 - Performance is measured on approved branch hardware.
 
 **Sources**
@@ -784,6 +824,8 @@ The system shall support staged branch rollout to explicitly selected branch set
 - 100% of rollout and rollback actions record the branch set, target build, approved preset stack, approval timestamp, and operator identity in the rollout audit.
 - Active customer sessions are never interrupted by forced update behavior.
 - Any promoted branch can return to the last approved build and approved preset stack in one approved rollback action while preserving approved local settings and active-session compatibility.
+- The release artifact includes the signed app, camera helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipe, and pinned RAW renderer dependency as one verifiable inventory.
+- A clean offline Windows environment can install, launch, self-check, render an approved fixture to the viewer, upgrade, and uninstall without a separately installed development toolchain.
 
 **Sources**
 - [MVP In Scope for Internal or Authorized Users](#mvp-in-scope-for-internal-or-authorized-users)
@@ -800,6 +842,9 @@ The system shall support staged branch rollout to explicitly selected branch set
 | The approved preset catalog is small enough to keep choice simple but broad enough for customer appeal | Prevents either choice overload or insufficient creative value | UX and pilot validation | PM + UX |
 | Published preset artifacts can maintain consistent look quality across branches without drift | Prevents branch inconsistency and preset-truth erosion | Architecture and operational validation | PM + Architect |
 | Approved branch hardware can sustain preview-readiness targets under the approved render path | Prevents shipping a booth experience that feels slow or misleading in practice | Prototype and smoke validation | Architect + Dev |
+| A pre-opened viewer can remain ready and present physical display-fit images without blank or stale frames | Prevents renderer work from being optimized against the wrong customer surface or endpoint | Epic 7 Story 7.1 readiness contract and Story 7.2 actual-present validation | UX + Architect + QA |
+| LibRaw embedded JPEG or capability-gated RAW+JPEG can provide a reliable fast source on EOS 700D | Prevents assuming a camera-source path from two samples or unsupported camera settings | Epic 7 Story 7.3 source comparison | Architect + Dev + QA |
+| A resident display renderer can meet latency and visual-parity gates for approved presets | Prevents committing the MVP to a renderer that is fast but visually incorrect or operationally fragile | Epic 7 Story 7.5 spike | Imaging + Architect + QA |
 | Final render or handoff completion can resolve independently without confusing customers | Prevents a false need to reintroduce customer-side editing or false-complete states | UX and pilot validation | PM + UX |
 | Operators can separate capture-state failure from render-state failure using bounded diagnostics only | Prevents unsafe or overly broad recovery behavior | Operator drill validation | PM + Ops |
 | Preset publication and rollback can affect future sessions without mutating active sessions | Prevents live-session instability and unbounded operational risk | Architecture and rollout validation | PM + Architect |
@@ -811,6 +856,10 @@ The system shall support staged branch rollout to explicitly selected branch set
 - Successful capture stores the new source photo under the current session before booth success feedback is shown.
 - Booth `Ready` is recognized as release truth only when live camera/helper truth is confirmed through the host-owned runtime boundary with fresh status rather than browser fallback, stale session state, or incomplete helper signals.
 - The booth reports preview readiness truthfully: current-session preview appears when ready, and explicit waiting guidance appears when it is not.
+- Before capture, the dedicated viewer is ready for the approved monitor profile and current session.
+- The first qualifying viewer frame is preset-applied, physical display-fit, and correlated to the accepted capture and capture-bound preset version.
+- Warm 100-shot viewer evidence meets p50, p95, hard-max, reliability, and zero-wrong-frame gates; cold, idle, and reconnect evidence is reported separately.
+- Proxy-to-RAW replacement introduces no blank, stale, prior-capture, crop-jump, scale-jump, or quality-tier-downgrade frame.
 - The customer can review only current-session photos, delete only as allowed by the `Current-Session Deletion Policy`, and change presets for future captures.
 - The adjusted end time is visible from session start, and the 5-minute warning plus exact-end alert fire correctly.
 - After session end, the product enters one explicit post-end state within the allowed timing budget, and `Completed` resolves only as `Local Deliverable Ready` or `Handoff Ready` after booth-side required work is actually complete.
@@ -819,7 +868,9 @@ The system shall support staged branch rollout to explicitly selected branch set
 - Publication and rollback can promote or revert approved preset artifacts for future sessions without mutating active sessions.
 - Branch rollout controls can promote explicitly selected branch sets and roll back the app build and approved preset stack without interrupting an active customer session.
 - No forced update interrupts an active customer session.
+- A signed complete installer reproduces the approved viewer, camera, preset proxy, RAW refinement, and final paths on a clean offline Windows environment.
 - The operator surface exposes only the diagnostics and recovery actions defined by the `Operator Recovery Policy`.
+- Epic 7 Story 7.10 and HV-18D record the final MVP Go/No-Go only after installer, performance/recovery, and rollout/rollback evidence are independently complete.
 
 ## Conclusion
 

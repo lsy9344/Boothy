@@ -2,11 +2,9 @@
 
 이 디렉터리는 Story 7.1 `촬영 전 전용 관람 창 준비와 화면 크기 계약`의 실장비 증거를 보존한다.
 
-**현재 상태: 2026-08-11 증거 패키지 수집, 복구 실패로 `No-Go`.**
-현재 회차 결과는 `run-20260811-135652/result.md`를 본다.
-자동 테스트 통과만으로 Story 7.1을 닫지 않는다. 아래 항목이 승인된 부스 하드웨어에서 수집되고
-`_bmad-output/implementation-artifacts/hardware-validation-ledger.md`의 Story 7.1 행이 `Go`로
-기록되기 전까지 story status는 `review`를 유지한다.
+**현재 상태: 2026-08-11 승인 부스 하드웨어 재검증 `Go`.**
+현재 회차 결과는 `run-20260811-155154/result.md`를 본다. 이전 `No-Go`였던 관람 창 재생성 문제는
+같은 장비에서 복구 후 실제 재촬영까지 완료해 해소했다.
 
 ## 수집 대상 (ledger required evidence)
 
@@ -34,15 +32,17 @@
 
 - `monitorTargeting: approved-customer-monitor`인 정상 snapshot
 - 승인 모니터 이름을 잘못 설정했을 때 `monitor-unavailable`이 되고 촬영이 막히는 증거
-- 단일 모니터 환경에서 `single-monitor-fallback`이 되고 촬영이 막히는 snapshot·부스 화면
-- 승인 목록 밖 해상도에서 `unapproved-profile`이 되고 촬영이 막히는 snapshot·부스 화면
+- 단일 모니터가 실제 승인 운영 구성인 지점에서는 `single-monitor-fallback` 차단 snapshot·부스 화면
+- 승인 목록 밖 해상도를 고객 모니터로 운영하는 지점에서는 `unapproved-profile` 차단 snapshot·부스 화면
 - 관람 창이 부스 조작 화면이 아닌 고객 모니터를 채우는 사진
 
 ## 4. Physical display-size contract — `display-size/`
 
-- 승인된 1080p / 1440p / 4K 각각에서의 snapshot `photoRect`
+- 해당 지점에서 실제 승인 운영 중인 display profile의 snapshot `photoRect`
 - `requiredSourceWidthPx/HeightPx`가 실측 `cssWidth/cssHeight × devicePixelRatio`와 일치함
 - 고정 384px asset이 해당 profile 요구치를 만족하지 못함을 보이는 대조표
+
+현재 승인되지 않은 대체 profile 조합은 자동 계약 테스트로 유지하고, 승인 운영 구성이 바뀔 때 해당 실장비 증거를 추가한다.
 
 ## 5. Failure-path recovery — `recovery/`
 

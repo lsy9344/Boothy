@@ -9,6 +9,10 @@ physical display-size 계약을 고정한다.
 immutable display generation, display pointer, double-buffer swap, actual-present 계측은
 Story 7.2 이후가 소유하며 이 문서에 추가하지 않는다.
 
+> 그 자리에 **무엇을 언제 올릴 수 있는가**는 `docs/contracts/viewer-display.md`(Story 7.2)가 소유한다.
+> 특히 `.viewer-surface__photo`의 기하와 standby 행의 레이아웃 점유는 이 문서의 layout-ready 계약이
+> 걸려 있는 불변식이므로 표시 경로에서 바꿀 수 없다.
+
 ## 소유권 원칙
 
 - `viewer-window`는 `booth-window`와 **별개의 WebView이고 별개의 React root**다.

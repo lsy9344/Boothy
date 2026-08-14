@@ -1,7 +1,7 @@
 //! Story 7.1: viewer readiness truth와 capture eligibility gate 회귀 테스트.
 
 use boothy_lib::{
-    commands::viewer_commands::should_attempt_window_creation,
+    commands::viewer_commands::{should_attempt_window_creation, should_recreate_unhealthy_window},
     contracts::dto::{
         validate_viewer_layout_report, CaptureReadinessDto, ViewerLayoutReportDto,
         ViewerReadinessSnapshotDto, VIEWER_READINESS_SCHEMA_VERSION,
@@ -94,6 +94,7 @@ fn capture_ready_readiness() -> CaptureReadinessDto {
         support_message: "준비가 끝났어요.".into(),
         reason_code: "ready".into(),
         latest_capture: None,
+        recent_captures: Vec::new(),
         live_capture_truth: None,
         post_end: None,
         timing: None,
@@ -184,6 +185,19 @@ fn reports_unavailable_when_no_monitor_is_enumerated() {
 }
 
 #[test]
+fn unavailable_monitor_keeps_the_viewer_window_absent() {
+    let selection = select_customer_monitor(&[], None);
+    let mut state = ViewerState::default();
+    state.mark_window_creating();
+    state.mark_window_creation_blocked(&selection);
+
+    let snapshot = state.snapshot(1_000_000);
+    assert_eq!(snapshot.window_state, "absent");
+    assert_eq!(snapshot.monitor_targeting, MONITOR_TARGETING_UNAVAILABLE);
+    assert_eq!(snapshot.reason_code, "viewer-absent");
+}
+
+#[test]
 fn falls_back_honestly_on_a_single_monitor_machine() {
     let selection = select_customer_monitor(&[operator_monitor()], None);
 
@@ -198,6 +212,38 @@ fn prefers_the_non_primary_monitor_when_no_name_is_configured() {
     let selection = select_customer_monitor(&[operator_monitor(), approved_1080p_monitor()], None);
 
     assert_eq!(selection.targeting, MONITOR_TARGETING_APPROVED);
+    assert_eq!(
+        selection
+            .monitor
+            .as_ref()
+            .and_then(|monitor| monitor.name.clone()),
+        Some("BOOTH-CUSTOMER".into())
+    );
+}
+
+#[test]
+fn prefers_an_approved_profile_over_the_first_unapproved_non_primary_monitor() {
+    let portrait_monitor = MonitorDescriptor {
+        name: Some("PORTRAIT-DISPLAY".into()),
+        width_px: 1440,
+        height_px: 2560,
+        scale_factor: 1.0,
+        position_x: 2560,
+        position_y: 411,
+        is_primary: false,
+    };
+
+    let selection = select_customer_monitor(
+        &[
+            operator_monitor(),
+            portrait_monitor,
+            approved_1080p_monitor(),
+        ],
+        None,
+    );
+
+    assert_eq!(selection.targeting, MONITOR_TARGETING_APPROVED);
+    assert_eq!(selection.profile_id, Some("1080p"));
     assert_eq!(
         selection
             .monitor
@@ -361,6 +407,20 @@ fn window_loss_immediately_drops_readiness() {
 
     assert!(!snapshot.viewer_ready);
     assert_eq!(snapshot.reason_code, VIEWER_REASON_WINDOW_CLOSED);
+}
+
+#[test]
+fn stale_close_event_cannot_close_a_recreated_viewer_epoch() {
+    let mut state = ViewerState::default();
+    state.mark_window_open(&approved_selection());
+    let stale_epoch = state.viewer_epoch();
+    state.mark_window_open(&approved_selection());
+
+    assert!(!state.mark_window_closed_if_epoch(stale_epoch));
+    assert_ne!(
+        state.snapshot(1_000_000).reason_code,
+        VIEWER_REASON_WINDOW_CLOSED
+    );
 }
 
 #[test]
@@ -595,6 +655,34 @@ fn backs_off_between_failed_creation_attempts() {
         Some(1_000),
         3_000,
         2_000
+    ));
+}
+
+#[test]
+fn recreates_only_after_a_recoverable_viewer_failure_persists() {
+    assert!(!should_recreate_unhealthy_window(
+        VIEWER_REASON_LISTENER_NOT_READY,
+        Some(1_000),
+        10_999,
+        10_000,
+    ));
+    assert!(should_recreate_unhealthy_window(
+        VIEWER_REASON_STALE_REPORT,
+        Some(1_000),
+        11_000,
+        10_000,
+    ));
+    assert!(!should_recreate_unhealthy_window(
+        VIEWER_REASON_SESSION_UNBOUND,
+        Some(1_000),
+        20_000,
+        10_000,
+    ));
+    assert!(!should_recreate_unhealthy_window(
+        VIEWER_REASON_MONITOR_NOT_APPROVED,
+        Some(1_000),
+        20_000,
+        10_000,
     ));
 }
 

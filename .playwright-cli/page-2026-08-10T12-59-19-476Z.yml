@@ -1,0 +1,29 @@
+- main [ref=e17]:
+  - generic [ref=e18]:
+    - paragraph [ref=e19]: Booth
+    - heading "원하는 룩을 골라 주세요" [level=1] [ref=e20]
+    - paragraph [ref=e21]: 대표 이미지를 보고 마음에 드는 하나를 고르면 다음 촬영부터 바로 적용돼요.
+    - generic [ref=e22]:
+      - article [ref=e23]:
+        - heading "지금 세션" [level=2] [ref=e24]
+        - paragraph [ref=e25]: 프리셋검증 0810
+        - paragraph [ref=e26]: 이 세션에 적용할 프리셋을 하나만 고를 수 있어요.
+      - generic [ref=e27]:
+        - button "Daylight preview Daylight 이 룩으로 진행할게요" [ref=e28] [cursor=pointer]:
+          - img "Daylight preview" [ref=e30]
+          - generic [ref=e31]:
+            - generic [ref=e32]: Daylight
+            - generic [ref=e33]: 이 룩으로 진행할게요
+        - button "Mono Pop preview Mono Pop 이 룩으로 진행할게요" [ref=e34] [cursor=pointer]:
+          - img "Mono Pop preview" [ref=e36]
+          - generic [ref=e37]:
+            - generic [ref=e38]: Mono Pop
+            - generic [ref=e39]: 이 룩으로 진행할게요
+        - button "Soft Glow preview Soft Glow 이 룩으로 진행할게요" [ref=e40] [cursor=pointer]:
+          - img "Soft Glow preview" [ref=e42]
+          - generic [ref=e43]:
+            - generic [ref=e44]: Soft Glow
+            - generic [ref=e45]: 이 룩으로 진행할게요
+      - article [ref=e46]:
+        - heading "다음 단계" [level=2] [ref=e47]
+        - paragraph [ref=e48]: 대표 이미지를 보고 원하는 분위기를 골라 주세요.

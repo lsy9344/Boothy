@@ -14,6 +14,9 @@ remote operator로서,
 
 1. 차단된 세션 범주가 식별되면 운영자가 available actions panel을 열 때, 콘솔은 해당 범주에서 `Operator Recovery Policy`가 허용한 액션만 보여줘야 한다. 또한 허용되지 않은 액션은 UI에서 실행할 수 없어야 한다.
 2. retry, 승인된 boundary restart, 허용된 time extension 같은 허용 액션을 운영자가 선택해 완료되면, 세션은 올바른 다음 normalized state로 전환되거나 안전 복구를 계속할 수 없을 때 `Phone Required`로 전환돼야 한다. 또한 이 액션은 고객 흐름에 unsafe recovery control을 노출하면 안 된다.
+3. stale operator view, session revision 변경, 더 이상 허용되지 않는 액션은 최신 host truth 기준으로 mutation 없이 거절돼야 하고, operator는 갱신된 bounded action set을 받아야 한다.
+4. duplicate·concurrent action, timeout, boundary failure, indeterminate result에서는 single-writer/idempotency guard가 중복 효과와 unsafe state advancement를 차단해야 한다.
+5. 성공·거절·timeout·실패 결과는 재시도 또는 `Phone Required` 라우팅 전에 versioned audit journal에 보존돼야 하며, audit 실패가 session truth를 손상시키면 안 된다.
 
 ## Tasks / Subtasks
 
@@ -111,7 +114,7 @@ remote operator로서,
 - frontend-to-host privileged mutation은 typed adapter/service -> Tauri command -> Rust domain module 순서를 따라야 한다. [Source: _bmad-output/planning-artifacts/architecture.md#API-&-Communication-Patterns]
 - customer-facing projection과 operator-facing projection은 같은 host-normalized truth에서 갈라져야 한다. booth용, operator용 판단 로직을 별도로 중복 구현하면 drift 위험이 크다. [Source: _bmad-output/planning-artifacts/architecture.md#State-Normalization]
 - capability gate는 계속 유지되어야 하며 operator surface는 admin authentication과 allowed surface check를 우회하면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Authentication-&-Security]
-- SQLite/audit store는 lifecycle와 intervention 기록을 위한 보조 저장소이지 photo/session durable truth를 대신하면 안 된다. [Source: _bmad-output/planning-artifacts/architecture.md#Data-Architecture]
+- Versioned JSON/JSONL audit journal은 lifecycle와 intervention 기록의 MVP 진실이며 photo/session durable truth를 대신하면 안 된다. SQLite는 derived query index로만 허용된다. [Source: _bmad-output/planning-artifacts/architecture.md#Data-Architecture]
 
 ### 프로젝트 구조 요구사항
 

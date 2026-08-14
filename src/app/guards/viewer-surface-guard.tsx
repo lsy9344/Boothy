@@ -18,3 +18,13 @@ export function ViewerSurfaceGuard() {
 
   return <Outlet />
 }
+
+export function BoothSurfaceGuard() {
+  const capabilityService = useCapabilityService()
+
+  if (!capabilityService.canAccess('booth')) {
+    return <main className="viewer-surface viewer-surface--blank" />
+  }
+
+  return <Outlet />
+}

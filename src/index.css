@@ -1147,6 +1147,21 @@ select {
   aspect-ratio: 3 / 2;
   flex: 0 0 auto;
   background: #17110f;
+  /* Story 7.2: 이미지 레이어를 이 박스 안쪽에만 겹친다. 박스 기하는 절대 바뀌지 않는다. */
+  position: relative;
+  overflow: hidden;
+}
+
+/*
+ * Story 7.2 opaque double-buffer.
+ * 두 레이어는 완전히 동일한 box와 object-fit을 쓴다. 하나라도 다르면 교체가 scale jump가 된다.
+ * transition / opacity는 두지 않는다 — 나가는 이미지가 한 프레임도 반투명해지면 안 된다.
+ */
+.viewer-photo__layer {
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  background: transparent;
 }
 
 .viewer-surface__standby {

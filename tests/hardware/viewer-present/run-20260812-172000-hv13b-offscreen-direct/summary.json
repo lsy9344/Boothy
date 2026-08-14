@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "hv-13b-offscreen-direct/v1",
+  "executedAt": "2026-08-12T17:20:04+09:00",
+  "sessionId": "session_000000000018cb01461b43d49c",
+  "variant": "hidden-prewarm",
+  "hiddenStrategy": "offscreen",
+  "camera": "Canon EOS 700D",
+  "monitor": {
+    "deviceName": "\\\\.\\DISPLAY3",
+    "x": 640,
+    "y": 1080,
+    "width": 1920,
+    "height": 1080
+  },
+  "captures": {
+    "requested": 5,
+    "rawPersisted": 5,
+    "previewReady": 5,
+    "previewBudgetExceeded": 5,
+    "captureToRawMs": [3204, 3001, 3163, 19524, 2806],
+    "captureToXmpPreviewMs": [8118, 7199, 7273, 24028, 6804]
+  },
+  "display": {
+    "committedGenerations": 10,
+    "integrityPassed": 10,
+    "terminalPresentRows": 9,
+    "presentedRows": 9,
+    "measuredRows": 9,
+    "trustedInputRows": 9,
+    "viewerWindowEventsAfterInput": 0,
+    "qualifyingLatencyP50Ms": 4131.157,
+    "qualifyingLatencyMaxMs": 20118.957,
+    "missingTerminalGenerationIds": [
+      "request_0000000000000658d5590a55f0-000008"
+    ],
+    "finalVariant": "b",
+    "approvedMonitorScreenshot": "approved-display3-final-b.png"
+  },
+  "result": "partial-pass",
+  "offscreenPathResult": "pass-with-terminal-telemetry-gap",
+  "hv13bResult": "No-Go",
+  "blockers": [
+    "one committed generation has no terminal viewer-present row",
+    "no 120fps+ qualifying physical monitor frames"
+  ]
+}
+

@@ -21,6 +21,11 @@ type ReadinessScreenProps = {
   isExplicitPostEnd: boolean
   isChangePresetDisabled: boolean
   onPrimaryAction(): void
+  /**
+   * Story 7.2: 공식 KPI 시작점. `click`보다 먼저 오는 `pointerup`에서 스탬프를 찍는다.
+   * 계측 lane이 꺼져 있으면 상위에서 아무 일도 하지 않는다.
+   */
+  onPrimaryPointerUp?(event: { isTrusted: boolean }): void
   onChangePreset(): void
 }
 
@@ -39,6 +44,7 @@ export function ReadinessScreen({
   isExplicitPostEnd,
   isChangePresetDisabled,
   onPrimaryAction,
+  onPrimaryPointerUp,
   onChangePreset,
 }: ReadinessScreenProps) {
   const shouldHidePrimaryAction =
@@ -114,6 +120,9 @@ export function ReadinessScreen({
             type="button"
             className="session-start-form__submit readiness-screen__action"
             disabled={!canCapture || isBusy}
+            onPointerUp={(event) => {
+              onPrimaryPointerUp?.(event)
+            }}
             onClick={onPrimaryAction}
           >
             {actionLabel}

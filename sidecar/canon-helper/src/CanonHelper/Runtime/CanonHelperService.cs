@@ -100,6 +100,7 @@ internal sealed class CanonHelperService : IDisposable
                     }
 
                     _activeRequest = request;
+                    var pairedComparisonEnabled = IsPairedComparisonEnabled();
                     _protocol.AppendEvent(
                         new CaptureAcceptedMessage(
                             CanonHelperSchemas.CaptureAccepted,
@@ -156,7 +157,82 @@ internal sealed class CanonHelperService : IDisposable
                                 )
                             );
                         },
-                        cancellationToken
+                        cancellationToken,
+                        enablePairedJpeg: pairedComparisonEnabled,
+                        onImageQualityCapability: capability =>
+                        {
+                            _protocol.AppendEvent(
+                                new ImageQualityCapabilityMessage(
+                                    CanonHelperSchemas.ImageQualityCapability,
+                                    "image-quality-capability",
+                                    _paths.SessionId,
+                                    DateTimeOffset
+                                        .FromUnixTimeMilliseconds(
+                                            capability.ProbedAtHostMicros / 1_000
+                                        )
+                                        .ToString("O"),
+                                    capability.ProbedAtHostMicros,
+                                    capability.DescriptorAvailable,
+                                    capability.CurrentValue,
+                                    capability.SupportedValues,
+                                    capability.RawPlusJpegSupported
+                                )
+                            );
+                        },
+                        onPairedJpeg: paired =>
+                        {
+                            _protocol.AppendEvent(
+                                new SourceObjectArrivedMessage(
+                                    CanonHelperSchemas.SourceObjectArrived,
+                                    "source-object-arrived",
+                                    _paths.SessionId,
+                                    paired.RequestId,
+                                    paired.CaptureId,
+                                    paired.ObservedAt.ToString("O"),
+                                    paired.AssetPath,
+                                    paired.ByteSize,
+                                    paired.ObjectIndex,
+                                    paired.GroupId == 0 ? null : paired.GroupId,
+                                    "jpeg",
+                                    paired.UsedFallbackCorrelation,
+                                    paired.RoleSignal
+                                )
+                            );
+                        },
+                        onObjectRejected: rejected =>
+                        {
+                            _protocol.AppendEvent(
+                                new SourceObjectRejectedMessage(
+                                    CanonHelperSchemas.SourceObjectRejected,
+                                    "source-object-rejected",
+                                    _paths.SessionId,
+                                    rejected.RequestId,
+                                    rejected.CaptureId,
+                                    rejected.ObservedAt.ToString("O"),
+                                    rejected.RejectReason,
+                                    rejected.Role,
+                                    rejected.ObjectIndex,
+                                    rejected.GroupId == 0 ? null : rejected.GroupId,
+                                    rejected.UsedFallbackCorrelation,
+                                    rejected.RoleSignal,
+                                    rejected.FileName
+                                )
+                            );
+                        },
+                        onCameraSettingWarning: warning =>
+                        {
+                            _protocol.AppendEvent(
+                                new CameraSettingWarningMessage(
+                                    CanonHelperSchemas.CameraSettingWarning,
+                                    "camera-setting-warning",
+                                    _paths.SessionId,
+                                    warning.RequestId,
+                                    warning.CaptureId,
+                                    warning.ObservedAt.ToString("O"),
+                                    warning.DetailCode
+                                )
+                            );
+                        }
                     );
                     break;
                 }
@@ -197,7 +273,11 @@ internal sealed class CanonHelperService : IDisposable
                     result.ArrivedAt.ToString("O"),
                     result.RawPath,
                     result.FastPreviewPath,
-                    result.FastPreviewKind
+                    result.FastPreviewKind,
+                    result.ObjectIndex,
+                    result.GroupId == 0 ? null : result.GroupId,
+                    result.ObjectRole,
+                    result.UsedFallbackCorrelation
                 )
             );
         }
@@ -268,5 +348,18 @@ internal sealed class CanonHelperService : IDisposable
     private static string UtcNow()
     {
         return DateTimeOffset.UtcNow.ToString("O");
+    }
+
+    internal static bool IsPairedComparisonEnabled()
+    {
+        return IsPairedComparisonEnabled(
+            Environment.GetEnvironmentVariable("BOOTHY_SOURCE_COMPARE_MODE")
+        );
+    }
+
+    internal static bool IsPairedComparisonEnabled(string? rawMode)
+    {
+        var mode = rawMode?.Trim().ToLowerInvariant();
+        return mode is "paired" or "ab";
     }
 }

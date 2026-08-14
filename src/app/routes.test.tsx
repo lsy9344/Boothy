@@ -38,6 +38,19 @@ describe('app routing baseline', () => {
     expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
   })
 
+  it('keeps the booth control surface hidden inside the viewer window', () => {
+    renderRoute(
+      ['/booth'],
+      createCapabilityService({
+        currentWindowLabel: 'viewer-window',
+        allowedSurfaces: ['booth', 'viewer'],
+      }),
+    )
+
+    expect(document.querySelector('.viewer-surface--blank')).toBeInTheDocument()
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+  })
+
   it('blocks direct navigation to restricted surfaces by default', async () => {
     const router = renderRoute(['/operator'])
 

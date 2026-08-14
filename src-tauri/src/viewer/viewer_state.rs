@@ -158,6 +158,20 @@ impl ViewerState {
         self.bump();
     }
 
+    pub fn mark_window_creation_blocked(&mut self, selection: &MonitorSelection) {
+        self.window_state = VIEWER_WINDOW_STATE_ABSENT;
+        self.listener_ready = false;
+        self.layout_ready = false;
+        self.monitor_targeting = selection.targeting;
+        self.display_profile = None;
+        self.photo_rect = None;
+        self.reported_session_id = None;
+        self.last_report_at_ms = None;
+        self.last_report_monotonic_ms = None;
+        self.saw_stale_epoch_report = false;
+        self.bump();
+    }
+
     pub fn mark_window_closed(&mut self) {
         if self.window_state == VIEWER_WINDOW_STATE_CLOSED
             && !self.listener_ready
@@ -174,6 +188,15 @@ impl ViewerState {
         self.last_report_at_ms = None;
         self.last_report_monotonic_ms = None;
         self.bump();
+    }
+
+    pub fn mark_window_closed_if_epoch(&mut self, viewer_epoch: u64) -> bool {
+        if self.viewer_epoch != viewer_epoch {
+            return false;
+        }
+
+        self.mark_window_closed();
+        true
     }
 
     pub fn apply_listener_report(&mut self, viewer_epoch: u64, now_ms: u64) -> ReportOutcome {

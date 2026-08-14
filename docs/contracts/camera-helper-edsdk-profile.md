@@ -149,6 +149,35 @@ host에 보이는 메시지 vocabulary는 계속 bounded하게 유지하는 것�
 - host는 `captures/originals/` 아래 active session root에 실제 파일이 존재하고 비어 있지 않을 때만 success를 확정해야 한다.
 - host는 여전히 실제 파일 존재를 다시 확인해야 한다.
 
+### multi-object download (Story 7.3)
+
+RAW+JPEG 조합에서는 5번의 object 이벤트가 **한 촬영에 두 번** 온다. 완료 판정을
+**object 단위가 아니라 request 단위**로 두어야 한다.
+
+- 이전 구현은 capture당 첫 object만 download하고 나머지를 아무 기록 없이 `EdsRelease`했다.
+  그 상태에서 RAW+JPEG를 켜면 두 번째 파일이 조용히 사라져
+  **"카메라가 지원하지 않는다"는 잘못된 결론**이 나온다.
+- `EdsDirectoryItemInfo.GroupID`로 같은 촬영의 object를 묶는다. `GroupID`를 쓸 수 없으면
+  파일명 stem + 도착 시각 창을 보조 판정으로 쓰고 **그 사실을 표본에 남긴다.**
+- object의 역할은 **`EdsDirectoryItemInfo.format`으로 판정한다.** 확장자가 비었다고 RAW로
+  가정하면 JPEG object가 RAW original로 저장될 수 있다.
+- `captures/originals/`에는 **RAW object만** 저장한다. JPEG object는 측정 전용 경로로 분리한다.
+- **부분 실패는 RAW truth를 무효화하지 않는다.** JPEG object가 실패·취소되어도 request는
+  RAW 기준으로 계속 성공 처리된다.
+- **in-flight capture는 여전히 1개다** (위 제품 고정 결정). object가 여러 개일 뿐이다.
+
+### image quality capability probe (Story 7.3)
+
+`EdsGetPropertyDesc(PropID_ImageQuality)`의 지원 목록이 **유일한 truth**다.
+
+- descriptor에 없는 조합은 **시도하지 않는다.** 시도해서 실패한 것과 지원되지 않아 시도하지
+  않은 것은 evidence에서 다른 결과다.
+- 승인 하드웨어(EOS 700D)가 RAW+small JPEG를 지원한다고 **가정하지 않는다.**
+- 측정이 끝나면 **원래 값으로 되돌린다.** 카메라를 측정 상태로 남기면 다음 고객 세션의
+  제품 동작이 바뀐다.
+
+자세한 계약은 [`capture-source.md`](./capture-source.md)에 있다.
+
 ## recovery 시퀀스 권장안
 
 - USB 분리, 카메라 전원 off, session loss는 즉시 `recovering` 또는 `degraded`로 내려간다.

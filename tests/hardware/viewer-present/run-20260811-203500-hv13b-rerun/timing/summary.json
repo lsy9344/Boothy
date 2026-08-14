@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "hv-13b-timing-summary/v1",
+  "warmupCapturesPerVariant": 5,
+  "measurementCapturesPerVariant": 30,
+  "variants": [
+    {
+      "variant": "visible-standby",
+      "measurementRows": 60,
+      "measurementRequests": 30,
+      "presentedRows": 60,
+      "measuredConfidenceRows": 60,
+      "trustedInputRows": 60,
+      "windowEventFreeRows": 60,
+      "p50Ms": 3710.617,
+      "p95Ms": 4280.416,
+      "maxMs": 4672.717,
+      "sampleA": { "rows": 30, "p50Ms": 3275.917, "p95Ms": 3682.017, "maxMs": 3822.117 },
+      "sampleB": { "rows": 30, "p50Ms": 4069.217, "p95Ms": 4382.816, "maxMs": 4672.717 }
+    },
+    {
+      "variant": "hidden-prewarm",
+      "measurementRows": 60,
+      "measurementRequests": 30,
+      "presentedRows": 60,
+      "measuredConfidenceRows": 60,
+      "trustedInputRows": 60,
+      "windowEventFreeRows": 60,
+      "p50Ms": 3774.393,
+      "p95Ms": 4540.441,
+      "maxMs": 15024.476,
+      "sampleA": { "rows": 30, "p50Ms": 3287.342, "p95Ms": 3890.076, "maxMs": 14290.877 },
+      "sampleB": { "rows": 30, "p50Ms": 4020.842, "p95Ms": 4609.641, "maxMs": 15024.476 }
+    }
+  ]
+}

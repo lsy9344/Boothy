@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "hv-13b-raw-captures/v1",
+  "sessionId": "session_000000000018cb01461b43d49c",
+  "captures": [
+    {"captureId": "capture_20260812082531835_5dde7be655", "rawBytes": 20158231, "captureToRawMs": 3204},
+    {"captureId": "capture_20260812082624446_46df65f460", "rawBytes": 20185808, "captureToRawMs": 3001},
+    {"captureId": "capture_20260812082635693_7ef0db89bd", "rawBytes": 20186657, "captureToRawMs": 3163},
+    {"captureId": "capture_20260812082704067_166d6611c1", "rawBytes": 20212705, "captureToRawMs": 19524},
+    {"captureId": "capture_20260812082708042_694f2e97aa", "rawBytes": 20227993, "captureToRawMs": 2806}
+  ],
+  "rawFilesCopiedIntoRepository": false,
+  "reason": "size-heavy CR2 originals remain in the source session; manifest correlations and byte sizes are preserved here"
+}

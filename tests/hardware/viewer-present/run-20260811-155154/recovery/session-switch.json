@@ -1,0 +1,14 @@
+{
+  "viewerEpoch": 1,
+  "firstSessionId": "session_000000000018caae229cbad2b8",
+  "firstRevision": 6,
+  "firstViewerReady": true,
+  "secondSessionId": "session_000000000018caae243a88476c",
+  "secondRevision": 8,
+  "secondViewerReady": true,
+  "secondReasonCode": "viewer-ready",
+  "listenerReady": true,
+  "layoutReady": true,
+  "monitorTargeting": "approved-customer-monitor"
+}
+

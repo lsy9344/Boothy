@@ -1,0 +1,17 @@
+{
+  "result": "no-go",
+  "visibleStandby": {
+    "warmupCaptures": 5,
+    "measurementCaptures": 0,
+    "committedGenerations": 10,
+    "viewerPresentRows": 0
+  },
+  "hiddenPrewarmInvisible": {
+    "warmupCaptures": 1,
+    "measurementCaptures": 0,
+    "committedGenerations": 2,
+    "viewerPresentRows": 0
+  },
+  "selection": null,
+  "stopReason": "fatal timing-evidence failure reproduced in both variants; 120fps+ capture rig unavailable"
+}

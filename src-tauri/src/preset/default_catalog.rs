@@ -10,9 +10,18 @@ use crate::{
     },
 };
 
-type DefaultPresetSeed = (&'static str, &'static str, &'static str, &'static str);
+type DefaultPresetSeed = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+);
 const DEFAULT_RENDER_TEMPLATE: &str =
     include_str!("default_catalog_assets/default-render-template.xmp");
+const SOFT_GLOW_RENDER_TEMPLATE: &str = include_str!("default_catalog_assets/preset-soft-glow.xmp");
+const MONO_POP_RENDER_TEMPLATE: &str = include_str!("default_catalog_assets/preset-mono-pop.xmp");
+const DAYLIGHT_RENDER_TEMPLATE: &str = include_str!("default_catalog_assets/preset-daylight.xmp");
 
 const DEFAULT_PRESET_SEEDS: [DefaultPresetSeed; 3] = [
     (
@@ -20,18 +29,21 @@ const DEFAULT_PRESET_SEEDS: [DefaultPresetSeed; 3] = [
         "2026.03.27",
         "Soft Glow",
         include_str!("default_catalog_assets/preset_soft-glow.svg"),
+        SOFT_GLOW_RENDER_TEMPLATE,
     ),
     (
         "preset_mono-pop",
         "2026.03.27",
         "Mono Pop",
         include_str!("default_catalog_assets/preset_mono-pop.svg"),
+        MONO_POP_RENDER_TEMPLATE,
     ),
     (
         "preset_daylight",
         "2026.03.27",
         "Daylight",
         include_str!("default_catalog_assets/preset_daylight.svg"),
+        DAYLIGHT_RENDER_TEMPLATE,
     ),
 ];
 
@@ -41,7 +53,7 @@ pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostE
     let has_existing_default_seed =
         DEFAULT_PRESET_SEEDS
             .iter()
-            .any(|(preset_id, published_version, _, _)| {
+            .any(|(preset_id, published_version, _, _, _)| {
                 catalog_root
                     .join(preset_id)
                     .join(published_version)
@@ -52,20 +64,24 @@ pub fn ensure_default_preset_catalog_in_dir(base_dir: &Path) -> Result<(), HostE
         return Ok(());
     }
 
-    for (preset_id, published_version, display_name, preview_svg) in DEFAULT_PRESET_SEEDS {
+    for (preset_id, published_version, display_name, preview_svg, render_template) in
+        DEFAULT_PRESET_SEEDS
+    {
         let bundle_dir = catalog_root.join(preset_id).join(published_version);
-        if has_any_bundle && !bundle_requires_runtime_backfill(&bundle_dir) {
+        let should_upgrade_placeholder = render_template != DEFAULT_RENDER_TEMPLATE
+            && bundle_uses_default_placeholder(&bundle_dir);
+        if has_any_bundle
+            && !bundle_requires_runtime_backfill(&bundle_dir)
+            && !should_upgrade_placeholder
+        {
             continue;
         }
 
         fs::create_dir_all(&bundle_dir).map_err(map_fs_error)?;
         fs::create_dir_all(bundle_dir.join("xmp")).map_err(map_fs_error)?;
         fs::write(bundle_dir.join("preview.svg"), preview_svg).map_err(map_fs_error)?;
-        fs::write(
-            bundle_dir.join("xmp").join("template.xmp"),
-            DEFAULT_RENDER_TEMPLATE,
-        )
-        .map_err(map_fs_error)?;
+        fs::write(bundle_dir.join("xmp").join("template.xmp"), render_template)
+            .map_err(map_fs_error)?;
 
         let bundle = json!({
             "schemaVersion": "published-preset-bundle/v1",
@@ -112,6 +128,12 @@ fn bundle_requires_runtime_backfill(bundle_dir: &Path) -> bool {
 
     load_published_preset_summary(bundle_dir).is_none()
         || load_published_preset_runtime_bundle(bundle_dir).is_none()
+}
+
+fn bundle_uses_default_placeholder(bundle_dir: &Path) -> bool {
+    fs::read_to_string(bundle_dir.join("xmp").join("template.xmp"))
+        .map(|contents| contents == DEFAULT_RENDER_TEMPLATE)
+        .unwrap_or(false)
 }
 
 fn contains_any_bundle_json(catalog_root: &Path) -> Result<bool, HostErrorEnvelope> {

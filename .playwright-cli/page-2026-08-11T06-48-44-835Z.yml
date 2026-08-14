@@ -1,0 +1,13 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - paragraph [ref=e5]: Booth
+    - heading "이름을 확인할게요" [level=1] [ref=e6]
+    - paragraph [ref=e7]: 이름과 휴대전화 뒤 4자리를 입력하면 바로 시작할 수 있어요.
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]: 이름
+        - textbox "이름" [ref=e12]
+      - generic [ref=e13]:
+        - generic [ref=e14]: 휴대전화 뒤 4자리
+        - textbox "휴대전화 뒤 4자리" [ref=e15]
+      - button "시작하기" [ref=e16] [cursor=pointer]

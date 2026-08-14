@@ -1,0 +1,17 @@
+{
+  "sessionId": "session_000000000018caad7e8fdf1c60",
+  "captureId": "capture_20260811064941360_f2188afd79",
+  "requestId": "request_0000000000000658bfdff99118",
+  "preset": "Daylight",
+  "rawPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018caad7e8fdf1c60\\captures\\originals\\capture_20260811064941360_f2188afd79.CR2",
+  "rawBytes": 20120963,
+  "previewPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018caad7e8fdf1c60\\renders\\previews\\capture_20260811064941360_f2188afd79.jpg",
+  "previewBytes": 58847,
+  "previewWidth": 384,
+  "previewHeight": 255,
+  "renderStatus": "previewReady",
+  "cameraState": "ready",
+  "helperState": "healthy",
+  "sessionMatch": "matched"
+}
+

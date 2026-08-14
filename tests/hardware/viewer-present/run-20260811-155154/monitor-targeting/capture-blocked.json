@@ -1,0 +1,14 @@
+{
+  "sessionId": "session_000000000018caadd6c4e7a528",
+  "surfaceState": "blocked",
+  "customerState": "Preparing",
+  "canCapture": false,
+  "primaryAction": "wait",
+  "customerMessage": "화면을 준비하고 있어요.",
+  "supportMessage": "곧 촬영을 시작할 수 있어요.",
+  "reasonCode": "viewer-preparing",
+  "cameraState": "ready",
+  "helperState": "healthy",
+  "sessionMatch": "matched"
+}
+

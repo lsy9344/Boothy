@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "hv-13b-window-events-summary/v1",
+  "visibleStandby": { "measurementRows": 60, "rowsWithEventsAfterInput": 0 },
+  "hiddenPrewarm": { "measurementRows": 60, "rowsWithEventsAfterInput": 0 },
+  "ac4SoftwareObservation": "pass"
+}

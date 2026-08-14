@@ -139,6 +139,11 @@ const captureReadinessSnapshotInputSchema = z.object({
   supportMessage: customerGuidanceSchema,
   reasonCode: captureReasonCodeSchema,
   latestCapture: sessionCaptureRecordSchema.nullable().optional(),
+  /**
+   * host가 함께 보내는 최근 capture 기록. `latestCapture`만으로는 다음 촬영이 접수된
+   * 순간 이전 촬영의 렌더 완료가 클라이언트에 도달하지 못한다.
+   */
+  recentCaptures: z.array(sessionCaptureRecordSchema).optional(),
   liveCaptureTruth: liveCaptureTruthSchema.optional(),
   postEnd: sessionPostEndSchema.nullable().optional(),
   timing: sessionTimingSnapshotSchema.nullable().optional(),
@@ -160,6 +165,7 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
       supportMessage: string
       reasonCode: z.infer<typeof captureReasonCodeSchema>
       latestCapture: z.infer<typeof sessionCaptureRecordSchema> | null
+      recentCaptures?: z.infer<typeof sessionCaptureRecordSchema>[]
       liveCaptureTruth?: z.infer<typeof liveCaptureTruthSchema>
       postEnd?: z.infer<typeof sessionPostEndSchema> | null
       timing?: z.infer<typeof sessionTimingSnapshotSchema> | null
@@ -180,6 +186,12 @@ export const captureReadinessSnapshotSchema = captureReadinessSnapshotInputSchem
       supportMessage: snapshot.supportMessage,
       reasonCode: snapshot.reasonCode,
       latestCapture,
+    }
+
+    // 없는 것과 빈 배열은 다르다. 키를 항상 채우면 기존 readiness 스냅샷 비교가 흔들리고,
+    // host가 이 필드를 못 보낸 tick을 "화해할 기록이 없음"과 구분할 수 없다.
+    if (snapshot.recentCaptures !== undefined) {
+      normalized.recentCaptures = snapshot.recentCaptures
     }
 
     if (snapshot.liveCaptureTruth !== undefined) {

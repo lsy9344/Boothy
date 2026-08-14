@@ -26,6 +26,7 @@ internal sealed class CanonSdkCamera : IDisposable
     private static readonly TimeSpan DefaultCaptureCompletionTimeout = TimeSpan.FromMilliseconds(
         30000
     );
+    private static readonly TimeSpan PairedObjectCompletionTimeout = TimeSpan.FromSeconds(5);
 
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;
@@ -140,10 +141,19 @@ internal sealed class CanonSdkCamera : IDisposable
         Action<CaptureFastPreviewAttemptedResult>? onFastPreviewAttempted,
         Action<CaptureFastPreviewReadyResult>? onFastPreviewReady,
         Action<CaptureFastPreviewFailedResult>? onFastPreviewFailed,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool enablePairedJpeg = false,
+        Action<ImageQualityCapability>? onImageQualityCapability = null,
+        Action<CapturePairedJpegResult>? onPairedJpeg = null,
+        Action<CaptureObjectRejectedResult>? onObjectRejected = null,
+        Action<CaptureCameraSettingWarningResult>? onCameraSettingWarning = null
     )
     {
         CurrentCaptureContext captureContext;
+        ImageQualityCapability? imageQualityCapability = null;
+        int? originalImageQuality = null;
+        var imageQualityChanged = false;
+        string? imageQualityActivationFailure = null;
 
         lock (_sync)
         {
@@ -165,13 +175,55 @@ internal sealed class CanonSdkCamera : IDisposable
                 );
             }
 
+            var pairedJpegActive = false;
+            if (enablePairedJpeg)
+            {
+                imageQualityCapability = ProbeImageQualityCapability(
+                    _camera,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000
+                );
+                originalImageQuality = imageQualityCapability.CurrentValue;
+                var pairedValue = ImageQualityValue.SelectRawPlusJpegCandidate(
+                    imageQualityCapability.SupportedValues
+                );
+
+                if (pairedValue is null)
+                {
+                    imageQualityActivationFailure = "unsupported-combination";
+                }
+                else if (originalImageQuality is null)
+                {
+                    imageQualityActivationFailure = "image-quality-current-unavailable";
+                }
+                else if (pairedValue.Value == originalImageQuality.Value)
+                {
+                    pairedJpegActive = true;
+                }
+                else if (TrySetImageQuality(_camera, pairedValue.Value))
+                {
+                    pairedJpegActive = true;
+                    imageQualityChanged = true;
+                }
+                else
+                {
+                    imageQualityActivationFailure = "image-quality-set-failed";
+                }
+            }
+
             captureContext = new CurrentCaptureContext(
                 paths,
                 request,
                 onFastPreviewAttempted,
                 onFastPreviewReady,
-                onFastPreviewFailed
+                onFastPreviewFailed,
+                BuildCaptureId(),
+                pairedJpegActive ? 2 : 1,
+                onPairedJpeg,
+                onObjectRejected,
+                onCameraSettingWarning
             );
+            captureContext.OriginalImageQuality = originalImageQuality;
+            captureContext.ImageQualityChanged = imageQualityChanged;
             _currentCapture = captureContext;
             _snapshot = _snapshot with
             {
@@ -182,76 +234,134 @@ internal sealed class CanonSdkCamera : IDisposable
             };
         }
 
-        var err = EDSDK.EdsSendCommand(
-            _camera,
-            EDSDK.CameraCommand_PressShutterButton,
-            (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
-        );
-
-        if (err == EDSDK.EDS_ERR_OK)
+        if (imageQualityCapability is not null)
         {
-            err = EDSDK.EdsSendCommand(
-                _camera,
-                EDSDK.CameraCommand_PressShutterButton,
-                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF
-            );
-        }
-
-        if (err != EDSDK.EDS_ERR_OK)
-        {
-            var captureTriggerException = BuildCaptureTriggerException(err);
-            ClearCaptureContext(
-                captureContext,
-                captureTriggerException.DetailCode,
-                captureTriggerException.RecoveryRequired ? "recovering" : "ready",
-                captureTriggerException.RecoveryRequired
-            );
-
-            throw captureTriggerException;
-        }
-
-        CaptureDownloadResult result;
-        try
-        {
-            var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
-            result = await captureContext.Completion.Task.WaitAsync(
-                captureCompletionTimeout,
-                cancellationToken
-            );
-        }
-        catch (TimeoutException)
-        {
-            var timeoutException = new CanonCaptureException(
-                "capture-download-timeout",
-                "RAW handoff를 기다리다 시간이 초과되었어요.",
-                recoveryRequired: true
-            );
-            captureContext.Completion.TrySetException(timeoutException);
-            ClearCaptureContext(
-                captureContext,
-                timeoutException.DetailCode,
-                "recovering",
-                timeoutException.RecoveryRequired
-            );
-            throw timeoutException;
-        }
-
-        lock (_sync)
-        {
-            if (_currentCapture == captureContext)
+            try
             {
-                _currentCapture = null;
-                _snapshot = _snapshot with
-                {
-                    CameraState = "ready",
-                    HelperState = "healthy",
-                    DetailCode = "camera-ready",
-                    RequestId = null,
-                };
+                onImageQualityCapability?.Invoke(imageQualityCapability);
+            }
+            catch
+            {
+                // Capability telemetry is advisory and must not block RAW capture.
             }
         }
 
-        return result;
+        if (imageQualityActivationFailure is not null)
+        {
+            EmitObjectRejected(
+                captureContext,
+                imageQualityActivationFailure,
+                "jpeg",
+                0,
+                null
+            );
+        }
+
+        try
+        {
+            var err = EDSDK.EdsSendCommand(
+                _camera,
+                EDSDK.CameraCommand_PressShutterButton,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
+            );
+
+            if (err == EDSDK.EDS_ERR_OK)
+            {
+                err = EDSDK.EdsSendCommand(
+                    _camera,
+                    EDSDK.CameraCommand_PressShutterButton,
+                    (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_OFF
+                );
+            }
+
+            if (err != EDSDK.EDS_ERR_OK)
+            {
+                var captureTriggerException = BuildCaptureTriggerException(err);
+                ClearCaptureContext(
+                    captureContext,
+                    captureTriggerException.DetailCode,
+                    captureTriggerException.RecoveryRequired ? "recovering" : "ready",
+                    captureTriggerException.RecoveryRequired
+                );
+
+                throw captureTriggerException;
+            }
+
+            var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
+            CaptureDownloadResult rawResult;
+            try
+            {
+                rawResult = await captureContext.RawCompletion.Task.WaitAsync(
+                    captureCompletionTimeout,
+                    cancellationToken
+                );
+            }
+            catch (TimeoutException)
+            {
+                var timeoutException = new CanonCaptureException(
+                    "capture-download-timeout",
+                    "RAW handoff를 기다리다 시간이 초과되었어요.",
+                    recoveryRequired: true
+                );
+                captureContext.RawCompletion.TrySetException(timeoutException);
+                captureContext.Completion.TrySetException(timeoutException);
+                ClearCaptureContext(
+                    captureContext,
+                    timeoutException.DetailCode,
+                    "recovering",
+                    timeoutException.RecoveryRequired
+                );
+                throw timeoutException;
+            }
+
+            var result = rawResult;
+            if (captureContext.Correlator.ExpectedObjectCount > 1)
+            {
+                try
+                {
+                    result = await captureContext.Completion.Task.WaitAsync(
+                        PairedObjectCompletionTimeout,
+                        cancellationToken
+                    );
+                }
+                catch (TimeoutException)
+                {
+                    EmitObjectRejected(
+                        captureContext,
+                        "paired-jpeg-timeout",
+                        "jpeg",
+                        0,
+                        null
+                    );
+                }
+            }
+
+            lock (_sync)
+            {
+                if (_currentCapture == captureContext)
+                {
+                    _currentCapture = null;
+                    _snapshot = _snapshot with
+                    {
+                        CameraState = "ready",
+                        HelperState = "healthy",
+                        DetailCode = "camera-ready",
+                        RequestId = null,
+                    };
+                }
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            ClearCaptureContext(captureContext, "capture-cancelled", "ready", false);
+            throw;
+        }
+        finally
+        {
+            RestoreImageQuality(captureContext);
+        }
     }
 
     public void TryBackfillPreviewAssets(SessionPaths paths)
@@ -738,20 +848,117 @@ internal sealed class CanonSdkCamera : IDisposable
             captureContext = _currentCapture;
         }
 
-        if (captureContext is null || Interlocked.Exchange(ref captureContext.DownloadStarted, 1) == 1)
+        if (captureContext is null)
         {
             if (inRef != IntPtr.Zero)
             {
+                TryCancelTransfer(inRef);
                 EDSDK.EdsRelease(inRef);
             }
 
             return EDSDK.EDS_ERR_OK;
         }
 
+        // 완료 판정은 object 단위가 아니라 request 단위다. 같은 촬영의 transfer object를
+        // groupID로 묶고, 이 request의 것이 아닌 object만 사유와 함께 돌려보낸다.
+        var infoResult = EDSDK.EdsGetDirectoryItemInfo(inRef, out var info);
+
+        if (infoResult != EDSDK.EDS_ERR_OK)
+        {
+            // 정보를 읽지 못했다. 첫 object라면 기존과 동일하게 download 경로로 보내
+            // 같은 실패(`download-info-failed`)를 내게 한다. 그 뒤 object는 버린다.
+            if (captureContext.Correlator.AcceptedObjects > 0)
+            {
+                EmitObjectRejected(captureContext, "download-info-failed", "unknown", 0, null);
+
+                if (inRef != IntPtr.Zero)
+                {
+                    TryCancelTransfer(inRef);
+                    EDSDK.EdsRelease(inRef);
+                }
+
+                return EDSDK.EDS_ERR_OK;
+            }
+
+            DownloadCapture(captureContext, inRef);
+            return EDSDK.EDS_ERR_OK;
+        }
+
+        var claim = captureContext.Correlator.TryClaim(
+            info.GroupID,
+            info.szFileName,
+            info.format,
+            DateTimeOffset.UtcNow
+        );
+
+        if (!claim.Accepted)
+        {
+            EmitObjectRejected(
+                captureContext,
+                claim.RejectReason ?? "object-rejected",
+                claim.Role.ToString().ToLowerInvariant(),
+                info.GroupID,
+                info.szFileName,
+                claim.ObjectIndex,
+                claim.UsedFallbackCorrelation,
+                claim.RoleSignal.ToString().ToLowerInvariant()
+            );
+
+            if (inRef != IntPtr.Zero)
+            {
+                TryCancelTransfer(inRef);
+                EDSDK.EdsRelease(inRef);
+            }
+
+            return EDSDK.EDS_ERR_OK;
+        }
+
+        // JPEG object는 RAW original 경로로 절대 보내지 않는다. 확장자 기본값 fallback이
+        // 정확히 그 사고를 일으킬 수 있다.
+        if (claim.Role == CaptureObjectRole.Jpeg && claim.RoleSignal != CaptureObjectRoleSignal.Unknown)
+        {
+            DownloadPairedJpeg(captureContext, inRef, info, claim);
+            return EDSDK.EDS_ERR_OK;
+        }
+
         // Keep RAW transfer on the SDK callback path instead of hopping to an
         // arbitrary threadpool thread, which can destabilize follow-up captures.
-        DownloadCapture(captureContext, inRef);
+        DownloadCapture(captureContext, inRef, info, claim);
         return EDSDK.EDS_ERR_OK;
+    }
+
+    private void EmitObjectRejected(
+        CurrentCaptureContext context,
+        string rejectReason,
+        string role,
+        uint groupId,
+        string? fileName,
+        int? objectIndex = null,
+        bool usedFallbackCorrelation = false,
+        string? roleSignal = null
+    )
+    {
+        try
+        {
+            context.OnObjectRejected?.Invoke(
+                new CaptureObjectRejectedResult(
+                    context.Request.RequestId,
+                    context.CaptureId,
+                    rejectReason,
+                    role,
+                    objectIndex,
+                    groupId,
+                    usedFallbackCorrelation,
+                    roleSignal,
+                    fileName,
+                    DateTimeOffset.UtcNow
+                )
+            );
+        }
+        catch
+        {
+            // 거부 알림은 best-effort다. RAW handoff가 유일한 정확성 경계로 남는다.
+        }
     }
 
     private uint HandlePropertyEvent(uint inEvent, uint inPropertyId, uint inParam, IntPtr inContext)
@@ -769,7 +976,12 @@ internal sealed class CanonSdkCamera : IDisposable
         return EDSDK.EDS_ERR_OK;
     }
 
-    private void DownloadCapture(CurrentCaptureContext context, IntPtr directoryItem)
+    private void DownloadCapture(
+        CurrentCaptureContext context,
+        IntPtr directoryItem,
+        EDSDK.EdsDirectoryItemInfo? knownInfo = null,
+        CaptureObjectClaim? knownClaim = null
+    )
     {
         IntPtr stream = IntPtr.Zero;
         var downloadCompleted = false;
@@ -779,23 +991,54 @@ internal sealed class CanonSdkCamera : IDisposable
         {
             Directory.CreateDirectory(context.Paths.CapturesOriginalsDir);
 
-            var infoResult = EDSDK.EdsGetDirectoryItemInfo(directoryItem, out var info);
-            if (infoResult != EDSDK.EDS_ERR_OK)
+            EDSDK.EdsDirectoryItemInfo info;
+            if (knownInfo is not null)
             {
-                throw new CanonCaptureException(
-                    "download-info-failed",
-                    $"파일 정보를 읽지 못했어요: 0x{infoResult:x8}",
-                    recoveryRequired: true
+                info = knownInfo.Value;
+            }
+            else
+            {
+                var infoResult = EDSDK.EdsGetDirectoryItemInfo(directoryItem, out info);
+                if (infoResult != EDSDK.EDS_ERR_OK)
+                {
+                    throw new CanonCaptureException(
+                        "download-info-failed",
+                        $"파일 정보를 읽지 못했어요: 0x{infoResult:x8}",
+                        recoveryRequired: true
+                    );
+                }
+            }
+
+            var claim = knownClaim
+                ?? context.Correlator.TryClaim(
+                    info.GroupID,
+                    info.szFileName,
+                    info.format,
+                    DateTimeOffset.UtcNow
                 );
-            }
 
-            var extension = Path.GetExtension(info.szFileName);
-            if (string.IsNullOrWhiteSpace(extension))
+            if (!claim.Accepted || claim.Role != CaptureObjectRole.Raw)
             {
-                extension = ".cr3";
+                EmitObjectRejected(
+                    context,
+                    claim.RejectReason ?? "non-raw-object-on-raw-path",
+                    claim.Role.ToString().ToLowerInvariant(),
+                    info.GroupID,
+                    info.szFileName,
+                    claim.ObjectIndex,
+                    claim.UsedFallbackCorrelation,
+                    claim.RoleSignal.ToString().ToLowerInvariant()
+                );
+                return;
             }
 
-            var captureId = BuildCaptureId();
+            // 확장자는 SDK가 준 값을 그대로 쓴다. 비어 있을 때의 기본값은 승인 하드웨어인
+            // EOS 700D가 실제로 만드는 `.cr2`다. 이전 기본값 `.cr3`는 이 카메라가 만들지
+            // 않는 이름이었고, object가 둘이 되면 JPEG를 RAW original로 저장할 수 있었다.
+            // 기존 `.cr3` 산출물은 그대로 읽힌다 — 여기서 정하는 것은 새로 쓸 이름뿐이다.
+            var extension = CaptureObjectCorrelator.ResolveRawExtension(info.szFileName);
+
+            var captureId = context.CaptureId;
             tempPath = Path.Combine(
                 context.Paths.CapturesOriginalsDir,
                 $"{captureId}.downloading{extension}"
@@ -868,22 +1111,29 @@ internal sealed class CanonSdkCamera : IDisposable
                 );
             }
 
+            context.RawPath = finalPath;
+
             if (string.IsNullOrWhiteSpace(immediateFastPreview.FastPreviewPath))
             {
                 QueuePendingFastPreviewDownload(context, directoryItem, captureId, finalPath);
                 directoryItem = IntPtr.Zero;
             }
 
-            context.Completion.TrySetResult(
-                new CaptureDownloadResult(
-                    context.Request.RequestId,
-                    captureId,
-                    finalPath,
-                    DateTimeOffset.UtcNow,
-                    immediateFastPreview.FastPreviewPath,
-                    immediateFastPreview.FastPreviewKind
-                )
+            var result = new CaptureDownloadResult(
+                context.Request.RequestId,
+                captureId,
+                finalPath,
+                DateTimeOffset.UtcNow,
+                immediateFastPreview.FastPreviewPath,
+                immediateFastPreview.FastPreviewKind,
+                claim.ObjectIndex,
+                info.GroupID,
+                "raw",
+                claim.UsedFallbackCorrelation
             );
+            context.RawResult = result;
+            context.RawCompletion.TrySetResult(result);
+            TryCompleteCapture(context);
         }
         catch (Exception error)
         {
@@ -900,18 +1150,19 @@ internal sealed class CanonSdkCamera : IDisposable
                     captureException.RecoveryRequired ? "recovering" : "ready",
                     captureException.RecoveryRequired
                 );
+                context.RawCompletion.TrySetException(captureException);
                 context.Completion.TrySetException(captureException);
             }
             else
             {
                 ClearCaptureContext(context, "download-failed", "recovering", true);
-                context.Completion.TrySetException(
-                    new CanonCaptureException(
-                        "download-failed",
-                        error.Message,
-                        recoveryRequired: true
-                    )
+                var downloadException = new CanonCaptureException(
+                    "download-failed",
+                    error.Message,
+                    recoveryRequired: true
                 );
+                context.RawCompletion.TrySetException(downloadException);
+                context.Completion.TrySetException(downloadException);
             }
 
             if (!string.IsNullOrWhiteSpace(tempPath) && File.Exists(tempPath))
@@ -936,6 +1187,315 @@ internal sealed class CanonSdkCamera : IDisposable
             {
                 EDSDK.EdsRelease(directoryItem);
             }
+        }
+    }
+
+    /// <summary>
+    /// Route B에서 RAW와 짝지어 도착한 JPEG transfer object를 받는다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>이 경로는 RAW 저장 경로와 완전히 분리되어 있다.</b> 여기서 무엇이 실패하거나
+    /// 취소되어도 <c>context.Completion</c>을 건드리지 않으므로 이미 저장된 RAW truth의
+    /// 성공 판정은 바뀌지 않는다. 예외도 밖으로 던지지 않는다 — SDK 콜백 경로다.
+    /// </para>
+    /// <para>
+    /// 산출물은 측정 전용 디렉터리에만 쓴다. canonical preview 경로(<c>renders/previews/</c>)는
+    /// 이미 booth 사진 레일에 표시되므로, 그곳에 쓰면 측정 lane이 제품 UI를 조용히 바꾼다.
+    /// </para>
+    /// </remarks>
+    private void DownloadPairedJpeg(
+        CurrentCaptureContext context,
+        IntPtr directoryItem,
+        EDSDK.EdsDirectoryItemInfo info,
+        CaptureObjectClaim claim
+    )
+    {
+        IntPtr stream = IntPtr.Zero;
+        var tempPath = string.Empty;
+        var downloadCompleted = false;
+
+        void Reject(string reason) =>
+            EmitObjectRejected(
+                context,
+                reason,
+                "jpeg",
+                info.GroupID,
+                info.szFileName,
+                claim.ObjectIndex,
+                claim.UsedFallbackCorrelation,
+                claim.RoleSignal.ToString().ToLowerInvariant()
+            );
+
+        try
+        {
+            // capture id는 shutter 전에 고정되어 object 도착 순서와 무관하게 공유된다.
+            var captureId = context.CaptureId;
+            var sourcesDir = Path.Combine(
+                context.Paths.SessionRoot,
+                "renders",
+                "sources"
+            );
+
+            Directory.CreateDirectory(sourcesDir);
+
+            tempPath = Path.Combine(sourcesDir, $"{captureId}-paired.downloading.jpg");
+            var finalPath = Path.Combine(sourcesDir, $"{captureId}-paired.jpg");
+
+            var streamResult = EDSDK.EdsCreateFileStream(
+                tempPath,
+                EDSDK.EdsFileCreateDisposition.CreateAlways,
+                EDSDK.EdsAccess.ReadWrite,
+                out stream
+            );
+
+            if (streamResult != EDSDK.EDS_ERR_OK)
+            {
+                TryCancelTransfer(directoryItem);
+                Reject("paired-jpeg-stream-failed");
+                return;
+            }
+
+            var downloadResult = EDSDK.EdsDownload(directoryItem, info.Size, stream);
+            if (downloadResult != EDSDK.EDS_ERR_OK)
+            {
+                EDSDK.EdsDownloadCancel(directoryItem);
+                Reject("paired-jpeg-download-failed");
+                return;
+            }
+
+            var completeResult = EDSDK.EdsDownloadComplete(directoryItem);
+            if (completeResult != EDSDK.EDS_ERR_OK)
+            {
+                TryCancelTransfer(directoryItem);
+                Reject("paired-jpeg-complete-failed");
+                return;
+            }
+
+            downloadCompleted = true;
+
+            if (stream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(stream);
+                stream = IntPtr.Zero;
+            }
+
+            File.Move(tempPath, finalPath, overwrite: true);
+
+            var fileInfo = new FileInfo(finalPath);
+            if (!fileInfo.Exists || fileInfo.Length == 0)
+            {
+                Reject("paired-jpeg-empty-file");
+                return;
+            }
+
+            try
+            {
+                context.OnPairedJpeg?.Invoke(
+                    new CapturePairedJpegResult(
+                        context.Request.RequestId,
+                        captureId,
+                        finalPath,
+                        fileInfo.Length,
+                        claim.ObjectIndex,
+                        info.GroupID,
+                        claim.UsedFallbackCorrelation,
+                        claim.RoleSignal.ToString().ToLowerInvariant(),
+                        DateTimeOffset.UtcNow
+                    )
+                );
+            }
+            catch
+            {
+                // 알림은 best-effort다.
+            }
+        }
+        catch
+        {
+            if (!downloadCompleted && directoryItem != IntPtr.Zero)
+            {
+                EDSDK.EdsDownloadCancel(directoryItem);
+            }
+
+            Reject("paired-jpeg-exception");
+        }
+        finally
+        {
+            if (stream != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(stream);
+            }
+
+            if (directoryItem != IntPtr.Zero)
+            {
+                EDSDK.EdsRelease(directoryItem);
+            }
+
+            if (!string.IsNullOrWhiteSpace(tempPath) && File.Exists(tempPath))
+            {
+                try
+                {
+                    File.Delete(tempPath);
+                }
+                catch
+                {
+                }
+            }
+
+            TryCompleteCapture(context);
+        }
+    }
+
+    private static void TryCancelTransfer(IntPtr directoryItem)
+    {
+        if (directoryItem == IntPtr.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            EDSDK.EdsDownloadCancel(directoryItem);
+        }
+        catch
+        {
+            // SDK callback cleanup is best-effort; the reference is still released by the caller.
+        }
+    }
+
+    /// <summary>
+    /// 카메라의 image-quality capability descriptor를 <b>읽기만</b> 한다.
+    /// </summary>
+    /// <remarks>
+    /// 지원 여부를 가정하지 않기 위한 probe다. 이 함수는 카메라 설정을 바꾸지 않으므로
+    /// 측정 lane이 꺼져 있어도 안전하다. 실제 조합 적용과 복원은 호출자가 결정한다.
+    /// </remarks>
+    private ImageQualityCapability ProbeImageQualityCapability(IntPtr camera, long probedAtMicros)
+    {
+        if (camera == IntPtr.Zero)
+        {
+            return ImageQualityCapability.Unavailable(probedAtMicros);
+        }
+
+        try
+        {
+            int? currentValue = null;
+
+            var currentResult = EDSDK.EdsGetPropertyData(
+                camera,
+                EDSDK.PropID_ImageQuality,
+                0,
+                out uint rawCurrentValue
+            );
+
+            if (currentResult == EDSDK.EDS_ERR_OK)
+            {
+                currentValue = unchecked((int)rawCurrentValue);
+            }
+
+            var descResult = EDSDK.EdsGetPropertyDesc(
+                camera,
+                EDSDK.PropID_ImageQuality,
+                out var desc
+            );
+
+            if (descResult != EDSDK.EDS_ERR_OK || desc.NumElements <= 0)
+            {
+                return new ImageQualityCapability(
+                    false,
+                    currentValue,
+                    Array.Empty<int>(),
+                    false,
+                    probedAtMicros
+                );
+            }
+
+            var elementCount = Math.Min(desc.NumElements, desc.PropDesc?.Length ?? 0);
+            var supported = new List<int>(elementCount);
+
+            for (var index = 0; index < elementCount; index++)
+            {
+                supported.Add(desc.PropDesc![index]);
+            }
+
+            return new ImageQualityCapability(
+                true,
+                currentValue,
+                supported,
+                ImageQualityValue.SelectRawPlusJpegCandidate(supported) is not null,
+                probedAtMicros
+            );
+        }
+        catch
+        {
+            return ImageQualityCapability.Unavailable(probedAtMicros);
+        }
+    }
+
+    private static bool TrySetImageQuality(IntPtr camera, int value)
+    {
+        if (camera == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            return EDSDK.EdsSetPropertyData(
+                    camera,
+                    EDSDK.PropID_ImageQuality,
+                    0,
+                    sizeof(uint),
+                    unchecked((uint)value)
+                ) == EDSDK.EDS_ERR_OK;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void RestoreImageQuality(CurrentCaptureContext context)
+    {
+        if (!context.ImageQualityChanged || context.OriginalImageQuality is null)
+        {
+            return;
+        }
+
+        context.ImageQualityChanged = false;
+        if (!TrySetImageQuality(_camera, context.OriginalImageQuality.Value))
+        {
+            try
+            {
+                context.OnCameraSettingWarning?.Invoke(
+                    new CaptureCameraSettingWarningResult(
+                        context.Request.RequestId,
+                        context.CaptureId,
+                        "image-quality-restore-failed",
+                        DateTimeOffset.UtcNow
+                    )
+                );
+            }
+            catch
+            {
+                // 설정 복원 telemetry는 advisory다. 저장된 RAW truth를 바꾸지 않는다.
+            }
+        }
+    }
+
+    private static void TryCompleteCapture(CurrentCaptureContext context)
+    {
+        if (context.RawResult is null)
+        {
+            return;
+        }
+
+        if (
+            context.Correlator.ExpectedObjectCount == 1
+            || context.Correlator.IsRequestComplete
+        )
+        {
+            context.Completion.TrySetResult(context.RawResult);
         }
     }
 
@@ -1312,6 +1872,8 @@ internal sealed class CanonSdkCamera : IDisposable
         bool recoveryRequired
     )
     {
+        RestoreImageQuality(context);
+
         lock (_sync)
         {
             if (_currentCapture == context)
@@ -1500,7 +2062,11 @@ internal sealed record CaptureDownloadResult(
     string RawPath,
     DateTimeOffset ArrivedAt,
     string? FastPreviewPath,
-    string? FastPreviewKind
+    string? FastPreviewKind,
+    int ObjectIndex,
+    uint GroupId,
+    string ObjectRole,
+    bool UsedFallbackCorrelation
 );
 
 internal sealed record CaptureFastPreviewReadyResult(
@@ -1530,6 +2096,48 @@ internal sealed record CaptureFastPreviewDownloadResult(
     string? FastPreviewPath,
     string? FastPreviewKind,
     string? FailureDetailCode
+);
+
+/// <summary>
+/// Route B에서 RAW와 짝지어 도착한 JPEG transfer object.
+/// </summary>
+/// <remarks>
+/// 이 경로는 <b>RAW 저장 경로와 완전히 분리되어 있다.</b> 여기서 무엇이 실패해도
+/// 이미 저장된 RAW의 성공 판정은 바뀌지 않는다.
+/// 산출물은 측정 전용 디렉터리(<c>renders/sources/</c>)에만 쓰이며, booth 사진 레일에
+/// 표시되는 canonical preview 경로(<c>renders/previews/</c>)를 건드리지 않는다.
+/// </remarks>
+internal sealed record CapturePairedJpegResult(
+    string RequestId,
+    string CaptureId,
+    string AssetPath,
+    long ByteSize,
+    int ObjectIndex,
+    uint GroupId,
+    bool UsedFallbackCorrelation,
+    string RoleSignal,
+    DateTimeOffset ObservedAt
+);
+
+/// <summary>거부된 transfer object. 조용히 버리지 않기 위해 남긴다.</summary>
+internal sealed record CaptureObjectRejectedResult(
+    string RequestId,
+    string? CaptureId,
+    string RejectReason,
+    string Role,
+    int? ObjectIndex,
+    uint GroupId,
+    bool UsedFallbackCorrelation,
+    string? RoleSignal,
+    string? FileName,
+    DateTimeOffset ObservedAt
+);
+
+internal sealed record CaptureCameraSettingWarningResult(
+    string RequestId,
+    string CaptureId,
+    string DetailCode,
+    DateTimeOffset ObservedAt
 );
 
 internal sealed record PendingFastPreviewDownload(
@@ -1570,7 +2178,12 @@ internal sealed class CurrentCaptureContext
         CaptureRequestMessage request,
         Action<CaptureFastPreviewAttemptedResult>? onFastPreviewAttempted,
         Action<CaptureFastPreviewReadyResult>? onFastPreviewReady,
-        Action<CaptureFastPreviewFailedResult>? onFastPreviewFailed
+        Action<CaptureFastPreviewFailedResult>? onFastPreviewFailed,
+        string captureId,
+        int expectedObjectCount = 1,
+        Action<CapturePairedJpegResult>? onPairedJpeg = null,
+        Action<CaptureObjectRejectedResult>? onObjectRejected = null,
+        Action<CaptureCameraSettingWarningResult>? onCameraSettingWarning = null
     )
     {
         Paths = paths;
@@ -1578,6 +2191,14 @@ internal sealed class CurrentCaptureContext
         OnFastPreviewAttempted = onFastPreviewAttempted;
         OnFastPreviewReady = onFastPreviewReady;
         OnFastPreviewFailed = onFastPreviewFailed;
+        OnPairedJpeg = onPairedJpeg;
+        OnObjectRejected = onObjectRejected;
+        OnCameraSettingWarning = onCameraSettingWarning;
+        CaptureId = captureId;
+        Correlator = new CaptureObjectCorrelator(expectedObjectCount);
+        RawCompletion = new TaskCompletionSource<CaptureDownloadResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         Completion = new TaskCompletionSource<CaptureDownloadResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -1588,6 +2209,39 @@ internal sealed class CurrentCaptureContext
     public Action<CaptureFastPreviewAttemptedResult>? OnFastPreviewAttempted { get; }
     public Action<CaptureFastPreviewReadyResult>? OnFastPreviewReady { get; }
     public Action<CaptureFastPreviewFailedResult>? OnFastPreviewFailed { get; }
+
+    /// <summary>Route B에서 짝지어 도착한 JPEG object 알림. 측정 lane에서만 채워진다.</summary>
+    public Action<CapturePairedJpegResult>? OnPairedJpeg { get; }
+
+    /// <summary>
+    /// 거부된 transfer object 알림.
+    /// </summary>
+    /// <remarks>
+    /// <b>조용히 버리지 않기 위해 존재한다.</b> 이전 구현은 두 번째 object를 아무 기록 없이
+    /// <c>EdsRelease</c>했고, 그 상태로 측정하면 "카메라가 RAW+JPEG를 지원하지 않는다"는
+    /// 잘못된 결론이 나온다.
+    /// </remarks>
+    public Action<CaptureObjectRejectedResult>? OnObjectRejected { get; }
+    public Action<CaptureCameraSettingWarningResult>? OnCameraSettingWarning { get; }
+
+    /// <summary>
+    /// request 단위 완료 판정.
+    /// </summary>
+    /// <remarks>
+    /// 이전에는 <c>DownloadStarted</c> 플래그 하나가 <i>object 단위</i>로 완료를 판정해
+    /// capture당 첫 object만 받고 나머지를 버렸다. 완료 판정이 request 단위로 옮겨졌다.
+    /// </remarks>
+    public CaptureObjectCorrelator Correlator { get; }
+
+    /// <summary>RAW original이 저장된 경로. JPEG object 처리에서 correlation에 쓴다.</summary>
+    public string? RawPath { get; set; }
+
+    /// <summary>이 촬영에 배정된 capture id. object 도착 순서와 무관하게 미리 고정한다.</summary>
+    public string CaptureId { get; }
+
+    public CaptureDownloadResult? RawResult { get; set; }
+    public int? OriginalImageQuality { get; set; }
+    public bool ImageQualityChanged { get; set; }
+    public TaskCompletionSource<CaptureDownloadResult> RawCompletion { get; }
     public TaskCompletionSource<CaptureDownloadResult> Completion { get; }
-    public int DownloadStarted;
 }

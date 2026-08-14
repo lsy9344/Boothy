@@ -11,6 +11,7 @@ describe('viewer surface capability 경계', () => {
     })
 
     expect(service.canAccess('viewer')).toBe(true)
+    expect(service.canAccess('booth')).toBe(false)
   })
 
   it('부스 창에서는 관람 화면 라우트를 열 수 없다', () => {

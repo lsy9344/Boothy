@@ -1,6 +1,6 @@
 # Hardware Validation Ledger
 
-Last Updated: 2026-08-11 10:12 +09:00
+Last Updated: 2026-08-14 11:45 +09:00
 Sprint Artifact Owner: Boothy sprint operator
 Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
 
@@ -11,6 +11,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 - If hardware evidence is missing, incomplete, or recorded as `No-Go`, the story stays in `review` or returns to `review`.
 - Release promotion stays on `release hold` until every gated story needed for the release baseline has a `Go` row in this ledger.
 - Epic 7 follows evidence dependencies: `HV-13A -> HV-13B -> HV-14 route decision -> HV-15 -> HV-16 adoption decision -> HV-17 -> HV-18A -> HV-18B -> HV-18C -> HV-18D`. A later Go cannot erase a missing or No-Go prerequisite.
+- 2026-08-12 correct-course: 120fps+ physical monitor frame evidence for the display endpoint moved from HV-13B to HV-18B. A gate may be re-scoped only by recording the transfer in both rows and in a sprint change proposal; evidence is never deleted, and the receiving gate carries a reopen condition for the story that transferred it. See `_bmad-output/planning-artifacts/sprint-change-proposal-20260812-183435.md`.
 - Story 7.3 and 7.5 may close their bounded experiment with a documented technology No-Go when comparison evidence and an approved alternative decision are complete. The rejected candidate remains disabled, and HV-18D cannot record release Go without an approved production route.
 
 ## Canonical Release-Gated Stories
@@ -26,13 +27,13 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 | Story 4.2 | HV-01, HV-09 | `review` until `Go` | Validation failure isolation and published-only booth visibility must both hold. |
 | Story 4.3 | HV-01, HV-07, HV-12 | `review` until `Go` | Immutable publish, darktable application, and catalogSnapshot drift protection all remain release-gated. |
 | Story 7.1 | HV-13A | `review` until `Go` | Pre-capture viewer readiness, approved monitor targeting, session binding, and physical display-size contract. |
-| Story 7.2 | HV-13B | `review` until `Go` | Immutable sample publication, opaque double-buffer, one-clock actual-present, and zero-transition-defect evidence. |
-| Story 7.3 | HV-14 | `review` until route decision | Enabler comparing LibRaw embedded JPEG and capability-gated RAW+JPEG with 30+ measured captures per tested route. |
+| Story 7.2 | HV-13B | `done` on re-scoped `Go` | Immutable sample publication, opaque double-buffer, one-clock actual-present, and telemetry completeness. Physical frames moved to HV-18B on 2026-08-12; an HV-18B display-endpoint defect returns this story to `review`. |
+| Story 7.3 | HV-14 | `review` until route decision | Enabler comparing dependency-free CR2 embedded JPEG and capability-gated RAW+JPEG with 30+ measured captures per tested route. |
 | Story 7.4 | HV-15 | `review` until `Go` | Physical display-fit immutable preset proxy, publication provenance, and zero-wrong-frame behavior. |
 | Story 7.5 | HV-16 | `review` until Go/No-Go decision | Architecture Spike for resident-renderer latency, parity, stability, and exact fallback evidence. |
 | Story 7.6 | HV-17 | `review` until `Go` | RAW-refined seamless replacement, priority scheduling, stale cancellation, and frame-level integrity. |
 | Story 7.7 | HV-18A | `review` until `Go` | Signed inventory and clean offline install/launch/self-check/fixture/upgrade/uninstall reproduction. |
-| Story 7.8 | HV-18B | `review` until `Go` | Warm 100-shot performance, quality/privacy, cold/idle/reconnect/burst/failure recovery. |
+| Story 7.8 | HV-18B | `review` until `Go` | Warm 100-shot performance, quality/privacy, cold/idle/reconnect/burst/failure recovery, and the physical-frame display endpoint evidence inherited from HV-13B on 2026-08-12. |
 | Story 7.9 | HV-18C | `review` until `Go` | Staged rollout, active-session protection, old-session compatibility, and rollback evidence. |
 | Story 7.10 | HV-18D | `review` until final decision | Canonical final MVP Go/No-Go aggregation, including UX-EV-01 and UX-EV-02. |
 
@@ -67,8 +68,8 @@ Supporting regression / follow-up notes:
 | 4.2 | Pass | Validation failure isolated, publish proof pending | No-Go | `HV-09` failure was observed, but `HV-01` success evidence is still pending. | Noah Lee | `_bmad-output/implementation-artifacts/4-2-부스-호환성-검증과-승인-준비-상태-전환.md` |
 | 4.3 | Pass | Not run | No-Go | `HV-01/HV-07/HV-12` hardware proof is not yet recorded in a canonical close row. | Noah Lee | `TBD` |
 | 7.1 | Not run | Not run | No-Go | Viewer readiness and physical display-size contract are not implemented or validated. | Noah Lee | `TBD` |
-| 7.2 | Not run | Not run | No-Go | Immutable sample swap and actual-present harness are not implemented or validated. | Noah Lee | `TBD` |
-| 7.3 | Not run | Not run | No-Go | Fast-source comparison has not started; no route is approved. | Noah Lee | `TBD` |
+| 7.2 | Pass | Software evidence passed / physical frame pending | No-Go | 70 hardware captures produced 140 valid generations and 120/120 measured actual-present rows; 120fps+ photon/transition evidence remains unavailable. | Noah Lee | `tests/hardware/viewer-present/run-20260811-203500-hv13b-rerun/` |
+| 7.3 | Pass | 3 interrupted real-camera runs / 17 persisted captures | No-Go | EOS 700D produced 51 route rows with 0 accepted sources: Route A/B were `orientation-unsupported`, Route C was `absent`. Two RAW handoff timeouts and one `camera-busy` prevented a qualifying 35-capture run. | Noah Lee | `tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md` |
 | 7.4 | Not run | Not run | No-Go | Immutable physical display-fit preset proxy is not implemented or validated. | Noah Lee | `TBD` |
 | 7.5 | Not run | Not run | No-Go | Resident-renderer prototype and adoption decision are pending. | Noah Lee | `TBD` |
 | 7.6 | Not run | Not run | No-Go | RAW-refined seamless replacement and deadline scheduling are pending. | Noah Lee | `TBD` |
@@ -204,7 +205,7 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 
 - story key: `3-2-export-waiting과-truthful-completion-안내`
 - HV checklist ID: `HV-08`, `HV-11`
-- evidence package path: `TBD`
+- evidence package path: `tests/hardware/capture-source/run-20260813-115426-hv14/` (preflight only; qualifying evidence pending)
 - executedAt: `TBD`
 - validator: `TBD`
 - booth PC: `TBD`
@@ -267,32 +268,45 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 
 - story key: `7-1-전용-관람-창-준비와-화면-크기-계약`
 - HV checklist ID: `HV-13A`
-- evidence package path: `tests/hardware/viewer-present/run-20260811-135652`
-- Go / No-Go result: `No-Go`
-- executed at: `2026-08-11 14:12:56 +09:00`
+- evidence package path: `tests/hardware/viewer-present/run-20260811-155154`
+- Go / No-Go result: `Go`
+- executed at: `2026-08-11 16:02:54 +09:00`
 - validator: `Codex (operator: Noah Lee)`
 - booth PC: `NOAH_WIN`
 - camera model: `Canon EOS 700D`
-- helper identifier: `local Debug canon-helper.exe; SDK identifier not captured`
-- release blocker: `Closing viewer-window blocks capture correctly, but ensure_viewer_window hangs for more than 30 seconds and the recreated viewer remains blank instead of converging to a new ready epoch.`
-- follow-up owner: `Noah Lee`
-- rerun prerequisite: `Fix the viewer-window recreation hang/blank recovery, pass automated review, then rerun the complete HV-13A matrix including single-monitor, 1440p, 4K, session-switch, and external monitor-placement evidence.`
-- remediation landed (2026-08-11, not yet hardware-verified): `Window creation no longer runs on the event-loop thread (command moved off the blocking main-thread context plus a main-thread offload guard); start_session no longer waits on window creation; boot rendering no longer blocks on the capability IPC; viewer-window is now recreated automatically from the readiness poll with single-flight and backoff. Automated regression coverage added (Rust 6, TS 4). This gate stays No-Go until the same booth hardware reproduces the recovery path.`
-- open question for rerun: `Recorded photo rect 1428.859x952.562 does not match a fullscreen 1080p customer monitor. Confirm whether the viewer window is actually fullscreen on the approved monitor; set_position/set_fullscreen failures are now logged.`
-- target rerun date: `After recovery fix`
+- helper identifier: `local Debug canon-helper.exe; camera-helper-sidecar/v1; canon-edsdk 13.19.0`
+- release blocker: `None for HV-13A. The previous viewer recreation hang/blank blocker is closed by same-device recovery and post-recovery capture evidence.`
+- follow-up owner: `None`
+- rerun prerequisite: `N/A`
+- hardware verification: `Approved DISPLAY3 ran fullscreen at 1920x1080 DPR 1; viewer converged before capture, recreated at epoch 2 after forced close, and enabled a second successful Canon capture. Invalid monitor configuration remained fail-closed without creating a viewer on an arbitrary display. Session replacement converged at a higher revision, and viewer routing exposed no booth controls.`
+- profile scope: `The production-approved customer display is DISPLAY3 1080p. 1440p/4K dimension calculations and single-monitor fallback remain covered by automated contract tests; the connected portrait 4K panel is an operator display, not an approved customer display.`
+- target rerun date: `N/A`
 - required evidence: `viewer profile`; `viewer snapshot`; `monitor targeting`; `session binding`; `listener/layout readiness`; `reload/gap recovery`; `physical display-size contract`
+- core evidence paths: `pre-capture/viewer-readiness-approved-1080p.json`; `capture/capture-round-trip.json`; `recovery/viewer-readiness-epoch-2.json`; `recovery/capture-after-recreation.json`; `monitor-targeting/capture-blocked.json`; `recovery/session-switch.json`
 
 ### Story 7.2
 
 - story key: `7-2-immutable-sample과-actual-present-계측`
 - HV checklist ID: `HV-13B`
-- evidence package path: `TBD`
-- Go / No-Go result: `No-Go`
-- release blocker: `Immutable sample publication, opaque double-buffer transition, and actual-present measurement are not yet proven.`
+- evidence package path: `tests/hardware/viewer-present/run-20260811-203500-hv13b-rerun/`
+- Go / No-Go result: `Go` (re-scoped 2026-08-12 — see scope transfer below)
+- executedAt: `2026-08-11T20:35:00+09:00` to `2026-08-11T20:50:00+09:00`
+- validator: `Codex (operator: Noah Lee)`
+- booth PC / camera / monitor: `NOAH_WIN / Canon EOS 700D / approved DISPLAY3 1920x1080`
+- release blocker: `None for the re-scoped gate. This gate does NOT prove the physical monitor frame; that evidence is owned by HV-18B.`
+- scope transfer (2026-08-12 correct-course): `120fps+ physical monitor frames, compositor-to-photon offset, and frame-level zero-transition-defect moved to Story 7.8 / HV-18B. Rationale: the physical frame proves the compositor-to-photon interval, at most 0.017 s on a 60 Hz monitor, while the measured customer-visible latency is 3.7-4.5 s and is owned by the source and renderer stories; and the subject worth filming, an actual preset-applied photo, only reaches the screen after Story 7.4. Approved by Noah Lee. Full rationale and defence lines: _bmad-output/planning-artifacts/sprint-change-proposal-20260812-183435.md.`
+- reopen condition: `An HV-18B transition defect attributable to the display endpoint (blank, spinner, stale image, wrong capture, crop jump, scale jump, tier downgrade) returns Story 7.2 to review and this row to No-Go.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `HV-13A Go, then implement renderer-independent immutable sample swap and one-clock physical monitor presentation evidence.`
-- target rerun date: `TBD`
-- required evidence: `immutable generations`; `pointer commits`; `decode/dimension/correlation checks`; `timing spans`; `actual monitor frames`; `visible-standby vs hidden-prewarm comparison`; `zero-transition-defect report`
+- rerun prerequisite: `None for this gate. The telemetry-completeness fix shipped after this package was recorded and rides on the next booth session (HV-14) using tests/hardware/viewer-present/hv-13b/check-telemetry-completeness.ps1.`
+- target rerun date: `N/A`
+- required evidence (re-scoped): `immutable generations`; `pointer commits`; `decode/dimension/correlation checks`; `timing spans`; `telemetry completeness — exactly one terminal row per committed generation`; `visible-standby vs hidden-prewarm comparison`; `AC 4 window-event report`
+- evidence NOT provided by this gate: `actual monitor frames`; `compositor-to-photon offset`; `frame-level zero-transition-defect report` — all owned by HV-18B
+- observed evidence: `70 physical captures produced 140/140 integrity-valid generations and 120/120 measured actual-present rows, all presented/measured/trusted with zero viewer-window events after input. Visible-standby combined p50/p95/max was 3710.617/4280.416/4672.717 ms; hidden-prewarm was 3774.393/4540.441/15024.476 ms. Qualifying physical high-speed frames: 0.`
+- core evidence paths: `result.md`; `environment.md`; `visible-standby/integrity-check.json`; `hidden-prewarm/integrity-check.json`; `timing/summary.json`; `window-events/summary.json`; `ab/summary.json`; `frames/README.md`
+- interim observation (not an HV-13B qualifying run): `2026-08-12 daylight spot check at tests/hardware/viewer-present/run-20260812-081157-hv13b-light-rerun/. Two real Canon captures displayed A then B full screen on approved DISPLAY3 with 4/4 integrity-valid generations, 4/4 measured actual-present rows, and zero viewer-window events after input. Two defects surfaced outside the display path: the first photo card stayed in the rendering state after its preview finished because readiness carried only latestCapture (fixed, four regression tests, not yet re-validated on hardware), and both XMP previews exceeded the 5000 ms budget at 7109/7632 ms with darktable-cli alone taking 4326/4735 ms. The preview budget overrun stays owned by Stories 7.3 through 7.6 and the threshold was not raised. Captured photos were visibly underexposed, which is a camera setup action, not a display-path defect.`
+
+- interim observation (not a qualifying physical-frame run): `2026-08-12 hidden-prewarm/offscreen direct run at tests/hardware/viewer-present/run-20260812-172000-hv13b-offscreen-direct/. Five real Canon captures produced 10/10 integrity-valid immutable generations; approved DISPLAY3 showed final sample B full screen. Nine terminal rows were presented/measured/trusted with zero viewer-window events. Generation request_0000000000000658d5590a55f0-000008 was committed but has no terminal viewer-present row, so evidence completeness is 9/10. The prior stale photo-card defect did not recur across five completed cards. Five XMP previews exceeded budget, including one overlapping camera request at 24028 ms. HV-13B remains No-Go because of the missing terminal row and zero qualifying 120fps+ physical frames.`
+- follow-up on the missing terminal row (code fixed, not yet re-validated on hardware): `2026-08-12. Root cause traced in the evidence: the host committed and notified generation 000008 with no rejection or telemetry warning, so the viewer report never arrived. The viewer cancelled its after-paint stamp whenever the effect was torn down after the swap had already committed, and that cancel could only ever destroy a legitimate sample. The fifth shutter press landed 22 ms before the 000008 commit while the hidden-prewarm reveal re-applied set_position/show/set_fullscreen on every generation, so a layout re-report tore the effect down inside the one-frame window. Four fixes shipped: the committed swap keeps its stamp until unmount; the host closes any committed generation without a terminal report as present-unreported so exactly one terminal row exists per generation; the hidden-prewarm reveal now runs once per viewer window generation; and present-report validation failures are logged instead of returning silently. Completeness is now checked mechanically by tests/hardware/viewer-present/hv-13b/check-telemetry-completeness.ps1, which reproduces the 9/10 finding on this evidence package and is a required gate for the next run. Nine regression tests were added (three TS, six Rust); the two client tests fail against the pre-fix component. The only remaining HV-13B blocker is the absence of a 120fps+ capture rig.`
 
 ### Story 7.3
 
@@ -302,9 +316,16 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 - Go / No-Go result: `No-Go`
 - release blocker: `No fast-source route is approved from a 30+ capture comparison.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `HV-13B Go, then randomized LibRaw embedded-JPEG and capability-gated RAW+JPEG measurement on approved EOS 700D hardware.`
+- rerun prerequisite: `HV-13B Go (recorded 2026-08-12 on the re-scoped gate) and a local Canon EDSDK payload at sidecar/canon-helper/vendor/canon-edsdk/ (or BOOTHY_CANON_SDK_ROOT). Then run randomized AB/BA measurement on approved EOS 700D hardware. The LibRaw dependency decision is closed — see the dependency decision row below — so no license approval blocks this run.`
+- dependency decision (2026-08-12, approved by Noah Lee): `Route A does NOT use LibRaw. CR2 is a TIFF container, so src-tauri/src/capture/embedded_jpeg.rs reads IFD#0 StripOffsets/StripByteCounts directly and validates the extracted bytes with Story 7.2's image_probe. This removes the LGPL-2.1/CDDL license gate and leaves the Story 7.7 offline clean-machine inventory unchanged — no new Rust crate was added. The contract route is named embedded-jpeg, not libraw-embedded-jpeg, so the contract does not name a library the implementation does not use. CR3 (ISO BMFF) is out of scope for this parser and is rejected with a distinct reason; the approved EOS 700D writes CR2. Extraction is read-only and cannot reach RAW truth.`
 - target rerun date: `TBD`
-- required evidence: `capability descriptor`; `per-object correlation`; `raw samples`; `p50/p95/max`; `success rate`; `orientation/decode/corruption report`; `approved primary/fallback/No-Go route decision`
+- required evidence: `capability descriptor`; `per-object correlation`; `raw samples`; `p50/p95/max`; `success rate`; `orientation/decode/corruption report`; `quality corpus review`; `approved primary/fallback/No-Go route decision`
+- hardware preflight (2026-08-13 11:54 +09:00): `Approved NOAH_WIN detected Canon EOS 700D on USB port 6. Canon helper 0.1.0 initialized EDSDK 13.19.0 and reported exactly one camera with camera-ready. Both measurement modes were unset, C: had 572.6 GB free, and no Canon/Boothy camera-owning process was running. Firmware, lens, card, power, cable/hub, and pre-capture Image Quality remain operator-confirmed prerequisites; start-measurement.ps1 blocks until environment.md has those values.`
+- evidence package scaffold (2026-08-13): `tests/hardware/capture-source/hv-14/ — README with the collection plan; check-source-completeness.ps1, which enforces 35 requests × all three canonical routes, exact per-request route membership, warm-up 5 + measured 30, one session/seed, AB+BA order, and a separate final-package gate; and test-check-source-completeness.ps1, which reproducibly proves telemetry and final-package PASS/FAIL boundaries plus six telemetry defects: missing route, broken request matrix, wrong warm-up split, missing required field, mixed sessions, and malformed JSONL. Story 7.2's check-telemetry-completeness.ps1 rides along on the same session.`
+- implementation status (2026-08-13, automated only): `T1-T6 and T8 are implemented; T7's runbook and mechanical gates are complete, while the physical HV-14 session remains Not run. All three routes are covered: embedded-jpeg (Route A, dependency-free CR2 IFD extraction), camera-paired-jpeg (Route B), and windows-shell-thumbnail (Route C, shipped incumbent). Current focused results: Canon helper 41 passed; Rust library 105 passed; capture-source integration 17 passed; TypeScript capture-source contracts 18 passed; targeted capture-readiness regression passed. Full clippy still reports pre-existing repository issues and is not hardware evidence. HV-14 must still establish whether a 700D CR2 carries a full-size embedded JPEG, whether its descriptor lists RAW+JPEG, arrival ordering, quality, and real extraction cost.`
+- baseline note (2026-08-12): `The comparison must include the shipped incumbent as a third route. The current fast preview is a Windows Shell thumbnail (IShellItemImageFactory, ThumbnailOnly), not an embedded JPEG, and the host fast-preview budget of 120 ms was exhausted in 5 of 5 captures on 2026-08-12. Measured context for the source interval: capture-to-RAW 2806-19524 ms and capture-to-XMP-preview 6804-24028 ms in the same run. A route claim without the incumbent measured under identical conditions is not a comparison.`
+- correction recorded during implementation (2026-08-12): `The helper emits four fastPreviewKind values, not two: camera-thumbnail, windows-shell-thumbnail, raw-sdk-preview, raw-fallback-preview. The contract document previously showed embedded-jpeg, a value no implementation produces. Corrected in docs/contracts/camera-helper-sidecar-protocol.md and pinned by a contract test that reads the helper source directly.`
+- defect found and fixed before the run (2026-08-12): `CanonSdkCamera.HandleObjectEvent downloaded only the first transfer object per capture and released the rest with no record (Interlocked.Exchange on DownloadStarted). Measuring RAW+JPEG in that state would have produced a false "camera does not support it" conclusion. Completion judgement now lives at request scope via CaptureObjectCorrelator, which pairs objects by EdsDirectoryItemInfo.GroupID, falls back to filename stem plus an arrival window while flagging usedFallbackCorrelation, and reports every rejected object with a reason. The default/off product path does not change ImageQuality or emit source-comparison artifacts; only paired/ab mode enables two-object collection. In single-object mode, non-RAW or unknown objects are explicitly rejected until the RAW original arrives.`
 
 ### Story 7.4
 
@@ -360,11 +381,12 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 - HV checklist ID: `HV-18B`
 - evidence package path: `TBD`
 - Go / No-Go result: `No-Go`
-- release blocker: `Warm 100-shot performance, quality/privacy, and recovery evidence are missing.`
+- release blocker: `Warm 100-shot performance, quality/privacy, and recovery evidence are missing. This gate also owns the physical-frame display endpoint evidence inherited from HV-13B on 2026-08-12.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `HV-18A Go on the complete installed release candidate.`
+- rerun prerequisite: `HV-18A Go on the complete installed release candidate, plus a 120fps+ external capture rig for the inherited physical-frame evidence.`
 - target rerun date: `TBD`
 - required evidence: `100-shot raw samples`; `p50/p95/max`; `failure/timeout retention`; `cold first-shot`; `10-minute idle`; `reconnect`; `burst`; `renderer failure`; `app restart`; `quality/privacy`; `zero-wrong-frame report`
+- inherited from HV-13B (2026-08-12 correct-course): `120fps+ actual monitor frames across preset-applied and RAW-refined transitions`; `compositor-to-photon offset applied to the reported KPI`; `monitor refresh rate and vsync`; `frame-level zero-transition-defect report (blank, spinner, stale, wrong capture, crop jump, scale jump, tier downgrade)`. A display-endpoint defect here returns Story 7.2 to `review` and HV-13B to `No-Go`. Procedure: `tests/hardware/viewer-present/hv-13b/README.md` section 4.
 
 ### Story 7.9
 

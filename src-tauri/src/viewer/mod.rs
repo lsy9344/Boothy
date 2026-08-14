@@ -4,6 +4,7 @@
 //! display pointer, double-buffer swap, actual-present telemetry는 Story 7.2 이후가 소유한다.
 
 pub mod display_profile;
+pub mod present_telemetry;
 pub mod readiness_gate;
 pub mod viewer_state;
 
@@ -62,12 +63,30 @@ pub fn current_epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 프로세스 수명 동안 wall-clock 보정의 영향을 받지 않는 liveness 기준.
-pub fn current_monotonic_ms() -> u64 {
+/// 프로세스 전역 monotonic 기준점.
+///
+/// Story 7.2의 present 계측과 Story 7.1의 liveness 판정이 **같은 clock**을 써야 한다.
+/// 두 번째 `Instant`를 만들면 span이 서로 어긋나거나 음수가 된다.
+fn process_start() -> &'static Instant {
     static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
-    PROCESS_START
-        .get_or_init(Instant::now)
-        .elapsed()
-        .as_millis() as u64
+    PROCESS_START.get_or_init(Instant::now)
+}
+
+/// 프로세스 수명 동안 wall-clock 보정의 영향을 받지 않는 liveness 기준.
+pub fn current_monotonic_ms() -> u64 {
+    process_start().elapsed().as_millis() as u64
+}
+
+/// present 계측용 고해상도 clock. `current_monotonic_ms()`와 같은 기준점을 공유한다.
+pub fn current_monotonic_micros() -> u64 {
+    process_start().elapsed().as_micros() as u64
+}
+
+/// wall-clock micros. 실장비 증거를 다른 로그와 맞출 때만 쓰고 KPI 계산에는 쓰지 않는다.
+pub fn current_epoch_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_micros() as u64)
+        .unwrap_or(0)
 }

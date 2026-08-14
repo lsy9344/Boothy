@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "hv-13b-raw-captures/v1",
+  "sessionId": "session_000000000018cae330831707f8",
+  "captures": [
+    {
+      "captureId": "capture_20260811231457425_2b1a64461c",
+      "byteSize": 19753678,
+      "sha256": "35dec81e23dcf2caf6fa9a2ead530aef6177415321daf8bdbc0b27afb82497f1",
+      "renderStatus": "previewReady"
+    },
+    {
+      "captureId": "capture_20260811231501844_aa8a1df97b",
+      "byteSize": 19753640,
+      "sha256": "c4937b126c0cc65f3cd69f6a8cf7e62856e4a9d8b97182317ab21c19c9445bd5",
+      "renderStatus": "previewReady"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "hv-14-correlation/v1",
+  "pairedRequestCount": 0,
+  "rejectedObjectCount": 0,
+  "fallbackCorrelationCount": 0,
+  "originalsJpegCount": 0,
+  "rawTruthPreserved": false,
+  "evidenceFiles": ["<relative evidence file>" ]
+}
