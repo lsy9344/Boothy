@@ -214,10 +214,19 @@ for ($index = 0; $index -lt $samples.Count; $index++) {
     $failures.Add("$row 행에 candidate가 없습니다.")
     continue
   }
-  foreach ($field in @('sessionId', 'requestId', 'captureId', 'route')) {
+  foreach ($field in @('sessionId', 'requestId', 'route')) {
     if (-not (Has-Text $candidate.$field)) {
       $failures.Add("$row 행의 candidate.$field 값이 비어 있습니다.")
     }
+  }
+  # helper 단계에서 실패한 요청의 행(cancelled)은 RAW truth가 없으므로 captureId가 비어
+  # 있어야 한다. 그 외의 행은 반드시 captureId를 가진다. 실패 행도 분모에 남기 위해
+  # 이 게이트가 실패 행을 거부하면 안 된다.
+  $isHelperStageFailureRow = ($sample.accepted -eq $false) -and
+    ($sample.rejectReason -eq 'cancelled') -and
+    ($null -eq $candidate.assetPath)
+  if (-not (Has-Text $candidate.captureId) -and -not $isHelperStageFailureRow) {
+    $failures.Add("$row 행의 candidate.captureId 값이 비어 있습니다.")
   }
   if ($sample.accepted -isnot [bool]) {
     $failures.Add("$row 행의 accepted가 boolean이 아닙니다.")
@@ -338,7 +347,23 @@ foreach ($requestGroup in $requestGroups) {
   $warmUpValues = @($requestGroup.Group | ForEach-Object { $_.isWarmUp } | Sort-Object -Unique)
   $seedValues = @($requestGroup.Group | ForEach-Object { $_.randomizationSeed } | Where-Object { Has-Text $_ } | Sort-Object -Unique)
 
-  if ($captureIds.Count -ne 1) { $failures.Add("request '$($requestGroup.Name)'가 하나의 captureId로 묶이지 않았습니다.") }
+  # 정상 요청은 route 전체가 하나의 captureId로 묶인다. helper 단계에서 실패한 요청은
+  # captureId가 전무하고 모든 행이 cancelled여야 한다 — 섞이면 correlation 결함이다.
+  $allCancelled = @($requestGroup.Group | Where-Object {
+      $_.accepted -ne $false -or $_.rejectReason -ne 'cancelled'
+    }).Count -eq 0
+  if ($captureIds.Count -gt 1) {
+    $failures.Add("request '$($requestGroup.Name)'가 하나의 captureId로 묶이지 않았습니다.")
+  }
+  elseif ($captureIds.Count -eq 0 -and -not $allCancelled) {
+    $failures.Add("request '$($requestGroup.Name)'에 captureId가 없는데 helper 단계 실패(cancelled)로 기록되지도 않았습니다.")
+  }
+  elseif ($captureIds.Count -eq 1) {
+    $rowsWithoutCapture = @($requestGroup.Group | Where-Object { -not (Has-Text $_.candidate.captureId) }).Count
+    if ($rowsWithoutCapture -gt 0) {
+      $failures.Add("request '$($requestGroup.Name)'의 일부 행에만 captureId가 있습니다.")
+    }
+  }
   if ($sessionIds.Count -ne 1) { $failures.Add("request '$($requestGroup.Name)'가 하나의 sessionId로 묶이지 않았습니다.") }
   if ($blockIndices.Count -ne 1) { $failures.Add("request '$($requestGroup.Name)'의 blockIndex가 route 간 일치하지 않습니다.") }
   if ($blockOrders.Count -ne 1) { $failures.Add("request '$($requestGroup.Name)'의 blockOrder가 route 간 일치하지 않습니다.") }

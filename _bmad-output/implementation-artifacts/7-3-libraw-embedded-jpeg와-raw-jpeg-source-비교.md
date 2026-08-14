@@ -2,10 +2,10 @@
 
 Status: review
 
-> **2026-08-13 진행 상황.** 구현과 자동 검증, HV-14 실행 절차·기계식 게이트까지 완료했다.
-> Route A의 의존성 결정은 **LibRaw 미채택 / 의존성 없는 CR2 IFD 파싱**으로 승인되어 T3가 닫혔다.
-> 남은 것은 HV-14 실장비 회차뿐이다 — 자세한 내용은
-> `Completion Notes → 남은 작업`에 있다. HV-14가 route 결정을 기록하기 전까지 `done`이 아니다.
+> **2026-08-14 진행 상황.** 첫 HV-14 실장비 회차는 **No-Go**였다 (Route A/B orientation 전멸,
+> Route C absent, busy/timeout으로 35회 미완결, 실패 요청의 분모 소실). 원인 4종 모두
+> 코드 조치와 회귀 테스트가 반영됐다 — `Completion Notes → HV-14 No-Go 원인 4종 조치` 참조.
+> 남은 것은 HV-14 실장비 **재실행**뿐이다. HV-14가 route 결정을 기록하기 전까지 `done`이 아니다.
 
 Type: Enabler / Experiment
 
@@ -491,10 +491,10 @@ Story 7.2 작업은 아직 커밋되지 않은 작업 트리에 있다 (branch `
 - [x] [Review][Patch] evidence 복사와 completeness gate를 staging에서 수행하고 성공 시에만 확정해, gate 실패 후 동일 세션 수집을 안전하게 재시도할 수 있게 한다 [tests/hardware/capture-source/run-20260813-115426-hv14/collect-evidence.ps1:32]
 - [x] [Review][Patch] measurement launcher가 runbook에 명시된 vendored Canon SDK fallback을 지원해 환경변수가 없는 표준 개발 환경에서도 preflight가 동작하게 한다 [tests/hardware/capture-source/run-20260813-115426-hv14/start-measurement.ps1:11]
 - [x] [Review][Patch] 최종 HV-14 gate가 단순한 비어 있지 않은 파일이 아니라 환경 확정값, capability/correlation 구조, 품질 이미지 corpus, 집계 지표, 명시적 판정을 검증하도록 강화하고 합성 실패 테스트로 고정한다 [tests/hardware/capture-source/hv-14/check-source-completeness.ps1:172]
-- [ ] [Hardware][Patch] EOS 700D 실측에서 Route A/B 17건이 모두 `orientation-unsupported`이므로 실제 orientation을 지원하거나 정규화한 뒤 재측정한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md]
-- [ ] [Hardware][Patch] Route C가 저장 capture 17건 모두 `absent`이므로 Windows Shell source 준비 이후에 비교하도록 측정 시점을 보정한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md]
-- [ ] [Hardware][Patch] helper가 `camera-ready`로 복귀한 뒤에도 반복된 `camera-busy`와 RAW handoff timeout을 해결해 35회 회차를 완결한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md]
-- [ ] [Hardware][Patch] helper 단계에서 실패한 촬영 요청도 source 비교 실패 행으로 남겨 성공률 분모에서 사라지지 않게 한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md]
+- [x] [Hardware][Patch] EOS 700D 실측에서 Route A/B 17건이 모두 `orientation-unsupported`이므로 실제 orientation을 지원하거나 정규화한 뒤 재측정한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md] — 조치 완료 (2026-08-14): 비교 lane이 orientation 1~8을 기록·승격하고, display 승인(1만 허용)은 불변. 재측정은 다음 HV-14 회차
+- [x] [Hardware][Patch] Route C가 저장 capture 17건 모두 `absent`이므로 Windows Shell source 준비 이후에 비교하도록 측정 시점을 보정한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md] — 조치 완료 (2026-08-14): 측정 lane이 helper 종단 이벤트를 기본 15초까지 기다렸다 판정 (`BOOTHY_SOURCE_SHELL_WAIT_MS`)
+- [x] [Hardware][Patch] helper가 `camera-ready`로 복귀한 뒤에도 반복된 `camera-busy`와 RAW handoff timeout을 해결해 35회 회차를 완결한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md] — 조치 완료 (2026-08-14): 셔터 DEVICE_BUSY 재시도(8×250ms), per-shot ImageQuality 왕복 제거, paired RAW handoff +15초 allowance(host/helper 동일). 35회 완결 자체는 다음 실장비 회차가 증명한다
+- [x] [Hardware][Patch] helper 단계에서 실패한 촬영 요청도 source 비교 실패 행으로 남겨 성공률 분모에서 사라지지 않게 한다 [tests/hardware/capture-source/run-20260813-115426-hv14/attempts-20260814.md] — 조치 완료 (2026-08-14): round-trip 실패 시 기대 route마다 `cancelled` 행 기록(captureId 없음), completeness 게이트가 정상 인정
 - [x] [Review][Defer] Story 7.2의 re-scoped Go와 요약 gateboard No-Go 표시가 ledger 안에서 상충한다 [_bmad-output/implementation-artifacts/hardware-validation-ledger.md:30] — deferred, pre-existing
 
 ## Dev Agent Record
@@ -591,9 +591,46 @@ render/preview 경로다.
 **HV-14가 답해야 할 것이 하나 늘었다:** 700D의 CR2가 실제로 full-size 내장 JPEG을 담고 있는지,
 그리고 orientation이 항상 1인지. 합성 fixture로는 확인할 수 없다.
 
+#### HV-14 No-Go(2026-08-14) 원인 4종 조치 — 코드 반영 완료, 실장비 재검증 대기
+
+첫 실장비 회차의 중단·전멸 원인 전부에 코드 조치와 회귀 테스트를 넣었다.
+
+1. **orientation (Route A/B 34건 전멸)** — 부스 rig의 700D는 회전 orientation을 실제로 만든다.
+   `image_probe::probe_jpeg`를 구조 판정(`probe_jpeg_structure`) + display 정책(orientation 1만)으로
+   분리하고, 비교 lane은 구조 판정을 공유하되 1~8을 **기록·승격**한다. 유효 범위 밖만
+   `orientation-unsupported`(추출 단계에서는 `corrupt`)다. JPEG EXIF가 없으면 CR2 컨테이너
+   값이 truth이고(`SourceAdmissionContext.container_orientation`), 기록과 truth가 어긋나면
+   `corrupt`다. **scope guard 갱신:** Story 7.2 파일 중 `image_probe.rs`에 이번에 diff가
+   생겼다 — 다만 `probe_jpeg`의 display 동작은 바이트 단위로 동일하고, 이를 고정하는
+   테스트(`structure_probe_reports_rotated_orientation_without_display_policy` +
+   기존 `rejects_rotated_orientation`)를 추가했다. 나머지 4개 계약 파일은 여전히 diff 없음.
+2. **Route C 17건 absent** — 측정 시점이 shell source 도착(RAW 후 비동기)보다 빨랐다.
+   측정 lane이 helper의 종단 이벤트(`fast-preview-ready`/`fast-thumbnail-failed`)를 기본
+   15초까지 기다렸다 판정한다(`BOOTHY_SOURCE_SHELL_WAIT_MS`, 테스트는
+   `SourceComparisonOptions::immediate()`). 대기 지연은 `readyAtHostMicros`에 그대로
+   드러나고 `extractionCostMicros`는 대기와 분리했다. 제품 120ms 예산·booth 레일 불변.
+3. **camera-busy / RAW handoff timeout (3회 중단)** — (a) 셔터 DEVICE_BUSY를 최대 8×250ms
+   재시도(busy = 셔터 미작동이므로 이중 촬영 불가), (b) per-shot ImageQuality
+   probe→set→restore 왕복을 제거하고 최초 전환의 원래 값을 helper가 보유
+   (`_heldOriginalImageQuality`) — 복원은 요청 실패·비-paired 진입·세션 종료 시점,
+   (c) paired 활성 시 RAW handoff 예산 +15초를 host(`sidecar_client`)와
+   helper(`PairedCaptureCompletionAllowance`)가 같은 값으로 더해 host>helper 관계 유지.
+   lane off 제품 경로의 예산·동작은 그대로다.
+4. **실패 요청의 분모 소실 (3건)** — round-trip 실패 시
+   `record_source_comparison_request_failure`가 기대 route마다 `cancelled` 행을 남긴다
+   (captureId 없음, block 자리 차지). `check-source-completeness.ps1`이 이 행을 정상
+   인정하고, captureId가 일부 행에만 있으면 correlation 결함으로 FAIL한다.
+
+**검증 (있는 그대로):** capture_source 통합 25/25 (신규 5), source_probe·embedded_jpeg
+단위 테스트 갱신 통과, helper `dotnet test` 47/47 (신규 5), TS 계약 테스트 갱신 통과
+(전체 442 passed / 1 failed — 기준선과 동일한 governance 기존 실패), `pnpm lint` 통과,
+`cargo fmt --check` 통과, `pnpm build` 기존 18건 오류로 실패(capture-source 관련 0건, 악화
+없음), `cargo test` 실패는 capture_readiness 병렬 경합뿐이며 단일 스레드 60/60·
+operator_recovery 7/7. HV-14 게이트 합성 시나리오 17종(신규 2) 통과.
+
 #### 남은 작업
 
-- **T7 실행분** — HV-14 실촬영 AB 회차 (qualifying 세션당 셔터 정확히 35회; 중단 시 별도 세션에서 전체 재실행)
+- **T7 실행분** — HV-14 실촬영 AB 회차 (qualifying 세션당 셔터 정확히 35회; 중단 시 별도 세션에서 전체 재실행). 재실행 전 `tests/hardware/capture-source/hv-14/README.md`의 "2026-08-14 No-Go 회차 이후 바뀐 것"을 확인한다
 
 ### File List
 
@@ -624,6 +661,7 @@ render/preview 경로다.
 - `tests/hardware/capture-source/run-20260813-115426-hv14/quality/manifest.template.json`
 - `tests/hardware/capture-source/run-20260813-115426-hv14/aggregate/summary.template.json`
 - `tests/hardware/capture-source/run-20260813-115426-hv14/decision.template.md`
+- `sidecar/canon-helper/tests/CanonHelper.Tests/CaptureRetryPolicyTests.cs`
 
 **수정**
 
@@ -631,7 +669,9 @@ render/preview 경로다.
 - `src/shared-contracts/index.ts` — `dto/capture-source` export
 - `src-tauri/src/contracts/dto.rs` — capture-source DTO와 상수
 - `src-tauri/src/capture/mod.rs` — 신규 모듈 2개 등록
-- `src-tauri/src/capture/sidecar_client.rs` — capability·source object 이벤트 수신과 correlation 조회
+- `src-tauri/src/capture/sidecar_client.rs` — capability·source object 이벤트 수신과 correlation 조회, fast preview 종단 이벤트 reader, paired timeout allowance
+- `src-tauri/src/capture/normalized_state.rs` — 촬영 완료 시 비교 lane 실행, round-trip 실패 시 `cancelled` 실패 행 기록
+- `src-tauri/src/display/image_probe.rs` — `probe_jpeg`를 구조 판정 + display 정책으로 분리 (`probe_jpeg_structure` 추가, display 동작 불변)
 - `sidecar/canon-helper/src/CanonHelper/HelperVersion.cs` — additive protocol v2
 - `sidecar/canon-helper/src/CanonHelper/Protocol/CanonHelperMessages.cs` — capability·source object 이벤트 계약
 - `sidecar/canon-helper/src/CanonHelper/Runtime/CanonHelperService.cs` — 비교 lane 연결과 helper event 발신
@@ -647,6 +687,7 @@ render/preview 경로다.
 
 ## Change Log
 
+- 2026-08-14: HV-14 No-Go 원인 4종을 일괄 조치했다. (1) 비교 lane이 실장비의 orientation 1~8을 기록·승격하도록 `probe_jpeg`를 구조/정책으로 분리했다 — display 승인은 여전히 1만 통과시키며 정규화는 Story 7.4 소유다. (2) Route C 측정이 helper의 종단 fast-preview 이벤트를 기본 15초까지 기다린다 (`BOOTHY_SOURCE_SHELL_WAIT_MS`). (3) 셔터 DEVICE_BUSY 재시도(8×250ms), per-shot ImageQuality 왕복 제거(원래 값은 helper가 보유했다가 실패·비-paired 진입·세션 종료 시 복원), paired RAW handoff 예산 +15초(host/helper 동일)를 넣었다. (4) helper 단계 실패 요청도 route마다 `cancelled` 행을 남기고 completeness 게이트가 이를 분모로 인정한다. 신규 회귀 테스트: Rust 통합 5, Rust 단위 갱신, C# 5, TS 계약 2, 게이트 합성 시나리오 2. 검증 결과는 기준선 대비 악화 없음(Completion Notes 참조). Status는 실장비 재검증 전이므로 `review` 유지, ledger는 `No-Go` 유지.
 - 2026-08-14: 연결된 EOS 700D로 HV-14를 직접 실행했다. preflight와 종료 후 self-check는 `camera-ready`였지만 세 회차가 각각 `capture-download-timeout`, `camera-busy`, `capture-download-timeout`으로 중단됐다. 저장된 17 captures의 51 route 행은 전부 거부됐다(Route A/B `orientation-unsupported`, Route C `absent`). qualifying 35회는 미완결이므로 hardware ledger를 No-Go로 갱신하고 Status는 `review` 유지.
 - 2026-08-13: 최종 HV-14 코드 리뷰 조치 6건을 일괄 반영했다. source freshness를 host monotonic clock으로 통일하고, 불완전 AB block 재사용과 correlation 없는 paired JPEG 승인을 차단했다. 증거 수집은 staging 성공 후 확정하도록 바꿨고, launcher의 vendored SDK fallback과 구조화된 최종 증거 게이트·운영 템플릿을 추가했다. capture-source 20건, capture readiness 단일 스레드 60건, HV-14 합성 게이트 15개 시나리오와 PowerShell 구문 검증이 통과했다. 실장비 35회 회차는 아직 남아 Status는 `review` 유지.
 - 2026-08-13: HV-14 실장비 preflight를 실행했다. NOAH_WIN에서 EOS 700D 1대, EDSDK 13.19.0 초기화, helper `camera-ready`, 저장 공간과 측정 lane 초기 상태를 확인했다. 회차 전 운영자 확인 템플릿, 안전한 AB 실행 스크립트, 세션 증거 수집·완결성 검사 스크립트를 준비했다. 펌웨어·렌즈·카드·전원·케이블·측정 전 Image Quality가 기록되기 전에는 실행이 차단된다. Qualifying 35회 촬영은 아직 `Not run`이므로 Status는 `review` 유지.

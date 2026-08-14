@@ -37,6 +37,14 @@
 - host의 fast preview 대기 예산은 `HELPER_FAST_PREVIEW_WAIT_MS = 120`이다.
   **이 값을 늘려 incumbent를 통과시키지 않는다.** 2026-08-12 evidence에서 이 예산이 5/5
   소진됐다는 사실 자체가 incumbent의 측정 결과다.
+- **Route C의 측정 시점은 제품 예산과 분리되어 있다** (2026-08-14, HV-14 실측 반영).
+  shell thumbnail은 RAW handoff **뒤에** 비동기로 도착하므로, RAW 직후에 판정하면 항상
+  `absent`가 된다 — HV-14 첫 회차의 Route C 표본 17건 전부가 그렇게 사라졌다.
+  측정 lane은 helper의 종단 이벤트(`fast-preview-ready` / `fast-thumbnail-failed`)를
+  기다렸다가 판정한다. 대기 예산은 기본 15초, `BOOTHY_SOURCE_SHELL_WAIT_MS`로 조정한다.
+  incumbent의 준비 지연은 `readyAtHostMicros - request 시작`으로 표본에 그대로 드러나고,
+  `extractionCostMicros`는 대기와 분리된 복사+검증 비용만 잰다. 제품의 120ms 예산과
+  booth 레일 동작은 바뀌지 않는다.
 
 `fastPreviewKind`의 허용 값과 각 값의 생산 경로는
 [`camera-helper-sidecar-protocol.md`](./camera-helper-sidecar-protocol.md#fastpreviewkind-허용-값)에 있다.
@@ -52,7 +60,7 @@
 | `partial` | EOI trailer가 없다. 아직 다 쓰이지 않았거나 잘렸다 |
 | `corrupt` | 기록된 크기·해시가 파일과 어긋난다 |
 | `undecodable` | SOI/SOF 구조를 해석할 수 없다 |
-| `orientation-unsupported` | EXIF orientation이 `1`이 아니다 |
+| `orientation-unsupported` | orientation이 EXIF 유효 범위(`1`~`8`) 밖이다 |
 | `wrong-session` | 다른 세션의 산출물 (NFR-004) |
 | `wrong-request` | 다른 request의 산출물 |
 | `wrong-capture` | 다른 capture의 산출물 |
@@ -68,10 +76,22 @@
 ### JPEG 구조 판정 규칙은 한 곳에만 있다
 
 `src-tauri/src/display/image_probe.rs`(Story 7.2)가 SOI / SOF / EOI trailer / EXIF orientation
-판정을 소유한다. Story 7.3의 `capture::source_probe`는 그 함수를 **직접 호출**하고 결과를
-자기 거부 사유로 옮기기만 한다.
+**구조 판정**(`probe_jpeg_structure`)을 소유한다. Story 7.3의 `capture::source_probe`는 그
+함수를 **직접 호출**하고 결과를 자기 거부 사유로 옮기기만 한다.
 
 규칙을 두 벌 만들면 Story 7.4에서 통과 기준이 갈라진다. 코드 구조로 그것을 막는다.
+
+### orientation 정책은 lane마다 다르다 (2026-08-14, HV-14 실측 반영)
+
+HV-14 첫 실장비 회차에서 부스 rig의 EOS 700D가 만든 Route A/B 표본 34건 **전부**가
+orientation ≠ 1로 거부되어 비교 자체가 무산됐다. 실장비의 회전 값은 결함이 아니라 현실이다.
+
+- **source 비교 lane** — orientation `1`~`8`을 **기록**하고 승격을 허용한다. 유효 범위 밖의
+  값만 `orientation-unsupported`다. truth는 JPEG 자체 EXIF가 우선이고, 없으면 CR2 컨테이너
+  (TIFF IFD#0)의 값이다. 기록된 값이 이 truth와 다르면 `corrupt`다.
+- **display 승인 (Story 7.2/7.4)** — `probe_jpeg`는 여전히 orientation `1`만 통과시킨다.
+  이 계약은 바뀌지 않았다. 회전된 source를 화면에 올리려면 **Story 7.4의 display proxy가
+  orientation 정규화를 소유해야 한다** — 표본의 `exifOrientation`이 그 입력이다.
 
 ## 측정 lane
 
@@ -106,6 +126,10 @@ RAW persistence와 manifest 반영이 끝난 직후 host의 실제 촬영 완료
   `true`인 표본은 파싱 자체가 실패한다. 필드가 없어서 기본값으로 통과하는 경로도 없다.
 - **모든 시도에 행이 하나씩 남는다.** 거부된 시도도, 후보가 아예 없던 시도도 남는다.
   Story 7.2는 terminal 행이 없는 산출물 때문에 한 회차를 잃었다.
+- **helper 단계에서 실패한 촬영 요청도 행을 남긴다** (2026-08-14, HV-14 실측 반영).
+  `capture-download-timeout`·`camera-busy` 같은 round-trip 실패는 기대 route마다
+  `cancelled` 행 하나를 남기고 block 자리를 차지한다. RAW truth가 없으므로 `captureId`는
+  `null`이다. HV-14 첫 회차에서 실패 요청 3건이 행 없이 사라져 성공률 분모가 조용히 줄었다.
 - 후보가 생성되지 않아 `assetPath`가 `null`이면 `widthPx`, `heightPx`, `byteSize`,
   `objectIndex`도 `null`이다. 결측을 숫자 `0`으로 꾸며 기록하지 않는다.
 
@@ -126,7 +150,26 @@ RAW persistence와 manifest 반영이 끝난 직후 host의 실제 촬영 완료
   `ImageQualityValue.SelectRawPlusJpegCandidate`는 descriptor가 준 목록 안에서만 고르고,
   목록에 RAW+JPEG가 없으면 `null`을 돌려준다. 대체 조합을 지어내지 않는다.
 - 측정이 끝나면 **원래 값으로 되돌린다.** 카메라를 측정 상태로 남기면 다음 고객 세션의
-  제품 동작이 바뀐다.
+  제품 동작이 바뀐다. 단, **촬영마다 되돌리지 않는다** — 아래 "실장비 안정화" 참조.
+
+### 실장비 안정화 (2026-08-14, HV-14 실측 반영)
+
+HV-14 첫 회차는 20회 요청 중 3회가 `capture-download-timeout`(2)·`camera-busy`(1)로 중단되어
+qualifying 35회를 완결하지 못했다. 세 가지가 바뀌었다.
+
+- **ImageQuality를 촬영마다 되돌리지 않는다.** 이전에는 paired 촬영 하나마다
+  probe → set → 촬영 → restore를 반복해 셔터 직전에 property 쓰기가 두 번씩 끼었고,
+  이것이 다음 셔터의 `DEVICE_BUSY`를 유발했다. 이제 최초 전환 시점의 원래 값을 helper가
+  보유하고(`_heldOriginalImageQuality`), 연속된 paired 촬영은 property를 건드리지 않는다.
+  복원 시점은 **요청 실패, 비-paired 촬영 진입, 카메라 세션 종료**다 — "측정 상태로
+  남기지 않는다"는 계약은 그대로다. capability probe(읽기)는 여전히 매 요청 수행된다.
+- **셔터 `DEVICE_BUSY`는 짧게 재시도한다.** busy는 셔터가 눌리지 않았다는 뜻이므로
+  재시도가 이중 촬영을 만들지 않는다. 250ms 간격, 최대 8회(약 2초) 후에만
+  `camera-busy`로 실패한다 (`CanonSdkCamera.ShouldRetryShutterBusy`).
+- **paired 활성 시 RAW handoff 예산에 +15초 allowance.** transfer object가 둘이라 RAW
+  경계가 늦게 닫힐 수 있다. helper(`PairedCaptureCompletionAllowance`)와
+  host(`PAIRED_SOURCE_CAPTURE_TIMEOUT_ALLOWANCE_MS`)가 같은 값을 더해
+  "host 예산 > helper 예산" 관계가 유지된다. lane이 꺼진 제품 경로의 예산은 그대로다.
 
 `EdsImageQuality` 32비트 값의 해석은 `ImageQualityValue`에 있다.
 
@@ -207,21 +250,22 @@ Story 1.5~1.7이 만든 계약이다. RAW 저장이 곧 촬영 성공이고 fast
    - `0x0117 StripByteCounts` — 그 길이
    - `0x0112 Orientation` — 컨테이너가 선언한 방향
 3. **범위 검증** — strip이 파일 끝을 넘어가면 `corrupt`. 조용히 잘라 쓰지 않는다.
-4. **구조 검증** — 꺼낸 바이트를 **Story 7.2의 `probe_jpeg`에 그대로 넣는다.**
-   SOI / SOF 크기 / EOI trailer / EXIF orientation 판정이 전부 거기서 온다.
+4. **구조 검증** — 꺼낸 바이트를 **Story 7.2의 `probe_jpeg_structure`에 그대로 넣는다.**
+   SOI / SOF 크기 / EOI trailer / EXIF orientation 파싱이 전부 거기서 온다.
 5. **orientation 확정** — JPEG 자체 EXIF가 있으면 그것이 우선, 없으면 TIFF IFD#0의 값을 쓴다.
-   `1`이 아니면 `orientation-unsupported`.
+   `1`~`8`은 **거부하지 않고 값 그대로 돌려준다** (HV-14 실측 반영 — 위의
+   "orientation 정책은 lane마다 다르다" 참조). 유효 범위 밖이면 `corrupt`.
 
 ### 거부 사유 매핑
 
 | 상황 | 사유 |
 | --- | --- |
 | TIFF가 아님 (CR3의 ISO BMFF 포함) | `undecodable` |
-| strip 태그가 없음 / 길이 0 | `absent` |
-| IFD offset·strip 범위가 파일 밖 | `corrupt` |
+| strip 태그가 없음 | `absent` |
+| strip 길이 0 / IFD offset·strip 범위가 파일 밖 | `corrupt` |
 | JPEG에 EOI trailer 없음 | `partial` |
 | JPEG 구조 해석 불가 | `undecodable` |
-| orientation ≠ 1 (JPEG EXIF 또는 컨테이너) | `orientation-unsupported` |
+| orientation이 EXIF 유효 범위(`1`~`8`) 밖 | `corrupt` |
 
 > **CR3는 이 파서의 대상이 아니다.** ISO BMFF 기반이라 구조가 완전히 다르다.
 > 승인 하드웨어 EOS 700D는 CR2를 만들며, CR3가 들어오면 조용히 실패하지 않고

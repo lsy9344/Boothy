@@ -20,8 +20,9 @@ use boothy_lib::{
         source_telemetry::{
             append_source_comparison_sample, build_source_comparison_sample,
             parse_source_compare_mode, read_source_comparison_samples,
+            record_source_comparison_request_failure_with_mode,
             run_source_comparison_for_capture_with_mode, source_artifact_path,
-            source_comparison_path, SourceCompareMode,
+            source_comparison_path, SourceCompareMode, SourceComparisonOptions,
         },
     },
     contracts::dto::{
@@ -81,14 +82,22 @@ fn build_jpeg(width: u16, height: u16) -> Vec<u8> {
 }
 
 fn build_cr2(jpeg: &[u8]) -> Vec<u8> {
+    build_cr2_with_orientation(jpeg, None)
+}
+
+fn build_cr2_with_orientation(jpeg: &[u8], orientation: Option<u16>) -> Vec<u8> {
     const IFD_OFFSET: usize = 16;
     const ENTRY_BYTES: usize = 12;
-    let jpeg_offset = IFD_OFFSET + 2 + 3 * ENTRY_BYTES + 4;
-    let entries = [
+    let mut entries = vec![
         (0x0103u16, 3u16, 1u32, 6u32),
-        (0x0111u16, 4u16, 1u32, jpeg_offset as u32),
         (0x0117u16, 4u16, 1u32, jpeg.len() as u32),
     ];
+    if let Some(value) = orientation {
+        entries.push((0x0112u16, 3u16, 1u32, value as u32));
+    }
+    let jpeg_offset = IFD_OFFSET + 2 + (entries.len() + 1) * ENTRY_BYTES + 4;
+    entries.push((0x0111u16, 4u16, 1u32, jpeg_offset as u32));
+    entries.sort_by_key(|entry| entry.0);
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"II");
     bytes.extend_from_slice(&0x002Au16.to_le_bytes());
@@ -133,6 +142,41 @@ fn write_paired_arrival_event(root: &PathBuf, paired: &PathBuf, jpeg_len: usize)
         "roleSignal": "sdkformat"
     });
     fs::write(&events, format!("{event}\n")).expect("write helper event");
+}
+
+fn write_fast_preview_event(root: &PathBuf, event_type: &str, path: Option<&PathBuf>, kind: &str) {
+    let events = SessionPaths::new(root, SESSION_A)
+        .diagnostics_dir
+        .join("camera-helper-events.jsonl");
+    fs::create_dir_all(events.parent().expect("events parent")).expect("events dir");
+    let event = if event_type == "fast-preview-ready" {
+        serde_json::json!({
+            "schemaVersion": "canon-helper-fast-preview-ready/v1",
+            "type": "fast-preview-ready",
+            "sessionId": SESSION_A,
+            "requestId": REQUEST,
+            "captureId": CAPTURE,
+            "observedAt": "2026-08-14T10:15:31Z",
+            "fastPreviewPath": path.expect("ready path").to_string_lossy(),
+            "fastPreviewKind": kind
+        })
+    } else {
+        serde_json::json!({
+            "schemaVersion": "canon-helper-fast-thumbnail-failed/v1",
+            "type": "fast-thumbnail-failed",
+            "sessionId": SESSION_A,
+            "requestId": REQUEST,
+            "captureId": CAPTURE,
+            "observedAt": "2026-08-14T10:15:31Z",
+            "detailCode": "fast-preview-fallback-failed",
+            "fastPreviewKind": kind
+        })
+    };
+    let mut line = event.to_string();
+    line.push('\n');
+    let mut contents = fs::read_to_string(&events).unwrap_or_default();
+    contents.push_str(&line);
+    fs::write(&events, contents).expect("write helper event");
 }
 
 fn capture_record(root: &PathBuf, session_id: &str) -> SessionCaptureRecord {
@@ -205,6 +249,7 @@ fn context<'a>(session_id: &'a str, routes: &'a [&'a str]) -> SourceAdmissionCon
         request_started_at_host_micros: REQUEST_STARTED,
         enabled_routes: routes,
         used_fallback_correlation: false,
+        container_orientation: None,
     }
 }
 
@@ -254,6 +299,7 @@ fn lane_off_writes_no_comparison_file() {
             Some("windows-shell-thumbnail"),
             SourceCompareMode::Off,
             0,
+            &SourceComparisonOptions::immediate(),
         )
         .expect("off lane should be a no-op"),
         0
@@ -284,6 +330,7 @@ fn embedded_lane_runs_through_the_product_entrypoint_and_preserves_raw_truth() {
             None,
             SourceCompareMode::Embedded,
             0,
+            &SourceComparisonOptions::immediate(),
         )
         .expect("run embedded lane"),
         1
@@ -312,6 +359,7 @@ fn product_entrypoint_compares_freshness_on_the_host_monotonic_clock() {
         None,
         SourceCompareMode::Embedded,
         u64::MAX,
+        &SourceComparisonOptions::immediate(),
     )
     .expect("record stale source attempt");
 
@@ -353,6 +401,7 @@ fn ab_product_entrypoint_records_exactly_one_row_for_each_route() {
             Some("windows-shell-thumbnail"),
             SourceCompareMode::Ab,
             0,
+            &SourceComparisonOptions::immediate(),
         )
         .expect("run AB lane"),
         3
@@ -388,6 +437,7 @@ fn paired_route_uses_helper_group_correlation_when_the_event_is_available() {
         None,
         SourceCompareMode::Paired,
         0,
+        &SourceComparisonOptions::immediate(),
     )
     .expect("run paired lane");
 
@@ -418,6 +468,7 @@ fn paired_route_rejects_an_artifact_without_a_matching_arrival_record() {
         None,
         SourceCompareMode::Paired,
         0,
+        &SourceComparisonOptions::immediate(),
     )
     .expect("record rejected paired lane");
 
@@ -448,6 +499,7 @@ fn incomplete_previous_block_stops_the_next_measurement() {
         None,
         SourceCompareMode::Embedded,
         0,
+        &SourceComparisonOptions::immediate(),
     )
     .expect("write one-route block");
 
@@ -457,6 +509,7 @@ fn incomplete_previous_block_stops_the_next_measurement() {
         None,
         SourceCompareMode::Ab,
         0,
+        &SourceComparisonOptions::immediate(),
     )
     .expect_err("mixed or partial AB evidence must stop");
     assert!(error.message.contains("불완전"));
@@ -496,6 +549,7 @@ fn product_entrypoint_never_reuses_another_sessions_source_artifact() {
         None,
         SourceCompareMode::Paired,
         0,
+        &SourceComparisonOptions::immediate(),
     )
     .expect("run session B lane");
 
@@ -741,4 +795,194 @@ fn ab_mode_measures_all_three_routes_including_the_incumbent() {
     for route in ALL_ROUTES {
         assert!(routes.contains(&route), "{route} 가 AB 모드에서 빠졌다");
     }
+}
+
+// ---------------------------------------------------------------------------
+// HV-14 실장비 회차의 결함 4종에 대한 회귀 방지선
+// ---------------------------------------------------------------------------
+
+/// HV-14: 부스 rig의 EOS 700D는 orientation!=1을 만든다. 회전 값은 거부가 아니라
+/// 기록 대상이다 — 컨테이너에만 선언된 orientation도 표본에 남아야 한다.
+#[test]
+fn rotated_capture_is_admitted_and_its_orientation_is_recorded() {
+    let root = unique_test_root("rotated-orientation");
+    let capture = capture_record(&root, SESSION_A);
+    let raw_path = PathBuf::from(&capture.raw.asset_path);
+    fs::create_dir_all(raw_path.parent().expect("raw parent")).expect("raw dir");
+    fs::write(
+        &raw_path,
+        build_cr2_with_orientation(&build_jpeg(5184, 3456), Some(6)),
+    )
+    .expect("write rotated raw");
+
+    run_source_comparison_for_capture_with_mode(
+        &root,
+        &capture,
+        None,
+        SourceCompareMode::Embedded,
+        0,
+        &SourceComparisonOptions::immediate(),
+    )
+    .expect("run embedded lane");
+
+    let sample = read_source_comparison_samples(&root, SESSION_A)
+        .expect("read samples")
+        .into_iter()
+        .next()
+        .expect("embedded sample");
+    assert!(sample.accepted, "회전된 실장비 촬영이 거부되었다");
+    assert_eq!(sample.candidate.exif_orientation, Some(6));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// HV-14: Route C 표본 17건 전부 `absent`였던 원인은 측정 시점이 shell source 도착보다
+/// 빨랐기 때문이다. helper의 종단 이벤트가 있으면 그것을 근거로 측정해야 한다.
+#[test]
+fn shell_route_measures_from_the_helper_terminal_event() {
+    let root = unique_test_root("shell-event-ready");
+    let capture = capture_record(&root, SESSION_A);
+    let jpeg = build_jpeg(1600, 1067);
+    let preview = SessionPaths::new(&root, SESSION_A)
+        .renders_previews_dir
+        .join(format!("{CAPTURE}.jpg"));
+    fs::create_dir_all(preview.parent().expect("preview parent")).expect("preview dir");
+    fs::write(&preview, &jpeg).expect("write shell preview");
+    write_fast_preview_event(
+        &root,
+        "fast-preview-ready",
+        Some(&preview),
+        "windows-shell-thumbnail",
+    );
+
+    // 제품 round trip은 120ms 예산 안에 preview를 받지 못했다 (fast_preview_kind = None).
+    run_source_comparison_for_capture_with_mode(
+        &root,
+        &capture,
+        None,
+        SourceCompareMode::Shell,
+        0,
+        &SourceComparisonOptions::immediate(),
+    )
+    .expect("run shell lane");
+
+    let sample = read_source_comparison_samples(&root, SESSION_A)
+        .expect("read samples")
+        .into_iter()
+        .next()
+        .expect("shell sample");
+    assert!(
+        sample.accepted,
+        "도착해 있는 shell source가 absent로 측정되었다"
+    );
+    assert_eq!(
+        sample.candidate.route,
+        SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL.to_string()
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// fast preview chain이 shell이 아닌 생산자로 끝났으면 이 촬영에 shell source는 없다.
+#[test]
+fn shell_route_is_absent_when_the_chain_ended_with_another_producer() {
+    let root = unique_test_root("shell-event-other-kind");
+    let capture = capture_record(&root, SESSION_A);
+    let jpeg = build_jpeg(1600, 1067);
+    let preview = SessionPaths::new(&root, SESSION_A)
+        .renders_previews_dir
+        .join(format!("{CAPTURE}.jpg"));
+    fs::create_dir_all(preview.parent().expect("preview parent")).expect("preview dir");
+    fs::write(&preview, &jpeg).expect("write preview");
+    write_fast_preview_event(
+        &root,
+        "fast-preview-ready",
+        Some(&preview),
+        "raw-fallback-preview",
+    );
+
+    run_source_comparison_for_capture_with_mode(
+        &root,
+        &capture,
+        None,
+        SourceCompareMode::Shell,
+        0,
+        &SourceComparisonOptions::immediate(),
+    )
+    .expect("run shell lane");
+
+    let sample = read_source_comparison_samples(&root, SESSION_A)
+        .expect("read samples")
+        .into_iter()
+        .next()
+        .expect("shell sample");
+    assert!(!sample.accepted);
+    assert_eq!(sample.reject_reason.as_deref(), Some("absent"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// HV-14: helper 단계에서 실패한 요청 3건이 source 행 없이 사라져 분모가 줄었다.
+/// 실패한 요청도 route마다 `cancelled` 행 하나를 가지고 block 자리를 차지한다.
+#[test]
+fn helper_stage_failure_leaves_a_cancelled_row_for_every_route() {
+    let root = unique_test_root("helper-failure-rows");
+
+    assert_eq!(
+        record_source_comparison_request_failure_with_mode(
+            &root,
+            SESSION_A,
+            REQUEST,
+            SourceCompareMode::Ab,
+        )
+        .expect("record failure rows"),
+        3
+    );
+
+    let samples = read_source_comparison_samples(&root, SESSION_A).expect("read samples");
+    assert_eq!(samples.len(), 3, "route마다 실패 행이 하나씩 남아야 한다");
+    for sample in &samples {
+        assert!(!sample.accepted);
+        assert_eq!(sample.reject_reason.as_deref(), Some("cancelled"));
+        assert_eq!(
+            sample.candidate.capture_id, None,
+            "실패 요청에는 RAW truth가 없다"
+        );
+        assert_eq!(sample.candidate.request_id, REQUEST);
+        assert_eq!(sample.block_index, 0);
+    }
+
+    // 다음 요청은 다음 block 자리를 쓴다 — 실패가 자리를 비워 두지 않는다.
+    record_source_comparison_request_failure_with_mode(
+        &root,
+        SESSION_A,
+        "capture_req_20260812_002",
+        SourceCompareMode::Ab,
+    )
+    .expect("record second failure");
+    let samples = read_source_comparison_samples(&root, SESSION_A).expect("read samples");
+    assert_eq!(samples.len(), 6);
+    assert!(samples[3..].iter().all(|sample| sample.block_index == 1));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// lane이 꺼져 있으면 실패 행도 만들지 않는다 — 제품 경로 무영향 원칙.
+#[test]
+fn helper_stage_failure_recording_is_a_no_op_while_the_lane_is_off() {
+    let root = unique_test_root("helper-failure-off");
+
+    assert_eq!(
+        record_source_comparison_request_failure_with_mode(
+            &root,
+            SESSION_A,
+            REQUEST,
+            SourceCompareMode::Off,
+        )
+        .expect("off lane no-op"),
+        0
+    );
+    assert!(!source_comparison_path(&root, SESSION_A).exists());
+
+    let _ = fs::remove_dir_all(&root);
 }

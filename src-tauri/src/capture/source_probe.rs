@@ -19,7 +19,7 @@ use crate::contracts::dto::{
     SOURCE_REJECT_STALE, SOURCE_REJECT_UNDECODABLE, SOURCE_REJECT_UNSUPPORTED_COMBINATION,
     SOURCE_REJECT_WRONG_CAPTURE, SOURCE_REJECT_WRONG_REQUEST, SOURCE_REJECT_WRONG_SESSION,
 };
-use crate::display::image_probe::{content_hash, probe_jpeg, JpegProbe, ProbeError};
+use crate::display::image_probe::{content_hash, probe_jpeg_structure, JpegProbe, ProbeError};
 
 /// 후보를 만들어 낸 쪽이 보고한 결과. 파일이 생기지 않은 이유를 host가 추측하지 않는다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +52,9 @@ pub struct SourceAdmissionContext<'a> {
     pub enabled_routes: &'a [&'a str],
     /// groupID가 없을 때 helper가 파일명 stem + 도착 시각 창으로 correlation을 완료했는가.
     pub used_fallback_correlation: bool,
+    /// CR2 컨테이너(TIFF IFD#0)가 선언한 orientation. JPEG 자체 EXIF가 없을 때만 쓰는
+    /// fallback truth이며, host가 RAW를 직접 읽어 얻은 값이다 (embedded route 한정).
+    pub container_orientation: Option<u16>,
 }
 
 /// 후보를 승격할 수 있는지 판정한다.
@@ -117,12 +120,17 @@ pub fn evaluate_source_candidate(
         return Err(SOURCE_REJECT_STALE);
     }
 
-    // 6. 구조 검증 — Story 7.2와 **같은 규칙**을 쓴다.
+    // 6. 구조 검증 — Story 7.2와 **같은 구조 규칙**을 쓴다.
+    //
+    // orientation 정책은 lane마다 다르다: display 승인(7.2/7.4)은 여전히 1만 통과시키지만,
+    // 이 비교 lane은 실장비가 실제로 만드는 값(1~8)을 **기록**해야 한다. HV-14 첫 회차에서
+    // EOS 700D의 Route A/B 표본 34건 전부가 orientation!=1로 거부되어 비교 자체가 무산됐다.
+    // 유효 범위(1~8) 밖의 값만 orientation-unsupported로 거부한다.
     let Some(bytes) = bytes else {
         return Err(SOURCE_REJECT_EXTRACTION_FAILED);
     };
 
-    let probe = probe_jpeg(bytes).map_err(map_probe_error)?;
+    let probe = probe_source_bytes(bytes)?;
 
     // 7. 기록된 메타데이터가 파일과 어긋나면 그 표본은 신뢰할 수 없다.
     if !candidate.decode_valid
@@ -133,7 +141,15 @@ pub fn evaluate_source_candidate(
         return Err(SOURCE_REJECT_CORRUPT);
     }
 
-    if candidate.exif_orientation != probe.orientation {
+    // orientation truth는 JPEG 자체 EXIF가 우선이고, 없으면 CR2 컨테이너 값이다 (T3 규칙).
+    let effective_orientation = probe.orientation.or(context.container_orientation);
+    if let Some(value) = effective_orientation {
+        if !(1..=8).contains(&value) {
+            return Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED);
+        }
+    }
+
+    if candidate.exif_orientation != effective_orientation {
         return Err(SOURCE_REJECT_CORRUPT);
     }
 
@@ -158,10 +174,20 @@ fn map_probe_error(error: ProbeError) -> &'static str {
 
 /// 후보 파일을 구조 검증하고 계측에 필요한 값을 뽑는다.
 ///
-/// 호출자가 후보를 기록하기 전에 쓰는 헬퍼다. **판정 규칙은 하나뿐**이라는 것을 코드 구조로
-/// 보장하기 위해 `image_probe`를 직접 감싼다.
+/// 호출자가 후보를 기록하기 전에 쓰는 헬퍼다. **구조 규칙은 하나뿐**이라는 것을 코드 구조로
+/// 보장하기 위해 `image_probe`의 구조 판정을 직접 감싼다. display의 "orientation 1만 허용"
+/// 정책은 여기 얹지 않는다 — 이 lane은 실장비의 실제 orientation(1~8)을 기록하는 것이
+/// 목적이고, EXIF 유효 범위 밖의 값만 거부한다.
 pub fn probe_source_bytes(bytes: &[u8]) -> Result<JpegProbe, &'static str> {
-    probe_jpeg(bytes).map_err(map_probe_error)
+    let probe = probe_jpeg_structure(bytes).map_err(map_probe_error)?;
+
+    if let Some(value) = probe.orientation {
+        if !(1..=8).contains(&value) {
+            return Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED);
+        }
+    }
+
+    Ok(probe)
 }
 
 /// AB/BA block 순서를 host가 결정한다.
@@ -269,6 +295,7 @@ mod tests {
             request_started_at_host_micros: REQUEST_STARTED,
             enabled_routes: &ALL_ROUTES,
             used_fallback_correlation: false,
+            container_orientation: None,
         }
     }
 
@@ -423,14 +450,64 @@ mod tests {
         );
     }
 
+    /// HV-14 첫 회차의 교훈: 부스 rig의 EOS 700D는 orientation 6/8을 실제로 만든다.
+    /// 비교 lane은 그 값을 거부하지 않고 **기록**해야 한다. display 승인 정책(1만 허용)은
+    /// `image_probe::probe_jpeg`에 그대로 남아 있다.
     #[test]
-    fn rejects_unsupported_orientation() {
+    fn admits_real_camera_orientation_and_records_it() {
         let bytes = build_jpeg(5184, 3456, Some(6));
+        let mut candidate = candidate_for(&bytes, 5184, 3456);
+        candidate.exif_orientation = Some(6);
+
+        assert_eq!(
+            evaluate(&candidate, SourceProducerOutcome::Produced, Some(&bytes)),
+            Ok(())
+        );
+    }
+
+    /// EXIF 유효 범위(1~8) 밖의 orientation은 여전히 지원하지 않는다.
+    #[test]
+    fn rejects_orientation_outside_exif_range() {
+        let bytes = build_jpeg(5184, 3456, Some(9));
         let candidate = candidate_for(&bytes, 5184, 3456);
 
         assert_eq!(
             evaluate(&candidate, SourceProducerOutcome::Produced, Some(&bytes)),
             Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED)
+        );
+    }
+
+    /// CR2는 orientation을 컨테이너 쪽에 두는 경우가 많다. JPEG 자체 EXIF가 없으면
+    /// host가 읽은 컨테이너 값이 truth이고, 기록도 그 값과 일치해야 한다.
+    #[test]
+    fn admits_container_declared_orientation_via_context() {
+        let bytes = build_jpeg(5184, 3456, None);
+        let mut candidate = candidate_for(&bytes, 5184, 3456);
+        candidate.exif_orientation = Some(8);
+
+        let mut with_container = context();
+        with_container.container_orientation = Some(8);
+
+        assert_eq!(
+            evaluate_source_candidate(
+                &candidate,
+                SourceProducerOutcome::Produced,
+                Some(&bytes),
+                &with_container
+            ),
+            Ok(())
+        );
+
+        // 컨테이너 값이 있는데 기록이 비어 있으면 그 표본은 신뢰할 수 없다.
+        candidate.exif_orientation = None;
+        assert_eq!(
+            evaluate_source_candidate(
+                &candidate,
+                SourceProducerOutcome::Produced,
+                Some(&bytes),
+                &with_container
+            ),
+            Err(SOURCE_REJECT_CORRUPT)
         );
     }
 

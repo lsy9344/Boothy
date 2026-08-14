@@ -20,7 +20,9 @@ use crate::{
             CanonHelperStatusMessage, FastPreviewReadyUpdate, SidecarClientError,
             CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION,
         },
-        source_telemetry::run_source_comparison_for_capture,
+        source_telemetry::{
+            record_source_comparison_request_failure, run_source_comparison_for_capture,
+        },
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
     },
     contracts::dto::{
@@ -184,6 +186,21 @@ where
         Err(error) => {
             if should_persist_capture_round_trip_failure(&error) {
                 persist_capture_round_trip_failure(base_dir, &input.session_id, &error)?;
+            }
+
+            // helper 단계에서 실패한 요청도 비교 분모에 남긴다. 행 없이 사라지면 성공률
+            // 분모가 조용히 줄어든다 — HV-14 첫 회차에서 실패 요청 3건이 그렇게 사라졌다.
+            // 계측 기록 실패가 촬영 오류 보고를 막아서는 안 되므로 경고만 남긴다.
+            if let Err(telemetry_error) =
+                record_source_comparison_request_failure(base_dir, &input.session_id, &request_id)
+            {
+                log::warn!(
+                    "source_comparison_failure_row_failed session={} request_id={} code={} message={}",
+                    input.session_id,
+                    request_id,
+                    telemetry_error.code,
+                    telemetry_error.message
+                );
             }
 
             drop(in_flight_guard);

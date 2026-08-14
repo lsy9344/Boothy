@@ -28,6 +28,16 @@ internal sealed class CanonSdkCamera : IDisposable
     );
     private static readonly TimeSpan PairedObjectCompletionTimeout = TimeSpan.FromSeconds(5);
 
+    // RAW+JPEG(paired) 비교 lane에서는 transfer object가 둘이라 RAW handoff가 늦게 닫힐 수
+    // 있다. HV-14 첫 회차에서 20회 요청 중 2회가 30초 예산을 넘겨 중단됐다. host의
+    // PAIRED_SOURCE_CAPTURE_TIMEOUT_ALLOWANCE_MS와 같은 값이어야 host가 먼저 끊지 않는다.
+    internal static readonly TimeSpan PairedCaptureCompletionAllowance = TimeSpan.FromSeconds(15);
+
+    // DEVICE_BUSY는 셔터가 눌리지 않았다는 뜻이므로 재시도해도 이중 촬영이 되지 않는다.
+    // HV-14에서 10~20초 간격의 정상 회차 중에도 busy 1건이 run을 중단시켰다.
+    private static readonly TimeSpan ShutterBusyRetryInterval = TimeSpan.FromMilliseconds(250);
+    internal const int ShutterBusyRetryLimit = 8;
+
     private readonly object _sync = new();
     private readonly GCHandle _selfHandle;
     private readonly EDSDK.EdsObjectEventHandler _objectHandler;
@@ -40,6 +50,10 @@ internal sealed class CanonSdkCamera : IDisposable
     private CameraSnapshot _snapshot =
         new("connecting", "starting", "helper-starting", null, null);
     private CurrentCaptureContext? _currentCapture;
+    // paired 비교 lane이 ImageQuality를 바꿨을 때의 원래 값. 촬영마다 되돌리지 않고 유지한다
+    // — per-shot 설정 왕복이 다음 셔터의 DEVICE_BUSY를 유발했다 (HV-14). 복원 시점은
+    // 요청 실패, 비-paired 촬영 진입, 카메라 세션 종료다.
+    private int? _heldOriginalImageQuality;
     private readonly Queue<PendingFastPreviewDownload> _pendingFastPreviewDownloads = new();
     private DateTimeOffset _lastKeepAlive = DateTimeOffset.MinValue;
     private DateTimeOffset _lastSdkRecycleAt = DateTimeOffset.MinValue;
@@ -151,8 +165,6 @@ internal sealed class CanonSdkCamera : IDisposable
     {
         CurrentCaptureContext captureContext;
         ImageQualityCapability? imageQualityCapability = null;
-        int? originalImageQuality = null;
-        var imageQualityChanged = false;
         string? imageQualityActivationFailure = null;
 
         lock (_sync)
@@ -182,7 +194,7 @@ internal sealed class CanonSdkCamera : IDisposable
                     _camera,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000
                 );
-                originalImageQuality = imageQualityCapability.CurrentValue;
+                var originalImageQuality = imageQualityCapability.CurrentValue;
                 var pairedValue = ImageQualityValue.SelectRawPlusJpegCandidate(
                     imageQualityCapability.SupportedValues
                 );
@@ -197,17 +209,26 @@ internal sealed class CanonSdkCamera : IDisposable
                 }
                 else if (pairedValue.Value == originalImageQuality.Value)
                 {
+                    // 이미 paired 값이다 — 직전 촬영부터 유지 중이거나 사용자의 원래 설정이다.
+                    // 어느 쪽이든 property 왕복 없이 그대로 촬영한다.
                     pairedJpegActive = true;
                 }
                 else if (TrySetImageQuality(_camera, pairedValue.Value))
                 {
                     pairedJpegActive = true;
-                    imageQualityChanged = true;
+                    // 최초 전환 시점의 원래 값만 기억한다. 이후 paired 촬영은 위의
+                    // 같은-값 분기로 들어와 property를 건드리지 않는다.
+                    _heldOriginalImageQuality ??= originalImageQuality;
                 }
                 else
                 {
                     imageQualityActivationFailure = "image-quality-set-failed";
                 }
+            }
+            else
+            {
+                // 비교 lane이 꺼진 촬영이 들어오면 유지 중이던 측정 설정을 먼저 되돌린다.
+                RestoreHeldImageQuality(null);
             }
 
             captureContext = new CurrentCaptureContext(
@@ -222,8 +243,6 @@ internal sealed class CanonSdkCamera : IDisposable
                 onObjectRejected,
                 onCameraSettingWarning
             );
-            captureContext.OriginalImageQuality = originalImageQuality;
-            captureContext.ImageQualityChanged = imageQualityChanged;
             _currentCapture = captureContext;
             _snapshot = _snapshot with
             {
@@ -259,11 +278,7 @@ internal sealed class CanonSdkCamera : IDisposable
 
         try
         {
-            var err = EDSDK.EdsSendCommand(
-                _camera,
-                EDSDK.CameraCommand_PressShutterButton,
-                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
-            );
+            var err = await PressShutterWithBusyRetryAsync(cancellationToken);
 
             if (err == EDSDK.EDS_ERR_OK)
             {
@@ -287,7 +302,10 @@ internal sealed class CanonSdkCamera : IDisposable
                 throw captureTriggerException;
             }
 
-            var captureCompletionTimeout = ResolveCaptureCompletionTimeout(paths.RuntimeRoot);
+            var captureCompletionTimeout = ApplyPairedCompletionAllowance(
+                ResolveCaptureCompletionTimeout(paths.RuntimeRoot),
+                captureContext.Correlator.ExpectedObjectCount
+            );
             CaptureDownloadResult rawResult;
             try
             {
@@ -358,10 +376,45 @@ internal sealed class CanonSdkCamera : IDisposable
             ClearCaptureContext(captureContext, "capture-cancelled", "ready", false);
             throw;
         }
-        finally
+        // 성공한 paired 촬영 뒤에는 ImageQuality를 되돌리지 않는다. 다음 paired 촬영이
+        // 같은 값으로 다시 바꾸는 왕복이 DEVICE_BUSY를 유발했다 (HV-14). 실패 경로는
+        // ClearCaptureContext가, lane 종료는 세션 종료/비-paired 촬영 진입이 복원한다.
+    }
+
+    /// <summary>
+    /// DEVICE_BUSY에서 즉시 실패하지 않고 짧게 물러났다 다시 시도한다.
+    /// busy는 셔터가 눌리지 않았다는 뜻이므로 재시도가 이중 촬영을 만들지 않는다.
+    /// </summary>
+    private async Task<uint> PressShutterWithBusyRetryAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
         {
-            RestoreImageQuality(captureContext);
+            var err = EDSDK.EdsSendCommand(
+                _camera,
+                EDSDK.CameraCommand_PressShutterButton,
+                (int)EDSDK.EdsShutterButton.CameraCommand_ShutterButton_Completely
+            );
+
+            if (!ShouldRetryShutterBusy(err, attempt))
+            {
+                return err;
+            }
+
+            await Task.Delay(ShutterBusyRetryInterval, cancellationToken);
         }
+    }
+
+    internal static bool ShouldRetryShutterBusy(uint err, int attempt)
+    {
+        return err == EDSDK.EDS_ERR_DEVICE_BUSY && attempt < ShutterBusyRetryLimit;
+    }
+
+    internal static TimeSpan ApplyPairedCompletionAllowance(
+        TimeSpan baseTimeout,
+        int expectedObjectCount
+    )
+    {
+        return expectedObjectCount > 1 ? baseTimeout + PairedCaptureCompletionAllowance : baseTimeout;
     }
 
     public void TryBackfillPreviewAssets(SessionPaths paths)
@@ -1455,19 +1508,34 @@ internal sealed class CanonSdkCamera : IDisposable
         }
     }
 
-    private void RestoreImageQuality(CurrentCaptureContext context)
+    /// <summary>
+    /// paired 비교 lane이 유지 중이던 ImageQuality 원래 값을 카메라에 되돌린다.
+    /// 복원에 실패하면 값을 계속 보유해 다음 기회(다음 촬영 진입·세션 종료)에 다시 시도한다.
+    /// </summary>
+    private void RestoreHeldImageQuality(CurrentCaptureContext? context)
     {
-        if (!context.ImageQualityChanged || context.OriginalImageQuality is null)
+        int? held;
+        lock (_sync)
         {
-            return;
+            held = _heldOriginalImageQuality;
+            if (held is null)
+            {
+                return;
+            }
+
+            _heldOriginalImageQuality = null;
         }
 
-        context.ImageQualityChanged = false;
-        if (!TrySetImageQuality(_camera, context.OriginalImageQuality.Value))
+        if (!TrySetImageQuality(_camera, held.Value))
         {
+            lock (_sync)
+            {
+                _heldOriginalImageQuality ??= held;
+            }
+
             try
             {
-                context.OnCameraSettingWarning?.Invoke(
+                context?.OnCameraSettingWarning?.Invoke(
                     new CaptureCameraSettingWarningResult(
                         context.Request.RequestId,
                         context.CaptureId,
@@ -1872,7 +1940,9 @@ internal sealed class CanonSdkCamera : IDisposable
         bool recoveryRequired
     )
     {
-        RestoreImageQuality(context);
+        // 요청이 실패로 끝나면 유지 중이던 측정 설정을 되돌린다. 카메라를 측정 상태로
+        // 남기지 않는다는 계약은 그대로다 — 유지가 허용되는 것은 연속된 paired 촬영뿐이다.
+        RestoreHeldImageQuality(context);
 
         lock (_sync)
         {
@@ -1949,6 +2019,10 @@ internal sealed class CanonSdkCamera : IDisposable
 
     private void ReleaseCamera()
     {
+        // 세션이 닫히기 전에 측정 lane이 유지하던 카메라 설정을 되돌린다. 다음 세션의
+        // 제품 동작이 측정 상태의 설정에서 시작하면 안 된다.
+        RestoreHeldImageQuality(null);
+
         lock (_sync)
         {
             ReleasePendingFastPreviewDownloadsLocked();
@@ -2240,8 +2314,6 @@ internal sealed class CurrentCaptureContext
     public string CaptureId { get; }
 
     public CaptureDownloadResult? RawResult { get; set; }
-    public int? OriginalImageQuality { get; set; }
-    public bool ImageQualityChanged { get; set; }
     public TaskCompletionSource<CaptureDownloadResult> RawCompletion { get; }
     public TaskCompletionSource<CaptureDownloadResult> Completion { get; }
 }

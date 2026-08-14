@@ -39,6 +39,25 @@ route 결정 (primary · fallback · No-Go)
 > **세 route 모두 구현되어 있다.** 다만 어느 route든 표본이 0건이면 그 사실을 명시적으로
 > 기록한다. 표본을 비워 두면 왜 비었는지 알 수 없다.
 
+### 2026-08-14 No-Go 회차 이후 바뀐 것 (재실행 전 필독)
+
+첫 실장비 회차(`run-20260813-115426-hv14`)는 No-Go였다. 원인 4종에 대한 조치가 코드에
+반영되었으므로, 재실행은 아래 동작을 전제로 한다.
+
+1. **회전된 촬영이 더 이상 `orientation-unsupported`로 전멸하지 않는다.** 부스 rig의
+   EOS 700D가 만드는 orientation(6/8 등)은 표본에 **기록**되고 승격도 가능하다.
+   display 승인(orientation 1만)은 바뀌지 않았다 — 정규화는 Story 7.4 소유다.
+2. **Route C는 helper의 종단 이벤트를 기다렸다가 측정한다.** 기본 대기 15초
+   (`BOOTHY_SOURCE_SHELL_WAIT_MS`로 조정). shell thumbnail이 이 예산 안에 도착하지
+   않거나 chain이 다른 생산자로 끝나면 그때만 `absent`다. 제품의 120ms 예산은 그대로다.
+3. **`camera-busy`·RAW handoff timeout 완화.** 셔터 DEVICE_BUSY는 최대 8×250ms 재시도,
+   paired 활성 시 RAW handoff 예산 +15초(host/helper 동일), ImageQuality는 촬영마다
+   되돌리지 않고 lane 종료 시점에 복원한다. **회차 종료 후 카메라의 Image Quality가
+   원래 값으로 복원되었는지 `environment.md`의 before/after 항목으로 반드시 확인한다.**
+4. **helper 단계에서 실패한 요청도 route마다 `cancelled` 행을 남긴다** (captureId 없음).
+   실패 요청이 성공률 분모에서 사라지지 않으며, completeness 게이트가 이 행을 정상으로
+   인정한다. qualifying 기준은 여전히 **성공·실패를 합쳐 35회 완결**이다.
+
 ### 셔터 작동 예산
 
 `ab` 모드는 촬영 1회마다 세 route를 모두 기록한다.

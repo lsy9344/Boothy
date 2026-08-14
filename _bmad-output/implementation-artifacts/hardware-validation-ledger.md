@@ -205,7 +205,7 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 
 - story key: `3-2-export-waiting과-truthful-completion-안내`
 - HV checklist ID: `HV-08`, `HV-11`
-- evidence package path: `tests/hardware/capture-source/run-20260813-115426-hv14/` (preflight only; qualifying evidence pending)
+- evidence package path: `TBD`
 - executedAt: `TBD`
 - validator: `TBD`
 - booth PC: `TBD`
@@ -312,7 +312,7 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 
 - story key: `7-3-libraw-embedded-jpeg와-raw-jpeg-source-비교`
 - HV checklist ID: `HV-14`
-- evidence package path: `TBD`
+- evidence package path: `tests/hardware/capture-source/run-20260813-115426-hv14/` (interrupted 2026-08-14 run; qualifying evidence pending)
 - Go / No-Go result: `No-Go`
 - release blocker: `No fast-source route is approved from a 30+ capture comparison.`
 - follow-up owner: `Noah Lee`
@@ -326,6 +326,7 @@ Canonical evidence package name: `Selected preset -> XMP apply -> preview/final 
 - baseline note (2026-08-12): `The comparison must include the shipped incumbent as a third route. The current fast preview is a Windows Shell thumbnail (IShellItemImageFactory, ThumbnailOnly), not an embedded JPEG, and the host fast-preview budget of 120 ms was exhausted in 5 of 5 captures on 2026-08-12. Measured context for the source interval: capture-to-RAW 2806-19524 ms and capture-to-XMP-preview 6804-24028 ms in the same run. A route claim without the incumbent measured under identical conditions is not a comparison.`
 - correction recorded during implementation (2026-08-12): `The helper emits four fastPreviewKind values, not two: camera-thumbnail, windows-shell-thumbnail, raw-sdk-preview, raw-fallback-preview. The contract document previously showed embedded-jpeg, a value no implementation produces. Corrected in docs/contracts/camera-helper-sidecar-protocol.md and pinned by a contract test that reads the helper source directly.`
 - defect found and fixed before the run (2026-08-12): `CanonSdkCamera.HandleObjectEvent downloaded only the first transfer object per capture and released the rest with no record (Interlocked.Exchange on DownloadStarted). Measuring RAW+JPEG in that state would have produced a false "camera does not support it" conclusion. Completion judgement now lives at request scope via CaptureObjectCorrelator, which pairs objects by EdsDirectoryItemInfo.GroupID, falls back to filename stem plus an arrival window while flagging usedFallbackCorrelation, and reports every rejected object with a reason. The default/off product path does not change ImageQuality or emit source-comparison artifacts; only paired/ab mode enables two-object collection. In single-object mode, non-RAW or unknown objects are explicitly rejected until the RAW original arrives.`
+- fixes landed after the 2026-08-14 No-Go run (code only; not hardware-validated): `All four abort causes from run-20260813-115426-hv14 have code fixes with regression tests. (1) The comparison lane now records real EXIF orientations 1-8 instead of rejecting them — the booth-rig 700D writes rotated orientation on every capture, which had rejected all 34 Route A/B samples; display admission (orientation 1 only) is unchanged and normalization stays owned by Story 7.4. (2) Route C now waits for the helper's terminal fast-preview event (default 15 s, BOOTHY_SOURCE_SHELL_WAIT_MS) instead of sampling at RAW handoff, which had recorded all 17 incumbent samples as absent. (3) Shutter DEVICE_BUSY is retried up to 8x250 ms, paired mode adds a 15 s RAW-handoff allowance on both helper and host, and ImageQuality is no longer set/restored around every shot (held original restored on failure, non-paired entry, and session close). (4) Helper-stage request failures now write one cancelled row per expected route with a null captureId, and check-source-completeness.ps1 accepts those rows as part of the denominator. Verification: Rust capture-source integration 25 passed, helper tests 47 passed, gate synthetic scenarios 17 passed including the two new failure-row cases. The Go/No-Go result stays No-Go until a qualifying 35-capture rerun.`
 
 ### Story 7.4
 

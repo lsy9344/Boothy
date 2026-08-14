@@ -95,8 +95,12 @@ fn parse_exif_orientation(payload: &[u8]) -> Option<u16> {
     None
 }
 
-/// 마커를 순회하며 SOF 크기와 EXIF orientation을 읽는다.
-pub fn probe_jpeg(bytes: &[u8]) -> Result<JpegProbe, ProbeError> {
+/// 마커를 순회하며 SOF 크기와 EXIF orientation을 읽는 **구조 판정**이다.
+///
+/// orientation 값 자체는 그대로 돌려준다. "orientation 1만 허용"은 display 승인 정책이지
+/// 구조 결함이 아니므로, 그 정책은 `probe_jpeg`가 얹는다. Story 7.3의 source 비교 lane은
+/// 실측 orientation을 기록해야 하므로 이 구조 판정을 공유한다 — 규칙은 여전히 한 벌이다.
+pub fn probe_jpeg_structure(bytes: &[u8]) -> Result<JpegProbe, ProbeError> {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return Err(ProbeError::Undecodable);
     }
@@ -174,17 +178,24 @@ pub fn probe_jpeg(bytes: &[u8]) -> Result<JpegProbe, ProbeError> {
 
     let (width_px, height_px) = dimensions.ok_or(ProbeError::Undecodable)?;
 
-    if let Some(value) = orientation {
-        if value != 1 {
-            return Err(ProbeError::OrientationUnsupported);
-        }
-    }
-
     Ok(JpegProbe {
         width_px,
         height_px,
         orientation,
     })
+}
+
+/// Story 7.2 display 승인 판정: 구조 판정 + orientation 1만 허용.
+pub fn probe_jpeg(bytes: &[u8]) -> Result<JpegProbe, ProbeError> {
+    let probe = probe_jpeg_structure(bytes)?;
+
+    if let Some(value) = probe.orientation {
+        if value != 1 {
+            return Err(ProbeError::OrientationUnsupported);
+        }
+    }
+
+    Ok(probe)
 }
 
 /// provenance/상관관계 확인용 해시. 보안 해시가 아니므로 알고리즘을 접두사로 드러낸다.
@@ -289,6 +300,17 @@ mod tests {
             probe_jpeg(&build_jpeg(3840, 2560, Some(6))),
             Err(ProbeError::OrientationUnsupported)
         );
+    }
+
+    /// 구조 판정은 회전된 orientation을 값 그대로 돌려준다. display 정책(`probe_jpeg`)이
+    /// 그 값을 거부하는 것과 별개다 — Story 7.3 source lane이 실측값을 기록할 때 쓴다.
+    #[test]
+    fn structure_probe_reports_rotated_orientation_without_display_policy() {
+        let probe = probe_jpeg_structure(&build_jpeg(3840, 2560, Some(6)))
+            .expect("structure probe should succeed");
+
+        assert_eq!(probe.orientation, Some(6));
+        assert_eq!((probe.width_px, probe.height_px), (3840, 2560));
     }
 
     #[test]

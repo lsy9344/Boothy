@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -251,6 +251,47 @@ try {
   $missingRequiredField = @(New-ValidSamples)
   $missingRequiredField[0].candidate.captureId = ''
   Invoke-GateCase -Name 'missing-required-field' -Samples $missingRequiredField -ExpectedExitCode 1 -ExpectedText 'candidate.captureId'
+
+  # HV-14 학습: helper 단계에서 실패한 요청은 captureId 없이 route마다 cancelled 행을
+  # 남긴다. 게이트는 이 실패 행을 결함이 아니라 분모의 일부로 받아들여야 한다.
+  $withHelperFailure = @(New-ValidSamples)
+  foreach ($sample in @($withHelperFailure | Where-Object { $_.candidate.requestId -eq 'request-34' })) {
+    $sample.candidate.captureId = $null
+    $sample.candidate.assetPath = $null
+    $sample.candidate.widthPx = $null
+    $sample.candidate.heightPx = $null
+    $sample.candidate.byteSize = $null
+    $sample.candidate.exifOrientation = $null
+    $sample.candidate.decodeValid = $false
+    $sample.candidate.sourceHash = $null
+    $sample.candidate.objectIndex = $null
+    $sample.candidate.groupId = $null
+    $sample.candidate.extractionCostMicros = $null
+    $sample.accepted = $false
+    $sample.rejectReason = 'cancelled'
+    $sample.objectRole = $null
+  }
+  Invoke-GateCase -Name 'helper-stage-failure-rows' -Samples $withHelperFailure -ExpectedExitCode 0 -ExpectedText 'PASS \(telemetry completeness only\)'
+
+  # captureId가 일부 행에만 있는 요청은 correlation 결함이다.
+  $partialCaptureId = @(New-ValidSamples)
+  $partialRow = $partialCaptureId | Where-Object {
+    $_.candidate.requestId -eq 'request-33' -and $_.candidate.route -eq 'windows-shell-thumbnail'
+  } | Select-Object -First 1
+  $partialRow.candidate.captureId = $null
+  $partialRow.candidate.assetPath = $null
+  $partialRow.candidate.widthPx = $null
+  $partialRow.candidate.heightPx = $null
+  $partialRow.candidate.byteSize = $null
+  $partialRow.candidate.exifOrientation = $null
+  $partialRow.candidate.decodeValid = $false
+  $partialRow.candidate.sourceHash = $null
+  $partialRow.candidate.objectIndex = $null
+  $partialRow.candidate.groupId = $null
+  $partialRow.accepted = $false
+  $partialRow.rejectReason = 'cancelled'
+  $partialRow.objectRole = $null
+  Invoke-GateCase -Name 'partial-capture-id' -Samples $partialCaptureId -ExpectedExitCode 1 -ExpectedText '일부 행에만'
 
   $mixedSessions = @(New-ValidSamples)
   $mixedSessions[0].candidate.sessionId = 'session-other'

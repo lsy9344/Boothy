@@ -21,7 +21,7 @@ use crate::contracts::dto::{
     SOURCE_REJECT_ABSENT, SOURCE_REJECT_CORRUPT, SOURCE_REJECT_ORIENTATION_UNSUPPORTED,
     SOURCE_REJECT_UNDECODABLE,
 };
-use crate::display::image_probe::{probe_jpeg, JpegProbe, ProbeError};
+use crate::display::image_probe::{probe_jpeg_structure, JpegProbe, ProbeError};
 
 /// TIFF IFD entry 하나의 크기 (tag 2 + type 2 + count 4 + value/offset 4).
 const IFD_ENTRY_BYTES: usize = 12;
@@ -226,7 +226,7 @@ pub fn extract_embedded_jpeg(raw_bytes: &[u8]) -> Result<EmbeddedJpeg, &'static 
     // 파일이 끝나기 전에 strip이 끝나야 한다. 잘린 파일을 통과시키면 7.4가 깨진 자산을 올린다.
     let jpeg_bytes = raw_bytes.get(offset..end).ok_or(SOURCE_REJECT_CORRUPT)?;
 
-    let probe = probe_jpeg(jpeg_bytes).map_err(|error| match error {
+    let probe = probe_jpeg_structure(jpeg_bytes).map_err(|error| match error {
         ProbeError::PartialFile => crate::contracts::dto::SOURCE_REJECT_PARTIAL,
         ProbeError::Undecodable => SOURCE_REJECT_UNDECODABLE,
         ProbeError::OrientationUnsupported => SOURCE_REJECT_ORIENTATION_UNSUPPORTED,
@@ -235,11 +235,16 @@ pub fn extract_embedded_jpeg(raw_bytes: &[u8]) -> Result<EmbeddedJpeg, &'static 
     // orientation은 JPEG 자체 EXIF가 우선이고, 없으면 TIFF IFD#0의 값을 쓴다.
     // CR2는 orientation을 컨테이너 쪽에 두는 경우가 많아 이 fallback이 없으면
     // 회전된 촬영이 orientation 1로 잘못 통과한다.
+    //
+    // 회전된 값(2~8)은 거부하지 않고 **그대로 돌려준다.** HV-14 첫 회차에서 부스 rig의
+    // EOS 700D가 만드는 모든 촬영이 orientation!=1로 거부되어 Route A 비교가 무산됐다.
+    // 회전 지원 여부의 판정은 승격 로직(`source_probe`)이, 표시 정규화는 Story 7.4가 소유한다.
+    // EXIF 유효 범위(1~8) 밖의 값만 손상된 메타데이터로 거부한다.
     let orientation = probe.orientation.or(tiff_orientation);
 
     if let Some(value) = orientation {
-        if value != 1 {
-            return Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED);
+        if !(1..=8).contains(&value) {
+            return Err(SOURCE_REJECT_CORRUPT);
         }
     }
 
@@ -463,9 +468,10 @@ mod tests {
     }
 
     /// CR2는 orientation을 컨테이너 쪽에 두는 경우가 많다. 이 fallback이 없으면
-    /// 회전된 촬영이 orientation 1로 잘못 통과한다.
+    /// 회전된 촬영이 orientation 없음으로 잘못 통과한다. 실장비(HV-14)의 회전 값은
+    /// 거부 대상이 아니라 **기록 대상**이다.
     #[test]
-    fn rejects_rotated_orientation_declared_only_in_the_container() {
+    fn reports_rotated_orientation_declared_only_in_the_container() {
         let jpeg = build_jpeg(5184, 3456, None);
         let cr2 = build_cr2(
             &jpeg,
@@ -475,21 +481,35 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            extract_embedded_jpeg(&cr2),
-            Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED)
-        );
+        let extracted = extract_embedded_jpeg(&cr2).expect("extraction should succeed");
+
+        assert_eq!(extracted.orientation, Some(6));
+        assert_eq!(extracted.probe.orientation, None);
     }
 
     #[test]
-    fn rejects_rotated_orientation_declared_in_the_embedded_jpeg() {
+    fn reports_rotated_orientation_declared_in_the_embedded_jpeg() {
         let jpeg = build_jpeg(5184, 3456, Some(8));
         let cr2 = build_cr2(&jpeg, Cr2Options::default());
 
-        assert_eq!(
-            extract_embedded_jpeg(&cr2),
-            Err(SOURCE_REJECT_ORIENTATION_UNSUPPORTED)
+        let extracted = extract_embedded_jpeg(&cr2).expect("extraction should succeed");
+
+        assert_eq!(extracted.orientation, Some(8));
+    }
+
+    /// EXIF 유효 범위(1~8) 밖의 orientation은 손상된 메타데이터다.
+    #[test]
+    fn rejects_orientation_outside_exif_range_as_corrupt() {
+        let jpeg = build_jpeg(5184, 3456, None);
+        let cr2 = build_cr2(
+            &jpeg,
+            Cr2Options {
+                tiff_orientation: Some(9),
+                ..Default::default()
+            },
         );
+
+        assert_eq!(extract_embedded_jpeg(&cr2), Err(SOURCE_REJECT_CORRUPT));
     }
 
     #[test]

@@ -8,7 +8,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts::dto::HostErrorEnvelope, session::session_paths::SessionPaths};
+use crate::{
+    capture::source_telemetry::current_source_compare_mode, contracts::dto::HostErrorEnvelope,
+    session::session_paths::SessionPaths,
+};
 
 pub const CANON_HELPER_BUNDLE_DIR: &str = "sidecar/canon-helper";
 pub const CAMERA_HELPER_STATUS_FILE_NAME: &str = "camera-helper-status.json";
@@ -36,6 +39,9 @@ const CAPTURE_EVENT_POLL_INTERVAL_MS: u64 = 10;
 // helper-side failures surface first without the host prematurely locking the
 // session.
 const DEFAULT_CAPTURE_ROUND_TRIP_TIMEOUT_MS: u64 = 35_000;
+/// RAW+JPEG(paired) 비교 lane이 켜져 있을 때 RAW handoff 대기에 더하는 추가 예산.
+/// helper의 `PairedCaptureCompletionAllowance`와 같은 값이어야 host가 먼저 끊지 않는다.
+const PAIRED_SOURCE_CAPTURE_TIMEOUT_ALLOWANCE_MS: u64 = 15_000;
 const CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME: &str = ".camera-helper-capture-timeout-ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,6 +462,50 @@ pub fn read_latest_source_object_arrival(
     }))
 }
 
+/// 이 request/capture의 fast preview 시도가 도달한 종착지.
+///
+/// helper의 fast preview chain(camera-thumbnail → windows-shell → raw 렌더)은 capture당
+/// 최대 한 번의 `fast-preview-ready` 또는 종단 `fast-thumbnail-failed`를 남긴다.
+/// Route C 측정은 이 종착지를 기다렸다가 판정한다 — 제품의 120ms 대기 예산과 무관하게.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FastPreviewOutcome {
+    Ready {
+        asset_path: String,
+        kind: Option<String>,
+    },
+    Failed,
+}
+
+pub fn read_latest_fast_preview_outcome(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+) -> Result<Option<FastPreviewOutcome>, SidecarClientError> {
+    let events = read_capture_event_messages(base_dir, session_id)?;
+
+    Ok(events.into_iter().rev().find_map(|event| match event {
+        CanonHelperEvent::FastPreviewReady(message)
+            if message.session_id == session_id
+                && message.request_id == request_id
+                && message.capture_id == capture_id =>
+        {
+            Some(FastPreviewOutcome::Ready {
+                asset_path: message.fast_preview_path,
+                kind: message.fast_preview_kind,
+            })
+        }
+        CanonHelperEvent::FastThumbnailFailed(message)
+            if message.session_id == session_id
+                && message.request_id == request_id
+                && message.capture_id == capture_id =>
+        {
+            Some(FastPreviewOutcome::Failed)
+        }
+        _ => None,
+    }))
+}
+
 pub fn read_latest_helper_error_message(
     base_dir: &Path,
     session_id: &str,
@@ -868,6 +918,19 @@ where
 }
 
 fn capture_round_trip_timeout_ms(base_dir: &Path) -> u64 {
+    let base = capture_round_trip_base_timeout_ms(base_dir);
+
+    // RAW+JPEG 비교 lane에서는 transfer object가 둘이라 RAW handoff가 늦게 닫힐 수 있다.
+    // HV-14 첫 회차에서 20회 요청 중 2회가 timeout으로 중단됐다. helper도 paired 활성 시
+    // 같은 allowance를 더하므로 "host 예산 > helper 예산" 관계는 유지된다.
+    if current_source_compare_mode().requires_paired_jpeg() {
+        base.saturating_add(PAIRED_SOURCE_CAPTURE_TIMEOUT_ALLOWANCE_MS)
+    } else {
+        base
+    }
+}
+
+fn capture_round_trip_base_timeout_ms(base_dir: &Path) -> u64 {
     let override_path = base_dir.join(CAPTURE_ROUND_TRIP_TIMEOUT_OVERRIDE_FILE_NAME);
 
     if let Ok(value) = fs::read_to_string(&override_path) {

@@ -10,12 +10,14 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{
     capture::{
         embedded_jpeg::extract_embedded_jpeg,
-        sidecar_client::read_latest_source_object_arrival,
+        sidecar_client::{
+            read_latest_fast_preview_outcome, read_latest_source_object_arrival, FastPreviewOutcome,
+        },
         source_probe::{
             block_order_for, evaluate_source_candidate, probe_source_bytes, SourceAdmissionContext,
             SourceProducerOutcome,
@@ -26,8 +28,8 @@ use crate::{
         SourceCandidateDto, SourceComparisonSampleDto, SOURCE_COMPARE_MODE_AB,
         SOURCE_COMPARE_MODE_EMBEDDED, SOURCE_COMPARE_MODE_OFF, SOURCE_COMPARE_MODE_PAIRED,
         SOURCE_COMPARE_MODE_SHELL, SOURCE_COMPARISON_SCHEMA_VERSION, SOURCE_OBJECT_ROLE_JPEG,
-        SOURCE_REJECT_ABSENT, SOURCE_REJECT_EXTRACTION_FAILED, SOURCE_REJECT_WRONG_CAPTURE,
-        SOURCE_ROUTE_CAMERA_PAIRED_JPEG, SOURCE_ROUTE_EMBEDDED_JPEG,
+        SOURCE_REJECT_ABSENT, SOURCE_REJECT_CANCELLED, SOURCE_REJECT_EXTRACTION_FAILED,
+        SOURCE_REJECT_WRONG_CAPTURE, SOURCE_ROUTE_CAMERA_PAIRED_JPEG, SOURCE_ROUTE_EMBEDDED_JPEG,
         SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL,
     },
     display::image_probe::content_hash,
@@ -83,6 +85,59 @@ impl SourceCompareMode {
                 SOURCE_ROUTE_CAMERA_PAIRED_JPEG,
                 SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL,
             ],
+        }
+    }
+
+    /// 이 모드가 카메라의 RAW+JPEG(paired) 설정을 요구하는가.
+    ///
+    /// helper의 paired 활성 조건과 host/helper 양쪽의 RAW handoff timeout allowance가
+    /// 이 판정을 공유한다.
+    pub fn requires_paired_jpeg(self) -> bool {
+        matches!(self, SourceCompareMode::Paired | SourceCompareMode::Ab)
+    }
+}
+
+/// Windows Shell incumbent가 fast preview로 승격될 때 쓰는 kind 값.
+const SHELL_FAST_PREVIEW_KIND: &str = "windows-shell-thumbnail";
+
+/// Route C(Windows Shell) 후보 대기 예산을 조정하는 환경 변수 (밀리초).
+pub const SOURCE_SHELL_WAIT_ENV: &str = "BOOTHY_SOURCE_SHELL_WAIT_MS";
+
+/// HV-14 첫 회차에서 Route C 표본 17건 전부가 `absent`였다. 원인은 shell thumbnail이
+/// 없어서가 아니라, 측정 시점이 shell source 도착(RAW 후 약 1~3초)보다 빨랐기 때문이다.
+/// 측정 lane은 이 예산만큼 helper의 종단 이벤트를 기다렸다가 판정한다.
+/// 제품의 `HELPER_FAST_PREVIEW_WAIT_MS = 120` 예산은 바꾸지 않는다.
+const DEFAULT_SHELL_SOURCE_WAIT_MS: u64 = 15_000;
+const SHELL_SOURCE_POLL_INTERVAL_MS: u64 = 100;
+
+/// 측정 lane 실행 옵션. 테스트는 대기가 필요 없는 `immediate()`를 쓴다.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceComparisonOptions {
+    /// Route C 후보의 종단 이벤트(ready/failed)를 기다리는 최대 시간.
+    pub shell_source_wait: Duration,
+    /// 대기 중 helper 이벤트 기록을 다시 읽는 간격.
+    pub shell_source_poll_interval: Duration,
+}
+
+impl SourceComparisonOptions {
+    /// 제품 경로 기본값. 운영자는 `BOOTHY_SOURCE_SHELL_WAIT_MS`로 대기 예산을 조정할 수 있다.
+    pub fn from_env() -> Self {
+        let wait_ms = std::env::var(SOURCE_SHELL_WAIT_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_SHELL_SOURCE_WAIT_MS);
+
+        Self {
+            shell_source_wait: Duration::from_millis(wait_ms),
+            shell_source_poll_interval: Duration::from_millis(SHELL_SOURCE_POLL_INTERVAL_MS),
+        }
+    }
+
+    /// 대기 없이 지금 도착해 있는 것만 판정한다. 결정적이어야 하는 테스트용.
+    pub fn immediate() -> Self {
+        Self {
+            shell_source_wait: Duration::ZERO,
+            shell_source_poll_interval: Duration::from_millis(1),
         }
     }
 }
@@ -352,7 +407,115 @@ pub fn run_source_comparison_for_capture(
         fast_preview_kind,
         mode,
         request_started_at_host_micros,
+        &SourceComparisonOptions::from_env(),
     )
+}
+
+/// 하나의 AB block이 차지하는 자리와 순서. 성공 표본과 실패 행이 같은 규칙을 공유한다.
+struct ComparisonBlock {
+    block_index: u32,
+    seed: u64,
+    block_order: &'static str,
+    routes: Vec<&'static str>,
+    is_warm_up: bool,
+}
+
+fn begin_comparison_block(
+    base_dir: &Path,
+    session_id: &str,
+    mode: SourceCompareMode,
+) -> Result<ComparisonBlock, HostErrorEnvelope> {
+    let previous = read_source_comparison_samples(base_dir, session_id)?;
+    let routes_per_block = mode.enabled_routes().len().max(1);
+    if previous.len() % routes_per_block != 0 {
+        return Err(HostErrorEnvelope::persistence(
+            "source 계측 기록의 마지막 block이 불완전해요. 기존 증거를 복구한 뒤 다시 측정해 주세요.",
+        ));
+    }
+    let block_index = (previous.len() / routes_per_block) as u32;
+    let seed = stable_seed(session_id);
+    let block_order = block_order_for(seed, block_index);
+    let mut routes = mode.enabled_routes().to_vec();
+    if mode == SourceCompareMode::Ab && block_order == crate::contracts::dto::SOURCE_BLOCK_ORDER_BA
+    {
+        routes.swap(0, 1);
+    }
+
+    Ok(ComparisonBlock {
+        block_index,
+        seed,
+        block_order,
+        routes,
+        is_warm_up: block_index < 5,
+    })
+}
+
+/// helper 단계에서 촬영 요청 자체가 실패했을 때, 그 요청을 비교 분모에 남긴다.
+///
+/// HV-14 첫 회차에서 helper 실패 요청 3건(`capture-download-timeout` 2, `camera-busy` 1)이
+/// source 행 없이 사라져 성공률 분모가 조용히 줄었다. 실패한 요청도 route마다 `cancelled`
+/// 행 하나를 가진다. RAW truth가 없으므로 captureId는 비워 둔다 — 이 행은 RAW 성공 판정과
+/// 무관한 계측 기록일 뿐이다.
+pub fn record_source_comparison_request_failure(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+) -> Result<usize, HostErrorEnvelope> {
+    record_source_comparison_request_failure_with_mode(
+        base_dir,
+        session_id,
+        request_id,
+        current_source_compare_mode(),
+    )
+}
+
+pub fn record_source_comparison_request_failure_with_mode(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    mode: SourceCompareMode,
+) -> Result<usize, HostErrorEnvelope> {
+    if !mode.is_enabled() {
+        return Ok(0);
+    }
+
+    let block = begin_comparison_block(base_dir, session_id, mode)?;
+
+    for route in &block.routes {
+        let now = crate::viewer::current_monotonic_micros();
+        let candidate = SourceCandidateDto {
+            capture_id: None,
+            request_id: request_id.into(),
+            session_id: session_id.into(),
+            route: (*route).into(),
+            asset_path: None,
+            width_px: None,
+            height_px: None,
+            byte_size: None,
+            exif_orientation: None,
+            decode_valid: false,
+            source_hash: None,
+            object_index: None,
+            group_id: None,
+            ready_at_host_micros: Some(now),
+            extraction_cost_micros: None,
+        };
+        let sample = build_source_comparison_sample(
+            candidate,
+            false,
+            Some(SOURCE_REJECT_CANCELLED),
+            None,
+            false,
+            block.block_order,
+            block.block_index,
+            block.is_warm_up,
+            block.seed,
+            now,
+        )?;
+        append_source_comparison_sample(base_dir, session_id, &sample)?;
+    }
+
+    Ok(block.routes.len())
 }
 
 pub fn run_source_comparison_for_capture_with_mode(
@@ -361,32 +524,30 @@ pub fn run_source_comparison_for_capture_with_mode(
     fast_preview_kind: Option<&str>,
     mode: SourceCompareMode,
     request_started_at_host_micros: u64,
+    options: &SourceComparisonOptions,
 ) -> Result<usize, HostErrorEnvelope> {
     if !mode.is_enabled() {
         return Ok(0);
     }
 
-    let previous = read_source_comparison_samples(base_dir, &capture.session_id)?;
-    let routes_per_block = mode.enabled_routes().len().max(1);
-    if previous.len() % routes_per_block != 0 {
-        return Err(HostErrorEnvelope::persistence(
-            "source 계측 기록의 마지막 block이 불완전해요. 기존 증거를 복구한 뒤 다시 측정해 주세요.",
-        ));
-    }
-    let block_index = (previous.len() / routes_per_block) as u32;
-    let seed = stable_seed(&capture.session_id);
-    let block_order = block_order_for(seed, block_index);
-    let mut routes = mode.enabled_routes().to_vec();
-    if mode == SourceCompareMode::Ab && block_order == crate::contracts::dto::SOURCE_BLOCK_ORDER_BA
-    {
-        routes.swap(0, 1);
-    }
-
-    let is_warm_up = block_index < 5;
+    let block = begin_comparison_block(base_dir, &capture.session_id, mode)?;
+    let ComparisonBlock {
+        block_index,
+        seed,
+        block_order,
+        routes,
+        is_warm_up,
+    } = block;
 
     for route in routes {
-        let measurement = measure_route(base_dir, capture, route, fast_preview_kind);
-        let (candidate, used_fallback_correlation, object_role, direct_reject) = measurement;
+        let measurement = measure_route(base_dir, capture, route, fast_preview_kind, options);
+        let (
+            candidate,
+            used_fallback_correlation,
+            object_role,
+            direct_reject,
+            container_orientation,
+        ) = measurement;
         let context = SourceAdmissionContext {
             bound_session_id: Some(&capture.session_id),
             active_request_id: Some(&capture.request_id),
@@ -394,6 +555,7 @@ pub fn run_source_comparison_for_capture_with_mode(
             request_started_at_host_micros,
             enabled_routes: mode.enabled_routes(),
             used_fallback_correlation,
+            container_orientation,
         };
 
         let bytes = candidate
@@ -429,18 +591,75 @@ pub fn run_source_comparison_for_capture_with_mode(
     Ok(mode.enabled_routes().len())
 }
 
+/// Route C 후보 대기의 종착지.
+enum ShellSourceResolution {
+    Ready(PathBuf),
+    Absent,
+}
+
+/// Windows Shell incumbent 후보가 준비될 때까지 기다린다.
+///
+/// incumbent의 shell thumbnail은 RAW handoff **뒤에** 비동기로 도착한다. 제품의 120ms
+/// fast preview 예산은 측정 결과이므로 바꾸지 않고, 측정 lane이 helper의 종단 이벤트
+/// (`fast-preview-ready` / `fast-thumbnail-failed`)를 기다렸다가 판정한다.
+/// 대기 시간은 `readyAtHostMicros - request 시작`으로 표본에 그대로 드러난다.
+fn resolve_shell_source(
+    base_dir: &Path,
+    capture: &SessionCaptureRecord,
+    fast_preview_kind: Option<&str>,
+    options: &SourceComparisonOptions,
+) -> ShellSourceResolution {
+    // 제품 round trip이 이미 shell preview를 승격해 두었다면 그대로 쓴다.
+    if fast_preview_kind == Some(SHELL_FAST_PREVIEW_KIND) {
+        if let Some(source) = capture.preview.asset_path.as_deref() {
+            return ShellSourceResolution::Ready(PathBuf::from(source));
+        }
+    }
+
+    let deadline = Instant::now() + options.shell_source_wait;
+    loop {
+        match read_latest_fast_preview_outcome(
+            base_dir,
+            &capture.session_id,
+            &capture.request_id,
+            &capture.capture_id,
+        ) {
+            Ok(Some(FastPreviewOutcome::Ready { asset_path, kind })) => {
+                // fast preview chain은 capture당 한 번만 종결된다. shell이 아닌 생산자로
+                // 끝났다면 이 촬영에 shell source는 없다 — 그것이 incumbent의 측정 결과다.
+                return if kind.as_deref() == Some(SHELL_FAST_PREVIEW_KIND) {
+                    ShellSourceResolution::Ready(PathBuf::from(asset_path))
+                } else {
+                    ShellSourceResolution::Absent
+                };
+            }
+            Ok(Some(FastPreviewOutcome::Failed)) => return ShellSourceResolution::Absent,
+            // 아직 이벤트가 없거나 기록을 읽지 못했다. 예산 안에서 다시 본다.
+            _ => {}
+        }
+
+        if Instant::now() >= deadline {
+            return ShellSourceResolution::Absent;
+        }
+        std::thread::sleep(options.shell_source_poll_interval);
+    }
+}
+
 fn measure_route(
     base_dir: &Path,
     capture: &SessionCaptureRecord,
     route: &str,
     fast_preview_kind: Option<&str>,
+    options: &SourceComparisonOptions,
 ) -> (
     SourceCandidateDto,
     bool,
     Option<&'static str>,
     Option<&'static str>,
+    Option<u16>,
 ) {
-    let started = Instant::now();
+    let mut started = Instant::now();
+    let mut container_orientation: Option<u16> = None;
     let (path, used_fallback_correlation, object_index, group_id, direct_reject) = match route {
         SOURCE_ROUTE_EMBEDDED_JPEG => {
             let raw = match fs::read(&capture.raw.asset_path) {
@@ -451,6 +670,7 @@ fn measure_route(
                         false,
                         Some(SOURCE_OBJECT_ROLE_JPEG),
                         Some(SOURCE_REJECT_EXTRACTION_FAILED),
+                        None,
                     )
                 }
             };
@@ -469,8 +689,12 @@ fn measure_route(
                             false,
                             Some(SOURCE_OBJECT_ROLE_JPEG),
                             Some(SOURCE_REJECT_EXTRACTION_FAILED),
+                            None,
                         );
                     }
+                    // CR2 컨테이너가 선언한 orientation은 JPEG 자체 EXIF가 없을 때의
+                    // fallback truth다 (T3 규칙). 승격 판정과 기록이 같은 값을 쓴다.
+                    container_orientation = extracted.orientation;
                     (Some(destination), false, Some(0), None, None)
                 }
                 Err(reason) => (None, false, None, None, Some(reason)),
@@ -495,10 +719,11 @@ fn measure_route(
                     }
                     _ => {
                         return (
-                            candidate_from_path(capture, route, &path, None, None, started),
+                            candidate_from_path(capture, route, &path, None, None, None, started),
                             false,
                             Some(SOURCE_OBJECT_ROLE_JPEG),
                             Some(SOURCE_REJECT_WRONG_CAPTURE),
+                            None,
                         )
                     }
                 };
@@ -514,36 +739,48 @@ fn measure_route(
             }
         }
         SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL => {
-            if fast_preview_kind != Some("windows-shell-thumbnail") {
-                (None, false, None, None, Some(SOURCE_REJECT_ABSENT))
-            } else if let Some(source) = capture.preview.asset_path.as_deref() {
-                let destination = source_artifact_path(
-                    base_dir,
-                    &capture.session_id,
-                    &capture.capture_id,
-                    "shell",
-                );
-                match fs::read(source)
-                    .and_then(|bytes| persist_source_artifact(&destination, &bytes).map(|_| bytes))
-                {
-                    Ok(_) => (Some(destination), false, Some(0), None, None),
-                    Err(_) => (
-                        None,
-                        false,
-                        None,
-                        None,
-                        Some(SOURCE_REJECT_EXTRACTION_FAILED),
-                    ),
+            match resolve_shell_source(base_dir, capture, fast_preview_kind, options) {
+                ShellSourceResolution::Ready(source) => {
+                    let destination = source_artifact_path(
+                        base_dir,
+                        &capture.session_id,
+                        &capture.capture_id,
+                        "shell",
+                    );
+                    // 대기 시간은 도착 시각(ready_at)에 드러난다. 추출 비용은 대기와
+                    // 분리해 복사+검증 비용만 잰다.
+                    started = Instant::now();
+                    match fs::read(&source).and_then(|bytes| {
+                        persist_source_artifact(&destination, &bytes).map(|_| bytes)
+                    }) {
+                        Ok(_) => (Some(destination), false, Some(0), None, None),
+                        Err(_) => (
+                            None,
+                            false,
+                            None,
+                            None,
+                            Some(SOURCE_REJECT_EXTRACTION_FAILED),
+                        ),
+                    }
                 }
-            } else {
-                (None, false, None, None, Some(SOURCE_REJECT_ABSENT))
+                ShellSourceResolution::Absent => {
+                    (None, false, None, None, Some(SOURCE_REJECT_ABSENT))
+                }
             }
         }
         _ => (None, false, None, None, Some(SOURCE_REJECT_ABSENT)),
     };
 
     let candidate = match path {
-        Some(path) => candidate_from_path(capture, route, &path, object_index, group_id, started),
+        Some(path) => candidate_from_path(
+            capture,
+            route,
+            &path,
+            object_index,
+            group_id,
+            container_orientation,
+            started,
+        ),
         None => missing_candidate(capture, route, started),
     };
 
@@ -552,6 +789,7 @@ fn measure_route(
         used_fallback_correlation,
         Some(SOURCE_OBJECT_ROLE_JPEG),
         direct_reject,
+        container_orientation,
     )
 }
 
@@ -561,6 +799,7 @@ fn candidate_from_path(
     path: &Path,
     object_index: Option<u32>,
     group_id: Option<u32>,
+    container_orientation: Option<u16>,
     started: Instant,
 ) -> SourceCandidateDto {
     let bytes = fs::read(path).unwrap_or_default();
@@ -574,7 +813,10 @@ fn candidate_from_path(
         width_px: probe.as_ref().map(|value| value.width_px),
         height_px: probe.as_ref().map(|value| value.height_px),
         byte_size: Some(bytes.len() as u64),
-        exif_orientation: probe.as_ref().and_then(|value| value.orientation),
+        // orientation truth는 JPEG 자체 EXIF 우선, 없으면 컨테이너 값 (구조가 유효할 때만).
+        exif_orientation: probe
+            .as_ref()
+            .and_then(|value| value.orientation.or(container_orientation)),
         decode_valid: probe.is_some(),
         source_hash: Some(content_hash(&bytes)),
         object_index,

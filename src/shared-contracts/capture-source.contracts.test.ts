@@ -114,6 +114,47 @@ describe('capture-source contracts', () => {
     ).toThrow()
   })
 
+  // HV-14 실장비 학습: 부스 rig의 EOS 700D는 orientation 6/8을 실제로 만든다.
+  // 비교 lane은 그 값을 기록하며, 승격도 가능하다. display 승인(1만 허용)과는 별개다.
+  it('admits an accepted sample that records a real rotated orientation', () => {
+    const rotated = sourceComparisonSampleSchema.parse({
+      ...buildSample(),
+      candidate: { ...buildCandidate(), exifOrientation: 6 },
+    })
+
+    expect(rotated.accepted).toBe(true)
+    expect(rotated.candidate.exifOrientation).toBe(6)
+    expect(rotated.isPresetApplied).toBe(false)
+  })
+
+  // HV-14 실장비 학습: helper 단계에서 실패한 요청도 route마다 cancelled 행 하나를
+  // 가진다. RAW truth가 없으므로 captureId는 비어 있다 — 분모에서 사라지지 않는다.
+  it('admits a helper-stage failure row with no capture id', () => {
+    const failureRow = sourceComparisonSampleSchema.parse({
+      ...buildSample(),
+      candidate: {
+        ...buildCandidate(),
+        captureId: null,
+        assetPath: null,
+        widthPx: null,
+        heightPx: null,
+        byteSize: null,
+        objectIndex: null,
+        groupId: null,
+        exifOrientation: null,
+        decodeValid: false,
+        sourceHash: null,
+        extractionCostMicros: null,
+      },
+      accepted: false,
+      rejectReason: 'cancelled' as const,
+      objectRole: null,
+    })
+
+    expect(failureRow.rejectReason).toBe('cancelled')
+    expect(failureRow.candidate.captureId).toBeNull()
+  })
+
   it('requires accepted and rejectReason to describe one outcome', () => {
     expect(() =>
       sourceComparisonSampleSchema.parse({
