@@ -416,20 +416,18 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
 > **Story 7.5의 `src/quality-metrics/parity-metrics.ts`를 재사용한다. 지표 도구를 다시 만들지 않는다.**
 > CIEDE2000은 Sharma 검증표 17쌍으로 이미 단위 테스트되어 있다.
 >
-> **미실행 상태 (2026-08-16).** 판정 도구(`src/quality-metrics/tier-justification.ts`)와 승인된
-> 임계값·규칙은 구현되고 12건의 단위 테스트로 고정됐다. **측정 자체는 실행되지 않았다** —
-> slanted-edge 대상이 있는 실제 EOS 700D 촬영과 pinned darktable이 필요하고, 그것은 HV-17 회차에서만
-> 나온다. 그래서 `RAW_REFINED_TIER_JUSTIFICATION`은 `NotMeasured`이고 정밀본은 게시되지 않는다.
-> **미실행은 통과가 아니다.**
+> **실측 완료 (2026-08-17).** 실제 EOS 700D 정상 노출 RAW 3장 × 승인 preset 3개를 pinned
+> darktable 5.4.1로 측정했다. detail은 `tier-not-justified`, look은 `refined-look-drift`였고
+> `RAW_REFINED_TIER_JUSTIFICATION`은 `NotJustified`로 고정됐다. 정밀본은 게시되지 않는다.
 
-- [ ] 같은 CR2 표본에서 proxy(`--hq false`)와 refined(`--hq true`) 출력을 쌍으로 만든다.
+- [x] 같은 CR2 표본에서 proxy(`--hq false`)와 refined(`--hq true`) 출력을 쌍으로 만든다.
       **두 출력의 픽셀 크기가 같아야 한다** — 다르면 지표가 아니라 리샘플러를 재는 것이다
-- [ ] **corpus 보완이 선행 조건이다.** Story 7.5에서 MTF50이 미실행으로 남은 이유는 HV-14 corpus 35장이
+- [x] **corpus 보완이 선행 조건이다.** Story 7.5에서 MTF50이 미실행으로 남은 이유는 HV-14 corpus 35장이
       전부 세로 인물/책상 장면이라 **slanted-edge 대상이 없었기** 때문이다.
       HV-17 corpus는 **해상도 차트 또는 명확한 slanted edge가 있는 실제 EOS 700D 촬영 최소 3장**을
       포함하고, 세 승인 preset 전부에 대해 측정한다 (3 × 3 = 최소 9쌍).
       자연 사진에서 slanted edge를 자동 탐지하지 않는다 — 엉뚱한 영역을 재고 그 숫자가 evidence에 남는다
-- [ ] **detail 축 (tier의 존재 조건)** — `mtf50FromSlantedEdge` 사용
+- [x] **detail 축 (tier의 존재 조건)** — `mtf50FromSlantedEdge` 사용
   - **통과: `median MTF50(refined) ≥ 1.10 × median MTF50(proxy)`**
   - **그리고 어떤 표본에서도 `MTF50(refined) < MTF50(proxy)`가 아닐 것** (역행 0건)
   - 표본별 값과 산포를 전부 남긴다. median만 적지 않는다
@@ -437,7 +435,7 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
     **촬영마다 darktable 실행이 하나 더 늘어나는 비용을 정당화할 수 있는 최소선**이다.
     5% 개선을 위해 renderer 부하를 두 배로 만드는 것은 제품 결정으로 성립하지 않는다
   - 못 넘으면 → `tier-not-justified`. lane 기본 `off` 유지, 판정과 원자료를 evidence에 기록
-- [ ] **look 축 (AC 4의 전환 결함 판정)** — `parity-metrics.ts`의 ΔE00·clipping 사용
+- [x] **look 축 (AC 4의 전환 결함 판정)** — `parity-metrics.ts`의 ΔE00·clipping 사용
   - **통과: `median ΔE00(refined vs proxy) ≤ 3`, `p95 ≤ 8`, clipping 증가 `≤ 2%p`**
   - 두 tier는 **같은 룩**이어야 한다. 교체 순간 색이 바뀌면 고객은 전환을 본다
   - 벗어나면 → **`refined-look-drift`. `tier-not-justified`가 아니라 AC 4 실패로 기록하고 원인을 찾는다.**
@@ -739,7 +737,7 @@ P2가 이제 줄을 서므로 이 사유는 정상 경로에서 발생하지 않
 
 고정한 것: `Cargo.toml [dependencies]` 5개 그대로(새 crate 없음),
 `BOOTHY_RESIDENT_RENDERER_MODE` 기본 `off`, `BOOTHY_DISPLAY_PROXY_MODE` 기본 `on`,
-`BOOTHY_RAW_REFINED_MODE` 기본 `off` + 판정 `NotMeasured`, 384px 상수 4개,
+`BOOTHY_RAW_REFINED_MODE` 기본 `off` + 판정 `NotJustified`, 384px 상수 4개,
 동시 실행 상한 2/1, `final`이 tier가 아님.
 
 #### 실장비 직접 실행 결과 (T6 측정, T8 회차)
@@ -755,6 +753,12 @@ P2가 이제 줄을 서므로 이 사유는 정상 경로에서 발생하지 않
 | HV-17B 회차 | **No-Go / Blocked** | proxy 5건 표시, refined 0건. 실제 swap·화면 녹화·관찰자 3명 필요 |
 | 전환 탐지 검사 | **미실행** | 관찰자 3명 + Noah Lee 서명 |
 | lane 기본값 `on` 전환 | **미도달** | HV-17A·HV-17B 각각 `Go` |
+
+2026-08-17 remediation rerun에서 정상 노출 RAW 3장 × preset 3개를 추가로 측정했다. 모든 9쌍의
+크기는 같았지만 median MTF50 비율은 `0.9994705`이고 5쌍이 역행해 detail 축이
+`tier-not-justified`였다. look 축도 median ΔE00 `4.5213`, median p95 ΔE00 `15.0056`으로
+`refined-look-drift`였다. 따라서 publication, 실제 swap, 관찰자 검사는 열지 않았다.
+증거: `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/`.
 
 실행 증거: `tests/hardware/raw-refined/run-20260817-003242-hv17/`. RAW+JPEG에서 RAW handoff가
 timeout 난 뒤 descriptor 승인값 RAW-only로 설정·readback 검증했고, CR2 5/5·proxy present 5/5·
@@ -823,6 +827,10 @@ Story 7.8의 capture/present 검증으로 넘긴다. 추정으로 하위 구간�
 
 ## Change Log
 
+- 2026-08-17: HV-17 No-Go 개선 자동화와 카메라 descriptor/readback preflight를 구현하고 실장비를
+  재측정했다. 3×3 corpus는 완성됐지만 detail 이득이 없고 look drift가 있어 refined route를
+  `NotJustified`로 확정했다. lane은 기본 `off`를 유지하며, HV-17A의 새 5-shot/네 취소 회차는
+  미수집이므로 Story는 `in-progress`, 두 sub-gate는 No-Go다.
 - 2026-08-17: Canon EOS 700D 실장비 HV-17을 직접 실행했다. RAW+JPEG handoff timeout을
   RAW-only 설정과 readback으로 회복한 뒤 5/5 CR2·proxy present, P0 탈락 0건,
   큐 대기 9/22/22 μs(p50/p95/max)를 확인했다. 그러나 refined generation은 0건이었고

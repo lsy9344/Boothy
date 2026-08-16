@@ -20,6 +20,8 @@ public sealed class ImageQualityCapabilityTests
     private const int RawPlusJpegLargeFine = 0x00640013; // EdsImageQuality_LRLJF
     private const int CrawPlusJpegLargeFine = 0x00630013; // EdsImageQuality_CRLJF
     private const int RawPlusHeifLarge = 0x00640080; // EdsImageQuality_RHEIFL
+    private const int RawOnly = 0x0064FF0F;
+    private const int CrawOnly = 0x0063FF0F;
 
     [Fact]
     public void Jpeg_only_values_are_not_raw_plus_jpeg()
@@ -35,6 +37,42 @@ public sealed class ImageQualityCapabilityTests
         Assert.True(ImageQualityValue.IsRawPlusJpeg(RawPlusJpegLarge));
         Assert.True(ImageQualityValue.IsRawPlusJpeg(RawPlusJpegLargeFine));
         Assert.True(ImageQualityValue.IsRawPlusJpeg(CrawPlusJpegLargeFine));
+    }
+
+    [Fact]
+    public void Raw_only_selection_uses_only_an_exact_descriptor_member()
+    {
+        int[] supported = [JpegLarge, CrawOnly, RawOnly, RawPlusJpegLargeFine];
+
+        var selected = ImageQualityValue.SelectRawOnlyCandidate(supported);
+
+        Assert.Equal(RawOnly, selected);
+        Assert.Contains(selected!.Value, supported);
+        Assert.True(ImageQualityValue.IsRawOnly(selected.Value));
+    }
+
+    [Fact]
+    public void Raw_only_selection_never_derives_a_value_from_raw_plus_jpeg()
+    {
+        int[] supported = [JpegLarge, RawPlusJpegLargeFine];
+
+        Assert.Null(ImageQualityValue.SelectRawOnlyCandidate(supported));
+    }
+
+    [Fact]
+    public void Raw_only_selection_accepts_craw_when_it_is_the_only_exact_descriptor_member()
+    {
+        int[] supported = [JpegLarge, CrawOnly, RawPlusJpegLargeFine];
+
+        Assert.Equal(CrawOnly, ImageQualityValue.SelectRawOnlyCandidate(supported));
+    }
+
+    [Fact]
+    public void Raw_only_selection_handles_empty_and_duplicate_descriptors()
+    {
+        Assert.Null(ImageQualityValue.SelectRawOnlyCandidate(null));
+        Assert.Null(ImageQualityValue.SelectRawOnlyCandidate([]));
+        Assert.Equal(RawOnly, ImageQualityValue.SelectRawOnlyCandidate([RawOnly, RawOnly]));
     }
 
     /// <summary>RAW+HEIF는 JPEG가 아니다. 이 실험의 대상이 아니므로 골라서는 안 된다.</summary>

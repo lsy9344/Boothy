@@ -338,19 +338,16 @@ else {
   if ($null -eq $tierVerdict.detail -or [string]::IsNullOrWhiteSpace($tierVerdict.detail.verdict)) {
     Add-BFailure 'verdict.json does not record a detail axis verdict'
   }
-  elseif ($tierVerdict.detail.verdict -eq 'not-measured') {
-    Add-BFailure 'the detail axis was never measured — an unmeasured axis is not a pass'
+  elseif ($tierVerdict.detail.verdict -ne 'justified') {
+    Add-BFailure "the detail axis is not justified: $($tierVerdict.detail.verdict)"
   }
 
   if ($null -eq $tierVerdict.look -or [string]::IsNullOrWhiteSpace($tierVerdict.look.verdict)) {
     Add-BFailure 'verdict.json does not record a look axis verdict'
   }
-  elseif ($tierVerdict.look.verdict -eq 'refined-look-drift') {
+  elseif ($tierVerdict.look.verdict -ne 'same-look') {
     # tier 문제가 아니라 AC 4 실패다.
-    Add-BFailure 'refined-look-drift: the two tiers do not share the same look — this is an AC 4 transition defect'
-  }
-  elseif ($tierVerdict.look.verdict -eq 'not-measured') {
-    Add-BFailure 'the look axis was never measured — an unmeasured axis is not a pass'
+    Add-BFailure "the two tiers do not share a verified same look: $($tierVerdict.look.verdict)"
   }
 
   # 표본별 값 없이 median만 적으면 산포를 숨기게 된다.

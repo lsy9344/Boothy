@@ -305,6 +305,14 @@ Assert-Case 'an unmeasured detail axis fails only HV-17B' 1 'automated-pass' 'No
   Write-JsonFile $path $verdict
 }
 
+Assert-Case 'a measured but unjustified detail tier fails only HV-17B' 1 'automated-pass' 'No-Go' {
+  param($runRoot)
+  $path = Join-Path $runRoot 'tier-justification/verdict.json'
+  $verdict = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+  $verdict.detail.verdict = 'tier-not-justified'
+  Write-JsonFile $path $verdict
+}
+
 Assert-Case 'a look drift fails only HV-17B' 1 'automated-pass' 'No-Go' {
   param($runRoot)
   $path = Join-Path $runRoot 'tier-justification/verdict.json'

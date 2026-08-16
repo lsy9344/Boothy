@@ -57,6 +57,10 @@ run-<timestamp>-hv17/
 ## 실행 순서
 
 ```powershell
+# 0. 고객 화면과 분리된 실제 RAW tier 측정 (pointer를 전진시키지 않음)
+node --experimental-strip-types ./run-tier-evidence.ts `
+  --manifest C:\absolute\run-<timestamp>-hv17\tier-manifest.json
+
 # 1. 계측 완결성 (촬영당 generation 2개, 각각 terminal 행 1개)
 ../../viewer-present/hv-13b/check-telemetry-completeness.ps1 `
   -SessionEvidenceDir ./run-<timestamp>-hv17/session-evidence
@@ -67,6 +71,21 @@ run-<timestamp>-hv17/
 # 3. gate 자체 검증 (회차 전에 한 번)
 ./test-check-raw-refined-evidence.ps1
 ```
+
+`tier-manifest.example.json`을 회차 폴더에 복사해 절대 경로와 실제 slanted-edge ROI를
+채운다. runner는 RAW 3장 이상 × preset 3개 이상을 강제하고, production display와 같은
+JPEG 인자(`--width`, `--height`, `--upscale false`, ICC, quality)를 쓴다. proxy/refined는
+`--hq`와 격리된 darktable worker root만 다르다. 산출 JPEG를 PPM으로 해독한 뒤 기존
+`parity-metrics.ts`와 `judgeTierJustification()`을 호출하며, 명령 원문과 stdout/stderr도
+`tier-justification/commands.jsonl`에 남긴다. 이 경로는 viewer generation이나 pointer를
+만들지 않는다.
+
+취소 회차를 실행할 때는 앱을 시작하기 전에 `BOOTHY_HV17_EVIDENCE_ROOT`를 해당 회차의
+절대 경로로 지정한다. 마지막 폴더명에 `hv17`이 없는 경로는 거부된다. 실제 taskkill 호출마다
+원문 stdout/stderr가 `logs/taskkill-*.log`에, 종료 시각·fallback·orphan probe 결과가
+`scheduler/process-tree/*.json`에 기록된다. 일반 앱 실행에서는 이 파일을 만들지 않는다.
+구조화 record에는 final 완료를 추정해 넣지 않으므로, 회차 종료 후 실제 final-ready 진실과
+결합해 `cancel-rounds.jsonl`을 만든다.
 
 ## PASS는 `Go`가 아니다
 
@@ -85,7 +104,7 @@ run-<timestamp>-hv17/
   역행 0건, slanted-edge 쌍 최소 9개(차트 3장 × 승인 preset 3개)
 - **look 축 (AC 4의 전환 결함 판정):** `median ΔE00 ≤ 3`, `p95 ≤ 8`, clipping 증가 `≤ 2%p`
 - 크기가 다른 쌍은 지표가 아니라 리샘플러를 재게 되므로 제외되고, 제외 사실이 남는다
-- 저노출 표본은 look 축에서 제외되고, 제외 사실이 남는다
+- runner에서 정상 노출을 확인하지 않은 표본은 detail/look 모두 `not-measured` 원자료로 남는다
 - **미실행은 통과가 아니다.** 측정 불가 항목은 `unmeasuredPairs`로 남는다
 
 ## `detection-trial/trials.csv`

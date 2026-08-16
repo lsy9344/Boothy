@@ -100,16 +100,17 @@ impl TierJustification {
     }
 }
 
-/// **현재 detail 축 판정은 `NotMeasured`다.**
+/// **현재 detail 축 판정은 `NotJustified`다.**
 ///
-/// AC 6의 측정에는 slanted-edge 대상이 있는 실제 EOS 700D 촬영 최소 3장과 pinned darktable이
-/// 필요하다 (T6). 그 원자료는 HV-17 회차에서만 나온다. 그전까지 이 값을 `Justified`로 바꾸면
-/// **측정되지 않은 tier 차이를 고객 화면에 게시하는 것**이고, AC 6이 정확히 그것을 금지한다.
+/// 실제 EOS 700D RAW 3장 × 승인 preset 3개를 pinned darktable 5.4.1로 측정한 HV-17 회차에서
+/// refined/proxy median MTF50 비율이 0.99947로 1.10 기준을 넘지 못했고 5개 pair가 역행했다.
+/// 원자료와 판정은 `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/
+/// tier-justification/`에 보존한다.
 ///
 /// `RESIDENT_APPROVED_DIRECT_DECODERS`가 빈 목록으로 상주 후보를 막는 것과 같은 장치다.
 /// 값을 바꾸려면 T6의 원자료(`tests/hardware/raw-refined/hv-17/tier-justification/`)와
 /// 그 판정이 evidence 패키지에 있어야 한다.
-pub const RAW_REFINED_TIER_JUSTIFICATION: TierJustification = TierJustification::NotMeasured;
+pub const RAW_REFINED_TIER_JUSTIFICATION: TierJustification = TierJustification::NotJustified;
 
 /// 정밀본 lane이 **시작조차 하지 않은** 이유. 전부 고유 코드이며 조용한 무시는 없다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -586,10 +587,10 @@ mod tests {
 
     /// **미실행은 통과가 아니다.** AC 6의 원자료가 없으면 이 tier는 존재하지 않는다.
     #[test]
-    fn an_unmeasured_tier_is_not_a_justified_tier() {
+    fn the_measured_tier_is_not_justified() {
         assert_eq!(
             RAW_REFINED_TIER_JUSTIFICATION,
-            TierJustification::NotMeasured
+            TierJustification::NotJustified
         );
         assert!(!TierJustification::NotMeasured.is_justified());
         assert!(!TierJustification::NotJustified.is_justified());

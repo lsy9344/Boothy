@@ -39,7 +39,7 @@ internal sealed record ImageQualityCapability(
 /// 예: <c>EdsImageQuality_LJ = 0x0010ff0f</c>는 둘째 이미지가 없음(<c>0xff</c>/<c>0x0f</c>)이고,
 /// <c>EdsImageQuality_LRLJF = 0x00640013</c>는 RAW(<c>0x64</c>) + Large Fine JPEG(<c>0x13</c>)이다.
 /// </remarks>
-internal static class ImageQualityValue
+public static class ImageQualityValue
 {
     /// <summary>둘째 이미지가 없음을 뜻하는 크기 코드.</summary>
     public const int NoSecondImageSize = 0xFF;
@@ -77,6 +77,32 @@ internal static class ImageQualityValue
         IsRawFormat(FirstImageFormat(value))
         && HasSecondImage(value)
         && IsJpegFormat(SecondImageFormat(value));
+
+    /// <summary>descriptor 값이 RAW 한 장만 생성하는 조합인가.</summary>
+    public static bool IsRawOnly(int value) =>
+        IsRawFormat(FirstImageFormat(value))
+        && SecondImageSize(value) == NoSecondImageSize
+        && SecondImageFormat(value) == NoSecondImageFormat;
+
+    /// <summary>
+    /// descriptor가 보고한 값 중 RAW-only를 고른다. 일반 RAW를 cRAW보다 우선하지만
+    /// descriptor 밖의 조합은 절대 만들어 내지 않는다.
+    /// </summary>
+    public static int? SelectRawOnlyCandidate(IReadOnlyList<int>? supportedValues)
+    {
+        if (supportedValues is null || supportedValues.Count == 0)
+        {
+            return null;
+        }
+
+        return supportedValues
+            .Where(IsRawOnly)
+            .OrderBy(value => FirstImageFormat(value) == RawFormat ? 0 : 1)
+            .ThenBy(FirstImageSize)
+            .ThenBy(value => value)
+            .Cast<int?>()
+            .FirstOrDefault();
+    }
 
     /// <summary>
     /// descriptor가 실제로 보고한 목록 안에서 RAW+JPEG 조합을 고른다.

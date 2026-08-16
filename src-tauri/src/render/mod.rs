@@ -35,6 +35,8 @@ pub const DISPLAY_LANE_DEADLINE_BUDGET_MICROS: u64 = 5_000_000;
 /// 취소 신호를 확인하는 간격. 렌더 loop의 polling 주기와 같다.
 const RENDER_CANCEL_POLL: Duration = Duration::from_millis(100);
 const DARKTABLE_CLI_BIN_ENV: &str = "BOOTHY_DARKTABLE_CLI_BIN";
+/// 명시한 회차에서만 taskkill 원문과 process-tree 결과를 보존한다.
+const HV17_EVIDENCE_ROOT_ENV: &str = "BOOTHY_HV17_EVIDENCE_ROOT";
 const RAW_PREVIEW_MAX_WIDTH_PX: u32 = 384;
 const RAW_PREVIEW_MAX_HEIGHT_PX: u32 = 384;
 const FAST_PREVIEW_RENDER_MAX_WIDTH_PX: u32 = 384;
@@ -1787,6 +1789,8 @@ pub struct ProcessTreeTermination {
     pub orphan_count: Option<u32>,
     pub requested_at_micros: u64,
     pub completed_at_micros: u64,
+    /// HV-17 evidence mode가 명시됐을 때 생성한 구조화 record. 일반 제품 실행은 `None`이다.
+    pub evidence_record_path: Option<PathBuf>,
 }
 
 impl ProcessTreeTermination {
@@ -1801,13 +1805,113 @@ impl ProcessTreeTermination {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "unavailable".to_string());
         format!(
-            "killOutcome={};directKillFallback={};orphanCount={};latencyMicros={}",
+            "killOutcome={};directKillFallback={};orphanCount={};latencyMicros={};evidenceRecord={}",
             self.kill_outcome,
             self.used_direct_kill_fallback,
             orphan_count,
-            self.latency_micros()
+            self.latency_micros(),
+            self.evidence_record_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "disabled".to_string())
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskkillTranscript {
+    command: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn hv17_evidence_root() -> Option<PathBuf> {
+    let raw = std::env::var_os(HV17_EVIDENCE_ROOT_ENV)?;
+    validated_hv17_evidence_root(PathBuf::from(raw))
+}
+
+fn validated_hv17_evidence_root(root: PathBuf) -> Option<PathBuf> {
+    let run_name = root.file_name()?.to_string_lossy().to_ascii_lowercase();
+
+    // 우발적으로 session 또는 사용자 폴더에 원문 로그를 만들지 않는다.
+    (root.is_absolute() && run_name.contains("hv17")).then_some(root)
+}
+
+fn safe_evidence_label(reason: &str) -> String {
+    let label = reason
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let trimmed = label.trim_matches('-');
+    if trimmed.is_empty() {
+        "unspecified".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn hv17_round_label(reason: &str) -> &str {
+    match reason {
+        "request-forgotten" => "delete",
+        "superseded-by-newer-capture" => "newer-capture",
+        other => other,
+    }
+}
+
+fn persist_process_tree_evidence_in_dir(
+    evidence_root: &Path,
+    reason: &str,
+    pid: u32,
+    termination: &ProcessTreeTermination,
+    transcript: &TaskkillTranscript,
+) -> std::io::Result<PathBuf> {
+    let round = hv17_round_label(reason);
+    let label = safe_evidence_label(round);
+    let suffix = format!("{}-{}-pid{}", label, termination.requested_at_micros, pid);
+    let log_relative = PathBuf::from("logs").join(format!("taskkill-{suffix}.log"));
+    let record_relative = PathBuf::from("scheduler")
+        .join("process-tree")
+        .join(format!("{suffix}.json"));
+    let log_path = evidence_root.join(&log_relative);
+    let record_path = evidence_root.join(&record_relative);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = record_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut raw_log = format!(
+        "command: {}\nkillOutcome: {}\n--- stdout ---\n",
+        transcript.command, termination.kill_outcome
+    )
+    .into_bytes();
+    raw_log.extend_from_slice(&transcript.stdout);
+    raw_log.extend_from_slice(b"\n--- stderr ---\n");
+    raw_log.extend_from_slice(&transcript.stderr);
+    raw_log.push(b'\n');
+    fs::write(&log_path, raw_log)?;
+    let record = serde_json::json!({
+        "schemaVersion": "hv17-process-tree-termination/v1",
+        "round": round,
+        "cancellationReason": reason,
+        "processId": pid,
+        "cancelRequestedAtMicros": termination.requested_at_micros,
+        "cancelCompletedAtMicros": termination.completed_at_micros,
+        "killOutcome": termination.kill_outcome,
+        "directKillFallback": termination.used_direct_kill_fallback,
+        "cancelOrphanCount": termination.orphan_count,
+        "orphanProbeAvailable": termination.orphan_count.is_some(),
+        "taskkillLogPath": log_relative.to_string_lossy().replace('\\', "/"),
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record)?)?;
+    Ok(record_path)
 }
 
 /// Windows 내장 `taskkill`의 절대 경로.
@@ -1828,6 +1932,14 @@ fn taskkill_binary_path() -> PathBuf {
 /// 하며, Story 7.3이 LibRaw를 뺀 것과 같은 이유다. Job Object(`windows-sys`) 방식은
 /// `Cargo.toml` 직접 의존성을 늘리므로 이 Story에서는 하지 않는다.
 pub fn terminate_process_tree(child: &mut Child, now: &dyn Fn() -> u64) -> ProcessTreeTermination {
+    terminate_process_tree_for_reason(child, now, "unspecified")
+}
+
+fn terminate_process_tree_for_reason(
+    child: &mut Child,
+    now: &dyn Fn() -> u64,
+    reason: &str,
+) -> ProcessTreeTermination {
     let requested_at_micros = now();
     let pid = child.id();
     // 부모를 죽인 뒤에는 살아남은 손자의 ParentProcessId가 이미 종료된 중간 PID를 가리킨다.
@@ -1835,17 +1947,41 @@ pub fn terminate_process_tree(child: &mut Child, now: &dyn Fn() -> u64) -> Proce
     let descendant_pids = current_descendant_process_ids(pid);
     let mut used_direct_kill_fallback = false;
 
-    let kill_outcome = match Command::new(taskkill_binary_path())
-        .args(["/T", "/F", "/PID", &pid.to_string()])
+    let taskkill_path = taskkill_binary_path();
+    let taskkill_args = ["/T", "/F", "/PID", &pid.to_string()];
+    let (kill_outcome, transcript) = match Command::new(&taskkill_path)
+        .args(taskkill_args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
     {
-        Ok(status) => format!("exit={}", status.code().unwrap_or(-1)),
+        Ok(output) => (
+            format!("exit={}", output.status.code().unwrap_or(-1)),
+            TaskkillTranscript {
+                command: format!(
+                    "{} {}",
+                    taskkill_path.to_string_lossy(),
+                    taskkill_args.join(" ")
+                ),
+                stdout: output.stdout,
+                stderr: output.stderr,
+            },
+        ),
         Err(error) => {
             used_direct_kill_fallback = true;
-            format!("spawn-failed:{}", error.kind())
+            (
+                format!("spawn-failed:{}", error.kind()),
+                TaskkillTranscript {
+                    command: format!(
+                        "{} {}",
+                        taskkill_path.to_string_lossy(),
+                        taskkill_args.join(" ")
+                    ),
+                    stdout: Vec::new(),
+                    stderr: error.to_string().into_bytes(),
+                },
+            )
         }
     };
 
@@ -1860,13 +1996,25 @@ pub fn terminate_process_tree(child: &mut Child, now: &dyn Fn() -> u64) -> Proce
         .as_deref()
         .and_then(count_surviving_processes);
 
-    ProcessTreeTermination {
+    let mut termination = ProcessTreeTermination {
         kill_outcome,
         used_direct_kill_fallback,
         orphan_count,
         requested_at_micros,
         completed_at_micros: now(),
+        evidence_record_path: None,
+    };
+    if let Some(root) = hv17_evidence_root() {
+        match persist_process_tree_evidence_in_dir(&root, reason, pid, &termination, &transcript) {
+            Ok(path) => termination.evidence_record_path = Some(path),
+            Err(error) => log::warn!(
+                "hv17_process_tree_evidence_write_failed reason={} root={} error={error}",
+                reason,
+                root.to_string_lossy()
+            ),
+        }
     }
+    termination
 }
 
 /// 현재 Windows process snapshot을 `(pid, parent_pid)`로 읽는다.
@@ -2020,10 +2168,14 @@ fn run_darktable_invocation(
                 // Story 7.6. 취소 신호가 먼저다. **두 벌의 종료 코드를 만들지 않는다** —
                 // 취소와 timeout이 같은 process tree 종료를 쓴다.
                 if cancellation.is_some_and(CancellationToken::is_cancelled) {
-                    let termination = terminate_process_tree(&mut child, &current_monotonic_micros);
                     let reason = cancellation
                         .and_then(CancellationToken::reason)
                         .unwrap_or_else(|| "cancelled".to_string());
+                    let termination = terminate_process_tree_for_reason(
+                        &mut child,
+                        &current_monotonic_micros,
+                        &reason,
+                    );
                     log::info!(
                         "render_cancelled stage={} reason={} {}",
                         stage.label,
@@ -2042,7 +2194,11 @@ fn run_darktable_invocation(
                 }
 
                 if started_at.elapsed() >= DEFAULT_RENDER_TIMEOUT {
-                    let termination = terminate_process_tree(&mut child, &current_monotonic_micros);
+                    let termination = terminate_process_tree_for_reason(
+                        &mut child,
+                        &current_monotonic_micros,
+                        "timeout",
+                    );
 
                     return Err(RenderWorkerError {
                         reason_code: "render-process-timeout",
@@ -2060,7 +2216,11 @@ fn run_darktable_invocation(
                 thread::sleep(RENDER_CANCEL_POLL);
             }
             Err(error) => {
-                let termination = terminate_process_tree(&mut child, &current_monotonic_micros);
+                let termination = terminate_process_tree_for_reason(
+                    &mut child,
+                    &current_monotonic_micros,
+                    "process-state-unavailable",
+                );
                 return Err(RenderWorkerError {
                     reason_code: "render-process-state-unavailable",
                     customer_message: stage.customer_message.into(),
@@ -3223,6 +3383,77 @@ mod tests {
             termination.kill_outcome
         );
         assert!(termination.completed_at_micros > termination.requested_at_micros);
+    }
+
+    #[test]
+    fn hv17_process_tree_evidence_preserves_raw_taskkill_output_and_probe_truth() {
+        let root = unique_temp_dir("run-hv17-process-tree");
+        let termination = ProcessTreeTermination {
+            kill_outcome: "exit=0".to_string(),
+            used_direct_kill_fallback: false,
+            orphan_count: Some(0),
+            requested_at_micros: 11_000,
+            completed_at_micros: 12_500,
+            evidence_record_path: None,
+        };
+        let transcript = TaskkillTranscript {
+            command: r"C:\Windows\System32\taskkill.exe /T /F /PID 4312".to_string(),
+            stdout: b"SUCCESS: process tree terminated".to_vec(),
+            stderr: b"localized stderr remains verbatim".to_vec(),
+        };
+
+        let record_path = persist_process_tree_evidence_in_dir(
+            &root,
+            "request-forgotten",
+            4312,
+            &termination,
+            &transcript,
+        )
+        .expect("persist evidence");
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&record_path).expect("read structured record"))
+                .expect("parse structured record");
+        let log_path = root.join(
+            record["taskkillLogPath"]
+                .as_str()
+                .expect("relative taskkill log path"),
+        );
+        let raw_log = fs::read_to_string(log_path).expect("read raw transcript");
+
+        assert_eq!(record["cancelOrphanCount"], 0);
+        assert_eq!(record["orphanProbeAvailable"], true);
+        assert_eq!(record["round"], "delete");
+        assert_eq!(record["cancellationReason"], "request-forgotten");
+        assert_eq!(record["cancelRequestedAtMicros"], 11_000);
+        assert_eq!(record["cancelCompletedAtMicros"], 12_500);
+        assert!(raw_log.contains("SUCCESS: process tree terminated"));
+        assert!(raw_log.contains("localized stderr remains verbatim"));
+        assert!(record_path.to_string_lossy().contains("delete"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hv17_evidence_root_requires_an_explicit_absolute_hv17_run() {
+        assert_eq!(
+            validated_hv17_evidence_root(PathBuf::from(r"C:\evidence\run-hv17")),
+            Some(PathBuf::from(r"C:\evidence\run-hv17"))
+        );
+        assert_eq!(
+            validated_hv17_evidence_root(PathBuf::from(r"C:\evidence\ordinary-run")),
+            None
+        );
+        assert_eq!(
+            validated_hv17_evidence_root(PathBuf::from("run-hv17")),
+            None
+        );
+        assert_eq!(safe_evidence_label("../newer capture"), "newer-capture");
+        assert_eq!(safe_evidence_label("***"), "unspecified");
+        assert_eq!(hv17_round_label("request-forgotten"), "delete");
+        assert_eq!(
+            hv17_round_label("superseded-by-newer-capture"),
+            "newer-capture"
+        );
     }
 
     #[test]

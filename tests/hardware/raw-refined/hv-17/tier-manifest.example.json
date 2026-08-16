@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "hv17-tier-run/v1",
+  "evidenceRoot": "C:\\absolute\\run-YYYYMMDD-HHMMSS-hv17",
+  "darktableCli": "C:\\Program Files\\darktable\\bin\\darktable-cli.exe",
+  "targetWidthPx": 1620,
+  "targetHeightPx": 1080,
+  "jpegQuality": 92,
+  "outputColorSpace": "sRGB",
+  "iccIntent": "PERCEPTUAL",
+  "samples": [
+    { "sampleId": "chart-01", "rawPath": "C:\\absolute\\chart-01.cr2", "edgeRoi": { "x": 100, "y": 100, "widthPx": 128, "heightPx": 128 }, "exposureConfirmed": true },
+    { "sampleId": "chart-02", "rawPath": "C:\\absolute\\chart-02.cr2", "edgeRoi": { "x": 100, "y": 100, "widthPx": 128, "heightPx": 128 }, "exposureConfirmed": true },
+    { "sampleId": "chart-03", "rawPath": "C:\\absolute\\chart-03.cr2", "edgeRoi": { "x": 100, "y": 100, "widthPx": 128, "heightPx": 128 }, "exposureConfirmed": true }
+  ],
+  "presets": [
+    { "presetId": "preset-daylight", "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-daylight.xmp" },
+    { "presetId": "preset-soft-glow", "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-soft-glow.xmp" },
+    { "presetId": "preset-mono-pop", "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-mono-pop.xmp" }
+  ]
+}

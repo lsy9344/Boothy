@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: review of HV-17 No-Go remediation (2026-08-17)
+
+- HV-17B의 generation gate가 최소 한 건의 refined 존재와 각 refined의 선행 proxy만 확인한다. 모든 대상 capture가 `proxy commit → refined commit → refined present`를 완결했는지 검증하는 coverage 계약과 결손 테스트가 별도 보강되어야 한다. (`tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1`, pre-existing)
+- HV-17A gate는 telemetry의 `P0`/`P1` 라벨을 확인하지만 실제 경쟁 작업의 dequeue/실행 순서를 비교하지 않는다. 우선순위 라벨 오기재와 실제 역순 실행을 구분할 scheduler-order evidence schema가 필요하다. (`tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1`, pre-existing)
+
 ## Deferred from: code review of 7-5-상주-renderer-검증-spike (2026-08-16)
 
 **proxy 경로 미결 6건은 Story 7.6이 같은 파일을 열어 놓고 전부 닫았다 (2026-08-16).**
