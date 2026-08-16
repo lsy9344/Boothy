@@ -590,6 +590,46 @@ export const validateDraftPresetResultSchema = z
     }
   })
 
+/**
+ * Story 7.4. display-fit proxy lane 자격과 그 승인 근거.
+ *
+ * **선택 항목이다.** 없으면 게시는 오늘과 똑같이 성공하고, 그 preset은 정확한 darktable RAW
+ * 경로만 쓴다 (`proxyCompatible = false`). 있으면 전부 유효해야 하며, 하나라도 어긋나면
+ * 게시를 거절한다 — 반쯤 승인된 룩이 고객 화면에 오르는 것보다 게시가 막히는 편이 낫다.
+ */
+export const proxyPublicationPayloadSchema = z.object({
+  proxyCompatible: z.literal(true),
+  /** 이 recipe가 재현할 수 있다고 승인된 operation allowlist. */
+  supportedOperations: z.array(z.string().trim().min(1)).min(1),
+  /**
+   * 승인된 recipe의 버전.
+   *
+   * 참조 렌더러가 darktable인 동안 recipe의 **실체는 번들이 이미 싣고 있는 XMP template**이며,
+   * host가 게시 시점에 `proxyRecipePath`로 그 경로를 기록한다. 별도의 compiled recipe 파일은
+   * Story 7.5가 상주 렌더러를 도입할 때 생긴다.
+   */
+  proxyRecipeVersion: z.string().trim().min(1),
+  referenceRenderer: z.literal('darktable'),
+  referenceRendererVersion: z.string().trim().min(1),
+  outputProfile: z.object({
+    colorSpace: z.literal('sRGB'),
+    jpegQuality: z.number().int().min(1).max(100),
+    iccIntent: z
+      .enum([
+        'perceptual',
+        'relative_colorimetric',
+        'saturation',
+        'absolute_colorimetric',
+      ])
+      .optional(),
+  }),
+  visualApproval: z.object({
+    approvedAt: z.string().trim().min(1),
+    approvedBy: z.string().trim().min(1),
+    corpusPath: z.string().trim().min(1).optional(),
+  }),
+})
+
 export const publishValidatedPresetInputSchema = z.object({
   presetId: presetIdSchema,
   draftVersion: draftVersionSchema,
@@ -600,6 +640,7 @@ export const publishValidatedPresetInputSchema = z.object({
   actorLabel: actorLabelSchema,
   scope: publicationScopeSchema,
   reviewNote: optionalTextSchema,
+  proxyPublication: proxyPublicationPayloadSchema.nullish(),
 })
 
 export const publishValidatedPresetSuccessSchema = z

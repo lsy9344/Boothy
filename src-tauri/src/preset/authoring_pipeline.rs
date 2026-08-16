@@ -7,12 +7,12 @@ use std::{
 use crate::{
     contracts::dto::{
         validate_draft_preset_edit_input, validate_draft_validation_input,
-        validate_publish_validated_preset_input, validate_repair_invalid_draft_input,
-        AuthoringWorkspaceResultDto, CapabilitySnapshotDto, DraftNoisePolicyDto,
-        DraftPresetEditPayloadDto, DraftPresetPreviewReferenceDto, DraftPresetSummaryDto,
-        DraftRenderProfileDto, DraftValidationFindingDto, DraftValidationReportDto,
-        DraftValidationSnapshotDto, HostErrorEnvelope, InvalidDraftArtifactDto,
-        PresetPublicationAuditRecordDto, PublishValidatedPresetInputDto,
+        validate_proxy_publication_payload, validate_publish_validated_preset_input,
+        validate_repair_invalid_draft_input, AuthoringWorkspaceResultDto, CapabilitySnapshotDto,
+        DraftNoisePolicyDto, DraftPresetEditPayloadDto, DraftPresetPreviewReferenceDto,
+        DraftPresetSummaryDto, DraftRenderProfileDto, DraftValidationFindingDto,
+        DraftValidationReportDto, DraftValidationSnapshotDto, HostErrorEnvelope,
+        InvalidDraftArtifactDto, PresetPublicationAuditRecordDto, PublishValidatedPresetInputDto,
         PublishValidatedPresetResultDto, PublishedPresetSummaryDto, RepairInvalidDraftInputDto,
         ValidateDraftPresetInputDto, ValidateDraftPresetResultDto,
     },
@@ -252,6 +252,16 @@ pub fn publish_validated_preset_in_dir(
 ) -> Result<PublishValidatedPresetResultDto, HostErrorEnvelope> {
     ensure_authoring_access(capability_snapshot)?;
     validate_publish_validated_preset_input(&input)?;
+
+    // Story 7.4: proxy 승인 정보가 실려 있으면 **전부 유효해야** 게시된다.
+    // 반쯤 승인된 룩이 고객 화면에 오르는 것보다 게시가 막히는 편이 낫다.
+    if let Some(proxy) = input.proxy_publication.as_ref() {
+        validate_proxy_publication_payload(
+            proxy,
+            crate::preset::preset_bundle::PROXY_REFERENCE_RENDERER,
+            PINNED_DARKTABLE_VERSION,
+        )?;
+    }
 
     let drafts_root = resolve_draft_authoring_root(base_dir);
     let draft_path = resolve_draft_file_path(&drafts_root, &input.preset_id);
@@ -928,6 +938,42 @@ fn create_published_bundle_from_draft(
         "darktableProjectPath": darktable_relative,
         "xmpTemplatePath": xmp_relative,
     });
+    let mut bundle_value = bundle_value;
+
+    // Story 7.4: proxy 승인 정보는 **선택 항목**이다. 없으면 오늘과 동일하게 게시되고
+    // 그 preset은 정확한 darktable RAW 경로만 쓴다 (`proxyCompatible = false`).
+    if let Some(proxy) = input.proxy_publication.as_ref() {
+        let mut output_profile = serde_json::json!({
+            "colorSpace": proxy.output_profile.color_space,
+            "jpegQuality": proxy.output_profile.jpeg_quality,
+        });
+
+        if let Some(icc_intent) = proxy.output_profile.icc_intent.as_ref() {
+            output_profile["iccIntent"] = serde_json::Value::String(icc_intent.clone());
+        }
+
+        let mut visual_approval = serde_json::json!({
+            "approvedAt": proxy.visual_approval.approved_at,
+            "approvedBy": proxy.visual_approval.approved_by,
+        });
+
+        if let Some(corpus_path) = proxy.visual_approval.corpus_path.as_ref() {
+            visual_approval["corpusPath"] = serde_json::Value::String(corpus_path.clone());
+        }
+
+        bundle_value["proxyPublication"] = serde_json::json!({
+            "proxyCompatible": true,
+            "supportedOperations": proxy.supported_operations,
+            "proxyRecipeVersion": proxy.proxy_recipe_version,
+            // 경로는 host가 정한다. 호출자가 넣을 수 있게 두면 bundle root 밖을 가리킬 여지가 생긴다.
+            "proxyRecipePath": xmp_relative,
+            "referenceRenderer": proxy.reference_renderer,
+            "referenceRendererVersion": proxy.reference_renderer_version,
+            "outputProfile": output_profile,
+            "visualApproval": visual_approval,
+        });
+    }
+
     let bundle_bytes = serde_json::to_vec_pretty(&bundle_value).map_err(|error| {
         HostErrorEnvelope::persistence(format!("published bundle을 직렬화하지 못했어요: {error}"))
     })?;

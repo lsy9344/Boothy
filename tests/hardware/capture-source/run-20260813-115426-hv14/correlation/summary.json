@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "hv-14-correlation/v1",
+  "pairedRequestCount": 35,
+  "rejectedObjectCount": 0,
+  "fallbackCorrelationCount": 0,
+  "originalsJpegCount": 0,
+  "rawTruthPreserved": true,
+  "evidenceFiles": ["camera-helper-events.jsonl"]
+}

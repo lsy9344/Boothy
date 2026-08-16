@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "hv-14-capability/v1",
+  "currentBefore": "<hex value>",
+  "currentAfter": "<restored hex value>",
+  "rawPlusJpegSupported": false,
+  "descriptorValues": ["<raw descriptor hex>"],
+  "combinations": [
+    {
+      "value": "<combination hex>",
+      "status": "attempted",
+      "reason": "<why attempted or skipped>"
+    }
+  ]
+}

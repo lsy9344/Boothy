@@ -4,6 +4,8 @@ Status: review
 
 Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Story 1.8은 render-backed `previewReady` / `finalReady` truth owner로 유지하고, Story 1.9는 blank waiting을 줄이기 위한 first-visible same-capture preview latency 보정을 별도 corrective follow-up으로 소유한다. 이 스토리의 목적은 "정식 preview truth를 빠르게 만든다"가 아니라 "정식 preview truth를 느슨하게 만들지 않으면서도 고객이 방금 찍은 shot을 더 빨리 보게 한다"이다.
 
+Correct Course Note (2026-08-11): 이 문서의 과거 same-canonical-path 구현 기록은 역사적 증거로만 보존한다. 현재 승인 계약은 pending preview와 preset-applied preview를 capture-scoped immutable generation으로 게시하고, 완전 write/decode/dimension/correlation 검증 뒤 active preview pointer를 atomically 전환하는 것이다. 한 JPEG 경로의 in-place overwrite는 closure evidence로 인정하지 않는다.
+
 ### Validation Gate Reference
 
 - Supporting evidence family:
@@ -13,10 +15,10 @@ Correct Course Note: 2026-04-02 승인된 sprint change proposal에 따라, Stor
 - Missing canonical close proof:
   - helper fast preview가 same-capture / same-session 정합성을 유지한다는 증거
   - pending fast preview가 보여도 booth state가 계속 truthful `Preview Waiting`으로 남는다는 증거
-  - later XMP preview가 같은 canonical path를 교체하고 그때만 `previewReady`가 올라간다는 증거
+  - later XMP preview가 새 immutable generation으로 게시되고 validated pointer 전환 뒤에만 `previewReady`가 올라간다는 증거
   - burst capture와 cross-session 상황에서도 잘못된 이미지가 섞이지 않는다는 증거
 - Current hardware gate: `No-Go`
-- Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview, later XMP replacement, timing split, cross-session isolation을 한 패키지로 묶어야 한다.
+- Close policy: automated pass만으로 닫지 않는다. canonical hardware evidence는 first-visible fast preview generation, later XMP generation pointer transition, timing split, cross-session isolation을 한 패키지로 묶어야 한다.
 - Latest observed booth behavior (2026-04-03, user field observation):
   - `사진 찍기` 직후 booth state는 바로 `Preview Waiting`으로 진입했다.
   - `최근 세션`에는 촬영 직후 약 1초 안팎에 아무 pending fast preview도 보이지 않았다.
@@ -38,13 +40,19 @@ booth customer로서,
 ## Acceptance Criteria
 
 1. Story 1.7 경로로 active session의 RAW persistence가 성공한 뒤 helper 또는 host가 same-capture fast preview 경로를 제공할 수 있어야 한다. 이 handoff는 optional이어야 하며, fast preview가 없다고 capture success가 실패로 승격되면 안 된다.
-2. fast preview handoff가 존재할 때 host는 same-session, same-capture, allowed-path 규칙과 파일 유효성을 검증한 뒤에만 그 자산을 canonical preview 경로 `renders/previews/{captureId}.jpg` 또는 동등 canonical path로 승격할 수 있어야 한다. 이 시점에는 `previewReady`와 `preview.readyAtMs`를 올리면 안 된다.
-3. booth가 `Preview Waiting` 상태인 동안 valid한 same-capture fast preview가 이미 canonical preview path에 있으면 latest-photo rail과 confirmation surface는 그 pending preview를 먼저 보여줄 수 있어야 한다. 다만 booth state와 customer copy는 여전히 "확인용 사진 준비 중"을 유지해야 하며, preset-applied booth-safe preview가 이미 준비된 것처럼 보이면 안 된다.
-4. Story 1.8 render worker가 later preset-applied preview를 만들면 runtime은 그 결과로 같은 canonical preview path를 교체해야 하며, 그때만 `previewReady`, `preview.readyAtMs`, 관련 readiness update를 기록할 수 있어야 한다.
+2. fast preview handoff가 존재할 때 host는 same-session, same-request, same-capture, allowed-path 규칙과 파일 유효성을 검증한 뒤 session/capture-scoped immutable pending-preview generation으로 게시해야 한다. 이 시점에는 `previewReady`와 `preview.readyAtMs`를 올리면 안 된다.
+3. booth가 `Preview Waiting` 상태인 동안 valid한 same-capture pending-preview generation이 active pointer로 선택되면 latest-photo rail과 confirmation surface는 그 이미지를 먼저 보여줄 수 있어야 한다. 다만 booth state와 customer copy는 여전히 "확인용 사진 준비 중"을 유지해야 하며, preset-applied booth-safe preview가 이미 준비된 것처럼 보이면 안 된다.
+4. Story 1.8 render worker가 later preset-applied preview를 만들면 runtime은 그 결과를 더 높은 immutable generation으로 게시하고, 완전 write/decode/dimension/correlation 검증 뒤 active preview pointer를 atomically 전환해야 한다. 그때만 `previewReady`, `preview.readyAtMs`, 관련 readiness update를 기록할 수 있어야 하며 pending generation을 in-place overwrite하면 안 된다.
 5. fast preview가 missing, invalid, stale, wrong-session, wrong-capture, 손상 파일, 비허용 경로 등으로 판정되면 host는 그 자산을 조용히 폐기하고 기존 truthful `Preview Waiting` + normal render follow-up으로 안전하게 fallback 해야 한다. 이 경우에도 저장된 RAW와 active session truth는 유지되어야 한다.
 6. instrumentation과 diagnostics는 fast preview first-visible과 later preset-applied preview ready를 분리해 기록해야 한다. approved booth hardware 검증에서는 same-capture correctness, burst capture queue delay, cross-session leakage 0, 그리고 `Preview Waiting` copy truthfulness를 함께 증명해야 한다.
 
-## Tasks / Subtasks
+## Remediation Tasks / Subtasks
+
+- [ ] 기존 same-path replacement를 immutable pending/render-backed generation과 atomic pointer 전환으로 교체한다. (AC: 2, 3, 4)
+- [ ] partial write, stale revision, wrong request/capture/session, lower tier가 active pointer를 전환하지 못하는 회귀 테스트를 추가한다. (AC: 2, 4, 5)
+- [ ] first-visible pending generation과 later render-backed generation을 분리 계측하고 승인 하드웨어 evidence를 다시 수집한다. (AC: 6)
+
+## Historical Tasks / Subtasks (2026-08-11 이전 same-path 설계 기록)
 
 - [x] helper/host 계약에 optional fast preview handoff를 추가한다. (AC: 1, 5, 6)
   - [x] `docs/contracts/camera-helper-sidecar-protocol.md`에 `file-arrived` optional metadata로 `fastPreviewPath`, `fastPreviewKind` 또는 동등 필드를 추가하고 backward compatibility 규칙을 명시한다.
@@ -53,7 +61,7 @@ booth customer로서,
 
 - [x] host fast preview promotion 경로를 구현한다. (AC: 2, 5)
   - [x] `src-tauri/src/capture/normalized_state.rs` 또는 `src-tauri/src/capture/ingest_pipeline.rs`에서 fast preview validate/promote seam을 추가한다.
-  - [x] canonical preview path는 existing session root `renders/previews/{captureId}.jpg` 경로를 우선 재사용한다.
+  - [x] Historical (superseded): canonical preview path `renders/previews/{captureId}.jpg` 재사용 구현.
   - [x] promote 시 `preview.assetPath`만 채우고 `preview.readyAtMs`는 계속 `null`, `renderStatus`는 계속 `previewWaiting`으로 유지한다.
   - [x] invalid fast preview는 capture success를 깨지 않고 discard + fallback 되게 한다.
 
@@ -64,7 +72,7 @@ booth customer로서,
 
 - [x] Story 1.8 render path와 same-path replacement를 연결한다. (AC: 4)
   - [x] `src-tauri/src/render/mod.rs`의 canonical preview output path를 fast preview promote path와 충돌 없이 공유한다.
-  - [x] later render-backed output이 pending preview를 같은 canonical path에서 교체하고, 그때만 `previewReady`를 기록하도록 유지한다.
+  - [x] Historical (superseded): later render-backed output의 same-path 교체 구현.
   - [x] Story 1.8의 "render-backed `previewReady` only" 규칙을 절대 느슨하게 만들지 않는다.
 
 - [x] timing / diagnostics 분리를 추가한다. (AC: 6)
@@ -140,7 +148,7 @@ booth customer로서,
 - `src/session-domain/selectors/current-session-previews.ts`는 `renderStatus`가 `captureSaved` 또는 `previewWaiting`이고 `preview.readyAtMs === null`인 경우에도 session-scoped preview asset이 있으면 displayable pending preview로 노출한다.
 - `src/booth-shell/components/SessionPreviewImage.tsx`는 `readyAtMs === null`을 pending preview로 취급하고 `current-session-preview-pending-visible` telemetry를 남길 준비가 되어 있다.
 - `src-tauri/src/commands/capture_commands.rs`는 아직 `120ms` sleep 뒤 `complete_preview_render_in_dir(...)`를 시작한다. 이 경로는 Story 1.9에서도 유지하되, fast preview first-visible path와 분리 측정돼야 한다.
-- `src-tauri/src/render/mod.rs`는 이미 canonical preview output path `renders/previews/{captureId}.jpg`를 사용한다. Story 1.9는 이 same path replacement 전략을 유지하는 편이 가장 안전하다.
+- Historical implementation은 `renders/previews/{captureId}.jpg` same-path replacement를 사용한다. 2026-08-11 승인 계약에 따라 이 경로는 immutable generation + atomic pointer 전환으로 교체해야 한다.
 
 ### 이전 스토리 인텔리전스
 
@@ -194,9 +202,9 @@ booth customer로서,
 ### 테스트 요구사항
 
 - 최소 필수 테스트:
-  - helper `file-arrived`에 fast preview metadata가 있는 경우 canonical preview path로 promote 된다.
+  - helper `file-arrived`에 fast preview metadata가 있는 경우 immutable pending-preview generation으로 게시된다.
   - fast preview가 있어도 `renderStatus`는 계속 `previewWaiting`이고 `readyAtMs`는 `null`이다.
-  - later render-backed preview가 같은 canonical path를 교체하고 그때만 `previewReady`가 된다.
+  - later render-backed preview가 higher immutable generation으로 게시되고 validated pointer 전환 뒤에만 `previewReady`가 된다.
   - fast preview missing / invalid / wrong-session / wrong-capture / corrupted file은 discard + fallback 된다.
   - current-session selector는 pending preview를 노출하지만 false-ready를 만들지 않는다.
   - burst capture 시 queue delay가 있어도 이전 shot이나 다른 session shot이 rail에 섞이지 않는다.

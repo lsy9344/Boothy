@@ -2,14 +2,16 @@
 
 Status: done
 
-Correct Course Note: persisted RAW truth와 truthful preview readiness evidence(HV-04, HV-05)가 canonical ledger 기준으로 닫혔다. 2026-03-31 실장비 검증에서 persisted RAW, preview artifact, 그리고 `session.json` capture timing metrics가 한 패키지로 확인되어 Story 1.5는 `done`으로 올린다. Story 1.7은 capture correlation supporting evidence를 공급하지만 canonical close ownership은 이 문서와 ledger가 소유한다.
+Correct Course Note: 2026-08-11 구현 준비성 보정에 따라 이 Story는 저장 완료와 `Preview Waiting`의 고객 상태·문구를 소유한다. 실제 capture request, RAW 도착, 세션 저장 correlation은 Story 1.7이 소유하고 preset-applied `previewReady`와 render truth는 Story 1.8이 소유한다. 2026-03-31 HV-04/HV-05 Go package는 삭제하지 않고 Story 1.5의 회귀 증거로 보존한다.
 
 ### Hardware Gate Reference
 
 - Canonical ledger: `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`
-- Required HV checklist IDs: `HV-04`, `HV-05`
+- Historical regression HV checklist IDs: `HV-04`, `HV-05`
+- Current story status: `done`
 - Current hardware gate: `Go`
-- Close policy: `automated pass` alone does not close this story; canonical ledger row `Go`가 기록되어 `done` 기준을 충족했다.
+- Close policy: `automated pass`만으로 닫지 않고 canonical hardware evidence의 `Go`를 요구한다.
+- Release ownership: Story 1.7 owns canonical `HV-04`; Story 1.8 owns canonical `HV-05` and render-backed preview truth.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -19,11 +21,18 @@ booth customer로서,
 촬영 성공과 프리뷰 준비 상태가 분리되어 안내되길 원한다.
 그래서 확인용 프리뷰가 아직 준비되지 않았더라도 내 사진이 안전하게 저장되었음을 신뢰할 수 있다.
 
+## Scope Ownership
+
+- Story 1.5는 host가 제공하는 persisted-capture truth를 저장 완료 안내와 `Preview Waiting` 고객 경험으로 표현한다.
+- Story 1.7은 실카메라 request correlation, RAW file arrival, session persistence의 실제 통합을 소유한다.
+- Story 1.8은 capture-bound preset을 적용한 `previewReady`와 render-backed timing truth를 소유한다.
+- Story 1.5의 `done`은 상태 모델과 고객 안내 완료를 뜻하며 Story 1.7/1.8의 출시 검증을 대체하지 않는다.
+
 ## Acceptance Criteria
 
-1. booth가 유효한 촬영 가능 상태이고 활성 프리셋이 선택된 상태에서 고객이 촬영에 성공하면, 새 소스 사진은 성공 안내 전에 활성 세션에 먼저 안전하게 저장되어야 한다. 또한 활성 프리셋은 캡처 또는 확인 surface에서 계속 보여야 한다.
+1. booth가 유효한 촬영 가능 상태이고 활성 프리셋이 선택된 상태에서 host가 현재 세션에 상관된 persisted-capture truth를 보고하면, 고객 성공 안내는 해당 truth 이후에만 표시되어야 한다. 또한 활성 프리셋은 캡처 또는 확인 surface에서 계속 보여야 한다.
 2. 성공적으로 저장된 촬영의 고객 안전 프리뷰가 아직 준비되지 않았다면 booth는 `Preview Waiting`에 진입해야 하며, 첫 문장은 사진 저장 완료를 확인하고 다음 문장은 확인용 프리뷰 준비 중과 지금 가능한 다음 행동을 설명해야 한다.
-3. 성공적으로 인정된 촬영의 즉시 결과는 승인된 하드웨어에서 1초 이내에 인지 가능해야 하며, 현재 세션 프리뷰 확인은 95백분위 기준 5초 이내에 보여야 한다. 준비가 더 걸리면 false-ready 상태 대신 truthful `Preview Waiting`을 유지해야 한다.
+3. 성공적으로 인정된 촬영의 즉시 결과는 1초 이내에 인지 가능해야 한다. preset-applied preview truth가 아직 도착하지 않았다면 시간 경과만으로 준비 완료를 추론하지 않고 truthful `Preview Waiting`을 유지해야 하며, 실제 render 및 viewer 성능 기준은 Story 1.8과 Epic 7의 NFR-003 검증이 소유한다.
 4. booth가 `Preview Waiting` 상태일 때 최신 사진 레일이 아직 비어 있어도 현재 세션 기준 정상일 수 있음을 설명해야 하며, 고객에게 내부 렌더 실패 원인이나 helper/filesystem 진단어를 노출하면 안 된다.
 
 ## Tasks / Subtasks

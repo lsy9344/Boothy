@@ -193,6 +193,7 @@ fn operator_audit_records_publication_rejection_success_and_catalog_rollback_wit
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("duplicate version should return a typed rejection");
@@ -210,6 +211,7 @@ fn operator_audit_records_publication_rejection_success_and_catalog_rollback_wit
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: Some("현재 세션 유지".into()),
+            proxy_publication: None,
         },
     )
     .expect("publication should succeed");

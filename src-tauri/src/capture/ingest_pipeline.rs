@@ -43,8 +43,9 @@ const SPECULATIVE_PREVIEW_WAIT_MS: u64 = 160;
 const SPECULATIVE_PREVIEW_POLL_MS: u64 = 40;
 const PREVIEW_REFINEMENT_IDLE_WAIT_MS: u64 = 5000;
 const PREVIEW_REFINEMENT_IDLE_POLL_MS: u64 = 80;
-const PREVIEW_REFINEMENT_QUEUE_WAIT_MS: u64 = 1200;
-const PREVIEW_REFINEMENT_QUEUE_POLL_MS: u64 = 80;
+// Story 7.6이 `PREVIEW_REFINEMENT_QUEUE_WAIT_MS` / `_POLL_MS`를 제거했다.
+// 렌더 큐가 이제 실제로 기다리므로, 여기서 같은 대기를 다시 구현하면
+// 실제 대기 시간이 evidence에서 두 배로 보인다.
 
 struct FastPreviewPromotionResult {
     asset_path: String,
@@ -584,33 +585,19 @@ fn has_in_flight_capture_for_runtime(base_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// 384px 레일의 preview 정밀화. **Story 7.6 이후 이 작업은 P2로 줄을 선다.**
+///
+/// 이전에는 렌더 큐가 가득 차면 `render-queue-saturated`로 즉시 실패했기 때문에
+/// 여기서 직접 재시도 loop를 돌려야 했다. 이제 스케줄러가 대신 기다리므로 그 loop는 사라진다 —
+/// 두 곳에서 같은 대기를 구현하면 실제 대기 시간이 evidence에서 두 배로 보인다.
+///
+/// **이 작업은 display 이벤트로 취소되지 않는다.** 삭제와 세션 교체만 취소한다.
 fn render_refined_preview_when_queue_allows(
     base_dir: &Path,
     session_id: &str,
     capture: &SessionCaptureRecord,
 ) -> Result<crate::render::RenderedCaptureAsset, crate::render::RenderWorkerError> {
-    let wait_cycles = (PREVIEW_REFINEMENT_QUEUE_WAIT_MS / PREVIEW_REFINEMENT_QUEUE_POLL_MS).max(1);
-    let mut last_error = None;
-
-    for attempt in 0..=wait_cycles {
-        match render_capture_asset_from_raw_in_dir(
-            base_dir,
-            session_id,
-            capture,
-            RenderIntent::Preview,
-        ) {
-            Ok(value) => return Ok(value),
-            Err(error)
-                if error.reason_code == "render-queue-saturated" && attempt < wait_cycles =>
-            {
-                last_error = Some(error);
-                thread::sleep(Duration::from_millis(PREVIEW_REFINEMENT_QUEUE_POLL_MS));
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    Err(last_error.expect("queue retry loop should store the last saturation error"))
+    render_capture_asset_from_raw_in_dir(base_dir, session_id, capture, RenderIntent::Preview)
 }
 
 fn finish_preview_render_in_dir(

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cbdb8b9e504c74",
+  "boothAlias": "HV15불일치검증 7418",
+  "customer": {
+    "name": "HV15불일치검증",
+    "phoneLastFour": "7418"
+  },
+  "createdAt": "2026-08-15T03:04:29Z",
+  "updatedAt": "2026-08-15T03:05:14Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cbdb8b9e504c74",
+    "adjustedEndAt": "2026-08-15T03:19:29Z",
+    "warningAt": "2026-08-15T03:14:29Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbdb8b9e504c74",
+      "boothAlias": "HV15불일치검증 7418",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260815030507446_0bedffa43d",
+      "requestId": "request_00000000000006590d344af118",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbdb8b9e504c74\\captures\\originals\\capture_20260815030507446_0bedffa43d.CR2",
+        "persistedAtMs": 1786763110440
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbdb8b9e504c74\\renders\\previews\\capture_20260815030507446_0bedffa43d.jpg",
+        "enqueuedAtMs": 1786763110440,
+        "readyAtMs": 1786763114338
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786763107460,
+        "previewVisibleAtMs": 1786763114338,
+        "fastPreviewVisibleAtMs": 1786763110853,
+        "xmpPreviewReadyAtMs": 1786763114338,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": null
+}

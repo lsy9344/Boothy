@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "hv15-wrong-frame-summary/v1",
+  "committedGenerationCount": 0,
+  "wrongFrameCount": 0,
+  "decision": "not-evaluable",
+  "reason": "no frame reached the customer viewer"
+}

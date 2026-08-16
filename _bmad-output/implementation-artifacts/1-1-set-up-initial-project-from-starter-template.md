@@ -14,6 +14,7 @@ owner / brand operator로서,
 
 1. 초기 상태의 새 프로젝트를 MVP 개발용으로 초기화하면, 승인된 `Vite react-ts + Tauri` 기준선 위에 `/booth`, `/operator`, `/authoring`, `/settings` 최상위 surface가 존재해야 한다. 또한 운영자/저작 surface는 기본 고객 흐름에 노출되지 않고 capability check 뒤에 있어야 한다.
 2. 기본 고객 실행 경로에서 앱을 열면 관리자 인증 없이 도달 가능한 화면은 booth surface뿐이어야 한다. 또한 고객 UI 어디에서도 운영자 제어 또는 내부 프리셋 저작 제어가 보이면 안 된다.
+3. clean checkout과 committed lockfile을 기준으로 dependency 설치, frontend dev/build smoke, Tauri integration/package smoke, 초기 CI baseline이 성공해야 한다. 완료 증거는 승인된 명령 출력 또는 CI run reference로 남겨야 한다.
 
 ## Tasks / Subtasks
 
@@ -70,7 +71,7 @@ owner / brand operator로서,
 - 앱은 로컬 우선 Windows 데스크톱 Tauri 애플리케이션이다. [Source: _bmad-output/planning-artifacts/architecture.md#System Overview]
 - Rust host가 장기적으로 세션, 타이밍, 캡처, 렌더, 완료 상태의 단일 정규화 계층이 된다. 이번 story에서는 그 경계를 허물지 않는 폴더 구조와 호출 경계만 먼저 만든다. [Source: _bmad-output/planning-artifacts/architecture.md#Core Architectural Decisions]
 - 활성 세션의 진실은 나중에 세션 파일시스템 루트와 `session.json`이 소유해야 하므로, 지금 단계에서 React route state나 local component state를 장기 truth처럼 설계하면 안 된다. [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
-- SQLite는 감사 로그용이지 사진/세션 자산의 원본 진실이 아니다. Story 1.1에서는 SQLite 중심 설계를 도입하지 말 것. [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
+- Versioned JSON/JSONL journal이 감사 기록의 MVP 진실이며 SQLite는 rebuildable derived index로만 허용된다. Story 1.1에서는 SQLite 중심 설계를 도입하지 말 것. [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
 
 ### 프로젝트 구조 요구사항
 

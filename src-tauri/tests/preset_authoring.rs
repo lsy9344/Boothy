@@ -503,6 +503,7 @@ fn published_records_cannot_be_saved_or_revalidated_from_the_4_2_authoring_flow(
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("publish should succeed");
@@ -566,6 +567,7 @@ fn publication_rejects_actor_label_and_review_note_that_exceed_host_contract_lim
             actor_label: "K".repeat(121),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect_err("actor label longer than the shared contract should be rejected");
@@ -582,6 +584,7 @@ fn publication_rejects_actor_label_and_review_note_that_exceed_host_contract_lim
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: Some("n".repeat(2001)),
+            proxy_publication: None,
         },
     )
     .expect_err("review note longer than the shared contract should be rejected");
@@ -940,6 +943,7 @@ fn validated_draft_publishes_an_immutable_bundle_and_future_sessions_can_select_
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: Some("현재 세션 유지".into()),
+            proxy_publication: None,
         },
     )
     .expect("publish should succeed");
@@ -1069,6 +1073,115 @@ fn default_catalog_bootstraps_first_run_booth_presets() {
         .iter()
         .all(|preset| preset.preview.asset_path.ends_with(".svg")));
 
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let soft_glow_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_soft-glow")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Soft Glow XMP should exist");
+    let mono_pop_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_mono-pop")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Mono Pop XMP should exist");
+    let daylight_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_daylight")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("Daylight XMP should exist");
+    assert!(soft_glow_xmp.contains("darktable:operation=\"sigmoid\""));
+    assert!(soft_glow_xmp.contains("darktable:operation=\"bloom\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"monochrome\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"sharpen\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"temperature\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"sharpen\""));
+
+    for (preset_id, expected_operation) in [
+        ("preset_soft-glow", "bloom"),
+        ("preset_mono-pop", "monochrome"),
+        ("preset_daylight", "temperature"),
+    ] {
+        let bundle_dir = catalog_root.join(preset_id).join("2026.03.27");
+        let bundle = load_published_preset_runtime_bundle(&bundle_dir)
+            .unwrap_or_else(|| panic!("{preset_id} runtime bundle should load"));
+        let publication = bundle
+            .proxy_publication
+            .unwrap_or_else(|reason| panic!("{preset_id} approval missing: {}", reason.as_str()));
+
+        assert!(publication
+            .supported_operations
+            .iter()
+            .any(|operation| operation == expected_operation));
+        assert_eq!(
+            publication.visual_approval_approved_by.as_deref(),
+            Some("Noah Lee (manual product approval)")
+        );
+    }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn default_catalog_upgrades_placeholder_xmp_for_seeded_filters() {
+    let base_dir = unique_test_root("default-catalog-filter-upgrade");
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("default booth presets should be created for first run");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+    let placeholder =
+        include_str!("../src/preset/default_catalog_assets/default-render-template.xmp");
+
+    for preset_id in ["preset_soft-glow", "preset_mono-pop", "preset_daylight"] {
+        fs::write(
+            catalog_root
+                .join(preset_id)
+                .join("2026.03.27")
+                .join("xmp")
+                .join("template.xmp"),
+            placeholder,
+        )
+        .expect("placeholder XMP should be writable");
+    }
+
+    ensure_default_preset_catalog_in_dir(&base_dir)
+        .expect("placeholder XMP should be upgraded in place");
+
+    let soft_glow_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_soft-glow")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Soft Glow XMP should exist");
+    let mono_pop_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_mono-pop")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Mono Pop XMP should exist");
+    let daylight_xmp = fs::read_to_string(
+        catalog_root
+            .join("preset_daylight")
+            .join("2026.03.27")
+            .join("xmp")
+            .join("template.xmp"),
+    )
+    .expect("upgraded Daylight XMP should exist");
+    assert!(soft_glow_xmp.contains("darktable:operation=\"sigmoid\""));
+    assert!(mono_pop_xmp.contains("darktable:operation=\"monochrome\""));
+    assert!(daylight_xmp.contains("darktable:operation=\"temperature\""));
+
     let _ = fs::remove_dir_all(base_dir);
 }
 
@@ -1138,6 +1251,7 @@ fn default_catalog_bootstrap_upgrades_legacy_default_seed_bundles_for_runtime_re
     assert_eq!(runtime_bundle.preset_id, "preset_daylight");
     assert_eq!(runtime_bundle.darktable_version, "5.4.1");
     assert!(runtime_bundle.xmp_template_path.is_file());
+    assert!(runtime_bundle.has_approved_visual_parity());
 
     let _ = fs::remove_dir_all(base_dir);
 }
@@ -1555,6 +1669,7 @@ fn publication_rejection_keeps_catalog_and_active_session_unchanged_and_records_
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("duplicate publish should return a rejection");
@@ -1600,6 +1715,7 @@ fn publication_rejection_keeps_catalog_and_active_session_unchanged_and_records_
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("stale validation should also return a rejection");
@@ -1649,6 +1765,7 @@ fn publication_rejects_metadata_mismatch_and_future_session_scope_violations() {
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("metadata mismatch should return a rejection");
@@ -1674,6 +1791,7 @@ fn publication_rejects_metadata_mismatch_and_future_session_scope_violations() {
             actor_label: "Kim Manager".into(),
             scope: "active-session".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("active-session scope should return a rejection");
@@ -1733,6 +1851,7 @@ fn publication_rejects_workspace_symlink_escapes_without_creating_a_bundle() {
             actor_label: "Kim Manager".into(),
             scope: "future-sessions-only".into(),
             review_note: None,
+            proxy_publication: None,
         },
     )
     .expect("path escape should return a rejection");

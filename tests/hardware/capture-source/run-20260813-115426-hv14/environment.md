@@ -1,0 +1,24 @@
+# HV-14 Environment
+
+- recordedAt: `2026-08-14T21:20:04+09:00`
+- validator: `Noah Lee`
+- booth PC: `NOAH_WIN`
+- app commit: `c390f53 + uncommitted Story 7.3 review changes`
+- OS: `Windows 11 Pro 10.0.26200 (build 26200)`
+- CPU / RAM: `Intel Core i9-9900KF / 63.9 GB`
+- GPU / driver: `NVIDIA GeForce GTX 1080 / 32.0.15.6094`
+- camera: `Canon EOS 700D`
+- camera firmware: `unknown; official latest 1.1.5, non-blocking for the EF-S 18-55mm lens`
+- lens: `Canon EF-S 18-55mm bundle lens; exact revision unknown`
+- memory card: `none; EDSDK SaveTo Host over direct PC USB`
+- power: `continuous AC power; adapter/coupler model unknown`
+- USB port / cable / hub: `Port 6 / existing working camera USB cable / direct PC connection, no hub reported`
+- Canon EDSDK: `13.19.0`
+- helper / protocol: `0.1.0 / camera-helper-sidecar/v2`
+- source comparison mode: `ab`
+- display sample mode: `off`
+- Image Quality before: `0x00640013`
+- Image Quality after: `0x00640013`
+- Image Quality restoration evidence: `the first and final capability events both reported 6553619; no camera-setting-warning; post-run self-check returned camera-ready`
+- scene plan: `user-approved limited run: one fixed current booth composition for all 35 shutters; no multi-scene quality corpus claim`
+- evidence scope: `technical route availability, correlation, dimensions/decode/orientation, success rate, and timing only; this run cannot alone satisfy the four-scene human quality gate`

@@ -162,6 +162,102 @@ pub struct CanonHelperFileArrivedMessage {
     pub fast_preview_path: Option<String>,
     #[serde(default)]
     pub fast_preview_kind: Option<String>,
+    // --- Story 7.3 (protocol v2): multi-object correlation 진단 필드 ---
+    // 전부 optional이며 **기존 필드의 의미를 바꾸지 않는다.** v1 helper가 이 값들을
+    // 보내지 않아도 host의 기존 정규화는 그대로 동작한다.
+    /// 같은 촬영 안에서 이 transfer object가 몇 번째로 도착했는가. 0부터.
+    #[serde(default)]
+    pub object_index: Option<u32>,
+    /// `EdsDirectoryItemInfo.groupID`. 0이거나 없으면 보조 correlation을 쓴 것이다.
+    #[serde(default)]
+    pub group_id: Option<u32>,
+    /// `raw` 또는 `jpeg`. 확장자가 아니라 SDK 정보로 판정한 값이다.
+    #[serde(default)]
+    pub object_role: Option<String>,
+    #[serde(default)]
+    pub used_fallback_correlation: Option<bool>,
+}
+
+/// helper → host. 카메라가 스스로 보고한 image-quality capability descriptor (protocol v2).
+///
+/// **지원 여부를 가정하지 않기 위한 메시지다.** descriptor에 없는 조합은 시도조차 하지 않고
+/// `unsupported-combination`으로 기록한다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperImageQualityCapabilityMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub observed_at: String,
+    pub probed_at_host_micros: u64,
+    pub descriptor_available: bool,
+    #[serde(default)]
+    pub current_value: Option<i64>,
+    #[serde(default)]
+    pub supported_values: Vec<i64>,
+    pub raw_plus_jpeg_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperSourceObjectArrivedMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub observed_at: String,
+    pub asset_path: String,
+    pub byte_size: u64,
+    pub object_index: u32,
+    #[serde(default)]
+    pub group_id: Option<u32>,
+    pub object_role: String,
+    pub used_fallback_correlation: bool,
+    pub role_signal: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperSourceObjectRejectedMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    #[serde(default)]
+    pub capture_id: Option<String>,
+    pub observed_at: String,
+    pub reject_reason: String,
+    pub object_role: String,
+    #[serde(default)]
+    pub object_index: Option<u32>,
+    #[serde(default)]
+    pub group_id: Option<u32>,
+    pub used_fallback_correlation: bool,
+    #[serde(default)]
+    pub role_signal: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonHelperCameraSettingWarningMessage {
+    #[serde(default)]
+    pub schema_version: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: String,
+    pub observed_at: String,
+    pub detail_code: String,
 }
 
 #[derive(Debug, Clone)]
@@ -239,6 +335,10 @@ enum CanonHelperEvent {
     FastPreviewReady(CanonHelperFastPreviewReadyMessage),
     FastThumbnailFailed(CanonHelperFastThumbnailFailedMessage),
     FileArrived(CanonHelperFileArrivedMessage),
+    ImageQualityCapability(CanonHelperImageQualityCapabilityMessage),
+    SourceObjectArrived(CanonHelperSourceObjectArrivedMessage),
+    SourceObjectRejected(CanonHelperSourceObjectRejectedMessage),
+    CameraSettingWarning(CanonHelperCameraSettingWarningMessage),
     RecoveryStatus(CanonHelperRecoveryStatusMessage),
     HelperError(CanonHelperErrorMessage),
 }
@@ -334,6 +434,26 @@ pub fn read_capture_event_count(
     session_id: &str,
 ) -> Result<usize, SidecarClientError> {
     Ok(read_capture_event_messages(base_dir, session_id)?.len())
+}
+
+pub fn read_latest_source_object_arrival(
+    base_dir: &Path,
+    session_id: &str,
+    request_id: &str,
+    capture_id: &str,
+) -> Result<Option<CanonHelperSourceObjectArrivedMessage>, SidecarClientError> {
+    let events = read_capture_event_messages(base_dir, session_id)?;
+
+    Ok(events.into_iter().rev().find_map(|event| match event {
+        CanonHelperEvent::SourceObjectArrived(message)
+            if message.session_id == session_id
+                && message.request_id == request_id
+                && message.capture_id == capture_id =>
+        {
+            Some(message)
+        }
+        _ => None,
+    }))
 }
 
 pub fn read_latest_helper_error_message(
@@ -449,6 +569,28 @@ where
                         capture_accepted_at_ms: accepted_at_ms,
                         persisted_at_ms,
                     });
+                }
+                CanonHelperEvent::ImageQualityCapability(message) => {
+                    // Capability telemetry is advisory and must not interrupt a capture.
+                    if message.session_id != session_id {
+                        continue;
+                    }
+                }
+                CanonHelperEvent::SourceObjectArrived(message) => {
+                    if message.session_id != session_id || message.request_id != request_id {
+                        continue;
+                    }
+                }
+                CanonHelperEvent::SourceObjectRejected(message) => {
+                    if message.session_id != session_id || message.request_id != request_id {
+                        continue;
+                    }
+                }
+                CanonHelperEvent::CameraSettingWarning(message) => {
+                    // Advisory only: a restore warning must not invalidate persisted RAW truth.
+                    if message.session_id != session_id || message.request_id != request_id {
+                        continue;
+                    }
                 }
                 CanonHelperEvent::RecoveryStatus(message) => {
                     if message.session_id != session_id {
@@ -600,6 +742,26 @@ fn parse_capture_event(line: &str) -> Result<CanonHelperEvent, SidecarClientErro
         "file-arrived" => serde_json::from_value::<CanonHelperFileArrivedMessage>(value)
             .map(CanonHelperEvent::FileArrived)
             .map_err(|_| SidecarClientError::InvalidEvents),
+        "image-quality-capability" => {
+            serde_json::from_value::<CanonHelperImageQualityCapabilityMessage>(value)
+                .map(CanonHelperEvent::ImageQualityCapability)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        "source-object-arrived" => {
+            serde_json::from_value::<CanonHelperSourceObjectArrivedMessage>(value)
+                .map(CanonHelperEvent::SourceObjectArrived)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        "source-object-rejected" => {
+            serde_json::from_value::<CanonHelperSourceObjectRejectedMessage>(value)
+                .map(CanonHelperEvent::SourceObjectRejected)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
+        "camera-setting-warning" => {
+            serde_json::from_value::<CanonHelperCameraSettingWarningMessage>(value)
+                .map(CanonHelperEvent::CameraSettingWarning)
+                .map_err(|_| SidecarClientError::InvalidEvents)
+        }
         "recovery-status" => serde_json::from_value::<CanonHelperRecoveryStatusMessage>(value)
             .map(CanonHelperEvent::RecoveryStatus)
             .map_err(|_| SidecarClientError::InvalidEvents),
@@ -729,4 +891,76 @@ fn current_time_ms() -> Result<u64, std::time::SystemTimeError> {
 
 fn strip_utf8_bom_prefix(value: &str) -> &str {
     value.trim_start_matches('\u{feff}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_image_quality_capability_without_invalidating_the_event_stream() {
+        let event = parse_capture_event(
+            r#"{"schemaVersion":"canon-helper-image-quality-capability/v1","type":"image-quality-capability","sessionId":"session_01hzzzzzzzzzzzzzzzzzzzzzzz","observedAt":"2026-08-12T10:15:30Z","probedAtHostMicros":1723460130123456,"descriptorAvailable":true,"currentValue":6553619,"supportedValues":[1048591,6553619],"rawPlusJpegSupported":true}"#,
+        )
+        .expect("capability event should be additive");
+
+        let CanonHelperEvent::ImageQualityCapability(message) = event else {
+            panic!("expected image-quality-capability event");
+        };
+
+        assert_eq!(message.session_id, "session_01hzzzzzzzzzzzzzzzzzzzzzzz");
+        assert!(message.descriptor_available);
+        assert!(message.raw_plus_jpeg_supported);
+        assert_eq!(message.probed_at_host_micros, 1_723_460_130_123_456);
+        assert_eq!(message.supported_values.len(), 2);
+    }
+
+    #[test]
+    fn parses_source_object_arrival_with_correlation_evidence() {
+        let event = parse_capture_event(
+            r#"{"schemaVersion":"canon-helper-source-object-arrived/v1","type":"source-object-arrived","sessionId":"session_01hzzzzzzzzzzzzzzzzzzzzzzz","requestId":"request-1","captureId":"capture-1","observedAt":"2026-08-12T10:15:31Z","assetPath":"C:\\runtime\\paired.jpg","byteSize":1234,"objectIndex":1,"groupId":42,"objectRole":"jpeg","usedFallbackCorrelation":false,"roleSignal":"sdkformat"}"#,
+        )
+        .expect("source object event should be additive");
+
+        let CanonHelperEvent::SourceObjectArrived(message) = event else {
+            panic!("expected source-object-arrived event");
+        };
+
+        assert_eq!(message.capture_id, "capture-1");
+        assert_eq!(message.object_index, 1);
+        assert_eq!(message.group_id, Some(42));
+        assert!(!message.used_fallback_correlation);
+    }
+
+    #[test]
+    fn parses_source_object_rejection_without_invalidating_capture() {
+        let event = parse_capture_event(
+            r#"{"schemaVersion":"canon-helper-source-object-rejected/v1","type":"source-object-rejected","sessionId":"session_01hzzzzzzzzzzzzzzzzzzzzzzz","requestId":"request-1","captureId":"capture-1","observedAt":"2026-08-12T10:15:31Z","rejectReason":"group-mismatch","objectRole":"jpeg","objectIndex":1,"groupId":43,"usedFallbackCorrelation":false,"roleSignal":"sdkformat","fileName":"IMG_0002.JPG"}"#,
+        )
+        .expect("source rejection event should be additive");
+
+        let CanonHelperEvent::SourceObjectRejected(message) = event else {
+            panic!("expected source-object-rejected event");
+        };
+
+        assert_eq!(message.reject_reason, "group-mismatch");
+        assert_eq!(message.object_index, Some(1));
+        assert_eq!(message.group_id, Some(43));
+    }
+
+    #[test]
+    fn parses_camera_setting_warning_as_advisory_telemetry() {
+        let event = parse_capture_event(
+            r#"{"schemaVersion":"canon-helper-camera-setting-warning/v1","type":"camera-setting-warning","sessionId":"session_01hzzzzzzzzzzzzzzzzzzzzzzz","requestId":"request-1","captureId":"capture-1","observedAt":"2026-08-12T10:15:34Z","detailCode":"image-quality-restore-failed"}"#,
+        )
+        .expect("camera setting warning should be additive");
+
+        let CanonHelperEvent::CameraSettingWarning(message) = event else {
+            panic!("expected camera-setting-warning event");
+        };
+
+        assert_eq!(message.request_id, "request-1");
+        assert_eq!(message.capture_id, "capture-1");
+        assert_eq!(message.detail_code, "image-quality-restore-failed");
+    }
 }

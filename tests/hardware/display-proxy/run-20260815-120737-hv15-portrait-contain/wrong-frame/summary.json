@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "hv15-wrong-frame-summary/v1",
+  "scenarios": {
+    "S1_firstCapture": "pass",
+    "S2_threeConsecutiveCaptures": "pass",
+    "S3_presetSwitch": "pass",
+    "S4_delete": "pass-after-fix-and-rerun",
+    "S5_rendererMismatch": "pass-after-helper-restart",
+    "S6_newSessionIsolation": "pass"
+  },
+  "wrongSession": 0,
+  "wrongRequest": 0,
+  "wrongCapture": 0,
+  "wrongPreset": 0,
+  "unfilteredQualifying": 0,
+  "blankUnexpected": 0,
+  "stale": 0,
+  "upscaled": 0,
+  "cropJump": 0,
+  "scaleJump": 0,
+  "tierDowngrade": 0,
+  "notes": "S4 initially exposed a real delete defect; this package records only the successful rerun as pass and preserves the defect/fix history in result.md and delete/summary.json."
+}

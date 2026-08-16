@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "hv-13b-integrity-check/v1",
+  "sessionId": "session_000000000018cb01461b43d49c",
+  "checks": "asset exists, byteSize matches journal, FNV-1a 64 sourceHash matches journal",
+  "generations": [
+    {"generationSeq": 1, "variant": "a", "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 2, "variant": "b", "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true},
+    {"generationSeq": 3, "variant": "a", "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 4, "variant": "b", "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true},
+    {"generationSeq": 5, "variant": "a", "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 6, "variant": "b", "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true},
+    {"generationSeq": 7, "variant": "a", "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 8, "variant": "b", "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true},
+    {"generationSeq": 9, "variant": "a", "byteSize": 701308, "sourceHash": "fnv1a64:3b9de2a0d1444657", "pass": true},
+    {"generationSeq": 10, "variant": "b", "byteSize": 719796, "sourceHash": "fnv1a64:2f2a1a2f89cb8d4b", "pass": true}
+  ],
+  "passed": 10,
+  "failed": 0
+}
+

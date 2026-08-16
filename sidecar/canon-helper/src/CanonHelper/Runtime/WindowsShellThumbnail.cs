@@ -4,13 +4,62 @@ using System.Runtime.InteropServices;
 
 namespace CanonHelper.Runtime;
 
+/// <summary>
+/// 요청 크기와 실제 산출 크기가 다를 수 있는 Shell 썸네일 경로.
+/// </summary>
+/// <remarks>
+/// Story 7.3 Route C(incumbent 기준선)의 계측 결과다. <c>BiggerSizeOk</c>는 요청보다 큰
+/// 캐시본을 허용하므로 <see cref="RequestedEdgePx"/>와 <see cref="WidthPx"/>가 일치한다는
+/// 보장이 없다. display-fit 판정(Story 7.4)의 입력은 요청값이 아니라 실측값이어야 한다.
+/// </remarks>
+internal sealed record ShellThumbnailMeasurement(
+    bool Succeeded,
+    int RequestedEdgePx,
+    int WidthPx,
+    int HeightPx,
+    long ByteSize,
+    long ExtractionCostMicros,
+    string? FailureDetailCode
+);
+
 internal static class WindowsShellThumbnail
 {
+    /// <summary>제품 코드가 오랫동안 써 온 요청 크기. 이 Story는 값을 바꾸지 않는다.</summary>
+    internal const int RequestedEdgePx = 1600;
+
     public static bool TrySavePreviewJpeg(string rawPath, string previewPath)
     {
-        if (!OperatingSystem.IsWindows() || !File.Exists(rawPath))
+        return Measure(rawPath, previewPath).Succeeded;
+    }
+
+    /// <summary>
+    /// 썸네일을 저장하면서 <b>실제 산출 크기와 추출 비용</b>을 함께 돌려준다.
+    /// </summary>
+    /// <remarks>
+    /// 실패해도 예외를 던지지 않는다. incumbent는 best-effort 경로이며 RAW truth와 무관하다.
+    /// 실패 표본도 고유 detail code와 함께 남는다 — 행이 없는 시도를 만들면 성공률 분모가
+    /// 조용히 줄어 기준선이 실제보다 좋아 보인다.
+    /// </remarks>
+    public static ShellThumbnailMeasurement Measure(string rawPath, string previewPath)
+    {
+        var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        long ElapsedMicros() =>
+            (System.Diagnostics.Stopwatch.GetTimestamp() - startedAt)
+            * 1_000_000L
+            / System.Diagnostics.Stopwatch.Frequency;
+
+        ShellThumbnailMeasurement Failure(string detailCode) =>
+            new(false, RequestedEdgePx, 0, 0, 0, ElapsedMicros(), detailCode);
+
+        if (!OperatingSystem.IsWindows())
         {
-            return false;
+            return Failure("shell-thumbnail-unsupported-os");
+        }
+
+        if (!File.Exists(rawPath))
+        {
+            return Failure("shell-thumbnail-source-missing");
         }
 
         IntPtr bitmapHandle = IntPtr.Zero;
@@ -24,7 +73,7 @@ internal static class WindowsShellThumbnail
                 out IShellItemImageFactory imageFactory
             );
             imageFactory.GetImage(
-                new NativeSize { Width = 1600, Height = 1600 },
+                new NativeSize { Width = RequestedEdgePx, Height = RequestedEdgePx },
                 ShellItemImageFlags.ResizeToFit
                     | ShellItemImageFlags.BiggerSizeOk
                     | ShellItemImageFlags.ThumbnailOnly,
@@ -33,7 +82,7 @@ internal static class WindowsShellThumbnail
 
             if (bitmapHandle == IntPtr.Zero)
             {
-                return false;
+                return Failure("shell-thumbnail-empty-handle");
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(previewPath)!);
@@ -41,11 +90,24 @@ internal static class WindowsShellThumbnail
             bitmap.Save(previewPath, ImageFormat.Jpeg);
 
             var previewInfo = new FileInfo(previewPath);
-            return previewInfo.Exists && previewInfo.Length > 0;
+            if (!previewInfo.Exists || previewInfo.Length == 0)
+            {
+                return Failure("shell-thumbnail-empty-file");
+            }
+
+            return new ShellThumbnailMeasurement(
+                true,
+                RequestedEdgePx,
+                bitmap.Width,
+                bitmap.Height,
+                previewInfo.Length,
+                ElapsedMicros(),
+                null
+            );
         }
         catch
         {
-            return false;
+            return Failure("shell-thumbnail-failed");
         }
         finally
         {

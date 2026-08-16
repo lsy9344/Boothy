@@ -1,0 +1,62 @@
+{
+  "corpus": {
+    "uniqueSamples": 3,
+    "uniquePresets": 3,
+    "uniquePairs": 9,
+    "duplicatePairs": [],
+    "complete": true
+  },
+  "detail": {
+    "verdict": "not-measured",
+    "measuredPairs": 0,
+    "unmeasuredPairs": [
+      "capture_20260816153458264_5d39fe705d/preset_daylight",
+      "capture_20260816153458264_5d39fe705d/preset_mono-pop",
+      "capture_20260816153458264_5d39fe705d/preset_soft-glow",
+      "capture_20260816154051179_3ad0e0ddca/preset_daylight",
+      "capture_20260816154051179_3ad0e0ddca/preset_mono-pop",
+      "capture_20260816154051179_3ad0e0ddca/preset_soft-glow",
+      "capture_20260816154435892_c488c861f0/preset_daylight",
+      "capture_20260816154435892_c488c861f0/preset_mono-pop",
+      "capture_20260816154435892_c488c861f0/preset_soft-glow"
+    ],
+    "medianProxyMtf50": null,
+    "medianRefinedMtf50": null,
+    "ratio": null,
+    "regressions": [],
+    "perSample": []
+  },
+  "look": {
+    "verdict": "not-measured",
+    "measuredPairs": 0,
+    "unmeasuredPairs": [
+      "capture_20260816153458264_5d39fe705d/preset_daylight",
+      "capture_20260816153458264_5d39fe705d/preset_mono-pop",
+      "capture_20260816153458264_5d39fe705d/preset_soft-glow",
+      "capture_20260816154051179_3ad0e0ddca/preset_daylight",
+      "capture_20260816154051179_3ad0e0ddca/preset_mono-pop",
+      "capture_20260816154051179_3ad0e0ddca/preset_soft-glow",
+      "capture_20260816154435892_c488c861f0/preset_daylight",
+      "capture_20260816154435892_c488c861f0/preset_mono-pop",
+      "capture_20260816154435892_c488c861f0/preset_soft-glow"
+    ],
+    "medianDeltaE": null,
+    "p95DeltaE": null,
+    "maxClippingIncreasePercentagePoints": null,
+    "offenders": []
+  },
+  "dimensionMismatchedPairs": [
+    "capture_20260816153458264_5d39fe705d/preset_daylight",
+    "capture_20260816153458264_5d39fe705d/preset_mono-pop",
+    "capture_20260816153458264_5d39fe705d/preset_soft-glow",
+    "capture_20260816154051179_3ad0e0ddca/preset_daylight",
+    "capture_20260816154051179_3ad0e0ddca/preset_mono-pop",
+    "capture_20260816154051179_3ad0e0ddca/preset_soft-glow",
+    "capture_20260816154435892_c488c861f0/preset_daylight",
+    "capture_20260816154435892_c488c861f0/preset_mono-pop",
+    "capture_20260816154435892_c488c861f0/preset_soft-glow"
+  ],
+  "underexposedExcludedPairs": [],
+  "laneDefaultEligible": false,
+  "transitionDefect": null
+}

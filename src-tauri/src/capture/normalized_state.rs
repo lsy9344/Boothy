@@ -20,6 +20,7 @@ use crate::{
             CanonHelperStatusMessage, FastPreviewReadyUpdate, SidecarClientError,
             CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION,
         },
+        source_telemetry::run_source_comparison_for_capture,
         CAPTURE_PIPELINE_LOCK, IN_FLIGHT_CAPTURE_SESSIONS,
     },
     contracts::dto::{
@@ -43,6 +44,7 @@ use crate::{
         append_session_timing_event_in_dir, sync_session_timing_in_dir, SessionTimingEventInput,
         TimingPhase,
     },
+    viewer::current_monotonic_micros,
 };
 
 const CAMERA_HELPER_STATUS_MAX_AGE_SECONDS: u64 = 5;
@@ -123,6 +125,7 @@ where
         .map(str::to_string)
         .unwrap_or_else(generate_capture_request_id);
     ensure_capture_request_id_is_fresh(base_dir, &input.session_id, &request_id, &readiness)?;
+    let request_started_at_host_micros = current_monotonic_micros();
     let requested_at = current_timestamp(SystemTime::now())?;
     let request_message = CanonHelperCaptureRequestMessage {
         schema_version: CANON_HELPER_CAPTURE_REQUEST_SCHEMA_VERSION.into(),
@@ -233,6 +236,10 @@ where
             detail: Some(&file_arrived_detail),
         },
     );
+    let source_fast_preview_kind = round_trip
+        .fast_preview
+        .as_ref()
+        .and_then(|preview| preview.kind.clone());
     let (manifest, capture, fast_preview_update) = persist_capture_in_dir(
         base_dir,
         &input,
@@ -259,6 +266,23 @@ where
                 .with_live_capture_truth(project_live_capture_truth(base_dir, &manifest).dto),
         )
     })?;
+
+    if let Err(error) = run_source_comparison_for_capture(
+        base_dir,
+        &capture,
+        source_fast_preview_kind.as_deref(),
+        request_started_at_host_micros,
+    ) {
+        // Source comparison is experimental evidence. It must never roll back or
+        // invalidate the RAW truth that was already persisted above.
+        log::warn!(
+            "source_comparison_failed session={} capture_id={} code={} message={}",
+            capture.session_id,
+            capture.capture_id,
+            error.code,
+            error.message
+        );
+    }
     if let Some(update) = fast_preview_update {
         let should_emit = early_fast_preview_update
             .as_ref()
@@ -477,6 +501,7 @@ fn build_capture_retry_readiness(
 
     with_projected_live_capture_truth(
         CaptureReadinessDto::capture_retry_required(manifest.session_id.clone(), latest_capture)
+            .with_recent_captures(reconciliation_captures(manifest))
             .with_timing(timing),
         &projected_live_capture_truth,
     )
@@ -665,10 +690,42 @@ pub fn delete_capture_in_dir(
     })
 }
 
+/// readiness가 함께 실어 보내는 최근 capture 기록 수.
+///
+/// 클라이언트는 `latest_capture` 외의 경로로 manifest를 다시 읽을 수 없다. 이 창이 없으면
+/// 다음 촬영이 접수된 순간 이전 촬영의 렌더 완료가 클라이언트에 도달하지 못한다.
+/// 렌더 1건은 수 초가 걸리고 그 사이 들어오는 촬영은 실측상 1~2건이므로 8은 충분한 여유다.
+pub const RECENT_CAPTURE_RECONCILIATION_WINDOW: usize = 8;
+
+/// 클라이언트가 화해해야 하는 capture 기록을 고른다.
+///
+/// 창 밖이라도 **렌더가 끝나지 않은 기록은 항상 포함한다.** 그 기록들이야말로 상태가
+/// 아직 변할 수 있는 대상이고, 창 크기 선택이 정확성을 좌우해서는 안 된다.
+/// 결과는 manifest 순서를 유지하며 중복이 없다.
+pub fn reconciliation_captures(manifest: &SessionManifest) -> Vec<SessionCaptureRecord> {
+    let window_start = manifest
+        .captures
+        .len()
+        .saturating_sub(RECENT_CAPTURE_RECONCILIATION_WINDOW);
+
+    manifest
+        .captures
+        .iter()
+        .enumerate()
+        .filter(|(index, capture)| *index >= window_start || capture.preview.ready_at_ms.is_none())
+        .map(|(_, capture)| capture.clone())
+        .collect()
+}
+
 pub fn normalize_capture_readiness(
     base_dir: &Path,
     manifest: &SessionManifest,
 ) -> CaptureReadinessDto {
+    resolve_capture_readiness(base_dir, manifest)
+        .with_recent_captures(reconciliation_captures(manifest))
+}
+
+fn resolve_capture_readiness(base_dir: &Path, manifest: &SessionManifest) -> CaptureReadinessDto {
     let timing = manifest.timing.clone();
     let latest_capture = manifest.captures.last().cloned();
     let timing_phase = timing_phase(timing.as_ref());

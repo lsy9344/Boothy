@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "hv15-display-profile-summary/v1",
+  "displayProfileId": "1080p",
+  "monitor": {
+    "name": "LG FULL HD",
+    "pnpId": "GSM5B55",
+    "widthPx": 1920,
+    "heightPx": 1080,
+    "dpi": 96,
+    "devicePixelRatio": 1,
+    "displayPath": "\\\\.\\DISPLAY3"
+  },
+  "requiredSourceWidthPx": 1429,
+  "requiredSourceHeightPx": 953,
+  "presentationPolicy": "contain-no-upscale",
+  "observedSourceWidthPx": 634,
+  "observedSourceHeightPx": 953,
+  "admissionBasis": "height reaches contain boundary; width is letterboxed"
+}

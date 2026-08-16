@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "hv-16-parity/v2",
+  "runId": "hv16-wic-vs-darktable-rot90",
+  "candidateLabel": "windows-wic-raw (Microsoft Raw Image Decoder 2.5.24.0), in-process direct CR2 decode",
+  "referenceLabel": "pinned darktable 5.4.1 neutral RAW render (default-render-template.xmp)",
+  "inputProvenance": "real-capture-direct",
+  "ssimDefinition": "pixel-weighted 8x8 block SSIM on Rec.709 luma, including partial edge blocks, K1=0.01 K2=0.03 L=1",
+  "deltaEDefinition": "CIEDE2000 (kL=kC=kH=1) on per-pixel sRGB D65",
+  "clippingDefinition": "fraction of pixels where any sRGB channel is <=1/255 or >=254/255",
+  "declaredPairCount": 6,
+  "measuredPairCount": 6,
+  "results": [
+    {
+      "captureId": "capture_20260814121451654_90cc349f2e",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.021258423113241633,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.2171709495421,
+          "p95": 33.89742306949102,
+          "max": 49.95970054208343
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.000360583114407871,
+        "referenceClippedFraction": 0.37601349611085355,
+        "clippingIncreasePercentagePoints": -37.565291299644564,
+        "upscaled": false
+      }
+    },
+    {
+      "captureId": "capture_20260814121533580_0615a4faa7",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.02125030209034956,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.196538590666623,
+          "p95": 33.83731636894061,
+          "max": 50.11249826917056
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.0003592953175707,
+        "referenceClippedFraction": 0.37353448719929944,
+        "clippingIncreasePercentagePoints": -37.317519188172874,
+        "upscaled": false
+      }
+    },
+    {
+      "captureId": "capture_20260814121551949_4b91e87752",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.021233131396545757,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.290397053147917,
+          "p95": 33.943802416614574,
+          "max": 49.54801762966717
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.000360583114407871,
+        "referenceClippedFraction": 0.3736877350229228,
+        "clippingIncreasePercentagePoints": -37.33271519085149,
+        "upscaled": false
+      }
+    },
+    {
+      "captureId": "capture_20260814121556049_0aafbae744",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.021356434778771548,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.138314805561947,
+          "p95": 33.83332659037729,
+          "max": 47.808613153594365
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.00041853397208056455,
+        "referenceClippedFraction": 0.38011255344356876,
+        "clippingIncreasePercentagePoints": -37.96940194714882,
+        "upscaled": false
+      }
+    },
+    {
+      "captureId": "capture_20260814121600366_e35063900a",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.021242751521636394,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.198884746591872,
+          "p95": 33.87530881296631,
+          "max": 47.74921350967132
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.00040823159738319684,
+        "referenceClippedFraction": 0.37805207850409517,
+        "clippingIncreasePercentagePoints": -37.7643846906712,
+        "upscaled": false
+      }
+    },
+    {
+      "captureId": "capture_20260814121604251_31fd2360a9",
+      "preset": "neutral-raw-decode",
+      "measurement": {
+        "widthPx": 719,
+        "heightPx": 1080,
+        "ssim": 0.021283292115926083,
+        "deltaE": {
+          "sampleCount": 776520,
+          "median": 26.188542800325276,
+          "p95": 33.84298439021623,
+          "max": 47.87368664032904
+        },
+        "skinRoiDeltaE": null,
+        "candidateClippedFraction": 0.00043141194045227425,
+        "referenceClippedFraction": 0.3780379127388863,
+        "clippingIncreasePercentagePoints": -37.76065007984341,
+        "upscaled": false
+      }
+    }
+  ]
+}

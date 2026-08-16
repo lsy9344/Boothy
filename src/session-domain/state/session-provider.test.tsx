@@ -259,7 +259,6 @@ describe('SessionProvider', () => {
             resolveCatalog = resolve
           }),
       )
-
     render(
       <SessionProvider
         sessionService={createStartSessionService({
@@ -2622,6 +2621,328 @@ describe('SessionProvider', () => {
     })
   })
 
+  it('reconciles an earlier capture that finished rendering after a newer capture became latest', async () => {
+    // 2026-08-12 실장비 회귀. 두 번째 촬영이 접수되면 첫 촬영은 더 이상 latestCapture가 아니다.
+    // host가 함께 보내는 recentCaptures로 화해하지 않으면, 첫 사진 카드는 manifest와 파일이
+    // 모두 완료된 뒤에도 `마무리 중`에 영원히 남는다.
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null =
+      null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const firstPendingCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_first',
+      requestId: 'request_first',
+      renderStatus: 'previewWaiting',
+    })
+    const firstReadyCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_first',
+      requestId: 'request_first',
+      renderStatus: 'previewReady',
+      preview: {
+        assetPath: 'fixtures/first-preview.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 4900,
+      },
+    })
+    const secondPendingCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_second',
+      requestId: 'request_second',
+      renderStatus: 'previewWaiting',
+    })
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        },
+      })
+    const captureRuntimeService: CaptureRuntimeService = {
+      getCaptureReadiness: vi
+        .fn<CaptureRuntimeService['getCaptureReadiness']>()
+        .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+      requestCapture: vi
+        .fn<CaptureRuntimeService['requestCapture']>()
+        .mockResolvedValue(
+          createCaptureRequestResult({
+            sessionId,
+            capture: firstPendingCapture,
+            readiness: createReadinessSnapshot({
+              sessionId,
+              surfaceState: 'previewWaiting',
+              customerState: 'Preview Waiting',
+              canCapture: false,
+              primaryAction: 'wait',
+              customerMessage: '사진을 준비하고 있어요.',
+              supportMessage: '잠시만 기다려 주세요.',
+              reasonCode: 'preview-waiting',
+              latestCapture: firstPendingCapture,
+            }),
+          }),
+        ),
+      subscribeToCaptureReadiness: vi
+        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+        .mockImplementation(async ({ onReadiness }) => {
+          emitReadiness = onReadiness as typeof emitReadiness
+          return () => {
+            emitReadiness = null
+          }
+        }),
+    }
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await latestState!.requestCapture({ sessionId })
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.manifest?.captures).toMatchObject([
+        {
+          captureId: 'capture_first',
+          renderStatus: 'previewWaiting',
+          preview: { readyAtMs: null },
+        },
+      ])
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    // 두 번째 촬영이 latest를 가져간 뒤에 첫 촬영의 렌더가 끝난 tick.
+    await act(async () => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'previewWaiting',
+          customerState: 'Preview Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '사진을 준비하고 있어요.',
+          supportMessage: '잠시만 기다려 주세요.',
+          reasonCode: 'preview-waiting',
+          latestCapture: secondPendingCapture,
+          recentCaptures: [firstReadyCapture, secondPendingCapture],
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.manifest?.captures).toMatchObject([
+        {
+          captureId: 'capture_first',
+          renderStatus: 'previewReady',
+          preview: {
+            assetPath: 'fixtures/first-preview.jpg',
+            readyAtMs: 4900,
+          },
+        },
+        {
+          captureId: 'capture_second',
+          renderStatus: 'previewWaiting',
+          preview: { readyAtMs: null },
+        },
+      ])
+    })
+  })
+
+  it('never rolls a finished capture back to rendering when a stale reconciliation tick arrives', async () => {
+    // 늦게 도착한 tick이 완료된 카드를 다시 `마무리 중`으로 만드는 것은 고치려는 증상 그 자체다.
+    let latestState: SessionStateContextValue | null = null
+    let emitReadiness: ((readiness: CaptureReadinessSnapshot) => void) | null =
+      null
+
+    const sessionId = 'session_01hs6n1r8b8zc5v4ey2x7b9g1m'
+    const pendingCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_first',
+      requestId: 'request_first',
+      renderStatus: 'previewWaiting',
+    })
+    const nextCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_second',
+      requestId: 'request_second',
+      renderStatus: 'previewWaiting',
+    })
+    const readyCapture = createCaptureRecord({
+      sessionId,
+      captureId: 'capture_first',
+      requestId: 'request_first',
+      renderStatus: 'previewReady',
+      preview: {
+        assetPath: 'fixtures/first-preview.jpg',
+        enqueuedAtMs: 100,
+        readyAtMs: 4900,
+      },
+    })
+    const startSession = vi
+      .fn<StartSessionGateway['startSession']>()
+      .mockResolvedValue({
+        ...createSessionStartResult(sessionId, 'Kim 4821'),
+        manifest: {
+          ...createSessionStartResult(sessionId, 'Kim 4821').manifest,
+          activePreset: {
+            presetId: 'preset_soft-glow',
+            publishedVersion: '2026.03.20',
+          },
+        },
+      })
+    const captureRuntimeService: CaptureRuntimeService = {
+      getCaptureReadiness: vi
+        .fn<CaptureRuntimeService['getCaptureReadiness']>()
+        .mockResolvedValue(createReadinessSnapshot({ sessionId })),
+      requestCapture: vi
+        .fn<CaptureRuntimeService['requestCapture']>()
+        .mockResolvedValue(
+          createCaptureRequestResult({
+            sessionId,
+            capture: pendingCapture,
+            readiness: createReadinessSnapshot({
+              sessionId,
+              surfaceState: 'previewWaiting',
+              customerState: 'Preview Waiting',
+              canCapture: false,
+              primaryAction: 'wait',
+              customerMessage: '사진을 준비하고 있어요.',
+              supportMessage: '잠시만 기다려 주세요.',
+              reasonCode: 'preview-waiting',
+              latestCapture: pendingCapture,
+            }),
+          }),
+        ),
+      subscribeToCaptureReadiness: vi
+        .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
+        .mockImplementation(async ({ onReadiness }) => {
+          emitReadiness = onReadiness as typeof emitReadiness
+          return () => {
+            emitReadiness = null
+          }
+        }),
+    }
+
+    render(
+      <SessionProvider
+        sessionService={createStartSessionService({
+          gateway: {
+            startSession,
+          },
+        })}
+        captureRuntimeService={captureRuntimeService}
+      >
+        <SessionStateProbe
+          onChange={(state) => {
+            latestState = state
+          }}
+        />
+      </SessionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestState!.startSession({
+        name: 'Kim',
+        phoneLastFour: '4821',
+      })
+    })
+
+    await act(async () => {
+      await latestState!.requestCapture({ sessionId })
+    })
+
+    await waitFor(() => {
+      expect(emitReadiness).not.toBeNull()
+    })
+
+    await act(async () => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'previewReady',
+          reasonCode: 'ready',
+          latestCapture: readyCapture,
+          recentCaptures: [readyCapture],
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.manifest?.captures).toMatchObject([
+        {
+          captureId: 'capture_first',
+          renderStatus: 'previewReady',
+          preview: { readyAtMs: 4900 },
+        },
+      ])
+    })
+
+    await act(async () => {
+      emitReadiness?.(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'previewWaiting',
+          customerState: 'Preview Waiting',
+          canCapture: false,
+          primaryAction: 'wait',
+          customerMessage: '사진을 준비하고 있어요.',
+          supportMessage: '잠시만 기다려 주세요.',
+          reasonCode: 'preview-waiting',
+          latestCapture: nextCapture,
+          recentCaptures: [pendingCapture, nextCapture],
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(latestState!.sessionDraft.manifest?.captures).toMatchObject([
+        {
+          captureId: 'capture_first',
+          renderStatus: 'previewReady',
+          preview: { readyAtMs: 4900 },
+        },
+        {
+          captureId: 'capture_second',
+          renderStatus: 'previewWaiting',
+        },
+      ])
+    })
+  })
+
   it('preserves a same-session capture record while scrubbing an out-of-scope preview path', async () => {
     let latestState: SessionStateContextValue | null = null
 
@@ -4849,7 +5170,7 @@ describe('SessionProvider', () => {
       },
     })
     const deleteCapture = vi
-      .fn<NonNullable<CaptureRuntimeService['deleteCapture']>>()
+      .fn<NonNullable<CaptureRuntimeGateway['deleteCapture']>>()
       .mockResolvedValue(
         createCaptureDeleteResult({
           sessionId,
@@ -4909,6 +5230,30 @@ describe('SessionProvider', () => {
           }),
         }),
       )
+    const getCaptureReadiness = vi
+      .fn<CaptureRuntimeGateway['getCaptureReadiness']>()
+      .mockResolvedValue(
+        createReadinessSnapshot({
+          sessionId,
+          surfaceState: 'previewReady',
+          customerState: 'Ready',
+          canCapture: true,
+          primaryAction: 'capture',
+          customerMessage: '지금 촬영할 수 있어요.',
+          supportMessage: '방금 찍은 사진을 아래에서 바로 확인할 수 있어요.',
+          reasonCode: 'ready',
+          latestCapture: createCaptureRecord({
+            sessionId,
+            captureId: latestCaptureId,
+            renderStatus: 'previewReady',
+            preview: {
+              assetPath: `C:/Users/Example/Pictures/dabi_shoot/sessions/${sessionId}/renders/previews/${latestCaptureId}.jpg`,
+              enqueuedAtMs: 200,
+              readyAtMs: 800,
+            },
+          }),
+        }),
+      )
 
     render(
       <SessionProvider
@@ -4917,14 +5262,16 @@ describe('SessionProvider', () => {
             startSession,
           },
         })}
-        captureRuntimeService={{
-          getCaptureReadiness: vi.fn<CaptureRuntimeService['getCaptureReadiness']>(),
-          deleteCapture,
-          requestCapture: vi.fn<CaptureRuntimeService['requestCapture']>(),
-          subscribeToCaptureReadiness: vi
-            .fn<CaptureRuntimeService['subscribeToCaptureReadiness']>()
-            .mockResolvedValue(() => undefined),
-        }}
+        captureRuntimeService={createCaptureRuntimeService({
+          gateway: {
+            getCaptureReadiness,
+            deleteCapture,
+            requestCapture: vi.fn<CaptureRuntimeGateway['requestCapture']>(),
+            subscribeToCaptureReadiness: vi
+              .fn<CaptureRuntimeGateway['subscribeToCaptureReadiness']>()
+              .mockResolvedValue(() => undefined),
+          },
+        })}
       >
         <SessionStateProbe
           onChange={(state) => {

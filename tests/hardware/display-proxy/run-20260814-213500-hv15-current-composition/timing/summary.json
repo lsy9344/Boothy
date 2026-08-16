@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "hv15-limited-timing-summary/v1",
+  "captureCount": 4,
+  "previewReadyElapsedMs": [22681, 8456, 9183, 9558],
+  "previewReadyP50Ms": 9371,
+  "previewReadyP95Ms": 22681,
+  "previewReadyMaxMs": 22681,
+  "acceptedDisplayGenerationCount": 0,
+  "displayTimingDecision": "not-evaluable",
+  "reason": "all display proxy attempts were rejected before commit"
+}

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "hv-13b-daylight-spot-check/v1",
+  "executedAt": "2026-08-12T08:13:19+09:00",
+  "sessionId": "session_000000000018cae330831707f8",
+  "variant": "visible-standby",
+  "camera": "Canon EOS 700D",
+  "monitor": {
+    "deviceName": "\\\\.\\DISPLAY3",
+    "x": 640,
+    "y": 1080,
+    "width": 1920,
+    "height": 1080
+  },
+  "captures": {
+    "requested": 2,
+    "rawPersisted": 2,
+    "previewReady": 2,
+    "previewBudgetExceeded": 2,
+    "captureToRawMs": [2721, 2600],
+    "captureToFastPreviewMs": [3185, 2755],
+    "captureToXmpPreviewMs": [7632, 7109]
+  },
+  "display": {
+    "generations": 4,
+    "integrityPassed": 4,
+    "actualPresentRows": 4,
+    "presentedRows": 4,
+    "measuredRows": 4,
+    "trustedInputRows": 4,
+    "viewerWindowEventsAfterInput": 0,
+    "qualifyingLatencyMs": [3256.305, 4125.105, 3125.105, 3858.605],
+    "finalVariant": "b"
+  },
+  "result": "partial-pass",
+  "secondaryMonitorResult": "pass",
+  "captureExperienceResult": "fail-stale-processing-state-and-preview-budget",
+  "hv13bResult": "No-Go-unchanged-no-120fps-physical-frames"
+}
+

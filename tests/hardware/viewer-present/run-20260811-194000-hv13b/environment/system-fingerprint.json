@@ -1,0 +1,19 @@
+﻿{
+    "ExecutedAt":  "2026-08-11T19:49:31.3741586+09:00",
+    "Computer":  "NOAH_WIN",
+    "OS":  "Microsoft Windows 11 Pro",
+    "OSVersion":  "10.0.26200",
+    "CPU":  "Intel(R) Core(TM) i9-9900KF CPU @ 3.60GHz",
+    "RAMGB":  63.9,
+    "GPU":  "NVIDIA GeForce GTX 1080",
+    "GPUDriver":  "32.0.15.6094",
+    "GPUCurrentMode":  "3840 x 2160 x 4294967296색",
+    "GPURefreshHz":  60,
+    "WebView2":  "151.0.4129.72",
+    "GitCommit":  "c390f53e2079e9379cb36501517fa05e26beb41d",
+    "Camera":  "Canon EOS 700D",
+    "ApprovedMonitor":  "\\\\.\\DISPLAY3",
+    "SampleGapMs":  800,
+    "HiddenStrategy":  "invisible",
+    "CaptureRig120Fps":  "not detected / not available to automation"
+}

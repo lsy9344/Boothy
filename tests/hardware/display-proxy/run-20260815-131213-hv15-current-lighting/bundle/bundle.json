@@ -1,0 +1,48 @@
+{
+  "boothStatus": "booth-safe",
+  "darktableVersion": "5.4.1",
+  "displayName": "Daylight",
+  "finalProfile": {
+    "displayName": "Booth Final JPEG",
+    "outputColorSpace": "sRGB",
+    "profileId": "final-jpeg"
+  },
+  "lifecycleStatus": "published",
+  "presetId": "preset_daylight",
+  "preview": {
+    "altText": "Daylight preview",
+    "assetPath": "preview.svg",
+    "kind": "preview-tile"
+  },
+  "previewProfile": {
+    "displayName": "Booth Preview JPEG",
+    "outputColorSpace": "sRGB",
+    "profileId": "preview-jpeg"
+  },
+  "proxyPublication": {
+    "outputProfile": {
+      "colorSpace": "sRGB",
+      "iccIntent": "perceptual",
+      "jpegQuality": 95
+    },
+    "proxyCompatible": true,
+    "proxyRecipePath": "xmp/template.xmp",
+    "proxyRecipeVersion": "2026.03.27",
+    "referenceRenderer": "darktable",
+    "referenceRendererVersion": "5.4.1",
+    "supportedOperations": [
+      "temperature",
+      "exposure",
+      "sigmoid",
+      "bloom",
+      "sharpen"
+    ],
+    "visualApproval": {
+      "approvedAt": "2026-08-14T00:00:00+09:00",
+      "approvedBy": "Noah Lee (manual product approval)"
+    }
+  },
+  "publishedVersion": "2026.03.27",
+  "schemaVersion": "published-preset-bundle/v1",
+  "xmpTemplatePath": "xmp/template.xmp"
+}

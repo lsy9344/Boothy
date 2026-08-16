@@ -1,0 +1,13 @@
+﻿{
+    "captureCount":  5,
+    "p0DroppedCount":  0,
+    "queueWaitMicros":  {
+                            "p50":  9,
+                            "p95":  22,
+                            "max":  22
+                        },
+    "queueWaitShareOfEndToEnd":  1.2601649807992862E-06,
+    "qualifyingSampleCount":  4,
+    "medianEndToEndMicros":  7141922,
+    "sourceSessionId":  "session_000000000018cc530d197ff02c"
+}

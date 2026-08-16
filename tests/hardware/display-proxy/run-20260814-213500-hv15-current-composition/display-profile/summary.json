@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "hv15-display-profile-summary/v1",
+  "displayProfileId": "1080p",
+  "requiredSourceWidthPx": 1429,
+  "requiredSourceHeightPx": 953,
+  "cameraComposition": "portrait",
+  "reproducedOutputWidthPx": 634,
+  "reproducedOutputHeightPx": 953,
+  "upscaleAllowed": false,
+  "arbitraryCropAllowed": false,
+  "fitDecision": "rejected",
+  "rejectReason": "insufficient-dimensions"
+}

@@ -32,7 +32,7 @@ export type OperatorAuditEventCategory = z.infer<
 >
 export type OperatorAuditEventType = z.infer<typeof operatorAuditEventTypeSchema>
 export type OperatorAuditEntry = z.infer<typeof operatorAuditEntrySchema>
-export type OperatorAuditQueryFilter = z.infer<typeof operatorAuditQueryFilterSchema>
+export type OperatorAuditQueryFilter = z.input<typeof operatorAuditQueryFilterSchema>
 export type OperatorAuditLatestOutcome = z.infer<
   typeof operatorAuditLatestOutcomeSchema
 >

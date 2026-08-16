@@ -213,4 +213,32 @@ describe('viewer readiness 계약', () => {
       'viewer-preparing',
     )
   })
+
+  it('host source dimensions match the measured rect and DPR', () => {
+    expect(() =>
+      viewerReadinessSnapshotSchema.parse({
+        ...HOST_SNAPSHOT_PAYLOAD,
+        photoRect: {
+          ...HOST_SNAPSHOT_PAYLOAD.photoRect,
+          requiredSourceWidthPx: 1,
+        },
+      }),
+    ).toThrow()
+
+    expect(
+      viewerReadinessSnapshotSchema.parse({
+        ...HOST_SNAPSHOT_PAYLOAD,
+        photoRect: {
+          cssWidth: 1620.4,
+          cssHeight: 1080.2,
+          devicePixelRatio: 1.5,
+          requiredSourceWidthPx: 2431,
+          requiredSourceHeightPx: 1621,
+        },
+      }).photoRect,
+    ).toMatchObject({
+      requiredSourceWidthPx: 2431,
+      requiredSourceHeightPx: 1621,
+    })
+  })
 })

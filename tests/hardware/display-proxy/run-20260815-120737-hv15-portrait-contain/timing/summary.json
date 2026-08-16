@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "hv15-timing-summary/v1",
+  "successfulPresentedSamples": 6,
+  "successfulCommittedSamples": 6,
+  "displaySuccessRate": 1.0,
+  "qualifyingLatencySecondsSorted": [
+    7.234858,
+    7.601357,
+    8.018657,
+    8.351074,
+    9.463773,
+    10.464558
+  ],
+  "medianSeconds": 8.1848655,
+  "p95NearestRankSeconds": 10.464558,
+  "maxSeconds": 10.464558,
+  "cameraRawDownloadTimeoutsOutsideDisplayCohort": 2,
+  "notes": "No slow display samples were excluded. Two setup-time camera transfer failures are reported separately because no RAW or display generation existed."
+}

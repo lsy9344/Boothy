@@ -1,0 +1,231 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cc530d197ff02c",
+  "boothAlias": "HV17B 1718",
+  "customer": {
+    "name": "HV17B",
+    "phoneLastFour": "1718"
+  },
+  "createdAt": "2026-08-16T15:34:27Z",
+  "updatedAt": "2026-08-16T15:54:42Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "completed"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cc530d197ff02c",
+    "adjustedEndAt": "2026-08-16T15:49:27Z",
+    "warningAt": "2026-08-16T15:44:27Z",
+    "phase": "ended",
+    "captureAllowed": false,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": "2026-08-16T15:44:27Z",
+    "endedTriggeredAt": "2026-08-16T15:49:27Z"
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cc530d197ff02c",
+      "boothAlias": "HV17B 1718",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260816153458264_5d39fe705d",
+      "requestId": "request_00000000000006592bcbcfd6e0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\captures\\originals\\capture_20260816153458264_5d39fe705d.CR2",
+        "persistedAtMs": 1786894500601
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\previews\\capture_20260816153458264_5d39fe705d.jpg",
+        "enqueuedAtMs": 1786894500601,
+        "readyAtMs": 1786894505160
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786894498272,
+        "previewVisibleAtMs": 1786894505160,
+        "fastPreviewVisibleAtMs": 1786894501325,
+        "xmpPreviewReadyAtMs": 1786894505160,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cc530d197ff02c",
+      "boothAlias": "HV17B 1718",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260816154051179_3ad0e0ddca",
+      "requestId": "request_00000000000006592be0d6f330",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\captures\\originals\\capture_20260816154051179_3ad0e0ddca.CR2",
+        "persistedAtMs": 1786894853721
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\previews\\capture_20260816154051179_3ad0e0ddca.jpg",
+        "enqueuedAtMs": 1786894853721,
+        "readyAtMs": 1786894858117
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786894851186,
+        "previewVisibleAtMs": 1786894858117,
+        "fastPreviewVisibleAtMs": 1786894854051,
+        "xmpPreviewReadyAtMs": 1786894858117,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cc530d197ff02c",
+      "boothAlias": "HV17B 1718",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260816154435892_c488c861f0",
+      "requestId": "request_00000000000006592bee3ac488",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\captures\\originals\\capture_20260816154435892_c488c861f0.CR2",
+        "persistedAtMs": 1786895078268
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\previews\\capture_20260816154435892_c488c861f0.jpg",
+        "enqueuedAtMs": 1786895078268,
+        "readyAtMs": 1786895082567
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786895075900,
+        "previewVisibleAtMs": 1786895082567,
+        "fastPreviewVisibleAtMs": 1786895078565,
+        "xmpPreviewReadyAtMs": 1786895082567,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cc530d197ff02c",
+      "boothAlias": "HV17B 1718",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260816154455753_5ee9fe0e1e",
+      "requestId": "request_00000000000006592bef6f10c8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\captures\\originals\\capture_20260816154455753_5ee9fe0e1e.CR2",
+        "persistedAtMs": 1786895098387
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\previews\\capture_20260816154455753_5ee9fe0e1e.jpg",
+        "enqueuedAtMs": 1786895098387,
+        "readyAtMs": 1786895102581
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786895095761,
+        "previewVisibleAtMs": 1786895102581,
+        "fastPreviewVisibleAtMs": 1786895098673,
+        "xmpPreviewReadyAtMs": 1786895102581,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cc530d197ff02c",
+      "boothAlias": "HV17B 1718",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260816154750623_dbe18db6a0",
+      "requestId": "request_00000000000006592bf9dd1650",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\captures\\originals\\capture_20260816154750623_dbe18db6a0.CR2",
+        "persistedAtMs": 1786895273098
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\previews\\capture_20260816154750623_dbe18db6a0.jpg",
+        "enqueuedAtMs": 1786895273098,
+        "readyAtMs": 1786895277299
+      },
+      "final": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc530d197ff02c\\renders\\finals\\capture_20260816154750623_dbe18db6a0.jpg",
+        "readyAtMs": 1786895371185
+      },
+      "renderStatus": "finalReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786895270631,
+        "previewVisibleAtMs": 1786895277299,
+        "fastPreviewVisibleAtMs": 1786895273412,
+        "xmpPreviewReadyAtMs": 1786895277299,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": {
+    "state": "completed",
+    "evaluatedAt": "2026-08-16T15:54:42Z",
+    "completionVariant": "handoff-ready",
+    "approvedRecipientLabel": null,
+    "nextLocationLabel": "안내된 곳",
+    "primaryActionLabel": "안내된 곳으로 이동해 주세요.",
+    "supportActionLabel": null,
+    "showBoothAlias": false,
+    "handoff": null
+  }
+}

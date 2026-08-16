@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "hv-14-aggregate/v1",
+  "randomizationSeed": 2404820328541599495,
+  "blockCount": 35,
+  "routes": [
+    {
+      "route": "embedded-jpeg",
+      "attemptCount": 35,
+      "successCount": 0,
+      "p50Micros": 9498,
+      "p95Micros": 13734,
+      "maxMicros": 13872,
+      "failureModes": { "orientation-unsupported": 35 }
+    },
+    {
+      "route": "camera-paired-jpeg",
+      "attemptCount": 35,
+      "successCount": 0,
+      "p50Micros": 12593,
+      "p95Micros": 20386,
+      "maxMicros": 20887,
+      "arrivalOrderDistribution": { "jpegFirst": 35, "rawFirst": 0 },
+      "failureModes": { "orientation-unsupported": 35 }
+    },
+    {
+      "route": "windows-shell-thumbnail",
+      "attemptCount": 35,
+      "successCount": 0,
+      "p50Micros": 4,
+      "p95Micros": 14,
+      "maxMicros": 26,
+      "failureModes": { "absent": 35 }
+    }
+  ]
+}

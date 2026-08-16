@@ -18,11 +18,14 @@ inputDocuments:
   - '_bmad-output/planning-artifacts/prd.md'
   - '_bmad-output/planning-artifacts/architecture.md'
   - 'refactoring/2026-03-15-boothy-darktable-agent-foundation.md'
+  - '_bmad-output/planning-artifacts/research/technical-preset-image-fast-display-research-2026-08-10.md'
 workflowType: 'ux-design'
 lastStep: 14
 project_name: 'Boothy'
 user_name: 'Noah Lee'
 date: '2026-03-11'
+lastEdited: '2026-08-11'
+status: 'approved-readiness-12-issue-remediation'
 ---
 
 # UX Design Specification Boothy
@@ -46,10 +49,12 @@ Boothy는 복잡한 세부 조정 과정 없이, 전문가가 설계한 프리�
 - **시간 관리의 명확성:** 쿠폰 연동 시간과 종료 예고 사운드 알림을 통한 사용자 안내.
 - **선택의 단순화:** 세부 조정 화면 없이 프리셋 카탈로그 중심으로 충분한 선택감을 주는 UX.
 - **신뢰성 있는 피드백:** 촬영 성공과 프리뷰 준비 완료를 구분해 안내하고, 현재 세션 범위 안에서 결과 준비 상태를 안전하게 이해시키는 흐름.
+- **관람 화면의 즉시성과 진실성:** 촬영 전에 준비된 전용 관람 화면에 같은 촬영·같은 프리셋의 화면 적합 이미지를 표시하고 RAW 정밀본으로 시각적 중단 없이 전환하는 흐름.
 
 ### Design Opportunities
 - **강렬한 시각적 정체성:** Brutal Core(Retro-Digital) 스타일을 활용한 독보적인 부스 UI.
 - **청각적 경험 디자인:** 사운드 알림을 통한 브랜드 아이덴티티 강화 및 사용자 가이드.
+- **이중 화면 역할 분리:** 조작·검토용 부스 화면과 몰입형 read-only 관람 화면을 분리해 촬영 리듬과 결과 감상을 모두 강화.
 
 ## Reading Guide
 
@@ -59,6 +64,9 @@ Boothy는 복잡한 세부 조정 과정 없이, 전문가가 설계한 프리�
 - 고객 경험은 booth-first, preset-driven 흐름을 유지해야 하며 고객에게 세부 조정 화면이나 내부 제작 도구를 노출하지 않습니다.
 - 고객 시작 단계는 `이름 + 휴대전화 뒤4자리` 입력만으로 끝나야 하며, 전체 전화번호 입력이나 예약 검증 흐름을 요구하지 않습니다.
 - 고객은 현재 활성 프리셋, 최신 촬영 결과, 현재 세션 범위만의 사진을 이해할 수 있어야 합니다.
+- 촬영 전에 대상 모니터의 전용 관람 화면이 현재 세션에 연결되고, visible·layout-ready·listener-ready 상태를 증명해야 합니다.
+- 전용 관람 화면의 첫 성공 이미지는 같은 촬영과 capture-bound 프리셋에 연결된 physical display-fit 결과여야 하며, 무보정 카메라 이미지나 작은 사진 레일은 성공 화면으로 계산하지 않습니다.
+- RAW 정밀본은 다음 이미지가 완전히 준비된 뒤 blank, spinner, 이전 사진, crop/scale jump, quality-tier downgrade 없이 교체되어야 합니다.
 - 조정된 종료 시각은 세션 시작부터 명확히 보여야 하며, 5분 전 경고와 종료 시점 이후의 다음 행동은 고객 안전 문구로 이해 가능해야 합니다.
 - 고객용 문구는 plain-language와 낮은 문구 밀도 원칙을 지키고 기술 진단어 또는 내부 운영 용어를 포함하지 않습니다.
 - `Preview Waiting`에서는 "촬영은 저장되었지만 확인용 사진을 준비 중"이라는 사실과 지금 가능한 행동을 함께 보여줘야 합니다.
@@ -83,6 +91,7 @@ Boothy의 정의적 경험은 **'프리셋 우선 촬영(Filter-First Capture)'*
 **구속되는 UX 요구사항**
 - **프리셋 중심 흐름:** 사용자는 승인된 프리셋을 고르고 직접 조정 없이 촬영을 이어갈 수 있어야 합니다.
 - **신뢰 피드백:** 촬영 성공 후 최신 사진과 활성 프리셋 상태를 현재 세션 범위 안에서 이해할 수 있어야 합니다.
+- **전용 관람 경험:** 촬영 전에 준비된 read-only 관람 화면에서 선택한 룩의 화면 적합 이미지를 보고, 이후 RAW 정밀본으로의 교체를 시각적 중단 없이 경험해야 합니다.
 - **타이밍 명확성:** 조정된 종료 시각, 5분 전 경고, 종료 후 다음 행동이 고객 안전 문구로 명확해야 합니다.
 - **자율적 흐름:** 별도 설명 없이도 사용자가 스스로 프리셋 변경, 촬영, 현재 세션 검토를 이어갈 수 있어야 합니다.
 
@@ -96,11 +105,11 @@ Boothy의 정의적 경험은 **'프리셋 우선 촬영(Filter-First Capture)'*
 ### 2.5 Experience Mechanics
 1. **진입:** 세션 시작 직후 이름과 휴대전화 뒤4자리를 입력하고, 이어서 직관적인 프리셋 선택 화면으로 이동합니다. 고객은 이 입력이 현재 세션을 구분하기 위한 최소 정보라고 이해할 수 있어야 합니다.
 2. **상호작용:** 프리셋 카드 터치 시 선택된 룩이 즉시 인지되어야 합니다. 이는 활성 상태 강조와 대표 프리뷰 타일 또는 샘플컷으로 표현하며, 사용자는 가장 마음에 드는 순간 촬영 버튼을 누릅니다.
-3. **피드백:** 촬영 직후에는 먼저 현재 세션에 소스 사진이 안전하게 저장되었음을 기준으로 성공을 안내하고, 프리뷰가 아직 준비 중이면 `Preview Waiting` 상태에서 "사진은 저장되었고 확인용 사진을 준비 중"이라는 메시지를 보여줍니다. 이 상태에서는 고객이 다음 촬영을 이어갈 수 있는지, 잠시 기다리면 되는지, 또는 현재 사진 레일이 아직 비어 있어도 정상인지가 분명해야 합니다. 이후 부스 안전 프리뷰가 준비되면 화면 하단 썸네일 레일에 최신 사진이 나타나며 확신을 줍니다.
+3. **피드백:** 촬영 직후 조작 화면은 현재 세션에 소스 사진이 안전하게 저장되었는지와 `Preview Waiting` 상태를 정직하게 안내합니다. 별도의 전용 관람 화면은 사전에 준비된 상태를 유지하다가 같은 촬영·같은 프리셋의 physical display-fit 이미지만 첫 성공 화면으로 제시합니다. 무보정 카메라 이미지는 진단 또는 진행 입력일 수 있지만 관람 성공으로 세지 않습니다. 이후 RAW 정밀본이 준비되면 완전 decode 뒤 같은 화면 영역에서 blank나 crop/scale jump 없이 교체합니다. 사진 레일은 현재 세션 검토를 지원하지만 관람 화면 성공 지표를 대신하지 않습니다.
 4. **마무리:** 쿠폰 연동 시간 종료 5분 전 사운드 알림으로 안내하며, 종료 후에는 `Export Waiting`, `Completed`, 또는 `Phone Required` 중 현재 상태에 맞는 고객 안전 흐름으로 세션을 마무리합니다. 특히 `Phone Required`는 실패 고지가 아니라 "지금은 부스가 다음 단계를 안전하게 끝낼 수 없어 도움이 필요하다"는 안내로 설계되어야 하며, 고객이 임의 조작을 시도하지 않도록 행동을 단순화해야 합니다.
 
 ### Platform Strategy
-Boothy는 윈도우 데스크톱 기반의 대형 터치스크린 포토 부스 하드웨어에 최적화된 플랫폼 전략을 따릅니다. 서서 조작하는 환경을 고려하여 모든 버튼과 제어 요소는 크고 명확한 Brutal Core 스타일을 적용하며, 로컬 하드웨어와 긴밀하게 연동되어 오프라인에서도 끊김 없는 촬영 성능을 보장합니다.
+Boothy는 윈도우 데스크톱 기반의 대형 터치스크린 조작 화면과 별도 고객 관람 모니터에 최적화된 플랫폼 전략을 따릅니다. 조작 화면은 큰 Brutal Core 컨트롤과 고객 안전 문구를 담당하고, 전용 관람 화면은 입력 컨트롤 없이 사진 자체에 집중합니다. 두 화면은 동일한 host-owned 세션 truth를 사용하며 오프라인에서도 상태가 수렴해야 합니다.
 
 ### Experience Principles
 1. **"생각하지 말고 찍으세요"**: 선택지는 단순화하고, 다음 행동은 명확한 시각적 언어로 제안합니다.
@@ -233,16 +242,22 @@ flowchart TD
 ```
 
 ### 촬영 루프 및 실시간 확인 (Capture Loop)
-선택한 프리셋으로 사진을 촬영하고, 현재 세션에 저장된 캡처와 이후 준비되는 프리뷰를 구분해 이해하며, 가능하면 먼저 보이는 same-capture 확인 이미지로 즉시 안심하고 나중에 더 정확한 프리뷰로 자연스럽게 이어지는 핵심 반복 과정입니다.
+선택한 프리셋으로 사진을 촬영하고, 조작 화면에서는 저장·대기·검토 상태를 정직하게 이해하며, 촬영 전에 준비된 전용 관람 화면에서는 화면 적합 프리셋 결과와 RAW 정밀본을 시각적 중단 없이 감상하는 핵심 반복 과정입니다.
 
 ```mermaid
 flowchart TD
-    A[촬영 화면 진입] --> B[셔터 버튼 터치]
+    V[전용 관람 화면 준비 완료] --> A[촬영 화면 진입]
+    A --> B[셔터 버튼 터치]
     B --> C[카운트다운 및 촬영]
     C --> D[소스 사진을 현재 세션에 안전하게 저장]
-    D --> E[Preview Waiting 상태 안내]
-    E -->|준비 완료| F[부스 안전 프리뷰 준비 완료 시 최신 사진 레일 업데이트]
+    D --> E[조작 화면 Preview Waiting 안내]
+    E --> P[같은 촬영의 화면 적합 preset proxy 검증]
+    P -->|qualifying frame| Q[전용 관람 화면에 표시]
+    Q --> R[RAW 정밀본 완전 decode]
+    R --> S[동일 영역 무중단 교체]
     E -->|지연 지속 또는 안전 경계 초과| J[고객 보호형 안내 후 Phone Required 가능]
+    Q --> F[현재 세션 사진 레일 업데이트]
+    S --> F
     F --> G{계속 촬영?}
     G -->|YES| B
     G -->|프리셋 변경| H[프리셋 카탈로그 호출]
@@ -277,6 +292,19 @@ flowchart TD
 - 나중에 더 정확한 booth-safe preview가 준비되면 고객이 같은 shot으로 인식할 수 있게 같은 자리에서 자연스럽게 교체합니다.
 - 최신 사진 레일이 아직 비어 있어도 정상이라는 점을 보조 문구로 명시합니다.
 - 이 상태가 길어져 `Phone Required`로 넘어갈 수 있는 경우에도, 고객에게는 내부 실패 원인이 아니라 "도움이 필요하다"는 결과만 전달합니다.
+
+### 전용 관람 화면과 무중단 교체 흐름
+
+전용 관람 화면은 촬영 후 열리는 팝업이 아니라 세션 시작 시 대상 모니터에 미리 준비되는 read-only surface입니다. 관람 화면은 조작과 진단을 제공하지 않고 사진 감상과 결과 전환에만 집중합니다.
+
+- 촬영 전에 현재 세션 연결, 승인된 monitor profile, photo rectangle, DPR, listener 준비 상태를 확인합니다.
+- Story 7.1에서는 renderer를 교체하지 않고 viewer readiness, approved monitor targeting, session binding, physical display-size contract만 먼저 증명합니다.
+- Story 7.2에서는 renderer를 교체하지 않은 상태에서 immutable sample asset, opaque double-buffer swap, actual monitor-present 계측, visible standby/hidden prewarm A/B를 증명합니다.
+- 관람 화면의 첫 qualifying frame은 같은 `session/request/capture/preset@version`에 연결되고 photo rectangle을 필요한 실제 픽셀로 채운 preset-applied 이미지여야 합니다.
+- 무보정 camera JPEG, 작은 rail thumbnail, file-ready, renderer-ready, `<img onLoad>`는 관람 성공으로 세지 않습니다.
+- 다음 asset이 완전히 decode되고 더 높은 승인 tier임이 확인되기 전까지 현재 이미지를 유지합니다.
+- proxy에서 RAW 정밀본으로 교체할 때 blank, spinner, 이전 촬영, 다른 프리셋, crop/scale jump, tier downgrade를 허용하지 않습니다.
+- visible standby를 기본 후보로 두고 hidden prewarm과 동일 장비에서 비교한 뒤 승인된 방식을 제품 기본값으로 사용합니다.
 
 ### Phone Required 보호 흐름
 `Phone Required`는 에러 덤프가 아니라, 고객을 안전하게 다음 단계로 이동시키는 서비스 상태입니다. 이 화면은 고객의 책임을 줄이고, 사진 손실 공포를 낮추고, 연락 행동 하나만 분명히 남겨야 합니다.
@@ -322,6 +350,13 @@ Boothy는 Tailwind CSS를 기반으로 한 Brutal Core 테마를 사용하여 �
 - **구조:** 가로 스크롤형 썸네일 리스트 + 삭제 버튼.
 - **인터랙션:** 가능하면 방금 찍은 same-capture 확인 이미지를 먼저 보여주고, booth-safe preset-applied preview가 준비되면 같은 자리에서 자연스럽게 교체합니다.
 
+#### ### 전용 관람 화면 (Customer Viewer Surface)
+- **목적:** 촬영 전에 준비된 대상 모니터에서 선택한 룩의 화면 적합 결과를 몰입감 있게 표시.
+- **구조:** read-only full-view photo rectangle + 최소한의 고객 안전 상태 표현. 편집, 삭제, 프리셋 선택, 운영 진단 컨트롤은 포함하지 않습니다.
+- **준비 계약:** 현재 세션, monitor profile, viewport, DPR, listener, layout readiness를 촬영 전에 확인합니다.
+- **인터랙션:** qualifying preset proxy를 첫 성공 화면으로 표시하고, RAW 정밀본은 완전 decode 후 opaque double-buffer 방식으로 무중단 교체합니다.
+- **금지:** unfiltered camera frame의 성공 처리, 작은 thumbnail 확대, blank/spinner 교체, stale generation 표시, crop/scale jump.
+
 #### ### 프리뷰 대기 패널 (Preview Waiting Panel)
 - **목적:** 촬영 저장 사실과 프리뷰 준비 상태를 분리해 고객 신뢰 유지.
 - **구조:** 저장 완료 배지 + 대기 메시지 + 선택적 보조 문구 + 현재 가능한 다음 행동.
@@ -337,9 +372,14 @@ Boothy는 Tailwind CSS를 기반으로 한 Brutal Core 테마를 사용하여 �
 - **터치 우선 설계:** 서서 조작하는 환경에 맞춰 모든 인터랙션 요소는 넉넉한 터치 영역을 유지해야 하며, `80px`은 초기 설계 기준선으로 취급합니다.
 
 ### Implementation Roadmap
-- **Phase 1:** 촬영 루프 필수 요소 (카메라 패널, 셔터, 프리셋 카드)
-- **Phase 2:** 세션 관리 요소 (시간 배지, 입력 필드, 삭제 모달, Preview Waiting 패널)
-- **Phase 3:** 경험 완성 요소 (사진 레일, 축하 애니메이션, Phone Required 도움 카드)
+- **Epic 7 Story 7.1:** pre-opened viewer readiness, 승인 모니터 지정, 현재 세션 연결, physical display-size contract 증명
+- **Epic 7 Story 7.2:** immutable sample, opaque double-buffer, actual-present 계측, visible/hidden viewer mode 결정
+- **Epic 7 Story 7.3~7.4:** 승인된 fast source와 physical display-fit immutable preset proxy 연결
+- **Epic 7 Story 7.5~7.6:** resident renderer 후보 결정과 RAW-refined seamless swap 검증
+- **Epic 7 Story 7.7:** complete installer와 clean offline Windows 재현
+- **Epic 7 Story 7.8:** warm 100-shot, cold/idle/reconnect, burst/failure 복구 검증
+- **Epic 7 Story 7.9:** staged rollout, active-session 보호, rollback 호환성 검증
+- **Epic 7 Story 7.10:** 전체 hardware evidence와 UX release evidence를 집계한 최종 MVP Go/No-Go 판정
 
 ## UX Consistency Patterns
 
@@ -373,10 +413,11 @@ Boothy의 모든 버튼은 Brutal Core 스타일(직각, 굵은 테두리, 그�
 ## Responsive Design & Accessibility
 
 ### Responsive Strategy
-Boothy는 대형 터치스크린 환경에 최적화된 **'Booth-First'** 전략을 따릅니다. 사용자의 팔 궤적과 시선을 고려하여 핵심 상호작용 요소를 배치하며, 화면 크기에 따라 제어 패널의 밀도를 유연하게 조정합니다.
+Boothy는 대형 터치스크린 조작 화면과 별도 관람 모니터에 최적화된 **'Booth-First + Physical Display-Fit'** 전략을 따릅니다. 조작 화면은 사용자의 팔 궤적과 시선을 고려하고, 관람 화면은 실제 photo rectangle과 DPR에 맞는 원본 픽셀을 요구합니다. 고정 384px thumbnail을 관람 화면에 확대하는 방식은 허용하지 않습니다.
 
 ### Breakpoint Strategy
 - **Booth Main:** 1024px+ (풀스크린 촬영 경험)
+- **Customer Viewer:** 승인된 1080p, 1440p, 4K monitor profile과 DPR별 physical fit class
 - **Operator View:** 768px - 1023px (상태 모니터링 및 설정)
 - **No customer mobile surface in MVP:** 반응형 검토 범위는 승인된 부스 화면과 운영자용 데스크톱급 화면으로 제한합니다.
 
@@ -390,6 +431,17 @@ WCAG 2.2 AA 수준을 기본 접근성 목표로 하여 누구나 소외 없는 
 - 실제 부스 하드웨어에서의 터치 반응성 및 Standing 사용성 테스트.
 - 색약 및 시각 약자를 위한 고대비 시뮬레이션 테스트.
 - 초보 사용자의 무가이드 촬영 성공률 테스트.
+- 촬영 입력 전에 viewer readiness와 실제 대상 모니터 연결·표시 여부를 테스트합니다. readiness 선행 시간은 진단값으로 기록하며, 승인된 하드웨어 검증으로 별도 채택되지 않는 한 고정 1초를 출시 게이트로 사용하지 않습니다.
+- trusted capture input부터 qualifying monitor frame까지 동일 clock 기반 actual-present 측정.
+- proxy 첫 frame부터 RAW swap 안정화까지 모든 frame을 검토해 blank, spinner, prior/wrong capture, wrong preset, crop/scale jump, tier downgrade 0건 확인.
+- visible standby와 hidden prewarm을 동일 장비에서 A/B하고 승인된 기본 동작을 기록.
+
+### Release Evidence Ownership
+
+- `UX-EV-01 / UX-DR16 접근성`: QA/Release가 WCAG 2.2 AA 점검, semantic HTML, focus placement, modal focus trap, ESC close, focus restoration 증거를 하나의 release package로 관리합니다.
+- `UX-EV-02 / 실부스 사용성`: QA/Release가 실제 터치 반응성, standing usability, 고대비 시뮬레이션, 초보 사용자의 무가이드 촬영 성공률 증거를 관리하고 PM과 UX가 결과를 공동 검토합니다.
+- 두 evidence package는 `_bmad-output/implementation-artifacts/hardware-validation-ledger.md`의 Release Evidence Matrix에서 추적하며, Story 7.10과 HV-18D 최종 판정 전에 모두 `Go`여야 합니다.
+- 이 소유권 지정은 PRD에 새 FR/NFR을 추가하지 않습니다. UX-DR16과 실사용 검증을 독립 release evidence로 유지해 기존 제품 범위 안에서 추적성을 보강합니다.
 
 ### Implementation Guidelines
 - **Relative Units:** 모든 간격과 크기에 `rem` 단위를 사용하여 시스템 폰트 크기 변경에 유연하게 대응합니다.

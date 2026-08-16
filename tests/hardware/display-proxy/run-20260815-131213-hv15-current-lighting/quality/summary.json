@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "hv15-current-lighting-quality/v1",
+  "lightingOrExposureAdjusted": false,
+  "samples": [
+    {
+      "preset": "Daylight",
+      "generationSeq": 3,
+      "widthPx": 634,
+      "heightPx": 953,
+      "meanLuma": 12.27,
+      "below16Percent": 78.3,
+      "below32Percent": 91.9
+    },
+    {
+      "preset": "Mono Pop",
+      "generationSeq": 4,
+      "deletedAfterSuccessfulPresent": true,
+      "widthPx": 634,
+      "heightPx": 953,
+      "meanLuma": 7.80,
+      "below16Percent": 84.6,
+      "below32Percent": 97.4
+    },
+    {
+      "preset": "Mono Pop",
+      "generationSeq": 5,
+      "deleteRecoveryCapture": true,
+      "widthPx": 634,
+      "heightPx": 953,
+      "meanLuma": 7.39,
+      "below16Percent": 85.4,
+      "below32Percent": 98.4
+    }
+  ],
+  "qualityVerdict": "severely-underexposed",
+  "functionalDisplayVerdict": "pass"
+}

@@ -125,7 +125,8 @@ export function computeRequiredSourceDimensions({
 }
 
 /**
- * 해당 asset이 photo rectangle을 upscale 없이 채울 수 있는지 판정한다.
+ * 해당 asset을 photo rectangle에 `contain`으로 놓을 때 upscale이 필요한지 판정한다.
+ * 한 축이 경계에 닿으면 다른 축은 letterbox 여백으로 남고 픽셀 확대는 일어나지 않는다.
  * Story 7.1은 이 판정을 계약으로만 소유하고, 실제 asset 게시는 Story 7.2 이후가 소유한다.
  */
 export function isDisplayFitSource(
@@ -151,7 +152,7 @@ export function isDisplayFitSource(
   }
 
   return (
-    source.naturalWidth >= required.requiredSourceWidthPx &&
+    source.naturalWidth >= required.requiredSourceWidthPx ||
     source.naturalHeight >= required.requiredSourceHeightPx
   )
 }

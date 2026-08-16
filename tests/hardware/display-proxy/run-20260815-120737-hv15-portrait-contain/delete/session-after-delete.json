@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cbdafd0a7261d8",
+  "boothAlias": "HV15삭제검증 7417",
+  "customer": {
+    "name": "HV15삭제검증",
+    "phoneLastFour": "7417"
+  },
+  "createdAt": "2026-08-15T02:54:17Z",
+  "updatedAt": "2026-08-15T03:02:56Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cbdafd0a7261d8",
+    "adjustedEndAt": "2026-08-15T03:09:17Z",
+    "warningAt": "2026-08-15T03:04:17Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [],
+  "postEnd": null
+}

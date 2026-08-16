@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "viewer-display/v2",
+  "sessionId": "session_000000000018cbdafd0a7261d8",
+  "revision": 3,
+  "activeGeneration": null,
+  "requiredSourceWidthPx": 1429,
+  "requiredSourceHeightPx": 953,
+  "measurementLaneEnabled": false,
+  "presentTelemetryEnabled": true,
+  "observedAtHostMicros": 362259016
+}

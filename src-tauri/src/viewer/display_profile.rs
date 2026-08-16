@@ -46,7 +46,8 @@ pub fn classify_display_profile(width_px: u32, height_px: u32) -> Option<&'stati
 /// 우선순위:
 /// 1. 승인된 모니터 이름이 설정되어 있으면 이름이 일치하는 모니터만 사용한다.
 ///    일치하는 모니터가 없으면 임의 대체 없이 `monitor-unavailable`로 보고한다.
-/// 2. 이름 설정이 없고 모니터가 2개 이상이면 primary가 아닌 첫 모니터를 사용한다.
+/// 2. 이름 설정이 없고 모니터가 2개 이상이면 승인 profile인 non-primary를 우선한다.
+///    없으면 primary가 아닌 첫 모니터를 사용해 미승인 상태를 정직하게 보고한다.
 /// 3. 모니터가 하나뿐이면 그 모니터를 쓰되 `single-monitor-fallback`으로 정직하게 보고한다.
 pub fn select_customer_monitor(
     monitors: &[MonitorDescriptor],
@@ -81,7 +82,15 @@ pub fn select_customer_monitor(
             if monitors.len() == 1 {
                 (&monitors[0], MONITOR_TARGETING_SINGLE_MONITOR_FALLBACK)
             } else {
-                match monitors.iter().find(|monitor| !monitor.is_primary) {
+                match monitors
+                    .iter()
+                    .find(|monitor| {
+                        !monitor.is_primary
+                            && classify_display_profile(monitor.width_px, monitor.height_px)
+                                .is_some()
+                    })
+                    .or_else(|| monitors.iter().find(|monitor| !monitor.is_primary))
+                {
                     Some(monitor) => (monitor, MONITOR_TARGETING_APPROVED),
                     None => (&monitors[0], MONITOR_TARGETING_SINGLE_MONITOR_FALLBACK),
                 }

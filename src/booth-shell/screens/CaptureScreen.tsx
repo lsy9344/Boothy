@@ -3,9 +3,17 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import type { HostErrorEnvelope } from '../../shared-contracts'
 import {
   buildLocalCaptureReadiness,
+  generateCaptureRequestId,
   getCaptureRuntimeMode,
   type CaptureRuntimeMode,
 } from '../../capture-adapter/services/capture-runtime'
+import {
+  ensureBoothClockCalibration,
+  reportTrustedCaptureInput,
+  stampTrustedCaptureInput,
+  type TrustedInputStamp,
+} from '../../capture-adapter/services/trusted-input-telemetry'
+import { useMeasurementLaneState } from '../../display-generation/state/use-measurement-lane-state'
 import { SurfaceLayout } from '../../shared-ui/layout/SurfaceLayout'
 import {
   selectCurrentSessionPreviews,
@@ -151,6 +159,18 @@ export function CaptureScreen() {
     null,
   )
   const playedTimingCueKeyRef = useRef<string | null>(null)
+  // Story 7.2: 공식 KPI 시작점. pointerup에서 찍고 click 핸들러가 같은 requestId로 촬영한다.
+  const trustedInputStampRef = useRef<TrustedInputStamp | null>(null)
+  const isMeasurementLaneEnabled = useMeasurementLaneState()
+
+  // 첫 촬영이 clock 보정 비용을 물지 않도록 미리 준비한다. lane이 꺼져 있으면 하지 않는다.
+  useEffect(() => {
+    if (!isMeasurementLaneEnabled) {
+      return
+    }
+
+    void ensureBoothClockCalibration()
+  }, [isMeasurementLaneEnabled])
 
   const readiness =
     sessionDraft.captureReadiness ??
@@ -277,16 +297,51 @@ export function CaptureScreen() {
     playCue(timing.phase)
   }, [timing])
 
+  /**
+   * `click`보다 먼저 오는 trusted `pointerup`에서 시작점을 찍는다.
+   * 동기 함수이며 IPC를 하지 않는다 — 여기서 기다리면 촬영 자체가 느려진다.
+   */
+  function handlePrimaryPointerUp(event: { isTrusted: boolean }) {
+    if (
+      !isMeasurementLaneEnabled ||
+      !copy.canCapture ||
+      sessionDraft.sessionId === null
+    ) {
+      trustedInputStampRef.current = null
+      return
+    }
+
+    trustedInputStampRef.current = stampTrustedCaptureInput(
+      event,
+      generateCaptureRequestId(),
+    )
+  }
+
   async function handlePrimaryAction() {
     if (!copy.canCapture || sessionDraft.sessionId === null) {
+      trustedInputStampRef.current = null
       return
     }
 
     setFallbackError(null)
 
+    const trustedInputStamp = trustedInputStampRef.current
+    trustedInputStampRef.current = null
+
+    // 계측 보고는 절대 await하지 않는다. 촬영 요청 경로를 지연시키면 제품이 느려진다.
+    if (trustedInputStamp !== null) {
+      reportTrustedCaptureInput({
+        sessionId: sessionDraft.sessionId,
+        stamp: trustedInputStamp,
+        isMeasurementLaneEnabled,
+      })
+    }
+
     try {
       await requestCapture({
         sessionId: sessionDraft.sessionId,
+        // 계측 표본과 촬영 요청이 같은 requestId를 공유해야 상관관계가 성립한다.
+        requestId: trustedInputStamp?.requestId,
       })
     } catch (error) {
       const hostError = error as HostErrorEnvelope
@@ -368,6 +423,7 @@ export function CaptureScreen() {
           isRequestingCapture
         }
         onPrimaryAction={handlePrimaryAction}
+        onPrimaryPointerUp={handlePrimaryPointerUp}
         onChangePreset={() => {
           setFallbackError(null)
           beginPresetSwitch()

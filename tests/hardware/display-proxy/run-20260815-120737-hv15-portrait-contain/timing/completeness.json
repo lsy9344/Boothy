@@ -1,0 +1,19 @@
+﻿{
+    "schemaVersion":  "hv-13b-telemetry-completeness/v1",
+    "sessionEvidenceDir":  "C:\\Code\\Boothy\\tests\\hardware\\display-proxy\\run-20260815-120737-hv15-portrait-contain\\session-evidence",
+    "committedGenerations":  1,
+    "terminalPresentRows":  1,
+    "qualifyingSamples":  1,
+    "presentUnreportedRows":  0,
+    "missingTerminalGenerations":  [
+
+                                   ],
+    "unknownTerminalGenerations":  [
+
+                                   ],
+    "duplicatedTerminalRows":  [
+
+                               ],
+    "completenessGate":  "pass",
+    "verdict":  "telemetry-complete"
+}

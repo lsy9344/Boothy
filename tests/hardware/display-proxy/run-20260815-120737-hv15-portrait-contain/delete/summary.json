@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "hv15-delete-summary/v1",
+  "sessionId": "session_000000000018cbdafd0a7261d8",
+  "initialResult": "fail",
+  "rerunResult": "pass",
+  "rawCountBefore": 1,
+  "rawCountAfter": 0,
+  "pointerRevisionAfter": 3,
+  "activeGenerationAfter": null,
+  "journalOutcome": "request-forgotten",
+  "viewerAfter": "standby"
+}

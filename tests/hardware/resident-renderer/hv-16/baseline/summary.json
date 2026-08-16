@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "hv-16-baseline/v1",
+  "measuredOn": "2026-08-16",
+  "corpus": {
+    "path": "tests/hardware/capture-source/run-20260813-115426-hv14/session-evidence/captures/originals",
+    "captures": 35,
+    "camera": "Canon EOS 700D (HV-14 real-capture corpus)"
+  },
+  "darktableOneShot": {
+    "binary": "C:/Program Files/darktable/bin/darktable-cli.exe",
+    "version": "5.4.1",
+    "targetPx": "1620x1080 contain, --upscale false",
+    "perRecipe": {
+      "preset-daylight": {
+        "n": 105,
+        "minMs": 3395,
+        "medianMs": 3705,
+        "p95Ms": 6553,
+        "maxMs": 10565
+      },
+      "preset-mono-pop": {
+        "n": 105,
+        "minMs": 3418,
+        "medianMs": 3710,
+        "p95Ms": 4168,
+        "maxMs": 4616
+      },
+      "preset-soft-glow": {
+        "n": 105,
+        "minMs": 3454,
+        "medianMs": 3748,
+        "p95Ms": 6627,
+        "maxMs": 11730
+      },
+      "default-render-template": {
+        "n": 105,
+        "minMs": 3373,
+        "medianMs": 3669,
+        "p95Ms": 4287,
+        "maxMs": 10382
+      }
+    },
+    "all": {
+      "n": 420,
+      "minMs": 3373,
+      "medianMs": 3705.5,
+      "p95Ms": 4995,
+      "maxMs": 11730
+    }
+  },
+  "windowsWicDirectDecode": {
+    "decoder": "Microsoft Raw Image Decoder",
+    "package": "Microsoft.RawImageExtension 2.5.24.0 (Microsoft Store appx)",
+    "perMode": {
+      "full": {
+        "n": 36,
+        "minMs": 1208.1,
+        "medianMs": 1286.6,
+        "p95Ms": 2138.7,
+        "maxMs": 2263.7
+      },
+      "fit1620": {
+        "n": 36,
+        "minMs": 1239.8,
+        "medianMs": 1323.0,
+        "p95Ms": 2200.1,
+        "maxMs": 2285.5
+      }
+    }
+  },
+  "derived": {
+    "presetOperationCostMs": 47,
+    "presetOperationShareOfRenderPct": 1.26,
+    "storyThreeFourEndToEndMedianMs": 8284,
+    "residualIfRenderWereFreeMs": 4568,
+    "residualIfResidentDirectDecodeMs": 5854.6,
+    "nfr003WarmP50TargetMs": 3000
+  }
+}

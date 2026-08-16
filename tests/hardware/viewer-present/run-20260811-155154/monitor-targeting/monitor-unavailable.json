@@ -1,0 +1,16 @@
+{
+  "configuredMonitorName": "U32J59x",
+  "viewerWindowCount": 0,
+  "schemaVersion": "viewer-readiness/v1",
+  "sessionId": "session_000000000018caadd6c4e7a528",
+  "viewerEpoch": 0,
+  "windowState": "absent",
+  "listenerReady": false,
+  "layoutReady": false,
+  "monitorTargeting": "monitor-unavailable",
+  "displayProfile": null,
+  "photoRect": null,
+  "viewerReady": false,
+  "reasonCode": "viewer-absent"
+}
+

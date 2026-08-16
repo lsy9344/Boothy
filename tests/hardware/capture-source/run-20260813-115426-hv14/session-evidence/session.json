@@ -1,0 +1,1241 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cbaaed889b09ec",
+  "boothAlias": "HV14측정 1414",
+  "customer": {
+    "name": "HV14측정",
+    "phoneLastFour": "1414"
+  },
+  "createdAt": "2026-08-14T12:13:34Z",
+  "updatedAt": "2026-08-14T12:19:07Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cbaaed889b09ec",
+    "adjustedEndAt": "2026-08-14T12:28:34Z",
+    "warningAt": "2026-08-14T12:23:34Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121451654_90cc349f2e",
+      "requestId": "request_000000000000065900c4761ec8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121451654_90cc349f2e.CR2",
+        "persistedAtMs": 1786709695740
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121451654_90cc349f2e.jpg",
+        "enqueuedAtMs": 1786709695740,
+        "readyAtMs": 1786709705731
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709691655,
+        "previewVisibleAtMs": 1786709705731,
+        "fastPreviewVisibleAtMs": 1786709696797,
+        "xmpPreviewReadyAtMs": 1786709705731,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121533580_0615a4faa7",
+      "requestId": "request_000000000000065900c6f41500",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121533580_0615a4faa7.CR2",
+        "persistedAtMs": 1786709737031
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121533580_0615a4faa7.jpg",
+        "enqueuedAtMs": 1786709737031,
+        "readyAtMs": 1786709742473
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709733594,
+        "previewVisibleAtMs": 1786709742473,
+        "fastPreviewVisibleAtMs": 1786709737410,
+        "xmpPreviewReadyAtMs": 1786709742473,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121551949_4b91e87752",
+      "requestId": "request_000000000000065900c8123190",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121551949_4b91e87752.CR2",
+        "persistedAtMs": 1786709755100
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121551949_4b91e87752.jpg",
+        "enqueuedAtMs": 1786709755100,
+        "readyAtMs": 1786709760433
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709751965,
+        "previewVisibleAtMs": 1786709760433,
+        "fastPreviewVisibleAtMs": 1786709755434,
+        "xmpPreviewReadyAtMs": 1786709760433,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121556049_0aafbae744",
+      "requestId": "request_000000000000065900c84b6b40",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121556049_0aafbae744.CR2",
+        "persistedAtMs": 1786709759192
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121556049_0aafbae744.jpg",
+        "enqueuedAtMs": 1786709759192,
+        "readyAtMs": 1786709764632
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709756064,
+        "previewVisibleAtMs": 1786709764632,
+        "fastPreviewVisibleAtMs": 1786709759403,
+        "xmpPreviewReadyAtMs": 1786709764632,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121600366_e35063900a",
+      "requestId": "request_000000000000065900c88e37d8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121600366_e35063900a.CR2",
+        "persistedAtMs": 1786709763392
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121600366_e35063900a.jpg",
+        "enqueuedAtMs": 1786709763392,
+        "readyAtMs": null
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewWaiting",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709760389,
+        "previewVisibleAtMs": null,
+        "fastPreviewVisibleAtMs": 1786709763614,
+        "xmpPreviewReadyAtMs": null,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "pending"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121604251_31fd2360a9",
+      "requestId": "request_000000000000065900c8cf3ad8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121604251_31fd2360a9.CR2",
+        "persistedAtMs": 1786709767659
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121604251_31fd2360a9.jpg",
+        "enqueuedAtMs": 1786709767659,
+        "readyAtMs": 1786709773915
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709764278,
+        "previewVisibleAtMs": 1786709773915,
+        "fastPreviewVisibleAtMs": 1786709767832,
+        "xmpPreviewReadyAtMs": 1786709773915,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121609134_9f722598de",
+      "requestId": "request_000000000000065900c9162500",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121609134_9f722598de.CR2",
+        "persistedAtMs": 1786709771945
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121609134_9f722598de.jpg",
+        "enqueuedAtMs": 1786709771945,
+        "readyAtMs": null
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewWaiting",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709769162,
+        "previewVisibleAtMs": null,
+        "fastPreviewVisibleAtMs": 1786709772138,
+        "xmpPreviewReadyAtMs": null,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "pending"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121613471_1ab5243ca3",
+      "requestId": "request_000000000000065900c9452078",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121613471_1ab5243ca3.CR2",
+        "persistedAtMs": 1786709776744
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121613471_1ab5243ca3.jpg",
+        "enqueuedAtMs": 1786709776744,
+        "readyAtMs": 1786709782191
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709773495,
+        "previewVisibleAtMs": 1786709782191,
+        "fastPreviewVisibleAtMs": 1786709776946,
+        "xmpPreviewReadyAtMs": 1786709782191,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121617889_06075c98ea",
+      "requestId": "request_000000000000065900c991df18",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121617889_06075c98ea.CR2",
+        "persistedAtMs": 1786709780675
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121617889_06075c98ea.jpg",
+        "enqueuedAtMs": 1786709780675,
+        "readyAtMs": 1786709786170
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709777911,
+        "previewVisibleAtMs": 1786709786170,
+        "fastPreviewVisibleAtMs": 1786709780873,
+        "xmpPreviewReadyAtMs": 1786709786170,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121621818_89cf49f252",
+      "requestId": "request_000000000000065900c9dd0540",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121621818_89cf49f252.CR2",
+        "persistedAtMs": 1786709784983
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121621818_89cf49f252.jpg",
+        "enqueuedAtMs": 1786709784983,
+        "readyAtMs": 1786709790316
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709781840,
+        "previewVisibleAtMs": 1786709790316,
+        "fastPreviewVisibleAtMs": 1786709785173,
+        "xmpPreviewReadyAtMs": 1786709790316,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121644403_a6147f8bb4",
+      "requestId": "request_000000000000065900cb24a7d0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121644403_a6147f8bb4.CR2",
+        "persistedAtMs": 1786709807374
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121644403_a6147f8bb4.jpg",
+        "enqueuedAtMs": 1786709807374,
+        "readyAtMs": 1786709812501
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709804423,
+        "previewVisibleAtMs": 1786709812501,
+        "fastPreviewVisibleAtMs": 1786709807715,
+        "xmpPreviewReadyAtMs": 1786709812501,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121648373_0c97ce675c",
+      "requestId": "request_000000000000065900cb609578",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121648373_0c97ce675c.CR2",
+        "persistedAtMs": 1786709811556
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121648373_0c97ce675c.jpg",
+        "enqueuedAtMs": 1786709811556,
+        "readyAtMs": 1786709817094
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709808394,
+        "previewVisibleAtMs": 1786709817094,
+        "fastPreviewVisibleAtMs": 1786709811733,
+        "xmpPreviewReadyAtMs": 1786709817094,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121652390_cfb255de63",
+      "requestId": "request_000000000000065900cba57980",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121652390_cfb255de63.CR2",
+        "persistedAtMs": 1786709815637
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121652390_cfb255de63.jpg",
+        "enqueuedAtMs": 1786709815637,
+        "readyAtMs": 1786709821617
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709812411,
+        "previewVisibleAtMs": 1786709821617,
+        "fastPreviewVisibleAtMs": 1786709815639,
+        "xmpPreviewReadyAtMs": 1786709821617,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121656575_a91b0bc77e",
+      "requestId": "request_000000000000065900cbe8f598",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121656575_a91b0bc77e.CR2",
+        "persistedAtMs": 1786709819769
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121656575_a91b0bc77e.jpg",
+        "enqueuedAtMs": 1786709819769,
+        "readyAtMs": 1786709825829
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709816596,
+        "previewVisibleAtMs": 1786709825829,
+        "fastPreviewVisibleAtMs": 1786709819993,
+        "xmpPreviewReadyAtMs": 1786709825829,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121700665_52188a13e7",
+      "requestId": "request_000000000000065900cc29fc38",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121700665_52188a13e7.CR2",
+        "persistedAtMs": 1786709823876
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121700665_52188a13e7.jpg",
+        "enqueuedAtMs": 1786709823876,
+        "readyAtMs": null
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewWaiting",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709820695,
+        "previewVisibleAtMs": null,
+        "fastPreviewVisibleAtMs": 1786709824062,
+        "xmpPreviewReadyAtMs": null,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "pending"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121704705_8a84a0087f",
+      "requestId": "request_000000000000065900cc738450",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121704705_8a84a0087f.CR2",
+        "persistedAtMs": 1786709827814
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121704705_8a84a0087f.jpg",
+        "enqueuedAtMs": 1786709827814,
+        "readyAtMs": null
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewWaiting",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709824732,
+        "previewVisibleAtMs": null,
+        "fastPreviewVisibleAtMs": 1786709828039,
+        "xmpPreviewReadyAtMs": null,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "pending"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121708709_f1b69df2d4",
+      "requestId": "request_000000000000065900ccb09ad8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121708709_f1b69df2d4.CR2",
+        "persistedAtMs": 1786709831635
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121708709_f1b69df2d4.jpg",
+        "enqueuedAtMs": 1786709831635,
+        "readyAtMs": null
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewWaiting",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709828742,
+        "previewVisibleAtMs": null,
+        "fastPreviewVisibleAtMs": 1786709831835,
+        "xmpPreviewReadyAtMs": null,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "pending"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121713198_54f65b289f",
+      "requestId": "request_000000000000065900ccf12fe8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121713198_54f65b289f.CR2",
+        "persistedAtMs": 1786709836627
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121713198_54f65b289f.jpg",
+        "enqueuedAtMs": 1786709836627,
+        "readyAtMs": 1786709841770
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709833237,
+        "previewVisibleAtMs": 1786709841770,
+        "fastPreviewVisibleAtMs": 1786709836844,
+        "xmpPreviewReadyAtMs": 1786709841770,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121728173_7d89483888",
+      "requestId": "request_000000000000065900cdd8c2f8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121728173_7d89483888.CR2",
+        "persistedAtMs": 1786709851526
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121728173_7d89483888.jpg",
+        "enqueuedAtMs": 1786709851526,
+        "readyAtMs": 1786709857870
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709848194,
+        "previewVisibleAtMs": 1786709857870,
+        "fastPreviewVisibleAtMs": 1786709851529,
+        "xmpPreviewReadyAtMs": 1786709857870,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121732150_187d4fb6eb",
+      "requestId": "request_000000000000065900ce1cdb98",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121732150_187d4fb6eb.CR2",
+        "persistedAtMs": 1786709854949
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121732150_187d4fb6eb.jpg",
+        "enqueuedAtMs": 1786709854949,
+        "readyAtMs": 1786709863096
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709852176,
+        "previewVisibleAtMs": 1786709863096,
+        "fastPreviewVisibleAtMs": 1786709855180,
+        "xmpPreviewReadyAtMs": 1786709863096,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121737392_32114d0fb5",
+      "requestId": "request_000000000000065900ce5ecc50",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121737392_32114d0fb5.CR2",
+        "persistedAtMs": 1786709860240
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121737392_32114d0fb5.jpg",
+        "enqueuedAtMs": 1786709860240,
+        "readyAtMs": 1786709866385
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709857423,
+        "previewVisibleAtMs": 1786709866385,
+        "fastPreviewVisibleAtMs": 1786709860655,
+        "xmpPreviewReadyAtMs": 1786709866385,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121741600_50420025d7",
+      "requestId": "request_000000000000065900ce80fe50",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121741600_50420025d7.CR2",
+        "persistedAtMs": 1786709864933
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121741600_50420025d7.jpg",
+        "enqueuedAtMs": 1786709864933,
+        "readyAtMs": 1786709870579
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709861630,
+        "previewVisibleAtMs": 1786709870579,
+        "fastPreviewVisibleAtMs": 1786709865129,
+        "xmpPreviewReadyAtMs": 1786709870579,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121746421_443ba0174b",
+      "requestId": "request_000000000000065900cec9d108",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121746421_443ba0174b.CR2",
+        "persistedAtMs": 1786709869338
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121746421_443ba0174b.jpg",
+        "enqueuedAtMs": 1786709869338,
+        "readyAtMs": 1786709875690
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709866448,
+        "previewVisibleAtMs": 1786709875690,
+        "fastPreviewVisibleAtMs": 1786709869524,
+        "xmpPreviewReadyAtMs": 1786709875690,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121750212_484a930de2",
+      "requestId": "request_000000000000065900cf032a40",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121750212_484a930de2.CR2",
+        "persistedAtMs": 1786709874416
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121750212_484a930de2.jpg",
+        "enqueuedAtMs": 1786709874416,
+        "readyAtMs": 1786709882271
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709870250,
+        "previewVisibleAtMs": 1786709882271,
+        "fastPreviewVisibleAtMs": 1786709874607,
+        "xmpPreviewReadyAtMs": 1786709882271,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121755579_013437ea77",
+      "requestId": "request_000000000000065900cf773028",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121755579_013437ea77.CR2",
+        "persistedAtMs": 1786709881369
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121755579_013437ea77.jpg",
+        "enqueuedAtMs": 1786709881369,
+        "readyAtMs": 1786709888436
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709875600,
+        "previewVisibleAtMs": 1786709888436,
+        "fastPreviewVisibleAtMs": 1786709881796,
+        "xmpPreviewReadyAtMs": 1786709888436,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121802733_4dd4bf35ce",
+      "requestId": "request_000000000000065900cfc2fc00",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121802733_4dd4bf35ce.CR2",
+        "persistedAtMs": 1786709886019
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121802733_4dd4bf35ce.jpg",
+        "enqueuedAtMs": 1786709886019,
+        "readyAtMs": 1786709892241
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709882763,
+        "previewVisibleAtMs": 1786709892241,
+        "fastPreviewVisibleAtMs": 1786709886355,
+        "xmpPreviewReadyAtMs": 1786709892241,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121825300_aa5ea1011f",
+      "requestId": "request_000000000000065900d12f3e70",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121825300_aa5ea1011f.CR2",
+        "persistedAtMs": 1786709908127
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121825300_aa5ea1011f.jpg",
+        "enqueuedAtMs": 1786709908127,
+        "readyAtMs": 1786709913270
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709905321,
+        "previewVisibleAtMs": 1786709913270,
+        "fastPreviewVisibleAtMs": 1786709908473,
+        "xmpPreviewReadyAtMs": 1786709913270,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121829411_3166191445",
+      "requestId": "request_000000000000065900d16cbad0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121829411_3166191445.CR2",
+        "persistedAtMs": 1786709912144
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121829411_3166191445.jpg",
+        "enqueuedAtMs": 1786709912144,
+        "readyAtMs": 1786709918712
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709909430,
+        "previewVisibleAtMs": 1786709918712,
+        "fastPreviewVisibleAtMs": 1786709912358,
+        "xmpPreviewReadyAtMs": 1786709918712,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121833649_088b813a36",
+      "requestId": "request_000000000000065900d1b08550",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121833649_088b813a36.CR2",
+        "persistedAtMs": 1786709916892
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121833649_088b813a36.jpg",
+        "enqueuedAtMs": 1786709916892,
+        "readyAtMs": 1786709922179
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709913668,
+        "previewVisibleAtMs": 1786709922179,
+        "fastPreviewVisibleAtMs": 1786709917158,
+        "xmpPreviewReadyAtMs": 1786709922179,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121838453_869708ab7e",
+      "requestId": "request_000000000000065900d1e70188",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121838453_869708ab7e.CR2",
+        "persistedAtMs": 1786709921558
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121838453_869708ab7e.jpg",
+        "enqueuedAtMs": 1786709921558,
+        "readyAtMs": 1786709927501
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709918479,
+        "previewVisibleAtMs": 1786709927501,
+        "fastPreviewVisibleAtMs": 1786709921734,
+        "xmpPreviewReadyAtMs": 1786709927501,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121842406_50ec32edf9",
+      "requestId": "request_000000000000065900d2283f20",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121842406_50ec32edf9.CR2",
+        "persistedAtMs": 1786709925593
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121842406_50ec32edf9.jpg",
+        "enqueuedAtMs": 1786709925593,
+        "readyAtMs": 1786709931332
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709922448,
+        "previewVisibleAtMs": 1786709931332,
+        "fastPreviewVisibleAtMs": 1786709925770,
+        "xmpPreviewReadyAtMs": 1786709931332,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121846468_9fb9363e6a",
+      "requestId": "request_000000000000065900d2551ef8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121846468_9fb9363e6a.CR2",
+        "persistedAtMs": 1786709929542
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121846468_9fb9363e6a.jpg",
+        "enqueuedAtMs": 1786709929542,
+        "readyAtMs": 1786709935283
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709926504,
+        "previewVisibleAtMs": 1786709935283,
+        "fastPreviewVisibleAtMs": 1786709929704,
+        "xmpPreviewReadyAtMs": 1786709935283,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121850380_5cfbb12584",
+      "requestId": "request_000000000000065900d2900300",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121850380_5cfbb12584.CR2",
+        "persistedAtMs": 1786709933556
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121850380_5cfbb12584.jpg",
+        "enqueuedAtMs": 1786709933556,
+        "readyAtMs": 1786709939396
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709930413,
+        "previewVisibleAtMs": 1786709939396,
+        "fastPreviewVisibleAtMs": 1786709933733,
+        "xmpPreviewReadyAtMs": 1786709939396,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121854385_2c73d18f29",
+      "requestId": "request_000000000000065900d2cfe8d8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121854385_2c73d18f29.CR2",
+        "persistedAtMs": 1786709937510
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121854385_2c73d18f29.jpg",
+        "enqueuedAtMs": 1786709937510,
+        "readyAtMs": 1786709943496
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709934410,
+        "previewVisibleAtMs": 1786709943496,
+        "fastPreviewVisibleAtMs": 1786709937759,
+        "xmpPreviewReadyAtMs": 1786709943496,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbaaed889b09ec",
+      "boothAlias": "HV14측정 1414",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260814121858810_8bfb1d86f4",
+      "requestId": "request_000000000000065900d30e0900",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\captures\\originals\\capture_20260814121858810_8bfb1d86f4.CR2",
+        "persistedAtMs": 1786709942034
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbaaed889b09ec\\renders\\previews\\capture_20260814121858810_8bfb1d86f4.jpg",
+        "enqueuedAtMs": 1786709942034,
+        "readyAtMs": 1786709947994
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786709938843,
+        "previewVisibleAtMs": 1786709947994,
+        "fastPreviewVisibleAtMs": 1786709942235,
+        "xmpPreviewReadyAtMs": 1786709947994,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": null
+}

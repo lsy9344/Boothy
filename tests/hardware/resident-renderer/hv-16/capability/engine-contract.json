@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "hv-16-engine-contract/v1",
+  "recordedOn": "2026-08-16",
+  "story": "7.5",
+  "engine": {
+    "id": "webgl2-resident",
+    "version": "0.1.0-spike",
+    "programHash": "fnv1a64:bcbf55e37b6cc622",
+    "programHashInput": "vertex shader + every fragment shader source, sorted by program name",
+    "programs": ["blit", "bloomComposite", "blur", "pointwise", "sharpen"],
+    "programCountIsIndependentOfPresetCount": true,
+    "note": "프로그램 집합이 preset 수와 무관해야 새 preset이 hot path에 컴파일을 끌고 들어오지 않는다."
+  },
+  "recipe": {
+    "schemaVersion": "resident-recipe/v1",
+    "hashAlgorithm": "fnv1a64 over the canonical recipe form",
+    "canonicalFormFields": [
+      "schemaVersion",
+      "presetId",
+      "presetVersion",
+      "engine",
+      "engineVersion",
+      "recipeVersion",
+      "outputColorSpace",
+      "iccIntent",
+      "jpegQuality",
+      "operations[order:name:enabled:modVersion:paramsHex:blendopParams]"
+    ],
+    "perPresetHashesAreRunScoped": true,
+    "note": "recipe hash는 게시된 bundle의 version 값에 의존하므로 HV-16 실행 시점에 회차별로 기록한다."
+  },
+  "operationAllowlist": [
+    "temperature",
+    "exposure",
+    "sigmoid",
+    "monochrome",
+    "bloom",
+    "sharpen"
+  ],
+  "operationAllowlistCoversApprovedPresets": {
+    "preset_daylight": ["temperature", "exposure", "sigmoid", "bloom", "sharpen"],
+    "preset_mono-pop": ["temperature", "exposure", "sigmoid", "monochrome", "sharpen"],
+    "preset_soft-glow": ["temperature", "exposure", "sigmoid", "bloom", "sharpen"]
+  },
+  "refusedByContract": {
+    "masks": "resident-mask-unsupported",
+    "unknownBlendopParams": "resident-blend-unsupported",
+    "operationOutsideAllowlist": "resident-operation-unsupported",
+    "modVersionMismatch": "resident-operation-unsupported",
+    "outputProfileOtherThanSrgbPerceptual": "resident-output-profile-mismatch",
+    "engineVersionDrift": "resident-engine-version-mismatch",
+    "recipeHashDrift": "resident-recipe-hash-mismatch",
+    "webgl2Unavailable": "resident-capability-unavailable",
+    "contextLostOrNotPrewarmed": "resident-context-not-ready",
+    "viewerHasNoPhotoRect": "resident-viewer-not-ready",
+    "noApprovedRealCaptureRoute": "resident-source-route-unapproved",
+    "inputRasterCameFromAOneShotProcess": "resident-one-shot-startup-not-eliminated",
+    "frameBlewTheRenderBudget": "resident-render-timeout"
+  },
+  "renderBudget": {
+    "micros": 1500000,
+    "reasonCode": "resident-render-timeout",
+    "note": "예산을 넘긴 프레임은 버리고 정확 경로로 내려간다. 느린 성공보다 빠른 fallback이 낫다 — 늦게 도착한 상주 결과를 쓰면 고객은 darktable 정확 경로보다 더 오래 기다리고 그 시간이 evidence에는 성공으로 남는다.",
+    "comparedTo": "pinned darktable one-shot median 3716 ms"
+  },
+  "adoptionGate": {
+    "approvedDirectDecoders": [],
+    "productionEligibleRequires": [
+      "inputProvenance == real-capture-direct",
+      "inputProducer is on approvedDirectDecoders",
+      "hotPathProgramCompileCount == 0",
+      "hotPathProcessStartCount == 0",
+      "adoptionBlockReason == null"
+    ],
+    "enforcedAt": [
+      "src-tauri/src/contracts/dto.rs :: validate_resident_producer_provenance",
+      "src/shared-contracts/schemas/viewer-display.ts :: residentProducerProvenanceSchema"
+    ],
+    "note": "목록이 비어 있는 한 어떤 상주 후보도 production eligible이 될 수 없다 (Story 7.5 AC 6)."
+  },
+  "executionModes": {
+    "off": "기본값. context조차 만들지 않는다. 알 수 없는 설정값도 여기로 닫힌다.",
+    "shadow": "렌더하고 계측하되 고객 화면 pointer를 건드리지 않는다.",
+    "evidence": "HV-16 회차에서만 명시적으로 켠다. 이때만 게시 경계를 통과한다."
+  },
+  "publicationBoundary": {
+    "reuses": "src-tauri/src/display/generation_publisher.rs :: publish_generation_in_dir",
+    "tier": "displayFitPresetProxy",
+    "createsSeparatePointerPath": false,
+    "note": "Story 7.4의 immutable 게시 경계를 그대로 통과한다 (AC 7)."
+  },
+  "schemaVersionBump": {
+    "from": "viewer-display/v2",
+    "to": "viewer-display/v3",
+    "reason": "프레임을 실제로 만든 renderer(producer)와 비교 기준 renderer(reference)를 분리해 기록하기 위해",
+    "backwardCompatibleReaders": ["viewer-display/v1", "viewer-display/v2"]
+  }
+}

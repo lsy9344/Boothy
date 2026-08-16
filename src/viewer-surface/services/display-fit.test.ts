@@ -115,9 +115,13 @@ describe('isDisplayFitSource', () => {
     expect(isDisplayFitSource({ naturalWidth: 1620, naturalHeight: 1080 }, required)).toBe(true)
   })
 
-  it('한 축이라도 모자라면 부적합하다', () => {
-    expect(isDisplayFitSource({ naturalWidth: 1620, naturalHeight: 1079 }, required)).toBe(false)
-    expect(isDisplayFitSource({ naturalWidth: 1619, naturalHeight: 1080 }, required)).toBe(false)
+  it('세로 원본을 contain으로 표시할 때 한 축이 목표에 닿으면 확대 없이 적합하다', () => {
+    expect(isDisplayFitSource({ naturalWidth: 720, naturalHeight: 1080 }, required)).toBe(true)
+    expect(isDisplayFitSource({ naturalWidth: 1620, naturalHeight: 720 }, required)).toBe(true)
+  })
+
+  it('두 축이 모두 모자라 확대가 필요하면 부적합하다', () => {
+    expect(isDisplayFitSource({ naturalWidth: 1619, naturalHeight: 1079 }, required)).toBe(false)
   })
 
   it('고정 384px thumbnail은 승인된 어떤 profile에서도 적합하지 않다', () => {

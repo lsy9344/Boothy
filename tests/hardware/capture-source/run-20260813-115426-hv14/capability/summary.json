@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "hv-14-capability/v1",
+  "currentBefore": "0x00640013",
+  "currentAfter": "0x00640013",
+  "rawPlusJpegSupported": true,
+  "descriptorValues": [
+    "0x0013FF0F",
+    "0x0012FF0F",
+    "0x0113FF0F",
+    "0x0112FF0F",
+    "0x0E13FF0F",
+    "0x0E12FF0F",
+    "0x0F13FF0F",
+    "0x1013FF0F",
+    "0x00640013",
+    "0x0064FF0F"
+  ],
+  "combinations": [
+    {
+      "value": "0x00640013",
+      "status": "attempted",
+      "reason": "descriptor-supported RAW plus Large Fine JPEG; already current before each capture"
+    }
+  ]
+}

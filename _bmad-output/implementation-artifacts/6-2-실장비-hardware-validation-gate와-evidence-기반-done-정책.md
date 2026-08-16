@@ -2,7 +2,7 @@
 
 Status: done
 
-Correct Course Note: automated pass는 구현 완료의 근거일 뿐 제품 관점 완료가 아니다. 지정된 hardware validation evidence가 `Go`로 잠기기 전까지 truth-critical story는 `review`를 유지해야 한다.
+Correct Course Note: automated pass는 구현 완료의 근거일 뿐 제품 관점 완료가 아니다. 지정된 hardware validation evidence가 `Go`로 잠기기 전까지 truth-critical story는 `review`를 유지해야 한다. 2026-08-11 보정으로 canonical integration owner는 Story 1.6/1.7/1.8이며 Story 1.4/1.5는 historical regression evidence로 유지한다.
 
 ## Story
 
@@ -12,20 +12,22 @@ truth-critical story가 실장비 검증 증거 없이 제품 관점 `done`으�
 
 ## Acceptance Criteria
 
-1. Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3을 대상으로 하는 canonical hardware gate 목록과 HV checklist 매핑이 하나의 sprint-owned artifact에 고정되어야 한다. 또한 이 기준은 현재 runbook과 planning artifact 사이의 범위 불일치를 해소해야 하며, 지정 evidence가 `Go`로 기록되기 전까지 해당 story는 `review` 또는 동등한 pre-close 상태를 유지해야 한다.
+1. Story 1.6, 1.7, 1.8, 3.2, 4.2, 4.3을 대상으로 하는 canonical hardware gate 목록과 HV checklist 매핑이 하나의 sprint-owned artifact에 고정되어야 한다. Story 1.4/1.5 evidence는 고객 상태·문구 regression으로 보존한다. 지정 evidence가 `Go`로 기록되기 전까지 canonical integration owner는 `review` 또는 동등한 pre-close 상태를 유지해야 한다.
 2. 각 gated story의 closure evidence는 최소 `story key`, 대응 `HV checklist ID`, `evidence package path`, `executedAt`, `validator`, `booth PC`, `camera model`, 필요한 경우 `darktable pin`과 `helper identifier`, `Go / No-Go result`, `release blocker`, `follow-up owner`를 남겨야 한다. 증거는 단순 스크린샷 묶음이 아니라 `session.json`, `timing-events.log`, `bundle.json`, `catalog-state.json` 같은 핵심 근거 경로와 연결되어야 한다.
 3. sprint review와 release baseline은 `automated pass`와 `hardware pass`를 분리해 기록해야 한다. automated test가 모두 통과해도 hardware pass가 없으면 release는 booth `Ready` 또는 `Completed` truth를 제품 관점 완료로 주장할 수 없어야 한다.
 4. hardware validation 결과가 `No-Go`이거나 증거 패키지가 누락되면 관련 story는 계속 `review`에 머물거나 `review`로 되돌아가야 한다. 또한 release decision은 보류되어야 하고, blocker, rerun 조건, owner가 같은 운영 artifact에 기록되어야 한다.
-5. 현재 영향을 받는 story 문서와 sprint 운영 산출물은 이 정책에 맞게 소급 정렬되어야 한다. 최소한 Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3은 각자 어떤 HV evidence로 닫히는지 명시적으로 참조해야 하고, sprint 운영자가 한 곳에서 자동 테스트 통과와 hardware gate 상태를 함께 확인할 수 있어야 한다.
+5. 현재 영향을 받는 story 문서와 sprint 운영 산출물은 이 정책에 맞게 소급 정렬되어야 한다. 최소한 Story 1.6, 1.7, 1.8, 3.2, 4.2, 4.3은 각자 어떤 HV evidence로 닫히는지 명시적으로 참조해야 하고, Story 1.4/1.5는 regression evidence임을 표시해야 한다. sprint 운영자는 한 곳에서 자동 테스트 통과와 hardware gate 상태를 함께 확인할 수 있어야 한다.
 
 ## Tasks / Subtasks
 
 - [x] canonical hardware gate 범위와 evidence registry를 고정한다. (AC: 1, 2, 5)
   - [x] `_bmad-output/implementation-artifacts/` 아래에 sprint-owned hardware evidence ledger 또는 동등한 운영 artifact를 만들고, story별 HV 매핑과 pass/no-go 기록 형식을 고정한다.
   - [x] canonical 매핑은 기본적으로 아래를 따른다.
-    - [x] Story 1.4 -> HV-02, HV-03, HV-10
-    - [x] Story 1.6 -> HV-02, HV-03, HV-10
-    - [x] Story 1.5 -> HV-04, HV-05
+    - [x] Story 1.4 -> historical HV-02, HV-03, HV-10 regression evidence
+    - [x] Story 1.5 -> historical HV-04, HV-05 regression evidence
+    - [x] Story 1.6 -> HV-02, HV-03, HV-10 canonical readiness evidence
+    - [x] Story 1.7 -> HV-04 canonical capture correlation evidence
+    - [x] Story 1.8 -> HV-05, HV-07, HV-08, HV-11, HV-12 canonical render/completion evidence
     - [x] Story 3.2 -> HV-08, HV-11
     - [x] Story 4.2 -> HV-01, HV-09
     - [x] Story 4.3 -> HV-01, HV-07, HV-12
@@ -45,7 +47,7 @@ truth-critical story가 실장비 검증 증거 없이 제품 관점 `done`으�
   - [x] branch rollout / release promotion은 related gated story 중 하나라도 `No-Go` 또는 evidence missing이면 진행하지 않는다고 명시한다.
 
 - [x] 현재 truth-critical story와 runbook 참조를 소급 정렬한다. (AC: 1, 2, 5)
-  - [x] Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3 문서에 동일한 방식의 hardware gate reference가 유지되는지 확인하고, 누락되거나 표현이 제각각이면 정규화한다.
+  - [x] Story 1.6, 1.7, 1.8, 3.2, 4.2, 4.3 문서에 canonical hardware gate reference가 유지되는지 확인하고 Story 1.4/1.5는 regression evidence로 구분한다.
   - [x] checklist, sprint-status, release-baseline, impacted story docs 사이에서 story list와 HV mapping이 서로 다르게 적혀 있지 않게 맞춘다.
   - [x] 첫 운영 회차에서 사용할 빈 evidence row 또는 placeholder를 미리 만들어, QA / operator가 즉시 실행 결과를 기입할 수 있게 한다.
 
@@ -74,13 +76,13 @@ truth-critical story가 실장비 검증 증거 없이 제품 관점 `done`으�
 
 ### 스토리 기반 요구사항
 
-- epics의 Additional Requirements는 Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3이 자동 테스트 통과만으로 제품 관점 `done`이 아니라고 이미 명시한다. [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
+- epics의 Additional Requirements는 Story 1.6, 1.7, 1.8, 3.2, 4.2, 4.3의 canonical release truth와 Story 1.4/1.5 regression evidence를 분리한다. [Source: _bmad-output/planning-artifacts/epics.md#Additional Requirements]
 - PRD의 release gate는 booth `Ready`, truthful preview/completion, publication/rollback safety가 실제 제품 진실로 검증되어야 한다고 요구한다. [Source: _bmad-output/planning-artifacts/prd.md#Release Gates]
 - hardware validation runbook은 `Go / No-Go`, evidence package, failure handling, BMAD 운영 메모까지 이미 제공하지만, sprint-owned evidence registry와 closure policy는 아직 느슨하다. 6.2는 이 간극을 메운다. [Source: docs/runbooks/booth-hardware-validation-checklist.md] [Source: docs/runbooks/booth-hardware-validation-checklist.md#BMAD 운영 메모]
 
 ### 선행 의존성과 구현 순서
 
-- 이 스토리는 Story 1.4, 1.5, 1.6, 3.2, 4.2, 4.3이 이미 구현 완료 또는 review 상태라는 전제 위에서 동작한다.
+- 이 스토리는 Story 1.6, 1.7, 1.8, 3.2, 4.2, 4.3의 canonical integration evidence와 Story 1.4/1.5의 historical regression evidence를 분리해 운영한다.
 - 현재 가장 안전한 구현 순서는 다음과 같다.
   - [ ] canonical gated-story 목록과 HV mapping을 먼저 고정한다.
   - [ ] sprint evidence ledger와 release baseline wording을 정리한다.

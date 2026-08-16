@@ -38,7 +38,7 @@ class StaticCapabilityService implements CapabilityService {
 
   canAccess(surface: SurfaceCapability) {
     if (surface === 'booth') {
-      return true
+      return this.currentWindowLabel !== SURFACE_WINDOW_LABELS.viewer
     }
 
     if (surface === 'viewer') {

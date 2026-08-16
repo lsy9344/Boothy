@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cbdbb4354a253c",
+  "boothAlias": "HV15최종 7419",
+  "customer": {
+    "name": "HV15최종",
+    "phoneLastFour": "7419"
+  },
+  "createdAt": "2026-08-15T03:07:24Z",
+  "updatedAt": "2026-08-15T03:48:31Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "completed"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cbdbb4354a253c",
+    "adjustedEndAt": "2026-08-15T03:22:24Z",
+    "warningAt": "2026-08-15T03:17:24Z",
+    "phase": "ended",
+    "captureAllowed": false,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": "2026-08-15T03:17:24Z",
+    "endedTriggeredAt": "2026-08-15T03:22:24Z"
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cbdbb4354a253c",
+      "boothAlias": "HV15최종 7419",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260815030734663_1b9083ef1a",
+      "requestId": "request_00000000000006590d3d141658",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbdbb4354a253c\\captures\\originals\\capture_20260815030734663_1b9083ef1a.CR2",
+        "persistedAtMs": 1786763257351
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbdbb4354a253c\\renders\\previews\\capture_20260815030734663_1b9083ef1a.jpg",
+        "enqueuedAtMs": 1786763257351,
+        "readyAtMs": 1786763262908
+      },
+      "final": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cbdbb4354a253c\\renders\\finals\\capture_20260815030734663_1b9083ef1a.jpg",
+        "readyAtMs": 1786764149398
+      },
+      "renderStatus": "finalReady",
+      "postEndState": "handoff-ready",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786763254670,
+        "previewVisibleAtMs": 1786763262908,
+        "fastPreviewVisibleAtMs": 1786763257765,
+        "xmpPreviewReadyAtMs": 1786763262908,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": {
+    "state": "completed",
+    "evaluatedAt": "2026-08-15T03:48:31Z",
+    "completionVariant": "handoff-ready",
+    "approvedRecipientLabel": null,
+    "nextLocationLabel": "안내된 곳",
+    "primaryActionLabel": "안내된 곳으로 이동해 주세요.",
+    "supportActionLabel": null,
+    "showBoothAlias": false,
+    "handoff": null
+  }
+}

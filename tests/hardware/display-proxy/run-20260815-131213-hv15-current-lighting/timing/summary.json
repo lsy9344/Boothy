@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "hv15-timing-summary/v1",
+  "sessionId": "session_000000000018cbdf04a181798c",
+  "attemptedCaptures": 5,
+  "committedGenerations": 5,
+  "presentedGenerations": 5,
+  "displaySuccessRate": 1.0,
+  "qualifyingLatencySecondsSorted": [
+    7.765543,
+    8.277443,
+    8.284043,
+    8.569343,
+    9.735243
+  ],
+  "medianSeconds": 8.284043,
+  "p95NearestRankSeconds": 9.735243,
+  "maxSeconds": 9.735243,
+  "cameraBusy": 0,
+  "cameraRawDownloadTimeouts": 0,
+  "displayProxyFailures": 0
+}

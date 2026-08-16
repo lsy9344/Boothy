@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { presetSelectionResultSchema } from '../../shared-contracts'
+
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }))
@@ -177,13 +179,15 @@ describe('active preset service', () => {
     const gateway = createDefaultActivePresetGateway()
 
     isTauriRuntimeMock.mockReturnValue(false)
-    const browserResult = await gateway.selectActivePreset({
-      sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
-      preset: {
-        presetId: 'preset_soft-glow',
-        publishedVersion: '2026.03.20',
-      },
-    })
+    const browserResult = presetSelectionResultSchema.parse(
+      await gateway.selectActivePreset({
+        sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
+        preset: {
+          presetId: 'preset_soft-glow',
+          publishedVersion: '2026.03.20',
+        },
+      }),
+    )
 
     expect(invokeMock).not.toHaveBeenCalled()
     expect(browserResult.sessionId).toBe('session_01hs6n1r8b8zc5v4ey2x7b9g1m')

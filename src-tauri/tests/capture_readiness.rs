@@ -11,8 +11,9 @@ use boothy_lib::{
     capture::{
         ingest_pipeline::{complete_preview_render_in_dir, mark_preview_render_failed_in_dir},
         normalized_state::{
-            delete_capture_in_dir, get_capture_readiness_in_dir, request_capture_in_dir,
-            request_capture_in_dir_with_fast_preview,
+            delete_capture_in_dir, get_capture_readiness_in_dir, reconciliation_captures,
+            request_capture_in_dir, request_capture_in_dir_with_fast_preview,
+            RECENT_CAPTURE_RECONCILIATION_WINDOW,
         },
         sidecar_client::{
             read_capture_request_messages, write_capture_request_message,
@@ -4005,6 +4006,143 @@ fn invalid_existing_handoff_ready_record_is_rebuilt_with_safe_destination_guidan
         }
         _ => panic!("expected completed post-end"),
     }
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn readiness_reports_earlier_captures_so_a_displaced_card_can_finish() {
+    // 2026-08-12 실장비 회귀. 두 번째 촬영이 접수되면 첫 촬영은 더 이상 latest가 아니다.
+    // readiness가 latest 하나만 실어 보내면 클라이언트는 첫 촬영의 렌더 완료를 영원히 알 수 없고,
+    // 첫 사진 카드가 파일과 manifest가 모두 완료된 뒤에도 `마무리 중`에 남는다.
+    let base_dir = unique_test_root("readiness-reconciles-earlier-captures");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let first_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    let first_ready_capture = complete_preview_render_in_dir(
+        &base_dir,
+        &session.session_id,
+        &first_capture.capture.capture_id,
+    )
+    .expect("first preview should complete");
+    let second_capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+
+    let readiness = get_capture_readiness_in_dir(
+        &base_dir,
+        CaptureReadinessInputDto {
+            session_id: session.session_id.clone(),
+        },
+    )
+    .expect("readiness should resolve");
+
+    assert_eq!(
+        readiness
+            .latest_capture
+            .as_ref()
+            .expect("latest capture should exist")
+            .capture_id,
+        second_capture.capture.capture_id,
+    );
+
+    let reconciled_first = readiness
+        .recent_captures
+        .iter()
+        .find(|capture| capture.capture_id == first_capture.capture.capture_id)
+        .expect("displaced first capture should still be reported");
+
+    assert_eq!(reconciled_first.render_status, "previewReady");
+    assert_eq!(
+        reconciled_first.preview.ready_at_ms,
+        first_ready_capture.preview.ready_at_ms,
+    );
+    assert!(reconciled_first.preview.ready_at_ms.is_some());
+    // latest도 목록에 있어야 클라이언트가 이 목록만으로 화해를 끝낼 수 있다.
+    assert!(readiness
+        .recent_captures
+        .iter()
+        .any(|capture| capture.capture_id == second_capture.capture.capture_id));
+
+    let _ = fs::remove_dir_all(base_dir);
+}
+
+#[test]
+fn recent_captures_always_include_a_render_that_is_still_pending() {
+    // 창 크기가 정확성을 좌우해서는 안 된다. 창 밖으로 밀려나도 렌더가 끝나지 않은 기록,
+    // 즉 상태가 아직 변할 수 있는 기록은 반드시 포함한다.
+    let base_dir = unique_test_root("recent-captures-keep-pending");
+    let session = start_session_in_dir(
+        &base_dir,
+        SessionStartInputDto {
+            name: "Kim".into(),
+            phone_last_four: "4821".into(),
+        },
+    )
+    .expect("session should be created");
+    let catalog_root = resolve_published_preset_catalog_dir(&base_dir);
+
+    create_published_bundle(&catalog_root);
+
+    select_active_preset_in_dir(
+        &base_dir,
+        boothy_lib::contracts::dto::PresetSelectionInputDto {
+            session_id: session.session_id.clone(),
+            preset_id: "preset_soft-glow".into(),
+            published_version: "2026.03.20".into(),
+        },
+    )
+    .expect("preset should become active");
+    write_ready_helper_status(&base_dir, &session.session_id);
+
+    let capture = request_capture_with_helper_success(&base_dir, &session.session_id);
+    complete_preview_render_in_dir(&base_dir, &session.session_id, &capture.capture.capture_id)
+        .expect("preview should complete");
+
+    let mut manifest = read_manifest(&base_dir, &session.session_id);
+    let template = manifest.captures[0].clone();
+    let pending_capture_id = "capture_pending_oldest".to_string();
+    let mut pending = template.clone();
+
+    pending.capture_id = pending_capture_id.clone();
+    pending.render_status = "previewWaiting".into();
+    pending.preview.ready_at_ms = None;
+    manifest.captures = vec![pending];
+
+    for index in 0..RECENT_CAPTURE_RECONCILIATION_WINDOW {
+        let mut filler = template.clone();
+
+        filler.capture_id = format!("capture_filler_{index}");
+        manifest.captures.push(filler);
+    }
+
+    let reconciled = reconciliation_captures(&manifest);
+
+    assert_eq!(
+        reconciled.len(),
+        RECENT_CAPTURE_RECONCILIATION_WINDOW + 1,
+        "pending capture must survive the window",
+    );
+    assert_eq!(reconciled[0].capture_id, pending_capture_id);
 
     let _ = fs::remove_dir_all(base_dir);
 }

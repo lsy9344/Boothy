@@ -677,6 +677,170 @@ pub struct PublishValidatedPresetInputDto {
     pub actor_label: String,
     pub scope: String,
     pub review_note: Option<String>,
+    /// Story 7.4. 없으면 게시는 오늘과 동일하게 성공하고 `proxyCompatible = false`가 된다.
+    #[serde(default)]
+    pub proxy_publication: Option<ProxyPublicationPayloadDto>,
+}
+
+/// Story 7.4. 게시 시점에 함께 기록하는 display-fit proxy lane 자격과 승인 근거.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyPublicationPayloadDto {
+    pub proxy_compatible: bool,
+    pub supported_operations: Vec<String>,
+    pub proxy_recipe_version: String,
+    pub reference_renderer: String,
+    pub reference_renderer_version: String,
+    pub output_profile: ProxyOutputProfileDto,
+    pub visual_approval: ProxyVisualApprovalDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyOutputProfileDto {
+    pub color_space: String,
+    pub jpeg_quality: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icc_intent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyVisualApprovalDto {
+    pub approved_at: String,
+    pub approved_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_path: Option<String>,
+}
+
+/// 게시 입력의 proxy 블록을 검증한다.
+///
+/// **부분 승인은 거절한다.** 반쯤 승인된 룩이 고객 화면에 오르는 것보다 게시가 막히는 편이 낫다.
+pub fn validate_proxy_publication_payload(
+    payload: &ProxyPublicationPayloadDto,
+    pinned_renderer: &str,
+    pinned_renderer_version: &str,
+) -> Result<(), HostErrorEnvelope> {
+    let reject = || {
+        HostErrorEnvelope::validation_message("화면 적합 미리보기 승인 정보를 다시 확인해 주세요.")
+    };
+
+    if !payload.proxy_compatible {
+        return Err(reject());
+    }
+
+    if payload.supported_operations.is_empty()
+        || payload
+            .supported_operations
+            .iter()
+            .any(|operation| !is_non_blank(operation))
+    {
+        return Err(reject());
+    }
+
+    let non_blank = [
+        payload.proxy_recipe_version.as_str(),
+        payload.output_profile.color_space.as_str(),
+        payload.visual_approval.approved_at.as_str(),
+        payload.visual_approval.approved_by.as_str(),
+    ];
+
+    if non_blank.iter().any(|value| !is_non_blank(value)) {
+        return Err(reject());
+    }
+
+    if !payload
+        .output_profile
+        .color_space
+        .eq_ignore_ascii_case("srgb")
+    {
+        return Err(reject());
+    }
+
+    if payload
+        .output_profile
+        .icc_intent
+        .as_deref()
+        .is_some_and(|intent| {
+            !matches!(
+                intent.trim().to_ascii_lowercase().as_str(),
+                "perceptual"
+                    | "relative_colorimetric"
+                    | "relative colorimetric"
+                    | "saturation"
+                    | "absolute_colorimetric"
+                    | "absolute colorimetric"
+            )
+        })
+        || payload
+            .visual_approval
+            .corpus_path
+            .as_deref()
+            .is_some_and(|path| !is_non_blank(path))
+    {
+        return Err(reject());
+    }
+
+    if !(1..=100).contains(&payload.output_profile.jpeg_quality) {
+        return Err(reject());
+    }
+
+    // 승인된 화질 증거가 지금 도는 렌더러의 것이 아니면 그 승인은 이 실행에 적용되지 않는다.
+    if payload.reference_renderer != pinned_renderer
+        || payload.reference_renderer_version != pinned_renderer_version
+    {
+        return Err(reject());
+    }
+
+    // recipe 경로는 호출자가 정하지 않는다. 참조 렌더러가 darktable인 동안 recipe의 실체는
+    // 번들이 이미 싣고 있는 XMP template이며, 게시 host가 그 경로를 직접 기록한다.
+    // 호출자가 경로를 넣을 수 있게 두면 bundle root 밖을 가리킬 여지가 생긴다.
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod proxy_publication_validation_tests {
+    use super::*;
+
+    fn valid_payload() -> ProxyPublicationPayloadDto {
+        ProxyPublicationPayloadDto {
+            proxy_compatible: true,
+            supported_operations: vec!["exposure".into()],
+            proxy_recipe_version: "2026.08.14".into(),
+            reference_renderer: "darktable".into(),
+            reference_renderer_version: "5.4.1".into(),
+            output_profile: ProxyOutputProfileDto {
+                color_space: "sRGB".into(),
+                jpeg_quality: 95,
+                icc_intent: Some("perceptual".into()),
+            },
+            visual_approval: ProxyVisualApprovalDto {
+                approved_at: "2026-08-14T00:00:00+09:00".into(),
+                approved_by: "Noah Lee".into(),
+                corpus_path: None,
+            },
+        }
+    }
+
+    #[test]
+    fn proxy_publication_rejects_profiles_the_renderer_cannot_execute() {
+        let mut unsupported_color = valid_payload();
+        unsupported_color.output_profile.color_space = "Display P3".into();
+        assert!(
+            validate_proxy_publication_payload(&unsupported_color, "darktable", "5.4.1").is_err()
+        );
+
+        let mut unsupported_intent = valid_payload();
+        unsupported_intent.output_profile.icc_intent = Some("guess".into());
+        assert!(
+            validate_proxy_publication_payload(&unsupported_intent, "darktable", "5.4.1").is_err()
+        );
+
+        let mut blank_corpus = valid_payload();
+        blank_corpus.visual_approval.corpus_path = Some("   ".into());
+        assert!(validate_proxy_publication_payload(&blank_corpus, "darktable", "5.4.1").is_err());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1191,6 +1355,14 @@ pub struct CaptureReadinessDto {
     pub support_message: String,
     pub reason_code: String,
     pub latest_capture: Option<SessionCaptureRecord>,
+    /// 클라이언트가 카드 상태를 되돌릴 수 있게 하는 화해(reconciliation) 창.
+    ///
+    /// `latest_capture` 하나만 보내면, 다음 촬영이 접수되는 순간 이전 촬영은 더 이상
+    /// latest가 아니므로 그 촬영의 렌더 완료가 클라이언트에 **영원히 도달하지 못한다.**
+    /// 2026-08-12 실장비 검증에서 첫 사진 카드가 완료된 뒤에도 `마무리 중`에 남은 원인이다.
+    /// 목록은 manifest 순서(오래된 것 -> 최신)이며 `latest_capture`도 포함한다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_captures: Vec<SessionCaptureRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_capture_truth: Option<LiveCaptureTruthDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1222,6 +1394,7 @@ impl CaptureReadinessDto {
             support_message: support_message.into(),
             reason_code: reason_code.into(),
             latest_capture,
+            recent_captures: Vec::new(),
             live_capture_truth: None,
             post_end: None,
             timing: None,
@@ -1240,6 +1413,11 @@ impl CaptureReadinessDto {
 
     pub fn with_latest_capture(mut self, latest_capture: Option<SessionCaptureRecord>) -> Self {
         self.latest_capture = latest_capture;
+        self
+    }
+
+    pub fn with_recent_captures(mut self, recent_captures: Vec<SessionCaptureRecord>) -> Self {
+        self.recent_captures = recent_captures;
         self
     }
 
@@ -1815,4 +1993,713 @@ pub fn validate_viewer_layout_report(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Story 7.2: immutable display generation과 actual-present 계측 계약.
+// 필드명/nullability/schemaVersion 문자열은
+// `src/shared-contracts/schemas/viewer-display.ts`와 정확히 일치해야 한다.
+// ---------------------------------------------------------------------------
+
+/// Story 7.4가 `v1` → `v2`로, Story 7.5가 `v2` → `v3`로, Story 7.6이 `v3` → `v4`로 올렸다.
+///
+/// v2는 generation이 tier별로 다른 모양을 갖게 됐기 때문이고, v3는 **프레임을 실제로 만든
+/// renderer와 참조 renderer를 분리해서 기록**해야 하기 때문이다. 상주 renderer가 만든 프레임에
+/// `referenceRenderer=darktable`만 남기면 evidence가 거짓말을 한다.
+///
+/// v4는 `rawRefinedDisplay` tier가 생기면서 **generation만 보고 두 tier를 구분할 수 있어야**
+/// 하기 때문이다 (`renderQuality`). 두 tier는 같은 RAW·같은 XMP·같은 renderer·같은 목표 크기를
+/// 쓰고 `--hq`만 다르므로, 이 필드가 없으면 evidence에서 어느 쪽이 화면에 있었는지 알 수 없다.
+///
+/// **읽기는 v1·v2·v3도 받는다** — 새 필드가 전부 `#[serde(default)]`이라 옛 JSON이 그대로
+/// 역직렬화된다. Story 7.9의 pre-upgrade session 호환이 이 규칙 위에 선다.
+pub const VIEWER_DISPLAY_SCHEMA_VERSION: &str = "viewer-display/v4";
+pub const VIEWER_DISPLAY_SCHEMA_VERSION_V1: &str = "viewer-display/v1";
+pub const VIEWER_DISPLAY_SCHEMA_VERSION_V2: &str = "viewer-display/v2";
+pub const VIEWER_DISPLAY_SCHEMA_VERSION_V3: &str = "viewer-display/v3";
+/// 이벤트 봉투 자체의 모양은 바뀌지 않았다. 안의 pointer가 자기 버전을 들고 다닌다.
+pub const VIEWER_DISPLAY_UPDATE_SCHEMA_VERSION: &str = "viewer-display-update/v1";
+
+/// Story 7.2가 등록한 계측용 tier.
+pub const DISPLAY_TIER_SAMPLE: &str = "sample";
+/// Story 7.4가 등록한 첫 고객 성공 화면 tier.
+pub const DISPLAY_TIER_DISPLAY_FIT_PRESET_PROXY: &str = "displayFitPresetProxy";
+/// Story 7.6이 등록한 RAW 정밀본 승급 tier.
+///
+/// **`final`은 여기 없고 앞으로도 추가하지 않는다.** 5184×3456 전체 해상도 산출물을
+/// 1429×953 사진 영역에 올리면 축소를 브라우저가 하게 되어, darktable 축소보다 품질이 낮으면서
+/// decode 비용은 훨씬 크다. `--upscale false` 기반 display-fit 계약과도 충돌한다.
+pub const DISPLAY_TIER_RAW_REFINED_DISPLAY: &str = "rawRefinedDisplay";
+
+/// proxy generation의 확정 파일 경로에 들어가는 variant 자리.
+/// 빈 문자열을 넘기면 `000001-.jpg`가 만들어져 사람도 스크립트도 읽지 못한다.
+pub const DISPLAY_PROXY_PATH_VARIANT: &str = "proxy";
+/// Story 7.6. RAW 정밀본 generation의 확정 파일 경로 variant 자리 (`<seq>-refined.jpg`).
+pub const DISPLAY_RAW_REFINED_PATH_VARIANT: &str = "refined";
+
+/// Story 7.6. `--hq false`로 만든 프레임 (proxy lane).
+pub const DISPLAY_RENDER_QUALITY_FAST: &str = "fast";
+/// Story 7.6. `--hq true`로 만든 프레임 (정밀본 lane).
+pub const DISPLAY_RENDER_QUALITY_HIGH: &str = "high";
+
+/// tier가 요구하는 렌더 품질. `None`이면 그 tier는 렌더 품질을 갖지 않는다 (`sample`).
+pub fn display_tier_required_render_quality(tier: &str) -> Option<&'static str> {
+    match tier {
+        DISPLAY_TIER_DISPLAY_FIT_PRESET_PROXY => Some(DISPLAY_RENDER_QUALITY_FAST),
+        DISPLAY_TIER_RAW_REFINED_DISPLAY => Some(DISPLAY_RENDER_QUALITY_HIGH),
+        _ => None,
+    }
+}
+
+/// tier 순서. 값이 클수록 높은 tier이며 **같은 촬영 안에서의** downgrade는 거부된다.
+pub fn display_tier_order(tier: &str) -> Option<u8> {
+    match tier {
+        DISPLAY_TIER_SAMPLE => Some(0),
+        DISPLAY_TIER_DISPLAY_FIT_PRESET_PROXY => Some(1),
+        DISPLAY_TIER_RAW_REFINED_DISPLAY => Some(2),
+        _ => None,
+    }
+}
+
+pub const DISPLAY_REJECT_PARTIAL_FILE: &str = "partial-file";
+pub const DISPLAY_REJECT_UNDECODABLE: &str = "undecodable";
+pub const DISPLAY_REJECT_INSUFFICIENT_DIMENSIONS: &str = "insufficient-dimensions";
+pub const DISPLAY_REJECT_STALE_EPOCH: &str = "stale-epoch";
+pub const DISPLAY_REJECT_LOWER_GENERATION: &str = "lower-generation";
+pub const DISPLAY_REJECT_OLDER_REQUEST: &str = "older-request";
+pub const DISPLAY_REJECT_SESSION_MISMATCH: &str = "session-mismatch";
+pub const DISPLAY_REJECT_ORIENTATION_UNSUPPORTED: &str = "orientation-unsupported";
+pub const DISPLAY_REJECT_UNKNOWN_GENERATION: &str = "unknown-generation";
+pub const DISPLAY_REJECT_TIER_DOWNGRADE: &str = "tier-downgrade";
+pub const DISPLAY_REJECT_VIEWER_NOT_READY: &str = "viewer-not-ready";
+pub const DISPLAY_REJECT_DECODE_FAILED: &str = "decode-failed";
+/// Story 7.4. capture-bound preset identity/version이 현재 활성 generation과 다르다.
+/// `older-request`와 뭉뚱그리면 순서 문제와 정체성 문제를 회차 분석에서 구분할 수 없다.
+pub const DISPLAY_REJECT_PRESET_MISMATCH: &str = "preset-mismatch";
+/// Story 7.4. 같은 request 안에서 더 오래된 capture의 generation이 늦게 도착했다.
+pub const DISPLAY_REJECT_OLDER_CAPTURE: &str = "older-capture";
+/// Story 7.6. RAW 정밀본의 실측 픽셀 크기가 현재 활성 proxy와 정확히 같지 않다.
+///
+/// **AC 4의 crop/scale 점프 0을 만드는 기계적 장치다.** 붙일 활성 proxy 자체가 없는 경우도
+/// 같은 사유로 거부한다 — 맞출 geometry가 없으면 크기 동일성은 성립할 수 없고,
+/// 정밀본은 승급이지 첫 성공 화면의 대체가 아니다 (UX-DR19).
+pub const DISPLAY_REJECT_REFINED_DIMENSION_MISMATCH: &str = "refined-dimension-mismatch";
+/// Story 7.6. AC 6의 detail 축(MTF50) gate가 `justified`를 기록하지 않았다.
+///
+/// 측정되지 않은 tier 차이는 게시하지 않는다. **host 전용 판정이다** — viewer는
+/// 이 gate를 통과한 generation만 보므로 스스로 이 사유를 주장할 수 없다.
+pub const DISPLAY_REJECT_REFINED_TIER_NOT_JUSTIFIED: &str = "refined-tier-not-justified";
+/// commit·notify까지 끝났지만 유예 시간 안에 viewer의 terminal 보고가 도착하지 않은 generation.
+///
+/// **host만 이 값을 쓴다.** viewer가 보고할 수 있는 결론이 아니라, 보고 자체가 오지 않았다는
+/// host의 관측이다. 이 코드가 없으면 그런 generation은 계측에 **아무 행도 남기지 않아**,
+/// "표시되지 않았다"와 "보고가 유실됐다"를 evidence에서 구분할 수 없다.
+pub const DISPLAY_REJECT_PRESENT_UNREPORTED: &str = "present-unreported";
+
+/// Story 7.4. display-fit preset proxy generation의 출처.
+///
+/// AC 1이 요구하는 결속을 하나도 빠짐없이 자산에 실어 둔다. 이 값들이 없으면
+/// "화면에 올라간 사진이 정말 이 촬영·이 프리셋·이 화면 크기의 결과인가"를 나중에 증명할 수 없다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayProxyProvenanceDto {
+    pub preset_id: String,
+    pub preset_version: String,
+    /// 이 proxy가 proxy lane에 들어간 **근거**.
+    /// `exact-reference-renderer`(근사 아님) 또는 `visual-approval`(승인된 근사).
+    /// evidence에서 두 종류의 프레임이 반드시 구분되어야 한다.
+    pub approval_basis: String,
+    pub proxy_recipe_version: String,
+    pub reference_renderer: String,
+    pub reference_renderer_version: String,
+    pub render_profile_id: String,
+    pub output_color_space: String,
+    pub jpeg_quality: u32,
+    pub source_route: String,
+    /// **입력** source의 내용 해시. generation의 `source_hash`는 게시 결과 파일의 해시라 다른 값이다.
+    pub source_asset_hash: String,
+    pub target_width_px: u32,
+    pub target_height_px: u32,
+    pub display_profile_id: String,
+    pub device_pixel_ratio: f64,
+    /// Story 7.5. **이 프레임을 실제로 만든 renderer.** `None`이면 참조 renderer가 직접 만들었다.
+    ///
+    /// 상주 renderer 결과에 이 블록이 없으면 evidence는 darktable이 만든 프레임과
+    /// 다른 엔진이 만든 프레임을 구분할 수 없다.
+    #[serde(default)]
+    pub resident_provenance: Option<ResidentProducerProvenanceDto>,
+    /// Story 7.6. 이 프레임을 만든 darktable pixelpipe 품질 (`fast` / `high`).
+    ///
+    /// proxy와 정밀본은 같은 RAW·같은 XMP·같은 renderer·같은 목표 크기를 쓰고 `--hq`만 다르다.
+    /// 이 필드가 없으면 **generation만 보고 두 tier를 구분할 수 없다.**
+    ///
+    /// v1~v3 JSON에는 이 필드가 없다. 그 시절 게시 경로는 proxy lane 하나였고 항상
+    /// `--hq false`였으므로 `fast`로 채우는 것은 추측이 아니라 그 빌드가 실제로 한 일이다.
+    #[serde(default = "default_display_render_quality")]
+    pub render_quality: String,
+}
+
+fn default_display_render_quality() -> String {
+    DISPLAY_RENDER_QUALITY_FAST.to_string()
+}
+
+/// Story 7.5. 상주 renderer 실행 mode. **알 수 없는 값은 전부 `off`다.**
+pub const RESIDENT_MODE_OFF: &str = "off";
+/// 렌더하고 계측하지만 **고객 화면 pointer는 건드리지 않는다.**
+pub const RESIDENT_MODE_SHADOW: &str = "shadow";
+/// HV-16 evidence 회차에서만 명시적으로 켠다. 이때만 게시 경계를 통과한다.
+pub const RESIDENT_MODE_EVIDENCE: &str = "evidence";
+
+/// 오프라인에서 미리 디코드해 둔 raster. **engine feasibility 자료 전용이다.**
+pub const RESIDENT_INPUT_PREDECODED_FIXTURE: &str = "predecoded-fixture";
+/// 상주 프로세스가 실제 촬영 원본을 **직접** 읽어서 만든 raster.
+pub const RESIDENT_INPUT_REAL_CAPTURE_DIRECT: &str = "real-capture-direct";
+/// 실제 촬영 원본이지만 별도 one-shot process가 raster를 먼저 만들었다.
+/// 그 process의 startup 비용은 hot path에 그대로 남아 있다.
+pub const RESIDENT_INPUT_REAL_CAPTURE_VIA_ONE_SHOT: &str = "real-capture-via-one-shot";
+
+/// **현재 승인된 direct real-capture decoder는 하나도 없다.**
+///
+/// Story 7.3(HV-14)이 embedded JPEG / paired JPEG / Windows shell thumbnail을 전부
+/// `Technology No-Go`로 닫았고, 그 뒤 승인된 대체 route가 없다. 이 목록이 비어 있는 한
+/// 어떤 상주 후보도 `productionEligible`을 주장할 수 없다 (Story 7.5 AC 6).
+///
+/// 값을 추가하려면 dependency·installer·라이선스·성능 범위를 적은 **별도 승인**이 필요하다.
+pub const RESIDENT_APPROVED_DIRECT_DECODERS: &[&str] = &[];
+
+/// Story 7.5. 상주 renderer가 만든 generation의 producer 신원.
+///
+/// 참조 renderer(`DisplayProxyProvenanceDto::reference_renderer`)와 **다른 질문에 답한다.**
+/// 참조 renderer는 "무엇과 비교해서 정확한가"이고, 이 블록은 "누가 이 픽셀을 만들었는가"다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidentProducerProvenanceDto {
+    pub producer_renderer: String,
+    pub producer_renderer_version: String,
+    pub producer_build_id: String,
+    /// `shadow` 또는 `evidence`. `off`는 렌더 자체를 하지 않으므로 여기 나타날 수 없다.
+    pub execution_mode: String,
+    pub recipe_schema_version: String,
+    pub compiled_recipe_hash: String,
+    pub program_hash: String,
+    /// 상주 context가 만들어진 시각. 촬영보다 **앞서야** 한다.
+    pub context_initialized_at_micros: u64,
+    /// 측정 대상 hot path에서 일어난 shader/program compile 횟수. **0이 아니면 AC 1 실패다.**
+    pub hot_path_program_compile_count: u32,
+    /// 측정 대상 hot path에서 일어난 renderer process 시작 횟수. **0이 아니면 AC 1 실패다.**
+    pub hot_path_process_start_count: u32,
+    pub input_provenance: String,
+    pub input_producer: String,
+    pub input_producer_version: String,
+    /// 입력 raster가 상주 renderer에게 **읽을 수 있는 상태로 도착한** 시각.
+    ///
+    /// 지연 구간의 시작점이다. 이 값이 없으면 "렌더러가 빠르다"와 "촬영부터 화면까지 빠르다"를
+    /// 분리해서 볼 수 없다.
+    pub source_ready_at_micros: u64,
+    /// 입력 raster를 만든 one-shot process의 startup 비용. 숨기지 않고 여기 남긴다.
+    pub input_startup_cost_micros: u64,
+    /// **production 채택 자격.** Story 7.5 spike에서는 승인된 direct decoder가 없으므로 항상 false다.
+    pub production_eligible: bool,
+    pub adoption_block_reason: Option<String>,
+    pub gpu_vendor: String,
+    pub gpu_renderer: String,
+    pub fallback_reason: Option<String>,
+}
+
+/// Story 7.5. 상주 계획 전달 계약. viewer가 촬영 **전에** 한 번 받아 간다.
+pub const RESIDENT_RENDERER_PLAN_SCHEMA_VERSION: &str = "resident-renderer-plan/v1";
+
+/// recipe 안의 한 연산. **params는 원문 그대로 넘긴다** — 해석은 엔진 한 곳에서만 한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidentRecipeOperationDto {
+    pub order: u32,
+    pub name: String,
+    pub enabled: bool,
+    pub mod_version: u32,
+    pub params_hex: String,
+    pub blendop_params: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidentRecipeDto {
+    pub schema_version: String,
+    pub preset_id: String,
+    pub preset_version: String,
+    pub engine: String,
+    pub engine_version: String,
+    pub recipe_version: String,
+    pub operations: Vec<ResidentRecipeOperationDto>,
+    pub output_color_space: String,
+    pub icc_intent: String,
+    pub jpeg_quality: u32,
+    pub recipe_hash: String,
+}
+
+/// preset 하나가 상주 경로에 들어가지 못한 이유. **조용한 누락을 만들지 않는다.**
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidentRecipeRefusalDto {
+    pub preset_id: String,
+    pub preset_version: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidentRendererPlanDto {
+    pub schema_version: String,
+    /// `off` / `shadow` / `evidence`. `off`이면 `recipes`는 비어 있다.
+    pub mode: String,
+    pub engine: String,
+    pub engine_version: String,
+    pub recipes: Vec<ResidentRecipeDto>,
+    pub refusals: Vec<ResidentRecipeRefusalDto>,
+}
+
+/// `productionEligible`이 거짓 주장을 하지 못하게 막는 기계적 gate.
+///
+/// fixture로 얻은 빠른 결과에 `productionEligible: true`를 붙이는 것이 이 Story에서
+/// 가장 쉬운 자기기만이다. 그래서 게시 경계 **앞에서** 거부한다.
+pub fn validate_resident_producer_provenance(
+    provenance: &ResidentProducerProvenanceDto,
+) -> Result<(), HostErrorEnvelope> {
+    let invalid = |detail: &str| {
+        log::warn!("resident_provenance_rejected detail={detail}");
+        Err(HostErrorEnvelope::validation_message(
+            "표시 자산 게시 값을 다시 확인해 주세요.",
+        ))
+    };
+
+    if !is_non_blank(&provenance.producer_renderer)
+        || !is_non_blank(&provenance.producer_renderer_version)
+        || !is_non_blank(&provenance.producer_build_id)
+        || !is_non_blank(&provenance.recipe_schema_version)
+        || !is_non_blank(&provenance.compiled_recipe_hash)
+        || !is_non_blank(&provenance.program_hash)
+        || !is_non_blank(&provenance.input_producer)
+        || !is_non_blank(&provenance.input_producer_version)
+        || !is_non_blank(&provenance.gpu_vendor)
+        || !is_non_blank(&provenance.gpu_renderer)
+    {
+        return invalid("producer identity fields must not be blank");
+    }
+
+    if provenance.context_initialized_at_micros == 0
+        || provenance.source_ready_at_micros == 0
+        || provenance.context_initialized_at_micros > provenance.source_ready_at_micros
+    {
+        return invalid("resident context must be initialized before the source becomes ready");
+    }
+
+    if !matches!(
+        provenance.execution_mode.as_str(),
+        RESIDENT_MODE_SHADOW | RESIDENT_MODE_EVIDENCE
+    ) {
+        return invalid("execution mode must be shadow or evidence");
+    }
+
+    let known_input = matches!(
+        provenance.input_provenance.as_str(),
+        RESIDENT_INPUT_PREDECODED_FIXTURE
+            | RESIDENT_INPUT_REAL_CAPTURE_DIRECT
+            | RESIDENT_INPUT_REAL_CAPTURE_VIA_ONE_SHOT
+    );
+
+    if !known_input {
+        return invalid("input provenance must be one of the three declared values");
+    }
+
+    if provenance.hot_path_program_compile_count > 0 || provenance.hot_path_process_start_count > 0
+    {
+        return invalid("a resident evidence frame requires an empty hot path");
+    }
+
+    if !provenance.production_eligible {
+        // 채택 불가라고 스스로 말하는 프레임은 그 이유를 반드시 들고 있어야 한다.
+        return match provenance.adoption_block_reason.as_deref() {
+            Some(reason) if !reason.trim().is_empty() => Ok(()),
+            _ => invalid("a non-eligible resident frame must carry its block reason"),
+        };
+    }
+
+    // 여기부터는 `productionEligible: true`를 주장하는 경우다. 조건이 전부 맞아야 한다.
+    if provenance.input_provenance != RESIDENT_INPUT_REAL_CAPTURE_DIRECT {
+        return invalid("production eligibility requires a direct real-capture input");
+    }
+
+    if !RESIDENT_APPROVED_DIRECT_DECODERS.contains(&provenance.input_producer.as_str()) {
+        return invalid("input decoder is not on the approved direct decoder list");
+    }
+
+    if provenance.adoption_block_reason.is_some() {
+        return invalid("an eligible resident frame cannot also carry a block reason");
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayGenerationDto {
+    pub generation_id: String,
+    pub generation_seq: u64,
+    /// host가 request를 처음 관측한 순서. 이전 pointer에는 없으므로 optional이다.
+    #[serde(default)]
+    pub request_order: Option<u64>,
+    /// 촬영 확정 시점에 고정한 순서. 렌더 완료 순서 대신 이 값으로 stale capture를 막는다.
+    #[serde(default)]
+    pub capture_order: Option<u64>,
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: Option<String>,
+    pub viewer_epoch: u64,
+    pub tier: String,
+    pub asset_path: String,
+    pub source_width_px: u32,
+    pub source_height_px: u32,
+    pub byte_size: u64,
+    pub source_hash: String,
+    /// 계측 fixture에서만 의미가 있다. proxy generation에서는 `None`이다.
+    /// v1 JSON에는 항상 값이 있으므로 `default`는 v2 proxy 행에만 쓰인다.
+    #[serde(default)]
+    pub sample_variant: Option<String>,
+    /// proxy generation에서만 존재한다. v1 JSON에는 이 필드가 없다.
+    #[serde(default)]
+    pub proxy_provenance: Option<DisplayProxyProvenanceDto>,
+    pub committed_at_host_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayPointerSnapshotDto {
+    pub schema_version: String,
+    pub session_id: Option<String>,
+    pub revision: u64,
+    pub active_generation: Option<DisplayGenerationDto>,
+    pub required_source_width_px: u32,
+    pub required_source_height_px: u32,
+    /// **표시 이미지가 계측용 fixture인지.** Story 7.2의 sample lane 상태 그대로다.
+    /// Story 7.4의 proxy lane은 실제 제품 결과이므로 이 값을 켜지 않는다.
+    pub measurement_lane_enabled: bool,
+    /// **두 surface가 present 계측 IPC를 해야 하는지.** `sample lane || proxy lane`이다.
+    /// 이 값을 `measurement_lane_enabled`와 합치면 proxy lane 회차의 actual-present가 0건이 된다.
+    #[serde(default)]
+    pub present_telemetry_enabled: bool,
+    pub observed_at_host_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayUpdateDto {
+    pub schema_version: String,
+    pub pointer: DisplayPointerSnapshotDto,
+}
+
+impl DisplayUpdateDto {
+    pub fn new(pointer: DisplayPointerSnapshotDto) -> Self {
+        Self {
+            schema_version: VIEWER_DISPLAY_UPDATE_SCHEMA_VERSION.into(),
+            pointer,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayPresentSpansDto {
+    pub viewer_receipt_at_micros: Option<u64>,
+    pub decode_start_at_micros: Option<u64>,
+    pub decode_end_at_micros: Option<u64>,
+    pub swap_committed_at_micros: Option<u64>,
+    pub img_on_load_at_micros: Option<u64>,
+    pub actual_present_at_micros: Option<u64>,
+    pub element_timing_render_at_micros: Option<u64>,
+    pub is_element_render_time: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayPresentReportDto {
+    pub generation_id: String,
+    pub viewer_epoch: u64,
+    pub outcome: String,
+    pub reject_reason: Option<String>,
+    pub natural_width_px: u32,
+    pub natural_height_px: u32,
+    pub spans: DisplayPresentSpansDto,
+    pub clock_offset_micros: i64,
+    pub clock_uncertainty_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClockProbeInputDto {
+    pub client_sent_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClockProbeResultDto {
+    pub host_monotonic_micros: u64,
+    pub host_epoch_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustedInputReportDto {
+    pub session_id: String,
+    pub request_id: String,
+    pub client_input_micros: u64,
+    pub clock_offset_micros: i64,
+    pub clock_uncertainty_micros: u64,
+    pub is_trusted: bool,
+}
+
+/// 계측용 sample generation 게시 입력. measurement lane이 켜져 있을 때만 사용한다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplaySamplePublishInputDto {
+    pub session_id: String,
+    pub request_id: String,
+    pub capture_id: Option<String>,
+    pub sample_variant: String,
+}
+
+pub fn validate_display_present_report(
+    report: &DisplayPresentReportDto,
+) -> Result<(), HostErrorEnvelope> {
+    if report.generation_id.trim().is_empty() {
+        return Err(HostErrorEnvelope::validation_message(
+            "표시 결과 보고 값을 다시 확인해 주세요.",
+        ));
+    }
+
+    if !matches!(
+        report.outcome.as_str(),
+        "presented" | "rejected" | "decode-failed"
+    ) {
+        return Err(HostErrorEnvelope::validation_message(
+            "표시 결과 보고 값을 다시 확인해 주세요.",
+        ));
+    }
+
+    let known_reject_reason = report
+        .reject_reason
+        .as_deref()
+        .is_some_and(|reject_reason| {
+            matches!(
+                reject_reason,
+                DISPLAY_REJECT_PARTIAL_FILE
+                    | DISPLAY_REJECT_UNDECODABLE
+                    | DISPLAY_REJECT_INSUFFICIENT_DIMENSIONS
+                    | DISPLAY_REJECT_STALE_EPOCH
+                    | DISPLAY_REJECT_LOWER_GENERATION
+                    | DISPLAY_REJECT_OLDER_REQUEST
+                    | DISPLAY_REJECT_SESSION_MISMATCH
+                    | DISPLAY_REJECT_ORIENTATION_UNSUPPORTED
+                    | DISPLAY_REJECT_UNKNOWN_GENERATION
+                    | DISPLAY_REJECT_TIER_DOWNGRADE
+                    | DISPLAY_REJECT_VIEWER_NOT_READY
+                    | DISPLAY_REJECT_DECODE_FAILED
+                    | DISPLAY_REJECT_PRESET_MISMATCH
+                    | DISPLAY_REJECT_OLDER_CAPTURE
+                    | DISPLAY_REJECT_REFINED_DIMENSION_MISMATCH
+                    | DISPLAY_REJECT_REFINED_TIER_NOT_JUSTIFIED
+            )
+        });
+    let coherent_outcome = match report.outcome.as_str() {
+        "presented" => {
+            report.reject_reason.is_none() && report.spans.actual_present_at_micros.is_some()
+        }
+        "rejected" => {
+            known_reject_reason
+                && report.reject_reason.as_deref() != Some(DISPLAY_REJECT_DECODE_FAILED)
+        }
+        "decode-failed" => report.reject_reason.as_deref() == Some(DISPLAY_REJECT_DECODE_FAILED),
+        _ => false,
+    };
+
+    if !coherent_outcome {
+        return Err(HostErrorEnvelope::validation_message(
+            "표시 결과 보고 값을 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_trusted_input_report(
+    report: &TrustedInputReportDto,
+) -> Result<(), HostErrorEnvelope> {
+    validate_session_id(&report.session_id)?;
+
+    if report.request_id.trim().is_empty() {
+        return Err(HostErrorEnvelope::validation_message(
+            "촬영 입력 계측 값을 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_display_sample_publish_input(
+    input: &DisplaySamplePublishInputDto,
+) -> Result<(), HostErrorEnvelope> {
+    validate_session_id(&input.session_id)?;
+
+    let safe_request_id = input.request_id == input.request_id.trim()
+        && input.request_id.chars().count() <= 120
+        && !input.request_id.contains(['/', '\\'])
+        && is_safe_draft_folder_name(&input.request_id);
+
+    if !safe_request_id || !matches!(input.sample_variant.as_str(), "a" | "b") {
+        return Err(HostErrorEnvelope::validation_message(
+            "표시 샘플 게시 값을 다시 확인해 주세요.",
+        ));
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Story 7.3: capture source route 비교 계약.
+// 필드명/nullability/enum 문자열은
+// `src/shared-contracts/schemas/capture-source.ts`와 정확히 일치해야 한다.
+// ---------------------------------------------------------------------------
+
+pub const CAPTURE_SOURCE_SCHEMA_VERSION: &str = "capture-source/v1";
+pub const SOURCE_COMPARISON_SCHEMA_VERSION: &str = "source-comparison/v1";
+
+/// Route A — RAW 컨테이너에 내장된 full-size JPEG.
+/// CR2의 TIFF IFD를 직접 읽는다 (`capture::embedded_jpeg`). 새 의존성을 쓰지 않는다.
+pub const SOURCE_ROUTE_EMBEDDED_JPEG: &str = "embedded-jpeg";
+/// Route B — 카메라가 RAW와 함께 만든 별도 JPEG transfer object.
+pub const SOURCE_ROUTE_CAMERA_PAIRED_JPEG: &str = "camera-paired-jpeg";
+/// Route C — 현재 제품에 살아 있는 incumbent. **비교의 기준선이다.**
+pub const SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL: &str = "windows-shell-thumbnail";
+
+pub fn is_known_source_route(route: &str) -> bool {
+    matches!(
+        route,
+        SOURCE_ROUTE_EMBEDDED_JPEG
+            | SOURCE_ROUTE_CAMERA_PAIRED_JPEG
+            | SOURCE_ROUTE_WINDOWS_SHELL_THUMBNAIL
+    )
+}
+
+pub const SOURCE_REJECT_ABSENT: &str = "absent";
+pub const SOURCE_REJECT_PARTIAL: &str = "partial";
+pub const SOURCE_REJECT_CORRUPT: &str = "corrupt";
+pub const SOURCE_REJECT_UNDECODABLE: &str = "undecodable";
+pub const SOURCE_REJECT_ORIENTATION_UNSUPPORTED: &str = "orientation-unsupported";
+pub const SOURCE_REJECT_WRONG_SESSION: &str = "wrong-session";
+pub const SOURCE_REJECT_WRONG_REQUEST: &str = "wrong-request";
+pub const SOURCE_REJECT_WRONG_CAPTURE: &str = "wrong-capture";
+pub const SOURCE_REJECT_STALE: &str = "stale";
+pub const SOURCE_REJECT_UNSUPPORTED_COMBINATION: &str = "unsupported-combination";
+pub const SOURCE_REJECT_EXTRACTION_FAILED: &str = "extraction-failed";
+pub const SOURCE_REJECT_CANCELLED: &str = "cancelled";
+
+pub fn is_known_source_reject_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        SOURCE_REJECT_ABSENT
+            | SOURCE_REJECT_PARTIAL
+            | SOURCE_REJECT_CORRUPT
+            | SOURCE_REJECT_UNDECODABLE
+            | SOURCE_REJECT_ORIENTATION_UNSUPPORTED
+            | SOURCE_REJECT_WRONG_SESSION
+            | SOURCE_REJECT_WRONG_REQUEST
+            | SOURCE_REJECT_WRONG_CAPTURE
+            | SOURCE_REJECT_STALE
+            | SOURCE_REJECT_UNSUPPORTED_COMBINATION
+            | SOURCE_REJECT_EXTRACTION_FAILED
+            | SOURCE_REJECT_CANCELLED
+    )
+}
+
+pub const SOURCE_OBJECT_ROLE_RAW: &str = "raw";
+pub const SOURCE_OBJECT_ROLE_JPEG: &str = "jpeg";
+
+pub const SOURCE_BLOCK_ORDER_AB: &str = "AB";
+pub const SOURCE_BLOCK_ORDER_BA: &str = "BA";
+
+/// 측정 lane 스위치 값. **기본은 `off`이고, off일 때 제품 경로는 지금과 완전히 동일하다.**
+pub const SOURCE_COMPARE_MODE_OFF: &str = "off";
+pub const SOURCE_COMPARE_MODE_EMBEDDED: &str = "embedded";
+pub const SOURCE_COMPARE_MODE_PAIRED: &str = "paired";
+pub const SOURCE_COMPARE_MODE_SHELL: &str = "shell";
+pub const SOURCE_COMPARE_MODE_AB: &str = "ab";
+
+pub fn is_known_source_compare_mode(mode: &str) -> bool {
+    matches!(
+        mode,
+        SOURCE_COMPARE_MODE_OFF
+            | SOURCE_COMPARE_MODE_EMBEDDED
+            | SOURCE_COMPARE_MODE_PAIRED
+            | SOURCE_COMPARE_MODE_SHELL
+            | SOURCE_COMPARE_MODE_AB
+    )
+}
+
+/// 한 route가 만들어 낸 source 후보 1건.
+///
+/// `asset_path`가 `None`이면 후보 자체가 생기지 않은 것이고, 그때도 표본 행은 남는다.
+/// **행이 없는 시도를 만들지 않는다** — Story 7.2가 이 결함으로 한 회차를 잃었다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCandidateDto {
+    pub capture_id: Option<String>,
+    pub request_id: String,
+    pub session_id: String,
+    pub route: String,
+    pub asset_path: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub byte_size: Option<u64>,
+    pub exif_orientation: Option<u16>,
+    pub decode_valid: bool,
+    pub source_hash: Option<String>,
+    pub object_index: Option<u32>,
+    pub group_id: Option<u32>,
+    pub ready_at_host_micros: Option<u64>,
+    pub extraction_cost_micros: Option<u64>,
+}
+
+/// helper → host. 카메라가 스스로 보고한 image-quality capability descriptor.
+///
+/// **지원 여부를 가정하지 않는다.** descriptor에 없는 조합은 시도조차 하지 않는다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageQualityCapabilityDto {
+    pub descriptor_available: bool,
+    pub current_value: Option<i64>,
+    pub supported_values: Vec<i64>,
+    pub raw_plus_jpeg_supported: bool,
+    pub probed_at_host_micros: u64,
+}
+
+/// `source-comparison.jsonl` 한 행.
+///
+/// **Story 7.2의 `viewer-present.jsonl`과 의도적으로 분리된 파일이다.**
+/// 두 파일을 합쳐 집계하는 도구를 만들지 않는다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceComparisonSampleDto {
+    pub schema_version: String,
+    pub candidate: SourceCandidateDto,
+    pub accepted: bool,
+    pub reject_reason: Option<String>,
+    pub object_role: Option<String>,
+    /// `groupID`가 없어 파일명 stem + 도착 시각 창으로 묶었는가.
+    pub used_fallback_correlation: bool,
+    pub block_order: String,
+    pub block_index: u32,
+    pub is_warm_up: bool,
+    pub randomization_seed: u64,
+    /// **항상 false다.** 이 lane의 어떤 산출물도 preset이 적용되지 않았다.
+    pub is_preset_applied: bool,
+    pub recorded_at_host_micros: u64,
 }

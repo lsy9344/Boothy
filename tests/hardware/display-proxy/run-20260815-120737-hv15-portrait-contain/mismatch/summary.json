@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "hv15-mismatch-summary/v1",
+  "sessionId": "session_000000000018cbdb8b9e504c74",
+  "result": "pass",
+  "diagnosticReason": "proxy-reference-renderer-mismatch",
+  "rawCount": 1,
+  "previewCount": 1,
+  "generationManifestPresent": false,
+  "originalBundleSha256": "C0D1F57F3AD26B17CB0ECACD628F2F1BCB8D7AD282D2C9A6CCBCD203ED3CA48A",
+  "restoredBundleSha256": "C0D1F57F3AD26B17CB0ECACD628F2F1BCB8D7AD282D2C9A6CCBCD203ED3CA48A",
+  "setupCameraRawDownloadTimeouts": 2,
+  "notes": "The production bundle was restored after every attempt. The successful run persisted RAW and normal preview while the display proxy lane was skipped before publication."
+}

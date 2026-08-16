@@ -8,6 +8,7 @@ import {
   createBrowserCaptureRuntimeGateway,
   createCaptureRuntimeService,
   createTauriCaptureRuntimeGateway,
+  type CaptureRuntimeGateway,
 } from './capture-runtime'
 
 function createCaptureRecord(
@@ -843,16 +844,18 @@ describe('capture runtime adapter', () => {
   })
 
   it('filters fast-preview updates by session before notifying the consumer', async () => {
-    let emitFastPreview: ((payload: unknown) => void) | null = null
+    const fastPreviewEmitter: {
+      current: ((payload: unknown) => void) | null
+    } = { current: null }
 
     const gateway: CaptureRuntimeGateway = {
       getCaptureReadiness: vi.fn(),
       requestCapture: vi.fn(),
       subscribeToCaptureReadiness: vi.fn().mockResolvedValue(() => undefined),
       subscribeToCaptureFastPreview: vi.fn().mockImplementation(async (onEvent) => {
-        emitFastPreview = onEvent
+        fastPreviewEmitter.current = onEvent
         return () => {
-          emitFastPreview = null
+          fastPreviewEmitter.current = null
         }
       }),
     }
@@ -866,7 +869,7 @@ describe('capture runtime adapter', () => {
       onFastPreview,
     })
 
-    emitFastPreview?.({
+    fastPreviewEmitter.current?.({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1n',
       requestId: 'request_foreign',
@@ -876,7 +879,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 320,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    fastPreviewEmitter.current?.({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_local',
@@ -899,7 +902,9 @@ describe('capture runtime adapter', () => {
   })
 
   it('forwards fast preview updates only for the active session subscription', async () => {
-    let emitFastPreview: ((payload: unknown) => void) | null = null
+    const fastPreviewEmitter: {
+      current: ((payload: unknown) => void) | null
+    } = { current: null }
     const onFastPreview = vi.fn()
 
     const service = createCaptureRuntimeService({
@@ -908,9 +913,9 @@ describe('capture runtime adapter', () => {
         requestCapture: vi.fn(),
         subscribeToCaptureReadiness: vi.fn(async () => () => undefined),
         subscribeToCaptureFastPreview: vi.fn(async (onEvent) => {
-          emitFastPreview = onEvent
+          fastPreviewEmitter.current = onEvent
           return () => {
-            emitFastPreview = null
+            fastPreviewEmitter.current = null
           }
         }),
       },
@@ -921,7 +926,7 @@ describe('capture runtime adapter', () => {
       onFastPreview,
     })
 
-    emitFastPreview?.({
+    fastPreviewEmitter.current?.({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_other',
       requestId: 'request_other',
@@ -930,7 +935,7 @@ describe('capture runtime adapter', () => {
       visibleAtMs: 120,
       kind: 'camera-thumbnail',
     })
-    emitFastPreview?.({
+    fastPreviewEmitter.current?.({
       schemaVersion: 'capture-fast-preview-update/v1',
       sessionId: 'session_01hs6n1r8b8zc5v4ey2x7b9g1m',
       requestId: 'request_01hs6n1r8b8zc5v4ey2x7b9g1m',

@@ -151,6 +151,66 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
 - `helper-error`
   - machine-readable code와 bounded detail
 
+## 메시지 종류 v2 추가분 (Story 7.3)
+
+v2는 **v1에 더하기만 한다.** 기존 필드의 의미를 바꾸지 않으므로 v1 helper가 새 필드를
+보내지 않아도 host의 기존 정규화는 그대로 동작한다. host 쪽 필드는 전부 optional이다.
+
+### `file-arrived` 추가 필드 (전부 optional)
+
+| 필드 | 뜻 |
+| --- | --- |
+| `objectIndex` | 같은 촬영 안에서 이 transfer object가 몇 번째로 도착했는가. 0부터 |
+| `groupId` | `EdsDirectoryItemInfo.GroupID`. `0`이거나 없으면 보조 correlation을 쓴 것이다 |
+| `objectRole` | `raw` 또는 `jpeg`. **확장자가 아니라 SDK format 정보로 판정한 값이다** |
+| `usedFallbackCorrelation` | `groupId` 대신 파일명 stem + 도착 시각 창을 사용했는지 여부 |
+
+RAW+JPEG 조합에서 카메라는 object event를 두 번 올린다. 두 object는 같은 `groupId`를
+공유하며 하나의 `requestId`에 묶인다. `groupId`를 쓸 수 없으면 helper는 파일명 stem과
+도착 시각 창으로 보조 판정하고 그 사실을 표본에 남긴다.
+
+> **in-flight capture는 여전히 1개만 허용한다.** object가 여러 개일 뿐이다
+> (`camera-helper-edsdk-profile.md`의 제품 고정 결정).
+
+### `image-quality-capability` (helper → host, 신규)
+
+카메라가 스스로 보고한 image-quality capability descriptor다.
+**지원 여부를 가정하지 않기 위한 메시지이며**, descriptor에 없는 조합은 시도조차 하지 않고
+`unsupported-combination`으로 기록한다.
+
+```json
+{
+  "schemaVersion": "canon-helper-image-quality-capability/v1",
+  "type": "image-quality-capability",
+  "sessionId": "session_01hs6n1r8b8zc5v4ey2x7b9g1m",
+  "observedAt": "2026-08-12T10:15:30Z",
+  "probedAtHostMicros": 1723460130123456,
+  "descriptorAvailable": true,
+  "currentValue": 1048591,
+  "supportedValues": [1048591, 6553619],
+  "rawPlusJpegSupported": true
+}
+```
+
+`supportedValues`는 `EdsGetPropertyDesc(PropID_ImageQuality)`가 돌려준 목록 원문이다.
+**이 목록이 유일한 truth다.** 자세한 값 해석은
+[`capture-source.md`](./capture-source.md#route-b--capability-gated-rawjpeg)를 참조한다.
+`probedAtHostMicros`는 helper가 descriptor를 읽은 시점의 epoch microseconds 원문이며,
+route evidence의 정렬과 시각 대조에 사용한다.
+
+### `source-object-arrived` / `source-object-rejected` (helper → host, 신규)
+
+Route B의 JPEG object와 거부된 transfer object는 각각 별도 advisory event로 남긴다.
+두 event에는 `requestId`, `captureId`, `objectIndex`, `groupId`, `objectRole`,
+`usedFallbackCorrelation`이 포함된다. host는 이 event를 수신해도 기존 RAW `file-arrived`
+성공 판정을 바꾸지 않으며, 측정 증거와 실패 분모에만 사용한다.
+
+### `camera-setting-warning` (helper → host, 신규)
+
+RAW+JPEG 측정 뒤 원래 Image Quality 값 복원에 실패한 경우 별도 advisory event로 남긴다.
+이 이벤트는 transfer object 거부가 아니며 이미 저장된 RAW 성공 판정을 바꾸지 않는다.
+`requestId`, `captureId`, `observedAt`, `detailCode`를 포함한다.
+
 ## camera-status 예시
 
 ```json
@@ -178,11 +238,31 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
   "requestId": "capture_req_20260327_001",
   "captureId": "capture_20260327_001",
   "arrivedAt": "2026-03-27T10:15:33Z",
-  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr3",
+  "rawPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/captures/originals/capture_20260327_001.cr2",
   "fastPreviewPath": "C:/Users/Example/Pictures/dabi_shoot/sessions/session_01hs6n1r8b8zc5v4ey2x7b9g1m/renders/previews/capture_20260327_001.jpg",
-  "fastPreviewKind": "embedded-jpeg"
+  "fastPreviewKind": "windows-shell-thumbnail"
 }
 ```
+
+### fastPreviewKind 허용 값
+
+helper가 **실제로 보내는 값은 다음 네 가지뿐이다.** 구현(`CanonSdkCamera.cs`)이 유일한 truth이며,
+새 값을 문서에 먼저 적지 않는다.
+
+| 값 | 생산 경로 | 비고 |
+| --- | --- | --- |
+| `camera-thumbnail` | `EdsDownloadThumbnail` — RAW 전송 전에 카메라 썸네일을 먼저 시도 | 성공하면 RAW 다운로드와 preview 작업이 겹친다 |
+| `windows-shell-thumbnail` | `IShellItemImageFactory.GetImage(1600×1600, ResizeToFit\|BiggerSizeOk\|ThumbnailOnly)` | **현재 제품의 실질적 fast preview.** Story 7.3 비교의 기준선(Route C) |
+| `raw-sdk-preview` | `EdsCreateImageRef` + `EdsSaveImage` | Shell 경로가 실패했을 때의 fallback |
+| `raw-fallback-preview` | RAW 도착 후 지연 생성 경로 | |
+
+> **`embedded-jpeg`는 아직 helper가 보내지 않는다.** Story 7.3이 Route A(`embedded-jpeg`)로
+> 새로 도입하려는 후보이며, HV-14가 route 결정을 기록하기 전까지 제품 경로로 승격되지 않는다.
+> 이전 판 문서는 이 예시에 `embedded-jpeg`를 적어 두었으나 구현에 없는 값이었다.
+
+`BiggerSizeOk`는 요청보다 큰 캐시본을 허용하므로 **실제 산출 픽셀 크기가 요청한 1600과 다를 수 있다.**
+display-fit 판정(Story 7.4)의 입력은 요청값이 아니라 실측값이어야 하므로, 측정 lane은 표본마다
+실제 크기를 기록한다.
 
 ## freshness 기준
 
@@ -200,7 +280,7 @@ operator는 helper raw 상태 전체를 그대로 보지 않고, bounded operato
 - helper가 `fastPreviewPath`를 같이 보내더라도 host는 same-session, same-capture, allowed-path, 파일 유효성 검증을 다시 통과한 경우에만 이를 pending preview 후보로 승격할 수 있다.
 - 현재 구현 기준 allowed fast preview path는 designated handoff 경로(`handoff/fast-preview/...`) 또는 canonical preview path(`renders/previews/{captureId}.jpg`와 동등 경로)로 제한한다.
 - `fastPreviewPath` 부재, 손상, stale, wrong-session, wrong-capture는 capture failure 이유가 아니다. 이 경우 host는 RAW handoff만으로 기존 `Preview Waiting` 경로를 계속 유지한다.
-- `fastPreviewKind`는 helper가 어떤 후보를 보냈는지 설명하는 optional 진단 힌트일 뿐이며, host preview truth를 직접 결정하지 않는다.
+- `fastPreviewKind`는 helper가 어떤 후보를 보냈는지 설명하는 optional 진단 힌트일 뿐이며, host preview truth를 직접 결정하지 않는다. 허용 값은 위 `fastPreviewKind 허용 값` 표가 유일한 근거다.
 - helper는 partial file이나 아직 close되지 않은 파일을 `file-arrived`로 알리면 안 된다.
 - 같은 원칙으로 helper는 partial request line이나 restart 이전의 stale request line을 새 촬영으로 재해석하면 안 된다.
 - 카메라 본체 셔터 직접 입력처럼 active `requestId` 없이 발생한 out-of-band 촬영은 현재 host가 active session success로 승격하는 canonical path가 아니다.

@@ -17,6 +17,21 @@
 - `scope`: `future-sessions-only` 또는 테스트용 거절 입력 `active-session`
 - `reviewNote`: 선택 메모
 
+### proxyPublication (선택, Story 7.4)
+
+publish input은 display-fit proxy lane 자격을 함께 실을 수 있다.
+
+- **없으면 게시는 오늘과 동일하게 성공**하고, 그 preset은 `proxyCompatible = false`로 게시된다.
+  Story 4.2/4.3의 성공 조건은 이 필드로 바뀌지 않는다.
+- **있으면 전부 유효해야 한다.** 하나라도 어긋나면 게시를 거절한다 —
+  반쯤 승인된 룩이 고객 화면에 오르는 것보다 게시가 막히는 편이 낫다.
+- 필드: `proxyCompatible`(반드시 `true`), `supportedOperations`(1개 이상),
+  `proxyRecipeVersion`, `referenceRenderer`(`darktable`), `referenceRendererVersion`(pinned와 일치),
+  `outputProfile{colorSpace, jpegQuality 1~100, iccIntent?}`,
+  `visualApproval{approvedAt, approvedBy, corpusPath?}`
+- **`proxyRecipePath`는 입력에 없다.** 게시 host가 번들의 XMP template 경로를 직접 기록한다.
+  호출자가 경로를 넣을 수 있게 두면 bundle root 밖을 가리킬 여지가 생긴다.
+
 ## Publish Result
 
 - `schemaVersion`: `draft-preset-publication-result/v1`

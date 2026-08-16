@@ -56,13 +56,34 @@ export const viewerDisplayProfileSchema = z.object({
  * 실제 CSS photo rectangle과 DPR에서 파생한 physical display-fit 계약.
  * `requiredSource*`는 host가 report에서 재계산한 값이며 client 계산값을 신뢰하지 않는다.
  */
-export const viewerPhotoRectSchema = z.object({
-  cssWidth: z.number().positive(),
-  cssHeight: z.number().positive(),
-  devicePixelRatio: z.number().positive(),
-  requiredSourceWidthPx: z.number().int().positive(),
-  requiredSourceHeightPx: z.number().int().positive(),
-})
+export const viewerPhotoRectSchema = z
+  .object({
+    cssWidth: z.number().positive(),
+    cssHeight: z.number().positive(),
+    devicePixelRatio: z.number().positive(),
+    requiredSourceWidthPx: z.number().int().positive(),
+    requiredSourceHeightPx: z.number().int().positive(),
+  })
+  .superRefine((rect, context) => {
+    const expectedWidth = Math.ceil(rect.cssWidth * rect.devicePixelRatio)
+    const expectedHeight = Math.ceil(rect.cssHeight * rect.devicePixelRatio)
+
+    if (rect.requiredSourceWidthPx !== expectedWidth) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requiredSourceWidthPx'],
+        message: 'requiredSourceWidthPx must equal ceil(cssWidth * devicePixelRatio).',
+      })
+    }
+
+    if (rect.requiredSourceHeightPx !== expectedHeight) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requiredSourceHeightPx'],
+        message: 'requiredSourceHeightPx must equal ceil(cssHeight * devicePixelRatio).',
+      })
+    }
+  })
 
 export const viewerReadinessSnapshotSchema = z
   .object({

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "session-manifest/v1",
+  "sessionId": "session_000000000018cae330831707f8",
+  "boothAlias": "HV13BLight 0812",
+  "customer": {
+    "name": "HV13BLight",
+    "phoneLastFour": "0812"
+  },
+  "createdAt": "2026-08-11T23:13:19Z",
+  "updatedAt": "2026-08-11T23:15:08Z",
+  "lifecycle": {
+    "status": "active",
+    "stage": "capture-ready"
+  },
+  "catalogRevision": 1,
+  "catalogSnapshot": [
+    {
+      "presetId": "preset_daylight",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_mono-pop",
+      "publishedVersion": "2026.03.27"
+    },
+    {
+      "presetId": "preset_soft-glow",
+      "publishedVersion": "2026.03.27"
+    }
+  ],
+  "activePreset": {
+    "presetId": "preset_daylight",
+    "publishedVersion": "2026.03.27"
+  },
+  "activePresetId": "preset_daylight",
+  "activePresetDisplayName": "Daylight",
+  "timing": {
+    "schemaVersion": "session-timing/v1",
+    "sessionId": "session_000000000018cae330831707f8",
+    "adjustedEndAt": "2026-08-11T23:28:19Z",
+    "warningAt": "2026-08-11T23:23:19Z",
+    "phase": "active",
+    "captureAllowed": true,
+    "approvedExtensionMinutes": 0,
+    "approvedExtensionAuditRef": null,
+    "warningTriggeredAt": null,
+    "endedTriggeredAt": null
+  },
+  "captures": [
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cae330831707f8",
+      "boothAlias": "HV13BLight 0812",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260811231457425_2b1a64461c",
+      "requestId": "request_0000000000000658cda3958ae8",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cae330831707f8\\captures\\originals\\capture_20260811231457425_2b1a64461c.CR2",
+        "persistedAtMs": 1786490099265
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cae330831707f8\\renders\\previews\\capture_20260811231457425_2b1a64461c.jpg",
+        "enqueuedAtMs": 1786490099265,
+        "readyAtMs": 1786490104176
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786490096544,
+        "previewVisibleAtMs": 1786490104176,
+        "fastPreviewVisibleAtMs": 1786490099729,
+        "xmpPreviewReadyAtMs": 1786490104176,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    },
+    {
+      "schemaVersion": "session-capture/v1",
+      "sessionId": "session_000000000018cae330831707f8",
+      "boothAlias": "HV13BLight 0812",
+      "activePresetId": "preset_daylight",
+      "activePresetVersion": "2026.03.27",
+      "activePresetDisplayName": "Daylight",
+      "captureId": "capture_20260811231501844_aa8a1df97b",
+      "requestId": "request_0000000000000658cda3daf2a0",
+      "raw": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cae330831707f8\\captures\\originals\\capture_20260811231501844_aa8a1df97b.CR2",
+        "persistedAtMs": 1786490103605
+      },
+      "preview": {
+        "assetPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cae330831707f8\\renders\\previews\\capture_20260811231501844_aa8a1df97b.jpg",
+        "enqueuedAtMs": 1786490103605,
+        "readyAtMs": 1786490108114
+      },
+      "final": {
+        "assetPath": null,
+        "readyAtMs": null
+      },
+      "renderStatus": "previewReady",
+      "postEndState": "activeSession",
+      "timing": {
+        "captureAcknowledgedAtMs": 1786490101005,
+        "previewVisibleAtMs": 1786490108114,
+        "fastPreviewVisibleAtMs": 1786490103760,
+        "xmpPreviewReadyAtMs": 1786490108114,
+        "captureBudgetMs": 1000,
+        "previewBudgetMs": 5000,
+        "previewBudgetState": "exceededBudget"
+      }
+    }
+  ],
+  "postEnd": null
+}
