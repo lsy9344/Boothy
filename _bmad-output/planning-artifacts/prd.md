@@ -824,8 +824,8 @@ The system shall support staged branch rollout to explicitly selected branch set
 - 100% of rollout and rollback actions record the branch set, target build, approved preset stack, approval timestamp, and operator identity in the rollout audit.
 - Active customer sessions are never interrupted by forced update behavior.
 - Any promoted branch can return to the last approved build and approved preset stack in one approved rollback action while preserving approved local settings and active-session compatibility.
-- The release artifact includes the signed app, camera helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipe, and pinned RAW renderer dependency as one verifiable inventory.
-- A clean offline Windows environment can install, launch, self-check, render an approved fixture to the viewer, upgrade, and uninstall without a separately installed development toolchain.
+- The release artifact includes the app, camera helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipe, and pinned RAW renderer dependency as one hash-verifiable inventory.
+- For MVP internal validation, the approved test PC installs, launches, self-checks, renders an approved fixture, upgrades, rolls back, and uninstalls the complete inventory. Code signing, Canon EDSDK redistribution evidence, network isolation, and a clean Windows environment are owner-approved waivers and must be recorded as `waived-by-owner`, not as verified passes.
 
 **Sources**
 - [MVP In Scope for Internal or Authorized Users](#mvp-in-scope-for-internal-or-authorized-users)
@@ -868,7 +868,7 @@ The system shall support staged branch rollout to explicitly selected branch set
 - Publication and rollback can promote or revert approved preset artifacts for future sessions without mutating active sessions.
 - Branch rollout controls can promote explicitly selected branch sets and roll back the app build and approved preset stack without interrupting an active customer session.
 - No forced update interrupts an active customer session.
-- A signed complete installer reproduces the approved viewer, camera, preset proxy, RAW refinement, and final paths on a clean offline Windows environment.
+- A complete installer reproduces the approved viewer, camera, preset proxy, RAW refinement, and final paths through the full lifecycle on the owner-approved test PC; signing, Canon redistribution, and clean/offline-environment claims remain explicitly waived and unproven.
 - The operator surface exposes only the diagnostics and recovery actions defined by the `Operator Recovery Policy`.
 - Epic 7 Story 7.10 and HV-18D record the final MVP Go/No-Go only after installer, performance/recovery, and rollout/rollback evidence are independently complete.
 

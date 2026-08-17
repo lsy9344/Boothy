@@ -376,7 +376,7 @@ Boothy는 Tailwind CSS를 기반으로 한 Brutal Core 테마를 사용하여 �
 - **Epic 7 Story 7.2:** immutable sample, opaque double-buffer, actual-present 계측, visible/hidden viewer mode 결정
 - **Epic 7 Story 7.3~7.4:** 승인된 fast source와 physical display-fit immutable preset proxy 연결
 - **Epic 7 Story 7.5~7.6:** resident renderer 후보 결정과 RAW-refined seamless swap 검증
-- **Epic 7 Story 7.7:** complete installer와 clean offline Windows 재현
+- **Epic 7 Story 7.7:** complete installer와 현재 승인 PC의 전체 lifecycle 재현 (서명·Canon 재배포·clean/offline 환경은 책임자 면제이며 UX 영향 없음)
 - **Epic 7 Story 7.8:** warm 100-shot, cold/idle/reconnect, burst/failure 복구 검증
 - **Epic 7 Story 7.9:** staged rollout, active-session 보호, rollback 호환성 검증
 - **Epic 7 Story 7.10:** 전체 hardware evidence와 UX release evidence를 집계한 최종 MVP Go/No-Go 판정

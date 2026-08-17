@@ -21,13 +21,14 @@ use boothy_lib::{
 /// `Cargo.toml`을 원문 그대로 읽는다. 의존성이 늘면 이 파일이 먼저 깨진다.
 const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
-/// **새 Rust crate를 추가하지 않는다.**
+/// **승인되지 않은 Rust crate를 추가하지 않는다.**
 ///
 /// Story 7.7의 offline 설치 인벤토리가 여기 걸려 있고, Story 7.3이 LibRaw를 뺀 것과 같은
 /// 이유다. process tree 종료를 Windows 내장 `taskkill` 절대 경로 호출로 구현한 것도
-/// `windows-sys` Job Object 방식이 이 목록을 늘리기 때문이다.
+/// `windows-sys` Job Object 방식이 이 목록을 늘리기 때문이다. `sha2`는 Story 7.7 self-check가
+/// 외부 `certutil.exe` 창을 만들지 않고 설치 트리를 검증하기 위해 승인한 유일한 추가 항목이다.
 #[test]
-fn story_7_6_adds_no_new_rust_dependency() {
+fn only_the_story_7_7_in_process_hash_dependency_was_added() {
     let dependencies: Vec<&str> = CARGO_MANIFEST
         .lines()
         .skip_while(|line| line.trim() != "[dependencies]")
@@ -40,8 +41,15 @@ fn story_7_6_adds_no_new_rust_dependency() {
 
     assert_eq!(
         dependencies,
-        vec!["serde_json", "serde", "log", "tauri", "tauri-plugin-log"],
-        "직접 의존성이 바뀌면 Story 7.7의 offline 재현 범위가 함께 바뀐다"
+        vec![
+            "serde_json",
+            "serde",
+            "sha2",
+            "log",
+            "tauri",
+            "tauri-plugin-log"
+        ],
+        "직접 의존성이 바뀌면 설치 재현 범위와 인벤토리를 함께 검토해야 한다"
     );
 }
 

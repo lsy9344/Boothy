@@ -92,7 +92,7 @@ Story 7.4 실장비 종단 median 8284 ms 기준으로 8237 ms가 남는다.
 이 미실행 항목들은 통과로 간주하지 않는다. 다만 2026-08-16 승인된 종료 예외에 따라, 실제 CR2를 처리할 승인된 상주 입력 경로가 없다는 독립적인 입력 축 `Technology No-Go`와 exact fallback 증거가 Story 7.5 종료를 결정한다.
 | 상주 엔진의 실제 GPU 실행 시간 | 미측정 (headless에 WebGL2 없음) | 채택을 재검토할 때만 필요 |
 | corpus 저노출 | HV-15와 같은 저노출 corpus. parity 절대값을 과장한다 | 정상 노출 corpus 확보 시 재측정 |
-| `Microsoft.RawImageExtension` 오프라인 배포 | 미확인 | **Story 7.7** |
+| `Microsoft.RawImageExtension` 오프라인 배포 | **판정 완료 (2026-08-17): `offline-distribution: not-possible`** | Story 7.7 이 닫았다 → `tests/hardware/installer/hv-18a/raw-image-extension-verdict.md` |
 
 ## exact fallback 확인
 
@@ -106,8 +106,13 @@ Story 7.4 실장비 종단 median 8284 ms 기준으로 8237 ms가 남는다.
 
 1. **Story 7.6**은 렌더러 교체가 아니라 **scheduler와 큐 대기**에서 시작한다.
    이 회차의 숫자는 그쪽에 남은 시간이 더 크다는 것을 보여 준다.
-2. **Story 7.7**이 `Microsoft.RawImageExtension`의 오프라인 배포 가능 여부를 판정하면,
-   그때 direct decoder 경로를 **별도 승인** 안건으로 다시 올릴 수 있다.
+2. ~~**Story 7.7**이 `Microsoft.RawImageExtension`의 오프라인 배포 가능 여부를 판정하면,
+   그때 direct decoder 경로를 **별도 승인** 안건으로 다시 올릴 수 있다.~~
+   → **2026-08-17 판정 완료.** 세 문항(오프라인 설치 수단 / 재배포 권리 / 버전 고정)이 모두
+   「아니오」여서 `offline-distribution: not-possible`로 닫혔다. 판정문은
+   `tests/hardware/installer/hv-18a/raw-image-extension-verdict.md`.
+   **`RESIDENT_APPROVED_DIRECT_DECODERS`는 비어 있는 채로 유지된다.**
+   이 판정이 긍정이었더라도 채택은 아니었다 — 이 회차의 parity 미달이 독립적으로 막는다.
 3. **Story 7.8**이 RAW 전송과 present 구간을 잡는다.
 4. HV-18D(Story 7.10)는 이 `Technology No-Go`를 결손이 아니라 **완결된 판정**으로 인용할 수 있다.
    승인된 production route(`raw-original + pinned darktable 5.4.1`)가 살아 있기 때문이다.

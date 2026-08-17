@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:darktable="http://darktable.sf.net/"
+      darktable:xmp_version="5"
+      darktable:history_end="5"
+      darktable:iop_order_version="4">
+      <darktable:masks_history>
+        <rdf:Seq/>
+      </darktable:masks_history>
+      <darktable:history>
+        <rdf:Seq>
+          <rdf:li
+            darktable:num="0"
+            darktable:operation="temperature"
+            darktable:enabled="1"
+            darktable:modversion="4"
+            darktable:params="003022400000803f00a0c93f0000000004000000"
+            darktable:multi_name=""
+            darktable:multi_name_hand_edited="0"
+            darktable:multi_priority="0"
+            darktable:blendop_version="14"
+            darktable:blendop_params="gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU="/>
+          <rdf:li
+            darktable:num="1"
+            darktable:operation="exposure"
+            darktable:enabled="1"
+            darktable:modversion="7"
+            darktable:params="00000000000080b93333b33f00004842000080c00000000001000000"
+            darktable:multi_name="Mono Pop"
+            darktable:multi_name_hand_edited="1"
+            darktable:multi_priority="0"
+            darktable:blendop_version="14"
+            darktable:blendop_params="gz08eJxjYGBgYAFiCQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dlAx68oBEMbFxwX+AwGIBgCbGCeh"/>
+          <rdf:li
+            darktable:num="2"
+            darktable:operation="sigmoid"
+            darktable:enabled="1"
+            darktable:modversion="3"
+            darktable:params="333313409a9919be0000c8426c09793c000000000000c8420000000000000000000000000000000000000000000000000000000000000000"
+            darktable:multi_name="Mono Pop"
+            darktable:multi_name_hand_edited="1"
+            darktable:multi_priority="0"
+            darktable:blendop_version="14"
+            darktable:blendop_params="gz08eJxjYGBgYAFiCQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dlAx68oBEMbFxwX+AwGIBgCbGCeh"/>
+          <rdf:li
+            darktable:num="3"
+            darktable:operation="monochrome"
+            darktable:enabled="1"
+            darktable:modversion="2"
+            darktable:params="00000000000000000000004000000000"
+            darktable:multi_name="Mono Pop"
+            darktable:multi_name_hand_edited="1"
+            darktable:multi_priority="0"
+            darktable:blendop_version="14"
+            darktable:blendop_params="gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU="/>
+          <rdf:li
+            darktable:num="4"
+            darktable:operation="sharpen"
+            darktable:enabled="1"
+            darktable:modversion="1"
+            darktable:params="cdcccc3fcdcc4c3f0000803e"
+            darktable:multi_name="Mono Pop"
+            darktable:multi_name_hand_edited="1"
+            darktable:multi_priority="0"
+            darktable:blendop_version="14"
+            darktable:blendop_params="gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU="/>
+        </rdf:Seq>
+      </darktable:history>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>

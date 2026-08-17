@@ -99,6 +99,7 @@ $zeroReportPath = Join-Path $RunRoot 'transition/zero-report.json'
 $tierVerdictPath = Join-Path $RunRoot 'tier-justification/verdict.json'
 $trialsPath = Join-Path $RunRoot 'detection-trial/trials.csv'
 $environmentPath = Join-Path $RunRoot 'environment.md'
+$partialDecisionPath = Join-Path $RunRoot 'partial-decision.json'
 
 if (-not (Test-Path -LiteralPath $environmentPath)) {
   # 환경을 모르면 어느 gate의 숫자도 재현할 수 없다. 두 gate 모두에 남긴다.
@@ -402,6 +403,88 @@ else {
   }
 }
 
+# ---------------------------------------------------------------------------
+# 승인된 Partial 종료: 안전성은 통과했지만 측정상 가치 없는 tier는 게시하지 않는다.
+# ---------------------------------------------------------------------------
+$partialDecision = Read-JsonFile $partialDecisionPath
+$partialFailures = New-Object System.Collections.Generic.List[string]
+$partialTierVerdict = $null
+
+if ($null -ne $partialDecision) {
+  if ($partialDecision.schemaVersion -ne 'hv17-partial-decision/v1') {
+    $partialFailures.Add('partial-decision.json schemaVersion must be hv17-partial-decision/v1') | Out-Null
+  }
+  if ($partialDecision.decision -ne 'Partial') {
+    $partialFailures.Add('partial-decision.json decision must be Partial') | Out-Null
+  }
+  if ($hv17aFailures.Count -ne 0) {
+    $partialFailures.Add('HV-17A must pass before Partial can close the story') | Out-Null
+  }
+  if ($partialDecision.implementationComplete -ne $true) {
+    $partialFailures.Add('the rawRefinedDisplay implementation and automated tests are not attested complete') | Out-Null
+  }
+  if ($partialDecision.laneDefaultEnabled -ne $false) {
+    $partialFailures.Add('the unjustified rawRefinedDisplay lane must remain disabled by default') | Out-Null
+  }
+  if ($partialDecision.fr010OpenItem -ne 'Story 7.10 / HV-18D') {
+    $partialFailures.Add('FR-010 two-stage promotion must remain an open Story 7.10 / HV-18D item') | Out-Null
+  }
+  if ([string]::IsNullOrWhiteSpace($partialDecision.approvedBy) -or
+      [string]::IsNullOrWhiteSpace($partialDecision.approvedAt)) {
+    $partialFailures.Add('Partial needs an approver and approval timestamp') | Out-Null
+  }
+
+  $tierRootText = [string]$partialDecision.tierEvidenceRoot
+  if ([string]::IsNullOrWhiteSpace($tierRootText)) {
+    $partialFailures.Add('Partial must point to the complete tier measurement evidence root') | Out-Null
+  }
+  else {
+    $tierRootCandidate = if ([System.IO.Path]::IsPathRooted($tierRootText)) {
+      $tierRootText
+    }
+    else {
+      Join-Path $RunRoot $tierRootText
+    }
+    if (-not (Test-Path -LiteralPath $tierRootCandidate -PathType Container)) {
+      $partialFailures.Add("tier evidence root does not exist: $tierRootText") | Out-Null
+    }
+    else {
+      $resolvedTierRoot = (Resolve-Path -LiteralPath $tierRootCandidate).Path
+      $partialTierVerdict = Read-JsonFile (Join-Path $resolvedTierRoot 'tier-justification/verdict.json')
+      if ($null -eq $partialTierVerdict) {
+        $partialFailures.Add('tier evidence has no tier-justification/verdict.json') | Out-Null
+      }
+      else {
+        if ($partialTierVerdict.corpus.complete -ne $true -or
+            $partialTierVerdict.corpus.uniqueSamples -lt 3 -or
+            $partialTierVerdict.corpus.uniquePresets -lt 3 -or
+            $partialTierVerdict.corpus.uniquePairs -lt 9) {
+          $partialFailures.Add('tier measurement corpus must be complete: 3 captures x 3 approved presets') | Out-Null
+        }
+        if ($partialTierVerdict.detail.verdict -ne 'tier-not-justified' -or
+            $partialTierVerdict.detail.measuredPairs -lt 9 -or
+            @($partialTierVerdict.detail.unmeasuredPairs).Count -ne 0) {
+          $partialFailures.Add('detail must be fully measured and verdict must be tier-not-justified') | Out-Null
+        }
+      }
+    }
+  }
+
+  if (@($committed | Where-Object { $_.generation.tier -eq $refinedTier }).Count -gt 0) {
+    $partialFailures.Add('an unjustified refined tier was committed to the customer display evidence') | Out-Null
+  }
+}
+
+$productVerdict = if ($null -ne $partialDecision -and $partialFailures.Count -eq 0) {
+  'Partial'
+}
+elseif ($hv17aFailures.Count -eq 0 -and $hv17bFailures.Count -eq 0) {
+  'Go-candidate'
+}
+else {
+  'No-Go'
+}
+
 $result = [ordered]@{
   schemaVersion = 'hv-17-raw-refined-evidence/v1'
   runRoot       = (Resolve-Path -LiteralPath $RunRoot).Path
@@ -414,6 +497,14 @@ $result = [ordered]@{
     scope    = 'seamless tier transition / frame integrity'
     failures = @($hv17bFailures)
     verdict  = if ($hv17bFailures.Count -eq 0) { 'automated-pass' } else { 'No-Go' }
+  }
+  productDecision = [ordered]@{
+    verdict = $productVerdict
+    failures = @($partialFailures)
+    laneDefaultEnabled = if ($productVerdict -eq 'Partial') { $false } else { $null }
+    tierDetailVerdict = if ($null -ne $partialTierVerdict) { $partialTierVerdict.detail.verdict } else { $null }
+    tierLookVerdict = if ($null -ne $partialTierVerdict) { $partialTierVerdict.look.verdict } else { $null }
+    openItem = if ($productVerdict -eq 'Partial') { 'Story 7.10 / HV-18D' } else { $null }
   }
   # 이 gate가 제공하지 않는 것을 명시한다. 침묵은 "확인했다"로 읽힌다.
   notProvenHere = @(
@@ -435,9 +526,14 @@ Write-Output $json
 foreach ($failure in $hv17aFailures) { Write-Host "HV-17A FAIL: $failure" }
 foreach ($failure in $hv17bFailures) { Write-Host "HV-17B FAIL: $failure" }
 
-if ($hv17aFailures.Count -gt 0 -or $hv17bFailures.Count -gt 0) {
+if ($productVerdict -eq 'No-Go') {
   exit 1
 }
 
-Write-Host 'HV-17A and HV-17B automated checks passed. This is not a Go — the human review items remain.'
+if ($productVerdict -eq 'Partial') {
+  Write-Host 'HV-17 Partial accepted: HV-17A passed; the measured-but-unjustified refined lane remains off.'
+}
+else {
+  Write-Host 'HV-17A and HV-17B automated checks passed. This is not a Go — the human review items remain.'
+}
 exit 0

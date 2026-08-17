@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "hv-18a-installer-versions/v1",
+  "production": [
+    { "version": "0.1.0", "installMode": "perMachine", "fileName": "Boothy_0.1.0_x64-setup.exe", "sha256": "ffb5d5d96d311894ad5f1e59b713b35f5310c31b7899b2d940bb290a6df043b6" },
+    { "version": "0.1.1", "installMode": "perMachine", "fileName": "Boothy_0.1.1_per-machine_x64-setup.exe", "sha256": "c8c6314d0f51d594e1fe3d0aab73d309b1ea39462fcaa59987997f20bf9cc176" }
+  ],
+  "automatedLifecycle": [
+    { "version": "0.1.0", "installMode": "currentUser", "fileName": "Boothy_0.1.0_current-user_x64-setup.exe", "sha256": "b74dbd024cb535f405eb78ec2b888df4aaec4d80f4ed8dadf2b8c09ea42ebee7" },
+    { "version": "0.1.1", "installMode": "currentUser", "fileName": "Boothy_0.1.1_current-user_x64-setup.exe", "sha256": "44a73ea0b64d92abc2861c43d7fdb498bd722e46fc49da61a5cfe1b53335901c" }
+  ]
+}

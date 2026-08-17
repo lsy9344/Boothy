@@ -1,5 +1,12 @@
 name: release-windows
 
+# Story 7.7. 부스 PC 는 인터넷도 SDK 도 없다. 그러므로 설치본 하나에 모든 것이 들어가야 하고,
+# 그 사실은 사람이 확인하는 것이 아니라 이 워크플로가 확인한다.
+#
+# 벤더 페이로드(Canon EDSDK, darktable 5.4.1)는 저장소에 없다. 조달 경로가 아직 결정되지
+# 않았으므로, 없을 때는 **조용히 건너뛰지 않고 건너뛴 사실과 사유를 로그와 요약에 남긴다.**
+# 그 상태의 산출물은 인벤토리에 결손으로 기록되고 release:verify 가 막는다.
+
 on:
   pull_request:
     branches: [main]
@@ -8,6 +15,11 @@ on:
     tags:
       - 'boothy-v*'
   workflow_dispatch:
+
+env:
+  # 조달된 벤더 페이로드의 고정 캐시 경로. self-hosted runner 또는 보안 아티팩트 저장소가
+  # 이 경로를 채운다. 비어 있으면 아래 단계가 결손을 명시적으로 기록한다.
+  BOOTHY_VENDOR_CACHE: ${{ vars.BOOTHY_VENDOR_CACHE }}
 
 jobs:
   windows-baseline:
@@ -19,6 +31,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
+          # 22.18+ 는 .ts 를 그대로 실행한다. release/build-inventory.ts 가 이 위에서 돈다.
           node-version: 22
 
       - name: Setup pnpm
@@ -29,13 +42,212 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run desktop baseline build
+      - name: Lint
+        run: pnpm lint
+
+      - name: Frontend and contract tests
+        run: pnpm test:run
+
+      - name: Inventory gate self-test
+        # **게이트가 통과만 하는 게이트가 되지 않게 한다.** 각 사유 코드를 인공적으로
+        # 재현해 실제로 그 코드로 실패하는지 확인한다.
+        run: pnpm test:release-gate
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Restore vendor payloads
+        id: vendor
+        shell: pwsh
+        run: |
+          $cache = $env:BOOTHY_VENDOR_CACHE
+          $restored = $false
+
+          if ([string]::IsNullOrWhiteSpace($cache)) {
+            $reason = 'BOOTHY_VENDOR_CACHE 가 설정되지 않았습니다. Canon EDSDK 와 darktable 5.4.1 조달 경로가 아직 결정되지 않았습니다 (Story 7.7 T8 미결 항목).'
+          }
+          elseif (-not (Test-Path -LiteralPath $cache)) {
+            $reason = "BOOTHY_VENDOR_CACHE 경로가 존재하지 않습니다: $cache"
+          }
+          else {
+            $edsdk = Join-Path $cache 'canon-edsdk'
+            $darktable = Join-Path $cache 'darktable-5.4.1'
+
+            if (-not (Test-Path -LiteralPath $edsdk)) {
+              $reason = "캐시에 canon-edsdk 가 없습니다: $edsdk"
+            }
+            elseif (-not (Test-Path -LiteralPath $darktable)) {
+              $reason = "캐시에 darktable-5.4.1 이 없습니다: $darktable"
+            }
+            else {
+              New-Item -ItemType Directory -Path 'sidecar/canon-helper/vendor' -Force | Out-Null
+              New-Item -ItemType Directory -Path 'release/vendor' -Force | Out-Null
+              Copy-Item -LiteralPath $edsdk -Destination 'sidecar/canon-helper/vendor/canon-edsdk' -Recurse -Force
+              Copy-Item -LiteralPath $darktable -Destination 'release/vendor/darktable-5.4.1' -Recurse -Force
+              $restored = $true
+              $reason = ''
+            }
+          }
+
+          "restored=$restored" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          if ($restored) {
+            Write-Host '벤더 페이로드를 복원했습니다.'
+            '## 벤더 페이로드: 복원됨' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+          else {
+            # **조용히 건너뛰지 않는다.** 사유를 로그와 요약 양쪽에 남긴다.
+            Write-Host "벤더 페이로드를 복원하지 못했습니다: $reason"
+            "## 벤더 페이로드: 건너뜀`n`n$reason`n`n이 빌드는 release candidate 가 아닙니다. 인벤토리가 결손을 기록하고 release:verify 가 막습니다." |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+
+      - name: Import signing certificate
+        id: signing
+        if: startsWith(github.ref, 'refs/tags/boothy-v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          BOOTHY_WINDOWS_CERT_BASE64: ${{ secrets.BOOTHY_WINDOWS_CERT_BASE64 }}
+          BOOTHY_WINDOWS_CERT_PASSWORD: ${{ secrets.BOOTHY_WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:BOOTHY_WINDOWS_CERT_BASE64)) {
+            # 인증서가 없으면 **미서명으로 빌드하되 그 사실을 인벤토리에 기록한다.**
+            # 태그 경로에서는 마지막 단계가 이 상태를 실패로 만든다.
+            Write-Host '서명 인증서 시크릿이 없습니다. 미서명으로 진행하고 인벤토리에 unsigned 로 기록합니다.'
+            '## 서명: 미서명' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            'thumbprint=' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'boothy-signing.pfx'
+          [System.IO.File]::WriteAllBytes(
+            $pfxPath,
+            [System.Convert]::FromBase64String($env:BOOTHY_WINDOWS_CERT_BASE64))
+
+          $password = ConvertTo-SecureString -String $env:BOOTHY_WINDOWS_CERT_PASSWORD -AsPlainText -Force
+          $imported = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item -LiteralPath $pfxPath -Force
+
+          "thumbprint=$($imported.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          '## 서명: 인증서 반입 완료' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Stage offline payloads
+        env:
+          BOOTHY_WINDOWS_CERT_THUMBPRINT: ${{ steps.signing.outputs.thumbprint }}
+        run: pnpm release:stage
+
+      - name: Verify inventory
+        id: verify
+        continue-on-error: true
+        run: pnpm release:verify
+
+      - name: Desktop baseline build
         if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/')
+        # PR 경로는 인벤토리 결손과 무관하게 컴파일 회귀를 잡는 것이 목적이다.
+        # 이 산출물은 release candidate 가 아니다 (인벤토리가 스스로 그렇게 적고 있다).
         run: pnpm build:desktop
 
-      - name: Run signing-ready draft build
+      - name: Release build
+        if: >-
+          (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')) &&
+          steps.verify.outcome == 'success' &&
+          steps.vendor.outputs.restored == 'True'
+        shell: pwsh
+        env:
+          BOOTHY_WINDOWS_CERT_THUMBPRINT: ${{ steps.signing.outputs.thumbprint }}
+        run: |
+          $thumbprint = $env:BOOTHY_WINDOWS_CERT_THUMBPRINT
+
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          if ([string]::IsNullOrWhiteSpace($thumbprint)) {
+            pnpm tauri build
+          }
+          else {
+            # 인증서 지문은 저장소에 들어가지 않는다. 빌드 시점 설정 오버레이로만 넘긴다.
+            $overlay = @{ bundle = @{ windows = @{ certificateThumbprint = $thumbprint } } } | ConvertTo-Json -Depth 6 -Compress
+            pnpm tauri build --config $overlay
+          }
+
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Seal inventory and verify artifact name
+        id: seal
+        if: >-
+          (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')) &&
+          steps.verify.outcome == 'success' &&
+          steps.vendor.outputs.restored == 'True'
+        shell: pwsh
+        run: |
+          # 산출물 이름 검증은 여기서 **실제로** 일어난다. 이름이 인벤토리와 다르면 실패한다.
+          pnpm release:seal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $sealed = Get-Content -LiteralPath 'release/dist/inventory.release.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+          $sizeMb = [math]::Round($sealed.installer.sizeBytes / 1MB, 1)
+
+          @(
+            '## 설치본',
+            '',
+            "- 파일: ``$($sealed.installer.fileName)``",
+            "- 크기: ${sizeMb} MB",
+            "- sha256: ``$($sealed.installer.sha256)``",
+            "- 서명 상태: ``$($sealed.signingStatus)``"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+          "signingStatus=$($sealed.signingStatus)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload release evidence
+        if: >-
+          (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')) &&
+          steps.verify.outcome == 'success' &&
+          steps.vendor.outputs.restored == 'True'
+        uses: actions/upload-artifact@v4
+        with:
+          name: boothy-release-inventory
+          path: |
+            release/dist/inventory.json
+            release/dist/inventory.release.json
+          if-no-files-found: warn
+
+      - name: Release gate
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/boothy-v')
-        run: pnpm release:desktop
+        shell: pwsh
+        run: |
+          # 태그 경로에서만 막는다. **미서명 설치본과 결손 인벤토리는 release candidate 가 아니다.**
+          $failures = @()
+
+          if ('${{ steps.verify.outcome }}' -ne 'success') {
+            $failures += '인벤토리 검증이 실패했습니다. 위 release:verify 단계의 사유 코드를 확인하세요.'
+          }
+
+          if ('${{ steps.vendor.outputs.restored }}' -ne 'True') {
+            $failures += '벤더 페이로드가 복원되지 않았습니다. 오프라인 재현이 성립하지 않습니다.'
+          }
+
+          if ('${{ steps.seal.outputs.signingStatus }}' -ne 'signed') {
+            $failures += '설치본이 미서명입니다. AC 1 이 서명 증거를 요구합니다.'
+          }
+
+          # 릴리스 태그 경로는 핀까지 요구한다.
+          pnpm release:verify:strict
+          if ($LASTEXITCODE -ne 0) {
+            $failures += "핀 검증이 종료 코드 $LASTEXITCODE 로 실패했습니다."
+          }
+
+          if ($failures.Count -gt 0) {
+            Write-Host '릴리스를 막습니다:'
+            $failures | ForEach-Object { Write-Host "  - $_" }
+            exit 1
+          }
+
+          Write-Host '릴리스 게이트를 통과했습니다.'

@@ -11,7 +11,12 @@
     "build:desktop": "pnpm build && pnpm tauri build --debug",
     "lint": "eslint .",
     "preview": "vite preview",
-    "release:desktop": "pnpm build && pnpm tauri build",
+    "release:stage": "powershell -NoProfile -ExecutionPolicy Bypass -File release/stage.ps1",
+    "release:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File release/verify-inventory.ps1",
+    "release:verify:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File release/verify-inventory.ps1 -RequirePins",
+    "release:seal": "node release/build-inventory.ts --seal",
+    "release:desktop": "pnpm release:stage && pnpm release:verify && pnpm build && pnpm tauri build",
+    "test:release-gate": "powershell -NoProfile -ExecutionPolicy Bypass -File release/test-verify-inventory.ps1",
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run"

@@ -349,6 +349,23 @@ fn read_current_capture_readiness(
     .map(|readiness| gate_readiness_on_viewer(app, readiness, session_id))
 }
 
+pub(crate) fn emit_current_capture_readiness(app: &tauri::AppHandle, session_id: &str) {
+    let Ok(app_local_data_dir) = app.path().app_local_data_dir() else {
+        log::warn!("capture_readiness_refresh_path_unavailable session={session_id}");
+        return;
+    };
+    let base_dir = resolve_app_session_base_dir(app_local_data_dir);
+    let Some(readiness) = read_current_capture_readiness(app, &base_dir, session_id) else {
+        log::warn!("capture_readiness_refresh_failed session={session_id}");
+        return;
+    };
+
+    let _ = app.emit(
+        CAPTURE_READINESS_UPDATE_EVENT,
+        CaptureReadinessUpdateDto::new(session_id.to_string(), readiness),
+    );
+}
+
 fn emit_refined_preview_readiness_when_available(
     app: &tauri::AppHandle,
     base_dir: &std::path::Path,

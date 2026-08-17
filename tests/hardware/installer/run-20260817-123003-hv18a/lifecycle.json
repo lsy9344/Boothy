@@ -1,0 +1,53 @@
+{
+    "schemaVersion":  "hv-18a-lifecycle/v1",
+    "steps":  [
+                  {
+                      "id":  "install",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T14:41:00+09:00",
+                      "notes":  "0.1.0 current-user fixed package silent install exit 0; HKCU version 0.1.0"
+                  },
+                  {
+                      "id":  "launch",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T14:47:00+09:00",
+                      "notes":  "Boothy 운영 창과 관람 창 각 1개 생성; 무한 터미널 생성 없음"
+                  },
+                  {
+                      "id":  "self-check",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T14:45:32+09:00",
+                      "notes":  "installed tree exit 0; overall pass; bundled darktable 5.4.1"
+                  },
+                  {
+                      "id":  "fixture-display",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T15:17:21+09:00",
+                      "notes":  "proxy off + visible-standby 전용 회차; 실제 촬영 뒤 bundled sample B를 1920x1080 관람 화면에 표시하고 fixture/display.png 저장"
+                  },
+                  {
+                      "id":  "upgrade",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T15:21:50+09:00",
+                      "notes":  "0.1.0 -\u003e 0.1.1 installer exit 0; HKCU 0.1.1; 이전 종료 세션 session-compatibility pass"
+                  },
+                  {
+                      "id":  "rollback",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T15:23:10+09:00",
+                      "notes":  "0.1.1 -\u003e 0.1.0 installer exit 0; HKCU 0.1.0; 동일 세션 session-compatibility pass"
+                  },
+                  {
+                      "id":  "uninstall",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T15:24:00+09:00",
+                      "notes":  "uninstaller exit 0; install root, HKCU uninstall entry, Start Menu entry removed"
+                  },
+                  {
+                      "id":  "data-preservation",
+                      "status":  "pass",
+                      "observedAt":  "2026-08-17T15:24:00+09:00",
+                      "notes":  "uninstall boundary file count unchanged: 1152 -\u003e 1152; session root retained"
+                  }
+              ]
+}

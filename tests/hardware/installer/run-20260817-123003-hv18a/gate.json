@@ -1,0 +1,69 @@
+{
+    "schemaVersion":  "hv-18a-gate/v1",
+    "verdict":  "Go-candidate-with-waivers",
+    "failures":  [
+
+                 ],
+    "waivers":  {
+                    "schemaVersion":  "hv-18a-waivers/v1",
+                    "approvedBy":  "Noah Lee",
+                    "approvedAt":  "2026-08-17T13:22:41+09:00",
+                    "reason":  "MVP 내부 검증을 현재 승인된 PC에서 수행하며 서명, Canon EDSDK 재배포 증거, clean/offline 환경 검증을 생략한다.",
+                    "waivedChecks":  [
+                                         "C7",
+                                         "C8",
+                                         "C9"
+                                     ],
+                    "waivedEvidence":  [
+                                           "code-signing-certificate",
+                                           "canon-edsdk-redistribution-evidence",
+                                           "clean-offline-environment"
+                                       ]
+                },
+    "observations":  {
+                         "waivedChecks":  [
+                                              "C7",
+                                              "C8",
+                                              "C9"
+                                          ],
+                         "waiverApprovedBy":  "Noah Lee",
+                         "waiverApprovedAt":  "2026-08-17T13:22:41+09:00",
+                         "waivedEvidence":  [
+                                                "code-signing-certificate",
+                                                "canon-edsdk-redistribution-evidence",
+                                                "clean-offline-environment"
+                                            ],
+                         "selfCheckOverall":  "pass",
+                         "appVersion":  "0.1.0",
+                         "identifier":  "com.boothy.booth",
+                         "darktableResolutionSource":  "bundled-resource",
+                         "darktableBinary":  "C:\\Users\\dltnd\\AppData\\Local\\Boothy\\darktable\\bin\\darktable-cli.exe",
+                         "webview2Version":  "151.0.4129.86",
+                         "helperVersion":  "{\"helperVersion\":\"0.1.0\",\"protocolVersion\":\"camera-helper-sidecar/v2\",\"sdkFamily\":\"canon-edsdk\",\"sdkVersion\":\"13.19.0\"}",
+                         "rawRefinedDisposition":  "not-produced:tier-not-justified",
+                         "captureId":  "capture_20260817060442210_5422334205",
+                         "captureArtifactRoles":  [
+                                                      "raw-original",
+                                                      "display-proxy",
+                                                      "final"
+                                                  ],
+                         "installerFileName":  "Boothy_0.1.0_x64-setup.exe",
+                         "installerSha256":  "ffb5d5d96d311894ad5f1e59b713b35f5310c31b7899b2d940bb290a6df043b6",
+                         "installerSizeBytes":  405257006,
+                         "signingStatus":  "unsigned",
+                         "lifecycleSteps":  [
+                                                "install",
+                                                "launch",
+                                                "self-check",
+                                                "fixture-display",
+                                                "upgrade",
+                                                "rollback",
+                                                "uninstall",
+                                                "data-preservation"
+                                            ],
+                         "sessionRootPath":  "C:\\Users\\dltnd\\Pictures\\dabi_shoot",
+                         "customerPhotoCount":  1152,
+                         "networkValidation":  "waived-by-owner",
+                         "cleanEnvironmentValidation":  "waived-by-owner"
+                     }
+}

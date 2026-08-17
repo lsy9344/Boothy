@@ -1,0 +1,13 @@
+{
+  "cancelCompletedAtMicros": 2250262,
+  "cancelOrphanCount": 0,
+  "cancelRequestedAtMicros": 735901,
+  "cancellationReason": "request-forgotten",
+  "directKillFallback": false,
+  "killOutcome": "exit=0",
+  "orphanProbeAvailable": true,
+  "processId": 27264,
+  "round": "delete",
+  "schemaVersion": "hv17-process-tree-termination/v1",
+  "taskkillLogPath": "logs/taskkill-delete-735901-pid27264.log"
+}

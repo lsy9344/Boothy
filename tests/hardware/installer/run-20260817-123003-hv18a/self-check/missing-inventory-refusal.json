@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "install-self-check/v1",
+  "checkedAt": "2026-08-17T04:56:17Z",
+  "appVersion": "0.1.0",
+  "identifier": "com.boothy.booth",
+  "installRoot": "C:\\Users\\dltnd\\AppData\\Local\\Boothy",
+  "components": [
+    {
+      "name": "release-inventory",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "fail",
+      "reasonCode": "inventory-manifest-unreadable"
+    },
+    {
+      "name": "darktable-resolution",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "camera-helper-binary",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "webview2-runtime",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    }
+  ],
+  "webview2Version": "151.0.4129.86",
+  "darktableResolution": {
+    "binary": "C:\\Users\\dltnd\\AppData\\Local\\Boothy\\darktable\\bin\\darktable-cli.exe",
+    "source": "bundled-resource"
+  },
+  "helperVersion": "{\"helperVersion\":\"0.1.0\",\"protocolVersion\":\"camera-helper-sidecar/v2\",\"sdkFamily\":\"canon-edsdk\",\"sdkVersion\":\"13.19.0\"}",
+  "overall": "fail"
+}

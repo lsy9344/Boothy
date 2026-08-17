@@ -1,9 +1,57 @@
 # Deferred Work
 
-## Deferred from: review of HV-17 No-Go remediation (2026-08-17)
+## Deferred from: 7-7-완전한-installer와-clean-offline-재현 (2026-08-17)
 
-- HV-17B의 generation gate가 최소 한 건의 refined 존재와 각 refined의 선행 proxy만 확인한다. 모든 대상 capture가 `proxy commit → refined commit → refined present`를 완결했는지 검증하는 coverage 계약과 결손 테스트가 별도 보강되어야 한다. (`tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1`, pre-existing)
-- HV-17A gate는 telemetry의 `P0`/`P1` 라벨을 확인하지만 실제 경쟁 작업의 dequeue/실행 순서를 비교하지 않는다. 우선순위 라벨 오기재와 실제 역순 실행을 구분할 scheduler-order evidence schema가 필요하다. (`tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1`, pre-existing)
+이 Story 가 열어 놓고 **닫지 못한** 것들이다. 코드로 풀 수 없거나, 이 Story 의 범위 밖이다.
+
+### 외부 종속 — 코드로 풀 수 없다
+
+- **darktable GPL-3.0 재배포 고지 문안이 승인 대기다.** 의무 항목과 대응 소스 경로는 문서로
+  고정했다. 운영자에게 나가는 문안 자체는 승인자의 몫이다. (`release/licenses/darktable-5.4.1.md`)
+
+### 닫힌 것 (여기 적었다가 실제로 해결된 항목)
+
+- **코드 서명 인증서와 Canon EDSDK 재배포 증거는 2026-08-17 Noah Lee 승인으로 MVP 내부
+  HV-18A에서 면제됐다.** 해결 또는 통과가 아니라 `waived-by-owner`다. 설치본은 `unsigned`,
+  재배포 권리는 `not-evidenced`로 계속 기록하며 공개 배포 적합성을 주장하지 않는다.
+
+- ~~helper self-contained publish 실행 검증~~ **닫힘.** 이 머신에 EDSDK 페이로드가 있어
+  `dotnet publish -r win-x64 --self-contained true` → `--version` → `--self-check` 가 전부
+  실제로 통과했다 (311 파일 / 300.7 MB, `camera-ready`, 카메라 1대 인식).
+  EDSDK 런타임 트리 해시는 실측값으로 명세에 핀으로 기록했다.
+
+### 미결 결정 — 이 Story 가 기본안을 만들었지만 확정은 다른 사람 몫이다
+
+- **CI 벤더 페이로드 조달 경로는 이번 내부 검증에서 제외됐다.** 현재 PC의 승인된 로컬
+  페이로드로 전체 설치본을 만들고 검증했다. 공개/자동 릴리스로 전환할 때만 self-hosted runner
+  고정 캐시 또는 보안 아티팩트 저장소를 결정한다. (`.github/workflows/release-windows.yml`)
+- **darktable 5.4.1 staged-tree 핀은 실측값으로 채워졌다.** 공식 배포본의 별도 source archive
+  파일은 이번 경로에 없으므로 source-archive 해시는 계속 비워 두되, strict 검증은 실제 staged
+  tree digest로 통과한다. EDSDK 런타임도 source/staged 핀이 채워졌고 camera-helper는 저장소가
+  직접 빌드하므로 `requiresPin: false`다. (`release/inventory-spec.json`)
+
+### 현재 PC에서 실측해 닫힌 값
+
+- **lifecycle에 사용한 darktable 포함 설치본은 405,257,006바이트**였고 설치된 전체 트리
+  self-check를 통과했다. 이후 촬영 준비 갱신 수정을 포함해 다시 만든 최신 설치본은
+  **405,260,278바이트**, SHA-256
+  `202518faf04be56d4b47fc1a7ba7e180366e08be551700bc637885e93b94140c`이며 strict inventory
+  검증을 통과했다. 현재 PC의 WebView2 런타임은 `151.0.4129.86`으로 기록했다. 다른 PC에서
+  실행할 때에는 고정값으로 가정하지 않고 self-check가 다시 읽는다.
+
+### 범위 밖 (다른 Story 소유)
+
+- 100-shot 성능, cold/idle/reconnect 회복 → **Story 7.8 / HV-18B**
+- 120fps+ 물리 frame 과 compositor→photon 오프셋 → **HV-18B 단독**
+- 지점 승급과 운영 롤백 검증 → **Story 7.9 / HV-18C**. 이 Story 의 롤백은 **같은 PC 재설치**다.
+
+## Deferred from: approved HV-17 Partial disposition (2026-08-17)
+
+- RAW-refined tier는 detail 이득이 없어 기본 lane을 껐다. 따라서 HV-17B coverage/observer 항목은
+  현재 출시 조건이 아니다. 향후 tier를 다시 켤 때 모든 capture의
+  `proxy commit → refined commit → refined present` 완결성과 결손 테스트를 먼저 보강한다.
+- HV-17A의 네 가지 실제 Windows cancellation/process-tree 시험은 통과했다. 더 강한 경쟁 작업
+  dequeue 순서 schema는 RAW-refined P1 lane을 다시 켤 때 재검토한다.
 
 ## Deferred from: code review of 7-5-상주-renderer-검증-spike (2026-08-16)
 

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "hv-18a-build-tree-preflight-metrics/v1",
+  "executedAt": "2026-08-17T04:09:17Z",
+  "exitCode": 0,
+  "elapsedSeconds": 19.109,
+  "maxCertutilChildren": 0,
+  "reportPath": "self-check/build-tree-preflight.json",
+  "scope": "release build tree preflight; not an installed clean-VM self-check"
+}

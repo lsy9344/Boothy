@@ -196,6 +196,85 @@ describe('hardware validation governance baseline', () => {
     expect(story62).toContain('Story 6.2는 governance story로 `done`')
   })
 
+  it('closes Story 7.7 only after the owner-waived HV-18A hardware result is recorded', () => {
+    const ledger = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      'hardware-validation-ledger.md',
+    )
+    const sprintStatus = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      'sprint-status.yaml',
+    )
+    const story77 = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      '7-7-완전한-installer와-clean-offline-재현.md',
+    )
+
+    expect(ledger).toContain('### Story 7.7')
+    expect(ledger).toContain('7-7-완전한-installer와-clean-offline-재현')
+    expect(ledger).toContain('HV-18A')
+    expect(ledger).toContain('tests/hardware/installer/hv-18a/')
+
+    // 기계식 candidate와 책임자의 범위 승인을 구분해 기록한 뒤에만 닫는다.
+    expect(story77).toContain('Status: done')
+    expect(story77).toContain('Go-with-waivers')
+    expect(sprintStatus).toContain('7-7-완전한-installer와-clean-offline-재현: done')
+    expect(ledger).toContain('Go-with-waivers')
+
+    // 자동 통과만으로 닫히지 않는다.
+    expect(ledger).toContain('actual WebView2 runtime version')
+    expect(ledger).toContain('darktable resolution source')
+  })
+
+  it('records the RawImageExtension verdict on both sides so it is not asked again', () => {
+    const ledger = readRepoFile(
+      '_bmad-output',
+      'implementation-artifacts',
+      'hardware-validation-ledger.md',
+    )
+    const hv16Decision = readRepoFile(
+      'tests',
+      'hardware',
+      'resident-renderer',
+      'hv-16',
+      'decision.md',
+    )
+    const verdict = readRepoFile(
+      'tests',
+      'hardware',
+      'installer',
+      'hv-18a',
+      'raw-image-extension-verdict.md',
+    )
+
+    expect(verdict).toContain('offline-distribution: not-possible')
+    expect(verdict).toContain('adoption: not-adopted')
+    expect(ledger).toContain('offline-distribution: not-possible')
+    expect(hv16Decision).toContain('raw-image-extension-verdict.md')
+
+    // 판정이 긍정이었어도 채택은 아니다. 후보를 인벤토리로 되살리지 않는다.
+    expect(verdict).toContain('RESIDENT_APPROVED_DIRECT_DECODERS')
+  })
+
+  it('keeps exactly one release baseline, with the root copy reduced to a pointer', () => {
+    const canonical = readRepoFile('docs', 'release-baseline.md')
+    const rootCopy = readRepoFile('release-baseline.md')
+
+    expect(rootCopy).toContain('docs/release-baseline.md')
+    expect(rootCopy.length).toBeLessThan(canonical.length / 4)
+
+    // 루트 사본이 담고 있던 두 거짓 문장이 어디에도 남아 있지 않아야 한다.
+    expect(rootCopy).not.toContain('## Signing Inputs')
+    expect(rootCopy).not.toContain('## Artifact Path')
+
+    // 정본은 구현된 뒤에만 그 검사를 주장한다.
+    expect(canonical).toContain('`pnpm release:seal` enforces that name')
+    expect(canonical).toContain('now stated explicitly in configuration')
+  })
+
   it('keeps Story 1.7 as supporting evidence only for the canonical 1.5 close owner', () => {
     const story17 = readRepoFile(
       '_bmad-output',

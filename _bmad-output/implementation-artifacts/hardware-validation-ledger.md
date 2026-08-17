@@ -10,7 +10,7 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 - `done` requires both `automated pass` and a canonical hardware ledger row marked `Go`, except the bounded technology-spike No-Go closure rule below.
 - If hardware evidence is missing, incomplete, or recorded as `No-Go`, the story stays in `review` or returns to `review`.
 - Release promotion stays on `release hold` until every gated story needed for the release baseline has a `Go` row in this ledger.
-- Epic 7 follows evidence dependencies: `HV-13A -> HV-13B -> HV-14 route decision -> HV-15 -> HV-16 adoption decision -> HV-17 -> HV-18A -> HV-18B -> HV-18C -> HV-18D`. A later Go cannot erase a missing or No-Go prerequisite.
+- Epic 7 follows evidence dependencies: `HV-13A -> HV-13B -> HV-14 route decision -> HV-15 -> HV-16 adoption decision -> HV-17 -> HV-18A -> HV-18B -> HV-18C -> HV-18D`. A later Go cannot erase a missing or No-Go prerequisite unless the owner records an explicit product disposition that removes the failed capability from release scope; that exception is never reported as a gate pass.
 - 2026-08-12 correct-course: 120fps+ physical monitor frame evidence for the display endpoint moved from HV-13B to HV-18B. A gate may be re-scoped only by recording the transfer in both rows and in a sprint change proposal; evidence is never deleted, and the receiving gate carries a reopen condition for the story that transferred it. See `_bmad-output/planning-artifacts/sprint-change-proposal-20260812-183435.md`.
 - Story 7.3 and 7.5 may close their bounded experiment with a documented technology No-Go when comparison evidence and an approved alternative decision are complete. The rejected candidate remains disabled, and HV-18D cannot record release Go without an approved production route.
 - 2026-08-16 HV-16 closed as `Technology No-Go`. A resident renderer cannot reach NFR-003 on its own: even a zero-cost display render leaves 4568 ms against a 3000 ms warm p50. The remaining latency is owned by Story 7.6 (render queue wait, publication) and Story 7.8 (camera RAW transfer, present). HV-16 also recorded a new, previously unknown fact — Windows can decode CR2 in-process via `Microsoft.RawImageExtension` — which becomes a Story 7.7 dependency question, not a Story 7.5 adoption.
@@ -32,8 +32,8 @@ Canonical Path: `_bmad-output/implementation-artifacts/hardware-validation-ledge
 | Story 7.3 | HV-14 | `done` on technology No-Go + approved route | Enabler closed on 2026-08-16: all fast-source candidates remain disabled and `raw-original + pinned darktable 5.4.1` is the approved production route. |
 | Story 7.4 | HV-15 | `done` on `Go` | Closed 2026-08-16 with the approved raw-original + darktable route, real-camera display/delete recovery evidence, and explicit product exceptions for underexposure and unreadable environment/visual-review details. |
 | Story 7.5 | HV-16 | `done` on technology No-Go + approved fallback | Adoption decision recorded 2026-08-16 as `Technology No-Go`: WebGL2 cannot decode CR2 and preset operations are only 1.26% of the darktable render, so the resident candidate stays disabled and `raw-original + pinned darktable 5.4.1` remains the approved production route. The 5-person blind review, MTF50, actual-present, and resource measurements are explicitly not passed; they are mandatory only if a resident candidate is reactivated. |
-| Story 7.6 | HV-17 (`HV-17A` + `HV-17B`) | `review` until **both** record `Go` | RAW-refined seamless replacement, priority scheduling, stale cancellation, and frame-level integrity. **The two sub-gates are judged independently and neither may inherit the other's result** (AC 5). An HV-18B display-endpoint defect returns this story to `review`. |
-| Story 7.7 | HV-18A | `review` until `Go` | Signed inventory and clean offline install/launch/self-check/fixture/upgrade/uninstall reproduction. |
+| Story 7.6 | HV-17 (`HV-17A` + `HV-17B`) | `done` on approved `Partial` | HV-17A scheduler/cancellation evidence passed. The RAW-refined tier failed its reason-to-exist test, so HV-17B was not opened and the lane remains off. This is an approved product exclusion, not an HV-17B pass. Reopening the tier or finding an HV-18B display-endpoint defect returns this story to `review`. |
+| Story 7.7 | HV-18A | `done` on owner-approved `Go-with-waivers` | Current-PC install/launch/self-check/fixture/Canon capture/upgrade/rollback/uninstall/data preservation passed. The mechanical gate remains `Go-candidate-with-waivers`; signing, Canon redistribution evidence, and clean/offline environment remain explicitly waived for internal validation. |
 | Story 7.8 | HV-18B | `review` until `Go` | Warm 100-shot performance, quality/privacy, cold/idle/reconnect/burst/failure recovery, and the physical-frame display endpoint evidence inherited from HV-13B on 2026-08-12. |
 | Story 7.9 | HV-18C | `review` until `Go` | Staged rollout, active-session protection, old-session compatibility, and rollback evidence. |
 | Story 7.10 | HV-18D | `review` until final decision | Canonical final MVP Go/No-Go aggregation, including UX-EV-01 and UX-EV-02. |
@@ -73,8 +73,8 @@ Supporting regression / follow-up notes:
 | 7.3 | Pass | 35-capture real-camera comparison complete | Technology No-Go / route approved | All 105 route rows produced 0 accepted fast sources. Noah Lee approved `raw-original + pinned darktable 5.4.1` as the production route on 2026-08-16; rejected candidates remain disabled and the Enabler is closed. | Noah Lee | `tests/hardware/capture-source/run-20260813-115426-hv14/` |
 | 7.4 | Pass | Current-lighting rerun: 5/5 displayed plus delete recovery | Go | Approved raw-original + darktable route; 5/5 actual-present, preset switch, delete-to-standby and recovery passed. Underexposure and unreadable environment/visual-review details are explicit Story 7.4 product exceptions, not fabricated passes. Story 7.5 must perform its own renderer parity review. | Codex (operator: Noah Lee) | `tests/hardware/display-proxy/run-20260815-131213-hv15-current-lighting/` |
 | 7.5 | Pass | Component-level measurement complete / no live capture session | Technology No-Go / route retained | 420 darktable one-shot runs on the HV-14 real-capture corpus show preset operations cost 47 ms of a 3716 ms render (1.26%), so a resident engine that only replaces preset work cannot help. WebGL2 in WebView2 cannot decode CR2 at all. Windows WIC can decode CR2 in-process at 1284 ms median, but it depends on the unapproved `Microsoft.RawImageExtension` Store package and fails parity (SSIM 0.013–0.159, ΔE00 median 22.96–26.56 against SSIM ≥ 0.95 / ≤ 3). Even a free renderer leaves 4568 ms against the 3000 ms warm p50. Blind-review panel and MTF50 remain open and are recorded as not-passed. | Codex (operator: Noah Lee) | `tests/hardware/resident-renderer/hv-16/` |
-| 7.6 | Pass | Real EOS 700D tier rerun complete; cancellation evidence incomplete | No-Go / route rejected | Normal-exposure RAW 3×3 preset measurement found no detail gain (MTF50 ratio 0.99947, five regressions) and look drift (median ΔE00 4.52, p95 15.01). The refined route is now explicitly `tier-not-justified` and stays off. HV-17A still lacks the four live cancellation rounds and a new 5-shot burst. | Codex (operator: Noah Lee) | `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/` |
-| 7.7 | Not run | Not run | No-Go | Signed complete installer and clean offline reproduction are pending. | Noah Lee | `TBD` |
+| 7.6 | Pass | HV-17A actual scheduler cancellation pass; RAW-refined tier rejected | Partial / lane off | Four actual Windows scheduler cancellation scopes completed with zero orphan processes and the final render survived. The EOS 700D 3×3 quality rerun found no detail gain (MTF50 ratio 0.99947, five regressions) and look drift, so publication and observer testing were correctly skipped. Noah Lee approved keeping the unjustified tier off; FR-010 remains owned by Story 7.10/HV-18D. | Codex (operator: Noah Lee) | `tests/hardware/raw-refined/run-20260817-003242-hv17/`; `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/` |
+| 7.7 | Pass | Current-PC lifecycle and real EOS 700D pipeline complete | Go-with-waivers (internal scope) | All eight lifecycle steps passed, including fixture display, upgrade and rollback compatibility, uninstall, and preservation of 1,152 customer files. One real Canon capture produced raw-original, display-proxy, and final artifacts. C7/C8/C9 are owner-waived for internal validation and are not reported as passes. | Noah Lee | `tests/hardware/installer/run-20260817-123003-hv18a/` |
 | 7.8 | Not run | Not run | No-Go | 100-shot performance and recovery evidence are pending. | Noah Lee | `TBD` |
 | 7.9 | Not run | Not run | No-Go | Staged rollout, active-session protection, and rollback evidence are pending. | Noah Lee | `TBD` |
 | 7.10 | Not run | Not run | No-Go | Final MVP evidence aggregation, UX-EV-01 accessibility, and UX-EV-02 real-booth usability decisions are pending. | Noah Lee | `TBD` |
@@ -376,8 +376,8 @@ defect, or a clean transition carry an orphaned process.
 - story key: `7-6-raw-정밀본-무중단-교체`
 - HV checklist ID: `HV-17` — recorded as `HV-17A` + `HV-17B`
 - evidence package path: `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/` (normal-exposure rerun; earlier 5-shot run in `run-20260817-003242-hv17/`)
-- Go / No-Go result: `HV-17A No-Go`; `HV-17B No-Go`; product disposition `refined route rejected, lane off`
-- release blocker: `The rerun captured three normally exposed real EOS 700D RAWs and produced all 9 production-equivalent proxy/refined pairs. The detail axis failed at 0.99947 versus the 1.10 threshold with five regressions; the look axis also failed at median ΔE00 4.52 and median p95 15.01. The route is recorded as tier-not-justified and cannot enter publication. HV-17A still lacks a remediation-run 5-shot burst and the four mandatory live cancellation/process-tree rounds.`
+- Go / No-Go result: `HV-17A automated-pass`; `HV-17B No-Go/not opened`; product disposition `Partial — refined route rejected, lane off`
+- release blocker: `None for Story 7.6 closure under the approved Partial disposition. The tier remains unavailable because the real EOS 700D 3×3 rerun failed both its detail justification and same-look test. FR-010 remains open for Story 7.10/HV-18D; any future tier reactivation must first satisfy the HV-17B quality and transition evidence.`
 - follow-up owner: `Noah Lee`
 - rerun prerequisite: `A different refined recipe/renderer must first prove both ≥1.10 detail gain with zero regressions and same-look thresholds on a fresh real RAW 3×3 corpus. Only then can publication, four P1 cancellation rounds, swap recording, and observer testing be reopened.`
 - target rerun date: `After a materially different refined approach exists`
@@ -386,7 +386,7 @@ defect, or a clean transition carry an orphaned process.
 
 - required evidence: `scheduler spans on every display-lane generation`; `observed execution order matching priority`; `queue wait p50/p95/max and its share of end-to-end latency`; `burst of 5+ consecutive captures with zero P0 dropouts`; `four cancel rounds (delete, session replace, viewer epoch change, newer capture) each with cancelOrphanCount = 0`; `raw taskkill result logs`; `a round proving the final render still completed`
 - evidence NOT provided by this gate: `what was actually on screen` — owned by HV-17B
-- 2026-08-17 execution: `5 captures, 0 P0 drops, queue wait p50/p95/max 9/22/22 μs, end-to-end median 7,141,922 μs across 4 trusted-input samples, queue share 0.0001260165%, and one final completion. The four cancel rounds and process-tree raw logs were not run, so HV-17A is No-Go.`
+- 2026-08-17 execution: `5 captures, 0 P0 drops, queue wait p50/p95/max 9/22/22 μs, end-to-end median 7,141,922 μs across 4 trusted-input samples, queue share 0.0001260165%, and one final completion. A direct Windows scheduler harness then ran delete, session-replace, viewer-epoch-change, and newer-capture cancellation scopes: every process tree was terminated, cancelOrphanCount=0, and the final render completed. HV-17A is automated-pass.`
 
 #### HV-17B — seamless tier transition / frame integrity
 
@@ -394,27 +394,106 @@ defect, or a clean transition carry an orphaned process.
 - evidence NOT provided by this gate: `how the scheduler ran` — owned by HV-17A
 - detection test pass rule (2026-08-16, approved by Noah Lee): `Swap-trial detection rate must not exceed the control false-positive rate by more than 10 percentage points. A result obtained without a control group is not recorded as a pass — without a comparison it is an observation, not a measurement. The 5-observer × 30-trial format is not used; a detection test does not need that scale, and scale is why Story 7.5 could not close its panel AC.`
 - tier justification rule (2026-08-16, approved by Noah Lee): `The detail axis (MTF50) is the tier's condition of existence: median MTF50(refined) ≥ 1.10 × median MTF50(proxy) with zero per-sample regressions, measured on at least 9 slanted-edge pairs. The look axis (median ΔE00 ≤ 3, p95 ≤ 8, clipping increase ≤ 2%p) is not a quality bar but the AC 4 transition-defect judgement: leaving it is refined-look-drift, an AC 4 failure, not an unjustified tier. Story 7.4's visual-approval thresholds are not reused for the detail axis, and the two tiers are never compared against a full-resolution final because the resampler choice would decide the result.`
-- 2026-08-17 execution: `5 proxy generations and 5 terminal presents were recorded, but 0 refined generations. The images were near-black and contained no usable slanted edge, so detail/look are not-measured and laneDefaultEligible=false. No actual swap existed to record or show to observers; zero-report, trials.csv, and sign-off were intentionally not fabricated. HV-17B is mechanically No-Go and product-blocked pending a valid rerun.`
+- 2026-08-17 initial execution: `5 proxy generations and 5 terminal presents were recorded, but 0 refined generations. The images were near-black and contained no usable slanted edge, so detail/look were not measured. This was superseded by the normal-exposure remediation rerun below.`
 - 2026-08-17 remediation rerun: `Three normal-exposure EOS 700D RAW captures × Daylight/Soft Glow/Mono Pop produced 9 proxy/refined pairs with matching dimensions. Detail was tier-not-justified (median refined/proxy MTF50 ratio 0.99947; 5 regressions). Look was refined-look-drift (median ΔE00 4.5213; median p95 ΔE00 15.0056; clipping within threshold). laneDefaultEligible=false. Publication and the observer trial remained closed rather than manufacturing a transition.`
 
 #### Both sub-gates
 
 - evidence NOT provided by HV-17 at all: `120fps+ physical monitor frames`; `compositor-to-photon offset`; `frame-level zero-defect adjudication` — all owned by **HV-18B** (2026-08-12 correct-course). HV-17 does not wait for that rig; Story 7.2/HV-13B already lost a round to its absence.
 - reopen condition: `An HV-18B transition defect attributable to the display endpoint (blank, spinner, stale image, wrong capture, crop jump, scale jump, tier downgrade) returns Story 7.6 to review and HV-17 to No-Go. This mirrors the condition Story 7.2 carries.`
-- mechanical gate (2026-08-16): `tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1` verified against synthetic fixtures by `test-check-raw-refined-evidence.ps1` — it accepts one complete run and rejects 17 seeded defects, and **each rejection is asserted to fail only its own sub-gate**, which is how the AC 5 independence rule is enforced mechanically. `Script PASS is telemetry, provenance and threshold completeness only; it is not HV-17 Go.` The human items remain: normal-speed recording review, detection-test execution with named observers, and Noah Lee sign-off.
+- mechanical gate (2026-08-17): `tests/hardware/raw-refined/hv-17/check-raw-refined-evidence.ps1` accepts an owner-approved `Partial` only when HV-17A is complete, the detail tier is explicitly `tier-not-justified`, and the lane is off. Synthetic gate tests preserve independent HV-17A/HV-17B failure handling. Recording and observer evidence remain mandatory only if the tier is reactivated.
 - telemetry completeness (2026-08-16): `tests/hardware/viewer-present/hv-13b/check-telemetry-completeness.ps1 was updated to v2 for two generations per capture. The completeness contract is unchanged — exactly one terminal row per committed generation — but the KPI denominator is now the first-qualifying-frame tier only, and a refined row carrying qualifyingLatencyMicros fails the gate. Counting refined presents as KPI samples would double-count each capture and make NFR-003 numbers incomparable with runs that publish no refined tier.`
 
 ### Story 7.7
 
-- story key: `7-7-완전한-installer와-clean-offline-재현`
+- story key: `7-7-완전한-installer와-clean-offline-재현` (2026-08-17 승인 후 현재 PC lifecycle 범위)
 - HV checklist ID: `HV-18A`
-- evidence package path: `TBD`
-- Go / No-Go result: `No-Go`
-- release blocker: `Signed complete installer and clean offline lifecycle reproduction are missing.`
+- evidence package path: `tests/hardware/installer/run-20260817-123003-hv18a/`
+- Go / No-Go result: `Go-with-waivers` for the owner-approved current-PC internal scope; mechanical gate `Go-candidate-with-waivers`
+- release blocker: `None for the approved current-PC internal-validation scope. Code signing, Canon EDSDK redistribution evidence, and clean/offline environment are waived, not passed; public distribution still needs a separate decision.`
 - follow-up owner: `Noah Lee`
-- rerun prerequisite: `HV-17 Go and one approved production route with exact fallback.`
-- target rerun date: `TBD`
-- required evidence: `signed inventory`; `versions and hashes`; `licensing/signing`; `clean offline install`; `launch/self-check`; `fixture display`; `upgrade`; `uninstall`; `missing-inventory refusal`
+- rerun prerequisite: `Rerun after any installer, inventory, self-check, session-format, or capture pipeline change. Signing, Canon redistribution evidence, and clean/offline environment remain waived-by-owner for this internal scope.`
+- target rerun date: `Current-PC lifecycle completed 2026-08-17`
+- required evidence: `inventory versions and hashes`; `current-PC install`; `launch/self-check`; `fixture display`; `upgrade`; `rollback`; `uninstall`; `data preservation`; `missing-inventory refusal`; `actual Canon pipeline`. Waived: `code signing`; `Canon EDSDK redistribution evidence`; `clean/offline environment`.
+- environment fields required on every run: `booth PC`; `OS build`; **`actual WebView2 runtime version`** (the v2 bundler cannot pin it — there is no `fixedRuntime` mode); `monitor / DPR`; **`darktable resolution source`** (must read `bundled-resource`); `helper version`; `installer size`; `installer sha256`; `signing status`
+
+#### 2026-08-17 implementation baseline
+
+- inventory contract `release-inventory/v1` and report contract `install-self-check/v1` exist once for
+  TypeScript (`src/shared-contracts/schemas/release-inventory.ts`) and once for Rust
+  (`src-tauri/src/contracts/dto.rs`), with `docs/contracts/release-inventory.md` as the narrative contract.
+- machine gate `release/verify-inventory.ps1` separates `inventory-component-missing` (2),
+  `inventory-digest-mismatch` (3), `inventory-unexpected-component` (4), `inventory-not-staged` (5),
+  `inventory-manifest-unreadable` (6) and `inventory-pin-missing` (7). `release/test-verify-inventory.ps1`
+  reproduces each failure and asserts the exit code, and it does so against inventories produced by the
+  real generator — which also proves the TypeScript and PowerShell digest definitions agree.
+- the tree digest has one definition across three implementations, locked by a shared golden vector
+  (`467f567c…e2d6`) asserted in both `release/build-inventory.test.ts` and
+  `src-tauri/src/release/inventory.rs`.
+- `boothy.exe --self-check` writes `install-self-check/v1` and exits `0` / `1` / `2`, where `2` means
+  the check could not be performed or the report could not be written. It never creates a window.
+- darktable now resolves the bundled tree **before** any installed copy, source label `bundled-resource`.
+  A run resolving anything else is a run with a broken version pin, and `check-installer-evidence.ps1`
+  fails on it.
+- `tests/hardware/installer/hv-18a/check-installer-evidence.ps1` is verified by
+  `test-check-installer-evidence.ps1`: it accepts one complete run and rejects 18 seeded defects.
+  Script PASS establishes evidence completeness; the executed owner-waived result is recorded separately below.
+
+#### 2026-08-17 superseded preflight attempt
+
+- Complete darktable 5.4.1, camera helper 0.1.0, and EDSDK 13.19.0 payloads passed strict inventory verification.
+- The rebuilt installer is 405,257,006 bytes with SHA-256
+  `ffb5d5d96d311894ad5f1e59b713b35f5310c31b7899b2d940bb290a6df043b6`; signing status is `unsigned`.
+- The connected Canon EOS 700D passed helper self-check with one camera detected.
+- A discovered self-check defect created thousands of visible `certutil.exe` console processes. File hashing was moved in-process and locked by a red→green regression test. The rebuilt full-tree self-check then completed in 19.109 seconds with exit 0, all payload digests matching, and maximum `certutil` children = 0.
+- This build-tree preflight was not treated as installed lifecycle evidence. Its failures were subsequently resolved by the current-PC lifecycle run.
+
+#### 2026-08-17 current-PC lifecycle rerun with owner waivers
+
+- Noah Lee waived code signing, Canon EDSDK redistribution evidence, and clean/offline environment validation for MVP internal validation. The gate records C7/C8/C9 as `waived-by-owner`, not as passes.
+- Two `currentUser` test installers executed the full package lifecycle without UAC automation: 0.1.0 install and launch, 0.1.1 upgrade, 0.1.0 rollback, and uninstall all returned success. Production `perMachine` installers were retained separately; this run does not prove the UAC path.
+- Installed self-check passed before and after upgrade and rollback, with bundled darktable, helper 0.1.0 / EDSDK 13.19.0, and WebView2 151.0.4129.86.
+- Missing `inventory.json` produced the expected refusal `inventory-manifest-unreadable` with exit 2, and the file was restored.
+- A proxy-off fixture round displayed bundled sample B at 1920×1080 and saved `fixture/display.png`. A separate installed-app Canon EOS 700D round produced one correlated raw-original, display-proxy, and final artifact.
+- The same completed session was read successfully by the installed product after upgrade and again after rollback. Customer data remained exactly 1,152 files / 4,579,062,341 bytes, and the install root, uninstall registry entry, bundled payloads, and Start Menu entry were removed.
+- Mechanical result is `Go-candidate-with-waivers` with zero failures. C7 signing, C8 redistribution/offline-network proof, and C9 clean environment are recorded as owner waivers rather than passes. The shipped RAW-refined lane remains disabled under Story 7.6's approved Partial disposition.
+- After the lifecycle evidence was captured, the viewer-ready → capture-ready refresh race was fixed and the complete installer was rebuilt. The source-aligned package is 405,260,278 bytes with SHA-256 `202518faf04be56d4b47fc1a7ba7e180366e08be551700bc637885e93b94140c`; strict inventory verification and the full automated suite passed. It is stored separately from, and does not impersonate, the installer used for the lifecycle run.
+- Evidence: `tests/hardware/installer/run-20260817-123003-hv18a/`; fixture screenshot: `fixture/display.png`; gate: `gate.json`.
+
+#### 2026-08-17 partial real-payload exercise (build machine, not a booth PC)
+
+The Canon EDSDK payload was available on the implementation machine, so the packaging path ran
+end to end for everything except darktable. This is **not** HV-18A evidence — no clean offline VM, no
+network isolation, no signing — but it is measured rather than asserted.
+
+- camera helper published self-contained and **actually ran**: `--version` and `--self-check` both
+  succeeded, reporting `camera-ready` with one camera detected. 311 files, 300.7 MB.
+- EDSDK runtime staged as 2 files, 2,774,016 bytes; its staged tree digest
+  (`6b7250396f794a71f6fb123f3ba78cdeaf215ee1015f94528901cf4a3c941072`) is now pinned in the spec.
+- an NSIS installer was produced: `Boothy_0.1.0_x64-setup.exe`, **298,663,653 bytes (284.8 MB)**,
+  sha256 `3b403d904b5f7cb3b9577a8a641969055adb09924a9d3faf22f957799def0559`. The build log records the
+  WebView2 offline installer being downloaded and embedded. **darktable is absent from this build**, so
+  the size is a lower bound for a complete installer.
+- `release:seal` accepted that artifact and rejected a deliberately misnamed copy with exit `1`.
+- `boothy.exe --self-check` ran without creating a window and exited `1`. The `camera-helper` and
+  `edsdk-runtime` digests matched the generator exactly, the bundled helper launched from
+  `sidecar/canon-helper/`, WebView2 read as `151.0.4129.86`, and `darktable-resolution` failed with
+  `darktable-not-bundled` — correct, because this machine resolves darktable from `ProgramFiles`.
+- two defects were found and fixed only because real payloads were used: a temp-file name collision in
+  the Rust tree-digest path, and a culture-aware `Sort-Object` in the PowerShell gate that ordered 311
+  real .NET assembly names differently from the other two implementations. Both would have appeared on
+  a booth PC as an unexplained `inventory-digest-mismatch`.
+
+#### `Microsoft.RawImageExtension` — handed over by HV-16, closed here
+
+- verdict: `offline-distribution: not-possible`; `adoption: not-adopted`
+- basis: no standalone offline installer exists (Store appx only, and the Store-for-Business offline
+  licensing route is retired), no redistribution right was confirmed, and the version cannot be pinned.
+- `RESIDENT_APPROVED_DIRECT_DECODERS` stays empty. Even a positive distribution verdict would not have
+  changed adoption: HV-16 already recorded parity failure (SSIM 0.013–0.159, ΔE00 median 22.96–26.56).
+- verdict document: `tests/hardware/installer/hv-18a/raw-image-extension-verdict.md`
+- back-reference recorded in `tests/hardware/resident-renderer/hv-16/decision.md` so the next round does
+  not ask again.
 
 ### Story 7.8
 

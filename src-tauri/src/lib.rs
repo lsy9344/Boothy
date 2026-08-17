@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod display;
 pub mod handoff;
 pub mod preset;
+pub mod release;
 pub mod render;
 pub mod session;
 pub mod timing;
@@ -15,6 +16,14 @@ pub mod viewer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Story 7.7: `--self-check`는 **Tauri 빌더를 세우기 전에** 끝난다.
+    // 창을 만들면 clean offline VM 자동화가 그 창을 닫을 방법이 없다.
+    // 결과는 stdout이 아니라 보고서 파일과 종료 코드로 나간다 (릴리스 빌드에는 콘솔이 없다).
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if let Some(request) = release::self_check::parse_self_check_request(&arguments) {
+        std::process::exit(release::self_check::run_self_check(&request));
+    }
+
     let app = tauri::Builder::default()
         .manage(viewer::ViewerStateHandle::default())
         .manage(display::DisplayStateHandle::default())
@@ -86,6 +95,10 @@ pub fn run() {
 
             // Story 7.5: 상주 renderer lane은 spike다. 켜져 있으면 부팅 시 분명히 남긴다.
             commands::resident_renderer_commands::log_resident_renderer_mode();
+
+            // Story 7.7: 설치본이 자기 인벤토리와 어긋나면 **운영자 진단으로만** 투영한다.
+            // 고객 문구를 만들지 않고, 세션·촬영·렌더 경로를 새로 막지도 않는다.
+            release::self_check::run_startup_release_governance_check(&runtime_base_dir);
 
             Ok(())
         })

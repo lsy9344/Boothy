@@ -49,16 +49,52 @@ The root-level markdown files remain as legacy import copies for now. BMAD workf
 - `epics`, `stories`, and `sprint-status` are intentionally excluded from the reset baseline and must be regenerated from the current planning artifacts before implementation planning resumes.
 - WDS-specific `design-artifacts` are not initialized for this baseline yet, so their absence should not be interpreted as a missing canonical planning artifact set.
 
-## Windows Development Bootstrap Notes
+## Requirements: Development Machine vs Booth PC
+
+These two lists are different on purpose. A booth PC installs one file and needs nothing else.
+
+### Development machine (building Boothy)
 
 - The desktop baseline for this repository is `Vite react-ts + Tauri 2`.
-- Use Node.js `20.19+` or `22.12+` so the current Vite toolchain runs without version drift.
-- Install Rust with the MSVC toolchain and confirm both `rustc` and `cargo` are available on `PATH`.
-- Install Microsoft Visual Studio C++ Build Tools for Windows desktop Rust builds.
-- Install the Microsoft Edge WebView2 runtime because Tauri uses it to render the desktop shell on Windows.
+- Node.js `22.18+` or `24.x`. The release tooling runs `release/build-inventory.ts` directly as
+  TypeScript, which needs Node's built-in type stripping.
+- `pnpm 10.31.0`.
+- Rust with the MSVC toolchain; confirm both `rustc` and `cargo` are on `PATH`.
+- Microsoft Visual Studio C++ Build Tools for Windows desktop Rust builds.
+- .NET SDK `8.0.x` for the camera helper.
+- Microsoft Edge WebView2 runtime — **developers install this themselves**, because a dev build does
+  not bundle it.
 - Helpful verification commands:
   - `node -v`
   - `pnpm -v`
   - `rustc -V`
   - `cargo -V`
+  - `dotnet --list-sdks`
   - `winget list Microsoft.EdgeWebView2Runtime`
+
+### Booth PC (running Boothy)
+
+- Windows x64. **Nothing else.**
+- No Node, no Rust, no .NET SDK, no separately installed darktable, no internet.
+- The installer carries the WebView2 offline installer, the pinned darktable 5.4.1 tree, and a
+  self-contained camera helper. See [`docs/release-baseline.md`](./docs/release-baseline.md) and
+  [`release/README.md`](./release/README.md).
+- Installation elevates once (the installer is per-machine, because a booth PC is shared equipment
+  and the install carries the render engine).
+- To check an installation: `Boothy.exe --self-check`. It writes a report and exits — `0` pass,
+  `1` inventory mismatch, `2` could not check.
+
+## App Identifier Change
+
+From the first Story 7.7 build the app identifier is `com.boothy.booth`, not the starter default
+`com.tauri.dev`. Changing it after a signed build reaches a branch would turn every upgrade into an
+unrelated second installation, so it changed while that was still free.
+
+What this does and does not move:
+
+- **Customer photos and session data do not move.** They live in
+  `%USERPROFILE%\Pictures\dabi_shoot`, which has nothing to do with the identifier.
+- `%LOCALAPPDATA%\<identifier>\dabi_shoot` is only the fallback session root, used when
+  `USERPROFILE` is unavailable.
+- Sessions left in `%LOCALAPPDATA%\com.tauri.dev\dabi_shoot\` on a development machine will no longer
+  be visible. This is stated here rather than changed silently; move that folder if you need it.

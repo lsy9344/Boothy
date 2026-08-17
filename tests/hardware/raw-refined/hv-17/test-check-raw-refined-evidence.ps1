@@ -209,6 +209,45 @@ function Assert-Case([string]$label, [int]$expectedExit, [string]$expectedA, [st
 
 Assert-Case 'healthy run passes both gates' 0 'automated-pass' 'automated-pass' { param($runRoot) }
 
+# --- 승인된 Partial 종료: 안전 gate는 통과하고 가치 없는 tier는 꺼 둔다 --------
+$partialRoot = New-HealthyRun ([guid]::NewGuid().ToString('N'))
+$generationPath = Join-Path $partialRoot 'session-evidence/display/generations.jsonl'
+$generationRows = @(Get-Content -LiteralPath $generationPath -Encoding utf8 | ForEach-Object { $_ | ConvertFrom-Json })
+Write-JsonLines $generationPath @($generationRows | Where-Object { $_.generation.tier -ne 'rawRefinedDisplay' })
+$presentPath = Join-Path $partialRoot 'session-evidence/diagnostics/viewer-present.jsonl'
+$presentRows = @(Get-Content -LiteralPath $presentPath -Encoding utf8 | ForEach-Object { $_ | ConvertFrom-Json })
+Write-JsonLines $presentPath @($presentRows | Where-Object { $_.tier -ne 'rawRefinedDisplay' })
+$tierPath = Join-Path $partialRoot 'tier-justification/verdict.json'
+$tierVerdict = Get-Content -LiteralPath $tierPath -Raw -Encoding utf8 | ConvertFrom-Json
+$tierVerdict.detail.verdict = 'tier-not-justified'
+$tierVerdict | Add-Member -NotePropertyName corpus -NotePropertyValue ([pscustomobject]@{
+    complete = $true; uniqueSamples = 3; uniquePresets = 3; uniquePairs = 9
+  }) -Force
+$tierVerdict.detail | Add-Member -NotePropertyName measuredPairs -NotePropertyValue 9 -Force
+$tierVerdict.detail | Add-Member -NotePropertyName unmeasuredPairs -NotePropertyValue @() -Force
+Write-JsonFile $tierPath $tierVerdict
+Write-JsonFile (Join-Path $partialRoot 'partial-decision.json') @{
+  schemaVersion          = 'hv17-partial-decision/v1'
+  decision               = 'Partial'
+  implementationComplete = $true
+  tierEvidenceRoot       = '.'
+  laneDefaultEnabled     = $false
+  fr010OpenItem           = 'Story 7.10 / HV-18D'
+  approvedBy             = 'Noah Lee'
+  approvedAt             = '2026-08-17T00:00:00+09:00'
+}
+$partialOutcome = Invoke-Gate $partialRoot
+if ($partialOutcome.exitCode -ne 0 -or
+    $partialOutcome.result.hv17a.verdict -ne 'automated-pass' -or
+    $partialOutcome.result.hv17b.verdict -ne 'No-Go' -or
+    $partialOutcome.result.productDecision.verdict -ne 'Partial') {
+  Write-Host "FAIL [approved Partial closes the gate]: expected exit 0 / A pass / B No-Go / Partial"
+  $script:failures++
+}
+else {
+  Write-Host 'ok   [approved Partial closes the gate]'
+}
+
 # --- HV-17A 결함: HV-17B는 그대로 통과해야 한다 (AC 5 독립성) -------------------
 Assert-Case 'P0 dropout fails only HV-17A' 1 'No-Go' 'automated-pass' {
   param($runRoot)

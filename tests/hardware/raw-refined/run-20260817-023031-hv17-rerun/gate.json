@@ -1,0 +1,29 @@
+﻿{
+    "schemaVersion":  "hv-17-raw-refined-evidence/v1",
+    "runRoot":  "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun",
+    "hv17a":  {
+                  "scope":  "scheduler / capacity / cancellation / process tree",
+                  "failures":  [
+                                   "scheduler/burst.json not found at tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\scheduler\\burst.json",
+                                   "scheduler/cancel-rounds.jsonl not found at tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\scheduler\\cancel-rounds.jsonl"
+                               ],
+                  "verdict":  "No-Go"
+              },
+    "hv17b":  {
+                  "scope":  "seamless tier transition / frame integrity",
+                  "failures":  [
+                                   "no rawRefinedDisplay generation was committed — the promotion never happened",
+                                   "transition/zero-report.json not found at tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\transition\\zero-report.json",
+                                   "the detail axis is not justified: tier-not-justified",
+                                   "the two tiers do not share a verified same look: refined-look-drift",
+                                   "detection-trial/trials.csv not found at tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\detection-trial\\trials.csv"
+                               ],
+                  "verdict":  "No-Go"
+              },
+    "notProvenHere":  [
+                          "120fps+ physical monitor frames",
+                          "compositor-to-photon offset",
+                          "frame-level zero-defect adjudication"
+                      ],
+    "notProvenHereOwner":  "HV-18B"
+}

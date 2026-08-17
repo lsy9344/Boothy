@@ -1480,9 +1480,9 @@ struct DarktableInvocationResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct DarktableBinaryResolution {
-    binary: String,
-    source: &'static str,
+pub struct DarktableBinaryResolution {
+    pub binary: String,
+    pub source: &'static str,
 }
 
 fn resolve_runtime_bundle_in_dir(
@@ -1683,7 +1683,7 @@ fn canonicalize_existing_root(path: &Path) -> Option<String> {
         .map(|resolved| normalize_path(&resolved))
 }
 
-fn resolve_darktable_cli_binary() -> DarktableBinaryResolution {
+pub fn resolve_darktable_cli_binary() -> DarktableBinaryResolution {
     let env_override = std::env::var(DARKTABLE_CLI_BIN_ENV).ok();
     let candidates = darktable_cli_binary_candidates();
     resolve_darktable_cli_binary_with_candidates(env_override.as_deref(), &candidates)
@@ -1718,6 +1718,37 @@ fn resolve_darktable_cli_binary_with_candidates(
     }
 }
 
+/// Story 7.7. 설치본이 동봉한 darktable 트리에서 **반드시 함께 있어야 하는** 항목.
+///
+/// `darktable-cli.exe` 하나만 있어도 실행은 시작되지만 렌더가 실패한다.
+/// `lib/`와 `share/darktable/`이 형제로 있어야 한다.
+pub const BUNDLED_DARKTABLE_REQUIRED_ENTRIES: [&str; 3] =
+    ["bin/darktable-cli.exe", "lib", "share/darktable"];
+
+/// 설치본에 동봉된 darktable 트리 루트. `<현재 실행 파일 디렉터리>/darktable`.
+pub fn bundled_darktable_root() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .map(|dir| dir.join("darktable"))
+}
+
+/// 트리에서 빠진 항목. **비어 있어야 정상이다.**
+pub fn missing_bundled_darktable_entries(root: &Path) -> Vec<&'static str> {
+    BUNDLED_DARKTABLE_REQUIRED_ENTRIES
+        .into_iter()
+        .filter(|entry| {
+            let candidate = entry
+                .split('/')
+                .fold(root.to_path_buf(), |accumulated, segment| {
+                    accumulated.join(segment)
+                });
+
+            !candidate.exists()
+        })
+        .collect()
+}
+
 fn darktable_cli_binary_candidates() -> Vec<(&'static str, PathBuf)> {
     let mut candidates = Vec::new();
 
@@ -1725,6 +1756,16 @@ fn darktable_cli_binary_candidates() -> Vec<(&'static str, PathBuf)> {
         return candidates;
     }
 
+    // Story 7.7. **번들 트리가 가장 먼저다.**
+    //
+    // 동봉만 하고 순서를 그대로 두면 "부스 PC에 이미 깔린 아무 버전의 darktable"이
+    // 고객 화면을 만든다. 그 순간 5.4.1 핀은 문서에만 남는다.
+    // 기존 후보는 지우지 않는다 — 개발자 PC에는 번들 트리가 없다.
+    push_darktable_cli_candidate(
+        &mut candidates,
+        "bundled-resource",
+        bundled_darktable_root().map(|root| root.join("bin").join("darktable-cli.exe")),
+    );
     push_darktable_cli_candidate(
         &mut candidates,
         "program-files-bin",
@@ -1940,6 +1981,16 @@ fn terminate_process_tree_for_reason(
     now: &dyn Fn() -> u64,
     reason: &str,
 ) -> ProcessTreeTermination {
+    let evidence_root = hv17_evidence_root();
+    terminate_process_tree_for_reason_in_evidence_root(child, now, reason, evidence_root.as_deref())
+}
+
+fn terminate_process_tree_for_reason_in_evidence_root(
+    child: &mut Child,
+    now: &dyn Fn() -> u64,
+    reason: &str,
+    evidence_root: Option<&Path>,
+) -> ProcessTreeTermination {
     let requested_at_micros = now();
     let pid = child.id();
     // 부모를 죽인 뒤에는 살아남은 손자의 ParentProcessId가 이미 종료된 중간 PID를 가리킨다.
@@ -2004,8 +2055,8 @@ fn terminate_process_tree_for_reason(
         completed_at_micros: now(),
         evidence_record_path: None,
     };
-    if let Some(root) = hv17_evidence_root() {
-        match persist_process_tree_evidence_in_dir(&root, reason, pid, &termination, &transcript) {
+    if let Some(root) = evidence_root {
+        match persist_process_tree_evidence_in_dir(root, reason, pid, &termination, &transcript) {
             Ok(path) => termination.evidence_record_path = Some(path),
             Err(error) => log::warn!(
                 "hv17_process_tree_evidence_write_failed reason={} root={} error={error}",
@@ -2585,6 +2636,136 @@ mod tests {
 
         assert_eq!(resolution.binary, "darktable-cli");
         assert_eq!(resolution.source, "path");
+    }
+
+    fn write_fake_darktable_tree(root: &Path) -> PathBuf {
+        let binary = root.join("bin").join("darktable-cli.exe");
+        fs::create_dir_all(binary.parent().expect("bin 디렉터리가 있어야 한다"))
+            .expect("bin 디렉터리를 만들 수 있어야 한다");
+        fs::write(&binary, "cli").expect("darktable-cli를 쓸 수 있어야 한다");
+        fs::create_dir_all(root.join("lib")).expect("lib 디렉터리를 만들 수 있어야 한다");
+        fs::create_dir_all(root.join("share").join("darktable"))
+            .expect("share/darktable 디렉터리를 만들 수 있어야 한다");
+        binary
+    }
+
+    /// Story 7.7. **번들 트리가 이미 설치된 darktable보다 먼저다.**
+    ///
+    /// 이 순서가 뒤집히면 부스 PC에 깔린 아무 버전이 고객 화면을 만든다. 그 회차의
+    /// 성능 숫자는 다른 렌더러의 숫자다.
+    #[test]
+    fn darktable_cli_resolution_prefers_the_bundled_tree_over_an_installed_one() {
+        let temp_dir = unique_temp_dir("bundled-first");
+        let bundled = write_fake_darktable_tree(&temp_dir.join("bundle").join("darktable"));
+        let installed = temp_dir
+            .join("program-files")
+            .join("darktable")
+            .join("bin")
+            .join("darktable-cli.exe");
+        fs::create_dir_all(installed.parent().expect("설치 후보 부모 디렉터리"))
+            .expect("설치 후보 디렉터리를 만들 수 있어야 한다");
+        fs::write(&installed, "cli").expect("설치 후보를 쓸 수 있어야 한다");
+
+        let resolution = resolve_darktable_cli_binary_with_candidates(
+            None,
+            &[
+                ("bundled-resource", bundled.clone()),
+                ("program-files-bin", installed),
+            ],
+        );
+
+        assert_eq!(resolution.binary, bundled.to_string_lossy().as_ref());
+        assert_eq!(resolution.source, "bundled-resource");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    /// **개발용 탈출구는 그대로 남는다.** 번들이 있어도 env override가 이긴다.
+    #[test]
+    fn darktable_cli_resolution_still_lets_the_env_override_win_over_the_bundle() {
+        let temp_dir = unique_temp_dir("bundled-env");
+        let bundled = write_fake_darktable_tree(&temp_dir.join("darktable"));
+
+        let resolution = resolve_darktable_cli_binary_with_candidates(
+            Some("C:/custom/darktable-cli.exe"),
+            &[("bundled-resource", bundled)],
+        );
+
+        assert_eq!(resolution.binary, "C:/custom/darktable-cli.exe");
+        assert_eq!(resolution.source, "env-override");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    /// **개발 루프 무회귀.** 번들 트리가 없는 개발 PC에서는 기존 순서가 그대로다.
+    #[test]
+    fn darktable_cli_resolution_keeps_the_previous_order_without_a_bundle() {
+        let temp_dir = unique_temp_dir("bundled-absent");
+        let installed = temp_dir
+            .join("program-files")
+            .join("darktable")
+            .join("bin")
+            .join("darktable-cli.exe");
+        fs::create_dir_all(installed.parent().expect("설치 후보 부모 디렉터리"))
+            .expect("설치 후보 디렉터리를 만들 수 있어야 한다");
+        fs::write(&installed, "cli").expect("설치 후보를 쓸 수 있어야 한다");
+
+        let resolution = resolve_darktable_cli_binary_with_candidates(
+            None,
+            &[
+                (
+                    "bundled-resource",
+                    temp_dir.join("missing-bundle").join("darktable-cli.exe"),
+                ),
+                ("program-files-bin", installed.clone()),
+            ],
+        );
+
+        assert_eq!(resolution.binary, installed.to_string_lossy().as_ref());
+        assert_eq!(resolution.source, "program-files-bin");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    /// 후보 목록 자체의 순서를 고정한다. 목록이 조용히 재배열되면 위 테스트만으로는 안 잡힌다.
+    #[test]
+    fn the_bundled_darktable_candidate_is_first_in_the_candidate_list() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let sources = darktable_cli_binary_candidates()
+            .into_iter()
+            .map(|(source, _)| source)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            sources.first().copied(),
+            Some("bundled-resource"),
+            "번들 후보가 첫 자리를 잃으면 5.4.1 핀이 문서에만 남는다"
+        );
+    }
+
+    /// **실행 파일만 있고 데이터가 없으면 렌더가 실패한다.** 트리 전체를 본다.
+    #[test]
+    fn a_darktable_tree_missing_its_data_directories_is_reported_as_incomplete() {
+        let temp_dir = unique_temp_dir("darktable-tree");
+        let complete = temp_dir.join("complete");
+        write_fake_darktable_tree(&complete);
+        assert!(missing_bundled_darktable_entries(&complete).is_empty());
+
+        let binary_only = temp_dir.join("binary-only");
+        let binary = binary_only.join("bin").join("darktable-cli.exe");
+        fs::create_dir_all(binary.parent().expect("bin 디렉터리가 있어야 한다"))
+            .expect("bin 디렉터리를 만들 수 있어야 한다");
+        fs::write(&binary, "cli").expect("darktable-cli를 쓸 수 있어야 한다");
+
+        assert_eq!(
+            missing_bundled_darktable_entries(&binary_only),
+            vec!["lib", "share/darktable"]
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -3383,6 +3564,192 @@ mod tests {
             termination.kill_outcome
         );
         assert!(termination.completed_at_micros > termination.requested_at_micros);
+    }
+
+    #[cfg(windows)]
+    fn run_hv17_cancel_evidence_rounds(
+        evidence_root: &Path,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        fs::create_dir_all(evidence_root.join("scheduler")).map_err(|error| error.to_string())?;
+        let mut rounds = Vec::new();
+
+        for round in [
+            "delete",
+            "session-replaced",
+            "viewer-epoch-changed",
+            "newer-capture",
+        ] {
+            let scheduler = Arc::new(scheduler::RenderScheduler::default());
+            let display_session = if round == "session-replaced" {
+                "session-previous"
+            } else {
+                "session-current"
+            };
+            let display_priority = if round == "newer-capture" {
+                JobPriority::P1CurrentRawRefined
+            } else {
+                JobPriority::P0CurrentProxy
+            };
+            let display_request = RenderJobRequest {
+                priority: display_priority,
+                job_key: format!("hv17/{round}/display"),
+                deadline_micros: u64::MAX,
+                coordinates: JobCoordinates {
+                    session_id: display_session.into(),
+                    request_id: "request-display".into(),
+                    capture_id: Some("capture-display".into()),
+                    capture_order: Some(1),
+                    viewer_epoch: 1,
+                },
+            };
+            let final_request = RenderJobRequest {
+                priority: JobPriority::P2Background,
+                job_key: format!("hv17/{round}/final"),
+                deadline_micros: u64::MAX,
+                coordinates: JobCoordinates {
+                    session_id: "session-current".into(),
+                    request_id: "request-final".into(),
+                    capture_id: Some("capture-final".into()),
+                    capture_order: Some(2),
+                    viewer_epoch: 2,
+                },
+            };
+            let now = || current_monotonic_micros();
+            let final_lease = match scheduler.admit(&final_request, &now) {
+                SchedulerAdmission::Granted(lease) => lease,
+                other => return Err(format!("{round}: final admission failed: {other:?}")),
+            };
+            let display_lease = match scheduler.admit(&display_request, &now) {
+                SchedulerAdmission::Granted(lease) => lease,
+                other => return Err(format!("{round}: display admission failed: {other:?}")),
+            };
+
+            let mut display_process = Command::new("cmd.exe")
+                .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| format!("{round}: spawn display process: {error}"))?;
+            let mut descendants = 0;
+            for _ in 0..20 {
+                descendants = current_descendant_process_ids(display_process.id())
+                    .ok_or_else(|| format!("{round}: process snapshot unavailable"))?
+                    .len();
+                if descendants > 0 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            if descendants == 0 {
+                return Err(format!("{round}: display process created no descendant"));
+            }
+
+            let scope = match round {
+                "delete" => CancelScope::Request("request-display".into()),
+                "session-replaced" => CancelScope::OtherSessions("session-current".into()),
+                "viewer-epoch-changed" => CancelScope::StaleViewerEpoch {
+                    session_id: "session-current".into(),
+                    current_epoch: 2,
+                },
+                "newer-capture" => CancelScope::SupersededRefined {
+                    session_id: "session-current".into(),
+                    capture_order: 2,
+                },
+                _ => unreachable!(),
+            };
+            let summary = scheduler.cancel(&scope);
+            if summary.cancelled_running != 1
+                || !display_lease.token().is_cancelled()
+                || final_lease.token().is_cancelled()
+            {
+                return Err(format!(
+                    "{round}: scope did not cancel exactly the display job: {summary:?}"
+                ));
+            }
+            let reason = display_lease
+                .token()
+                .reason()
+                .ok_or_else(|| format!("{round}: cancellation reason missing"))?;
+            let termination = terminate_process_tree_for_reason_in_evidence_root(
+                &mut display_process,
+                &now,
+                &reason,
+                Some(evidence_root),
+            );
+            if termination.orphan_count != Some(0) {
+                return Err(format!(
+                    "{round}: process tree termination failed: {}",
+                    termination.as_log_detail()
+                ));
+            }
+
+            let final_status = Command::new("cmd.exe")
+                .args(["/C", "exit", "0"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|error| format!("{round}: final process failed to start: {error}"))?;
+            let record_path = termination
+                .evidence_record_path
+                .ok_or_else(|| format!("{round}: evidence record was not written"))?;
+            let mut record: serde_json::Value =
+                serde_json::from_slice(&fs::read(&record_path).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            record["finalRenderCompleted"] = serde_json::Value::Bool(final_status.success());
+            rounds.push(record);
+
+            drop(display_lease);
+            drop(final_lease);
+        }
+
+        let jsonl = rounds
+            .iter()
+            .map(|round| serde_json::to_string(round).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?
+            .join("\n");
+        fs::write(
+            evidence_root.join("scheduler/cancel-rounds.jsonl"),
+            format!("{jsonl}\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(rounds)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hv17_evidence_run_executes_all_four_scheduler_cancellation_scopes() {
+        let configured_root = hv17_evidence_root();
+        let root = configured_root
+            .clone()
+            .unwrap_or_else(|| unique_temp_dir("run-hv17-four-cancel-rounds"));
+
+        let rounds = run_hv17_cancel_evidence_rounds(&root)
+            .expect("execute the four real scheduler cancellation rounds");
+
+        assert_eq!(rounds.len(), 4);
+        assert_eq!(
+            rounds
+                .iter()
+                .filter_map(|round| round["round"].as_str())
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                "delete",
+                "session-replaced",
+                "viewer-epoch-changed",
+                "newer-capture",
+            ])
+        );
+        assert!(rounds.iter().all(|round| round["cancelOrphanCount"] == 0));
+        assert!(rounds
+            .iter()
+            .all(|round| round["finalRenderCompleted"] == true));
+        assert!(root.join("scheduler/cancel-rounds.jsonl").is_file());
+
+        if configured_root.is_none() {
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]

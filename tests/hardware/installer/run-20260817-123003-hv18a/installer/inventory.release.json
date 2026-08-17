@@ -1,0 +1,183 @@
+{
+  "schemaVersion": "release-inventory/v1",
+  "staging": "staged",
+  "generatedAt": "2026-08-17T03:59:35.822Z",
+  "appVersion": "0.1.0",
+  "identifier": "com.boothy.booth",
+  "installerFileName": "Boothy_0.1.0_x64-setup.exe",
+  "signingStatus": "unsigned",
+  "installer": {
+    "fileName": "Boothy_0.1.0_x64-setup.exe",
+    "sha256": "ffb5d5d96d311894ad5f1e59b713b35f5310c31b7899b2d940bb290a6df043b6",
+    "sizeBytes": 405257006
+  },
+  "components": [
+    {
+      "name": "Boothy",
+      "role": "app",
+      "version": "0.1.0",
+      "origin": "tauri-nsis-bundle",
+      "entrySelection": null,
+      "license": "proprietary",
+      "licenseEvidencePath": null,
+      "sourceArchiveSha256": null,
+      "installRelativePath": "Boothy.exe",
+      "signingStatus": "unsigned",
+      "status": "embedded",
+      "stagedTreeDigest": null,
+      "rationale": "설치본 안에 동봉되는 인벤토리 사본은 자기 자신의 해시를 담을 수 없다. 설치본 해시는 봉인 단계가 inventory.release.json 에 기록한다.",
+      "fileCount": null,
+      "totalBytes": null
+    },
+    {
+      "name": "canon-helper",
+      "role": "camera-helper",
+      "version": "0.1.0",
+      "origin": "dotnet publish -c Release -r win-x64 --self-contained true",
+      "entrySelection": {
+        "kind": "allExcept",
+        "entries": [
+          "EDSDK.dll",
+          "EdsImage.dll"
+        ]
+      },
+      "license": "MIT (.NET runtime, System.Drawing.Common, Microsoft.Win32.SystemEvents) + proprietary (Boothy helper source)",
+      "licenseEvidencePath": "release/licenses/canon-helper-dependencies.md",
+      "sourceArchiveSha256": null,
+      "installRelativePath": "sidecar/canon-helper/",
+      "signingStatus": "unsigned",
+      "status": "present",
+      "stagedTreeDigest": "5dc07c8d860be76dc9fe7bd1b1beeb165895d7e621a917a698a3d156c94b1a23",
+      "rationale": null,
+      "fileCount": 311,
+      "totalBytes": 315334154
+    },
+    {
+      "name": "Canon EDSDK runtime",
+      "role": "edsdk-runtime",
+      "version": "13.19.0",
+      "origin": "Canon EDSDK 13.19.0 (2025-02-28)",
+      "entrySelection": {
+        "kind": "only",
+        "entries": [
+          "EDSDK.dll",
+          "EdsImage.dll"
+        ]
+      },
+      "license": "Canon EDSDK developer agreement — redistribution clause NOT YET EVIDENCED",
+      "licenseEvidencePath": "release/licenses/canon-edsdk-13.19.0.md",
+      "sourceArchiveSha256": "c4f15e9df3e24d439405828f69c2ad46dae0490c29022e31dcb31969b3aa699d",
+      "installRelativePath": "sidecar/canon-helper/",
+      "signingStatus": "not-applicable",
+      "status": "present",
+      "stagedTreeDigest": "6b7250396f794a71f6fb123f3ba78cdeaf215ee1015f94528901cf4a3c941072",
+      "rationale": null,
+      "fileCount": 2,
+      "totalBytes": 2774016
+    },
+    {
+      "name": "raw-original source adapter",
+      "role": "source-adapter",
+      "version": "0.1.0",
+      "origin": "embedded-in-app-binary",
+      "entrySelection": null,
+      "license": "proprietary",
+      "licenseEvidencePath": null,
+      "sourceArchiveSha256": null,
+      "installRelativePath": "Boothy.exe",
+      "signingStatus": "unsigned",
+      "status": "embedded",
+      "stagedTreeDigest": null,
+      "rationale": "HV-14 Technology No-Go 이후 승인된 source는 raw-original 하나이고 별도 라이브러리가 없다. LibRaw 는 LGPL-2.1/CDDL 때문에 Story 7.3 에서 제외됐다.",
+      "fileCount": null,
+      "totalBytes": null
+    },
+    {
+      "name": "resident display renderer",
+      "role": "display-renderer",
+      "version": null,
+      "origin": "none",
+      "entrySelection": null,
+      "license": "not-applicable",
+      "licenseEvidencePath": null,
+      "sourceArchiveSha256": null,
+      "installRelativePath": null,
+      "signingStatus": "not-applicable",
+      "status": "not-applicable",
+      "stagedTreeDigest": null,
+      "rationale": "HV-16 Technology No-Go. 상주 renderer 후보와 shader 번들이 비활성이라 동봉할 것이 없다. RESIDENT_APPROVED_DIRECT_DECODERS 는 비어 있는 채로 둔다.",
+      "fileCount": null,
+      "totalBytes": null
+    },
+    {
+      "name": "darktable built-in sRGB",
+      "role": "color-profile",
+      "version": "5.4.1",
+      "origin": "darktable-builtin-srgb",
+      "entrySelection": null,
+      "license": "GPL-3.0-or-later",
+      "licenseEvidencePath": "release/licenses/darktable-5.4.1.md",
+      "sourceArchiveSha256": null,
+      "installRelativePath": "darktable/",
+      "signingStatus": "not-applicable",
+      "status": "embedded",
+      "stagedTreeDigest": null,
+      "rationale": "별도 ICC 파일이 없다. 출력 색공간은 --icc-type SRGB 로 darktable 내장 프로파일을 쓴다. 없는 파일을 인벤토리에 지어내지 않는다.",
+      "fileCount": null,
+      "totalBytes": null
+    },
+    {
+      "name": "proxy recipes",
+      "role": "proxy-recipes",
+      "version": "0.1.0",
+      "origin": "embedded-in-app-binary",
+      "entrySelection": null,
+      "license": "proprietary",
+      "licenseEvidencePath": null,
+      "sourceArchiveSha256": null,
+      "installRelativePath": "Boothy.exe",
+      "signingStatus": "unsigned",
+      "status": "embedded",
+      "stagedTreeDigest": null,
+      "rationale": "세 preset 의 XMP 템플릿은 include_str! 로 앱 바이너리에 컴파일된다. 첫 실행 시 런타임 카탈로그로 펼쳐지므로 설치본에 별도 파일이 없다.",
+      "fileCount": null,
+      "totalBytes": null
+    },
+    {
+      "name": "darktable",
+      "role": "raw-renderer",
+      "version": "5.4.1",
+      "origin": "darktable release-5.4.1 / c3f96ca, official Windows build, unmodified",
+      "entrySelection": {
+        "kind": "all"
+      },
+      "license": "GPL-3.0-or-later",
+      "licenseEvidencePath": "release/licenses/darktable-5.4.1.md",
+      "sourceArchiveSha256": null,
+      "installRelativePath": "darktable/",
+      "signingStatus": "not-applicable",
+      "status": "present",
+      "stagedTreeDigest": "b1576fa142494d05ae525c8d03fe3c3ddb90674564d438089a746397c5cda59f",
+      "rationale": null,
+      "fileCount": 2798,
+      "totalBytes": 488921281
+    },
+    {
+      "name": "Microsoft Edge WebView2 Runtime",
+      "role": "webview2-runtime",
+      "version": "offline-installer-embedded",
+      "origin": "tauri bundle.windows.webviewInstallMode=offlineInstaller",
+      "entrySelection": null,
+      "license": "Microsoft Edge WebView2 Runtime distribution terms",
+      "licenseEvidencePath": "release/licenses/webview2-runtime.md",
+      "sourceArchiveSha256": null,
+      "installRelativePath": "Boothy_0.1.0_x64-setup.exe",
+      "signingStatus": "not-applicable",
+      "status": "embedded",
+      "stagedTreeDigest": null,
+      "rationale": "NSIS 설치본이 Microsoft 오프라인 설치본을 자체 포함해 설치 중에 실행한다. Tauri v2 스키마에 fixedRuntime 이 없어 런타임 버전을 설치본으로 고정할 수 없다. 그래서 회차마다 실제 버전을 self-check 가 읽어 기록한다.",
+      "fileCount": null,
+      "totalBytes": null
+    }
+  ]
+}

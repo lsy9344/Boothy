@@ -1,0 +1,29 @@
+﻿{
+    "schemaVersion":  "hv-17-raw-refined-evidence/v1",
+    "runRoot":  "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-003242-hv17",
+    "hv17a":  {
+                  "scope":  "scheduler / capacity / cancellation / process tree",
+                  "failures":  [
+
+                               ],
+                  "verdict":  "automated-pass"
+              },
+    "hv17b":  {
+                  "scope":  "seamless tier transition / frame integrity",
+                  "failures":  [
+                                   "no rawRefinedDisplay generation was committed — the promotion never happened",
+                                   "transition/zero-report.json not found at ..\\tests\\hardware\\raw-refined\\run-20260817-003242-hv17\\transition\\zero-report.json",
+                                   "the detail axis is not justified: not-measured",
+                                   "the two tiers do not share a verified same look: not-measured",
+                                   "the detail axis needs at least 9 slanted-edge pairs (3 captures x 3 approved presets) with per-sample values",
+                                   "detection-trial/trials.csv not found at ..\\tests\\hardware\\raw-refined\\run-20260817-003242-hv17\\detection-trial\\trials.csv"
+                               ],
+                  "verdict":  "No-Go"
+              },
+    "notProvenHere":  [
+                          "120fps+ physical monitor frames",
+                          "compositor-to-photon offset",
+                          "frame-level zero-defect adjudication"
+                      ],
+    "notProvenHereOwner":  "HV-18B"
+}

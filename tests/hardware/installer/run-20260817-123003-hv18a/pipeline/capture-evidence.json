@@ -1,0 +1,33 @@
+{
+    "schemaVersion":  "hv-18a-capture-evidence/v1",
+    "captureId":  "capture_20260817060442210_5422334205",
+    "requestId":  "request_000000000000065937f2214778",
+    "sessionId":  "session_000000000018cc8280bd42a9b4",
+    "cameraCapture":  {
+                          "status":  "pass",
+                          "source":  "canon-camera",
+                          "cameraModel":  "Canon EOS 700D"
+                      },
+    "artifacts":  [
+                      {
+                          "role":  "raw-original",
+                          "relativePath":  "pipeline/artifacts/capture_20260817060442210_5422334205.CR2",
+                          "sha256":  "42b9f0ff63fd923c6c934aa82503ce8117105b51931418db2e9a3a2a824d4c0c"
+                      },
+                      {
+                          "role":  "display-proxy",
+                          "relativePath":  "pipeline/artifacts/capture_20260817060442210_5422334205-display-proxy.jpg",
+                          "sha256":  "c2baa58952d5a7ff6314b581d8b2681472fb196c9816b1a3b06539ba0045847f"
+                      },
+                      {
+                          "role":  "final",
+                          "relativePath":  "pipeline/artifacts/capture_20260817060442210_5422334205-final.jpg",
+                          "sha256":  "102e4e1dab868497fec8bfe792dd36c990e633030d36f5f6250134c1dd814bb7"
+                      }
+                  ],
+    "rawRefinedDisposition":  {
+                                  "status":  "not-produced",
+                                  "reason":  "tier-not-justified",
+                                  "hv17GatePath":  "pipeline/hv17-gate.json"
+                              }
+}

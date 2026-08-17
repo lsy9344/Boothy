@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "install-self-check/v1",
+  "checkedAt": "2026-08-17T05:45:32Z",
+  "appVersion": "0.1.0",
+  "identifier": "com.boothy.booth",
+  "installRoot": "C:\\Users\\dltnd\\AppData\\Local\\Boothy",
+  "components": [
+    {
+      "name": "release-inventory",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "app",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "camera-helper",
+      "expectedDigest": "5dc07c8d860be76dc9fe7bd1b1beeb165895d7e621a917a698a3d156c94b1a23",
+      "actualDigest": "5dc07c8d860be76dc9fe7bd1b1beeb165895d7e621a917a698a3d156c94b1a23",
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "edsdk-runtime",
+      "expectedDigest": "6b7250396f794a71f6fb123f3ba78cdeaf215ee1015f94528901cf4a3c941072",
+      "actualDigest": "6b7250396f794a71f6fb123f3ba78cdeaf215ee1015f94528901cf4a3c941072",
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "source-adapter",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "display-renderer",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "color-profile",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "proxy-recipes",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "raw-renderer",
+      "expectedDigest": "b1576fa142494d05ae525c8d03fe3c3ddb90674564d438089a746397c5cda59f",
+      "actualDigest": "b1576fa142494d05ae525c8d03fe3c3ddb90674564d438089a746397c5cda59f",
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "webview2-runtime",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "skipped",
+      "reasonCode": null
+    },
+    {
+      "name": "darktable-resolution",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "camera-helper-binary",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    },
+    {
+      "name": "webview2-runtime",
+      "expectedDigest": null,
+      "actualDigest": null,
+      "status": "pass",
+      "reasonCode": null
+    }
+  ],
+  "webview2Version": "151.0.4129.86",
+  "darktableResolution": {
+    "binary": "C:\\Users\\dltnd\\AppData\\Local\\Boothy\\darktable\\bin\\darktable-cli.exe",
+    "source": "bundled-resource"
+  },
+  "helperVersion": "{\"helperVersion\":\"0.1.0\",\"protocolVersion\":\"camera-helper-sidecar/v2\",\"sdkFamily\":\"canon-edsdk\",\"sdkVersion\":\"13.19.0\"}",
+  "overall": "pass"
+}

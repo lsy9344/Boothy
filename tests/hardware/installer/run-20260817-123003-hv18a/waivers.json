@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "hv-18a-waivers/v1",
+  "approvedBy": "Noah Lee",
+  "approvedAt": "2026-08-17T13:22:41+09:00",
+  "reason": "MVP 내부 검증을 현재 승인된 PC에서 수행하며 서명, Canon EDSDK 재배포 증거, clean/offline 환경 검증을 생략한다.",
+  "waivedChecks": ["C7", "C8", "C9"],
+  "waivedEvidence": [
+    "code-signing-certificate",
+    "canon-edsdk-redistribution-evidence",
+    "clean-offline-environment"
+  ]
+}

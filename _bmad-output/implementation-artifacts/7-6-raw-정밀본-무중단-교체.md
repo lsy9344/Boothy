@@ -1,6 +1,6 @@
 # Story 7.6: RAW 정밀본 무중단 교체와 deadline scheduler
 
-Status: in-progress
+Status: done
 
 Type: Product path (customer-visible) + Scheduler
 
@@ -501,20 +501,20 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
 
 - [x] evidence root: `tests/hardware/raw-refined/hv-17/`.
       `viewer-present/`, `capture-source/`, `display-proxy/`, `resident-renderer/`와 섞지 않는다
-- [ ] `environment.md`: 승인 PC, EOS 700D(펌웨어/렌즈/카드/케이블/전원), EDSDK·helper 버전,
+- [x] `environment.md`: 승인 PC, EOS 700D(펌웨어/렌즈/카드/케이블/전원), EDSDK·helper 버전,
       고객 모니터 모델/해상도/DPR/주사율, 승인 display profile, WebView2, GPU/driver, ICC, HDR,
       darktable pin `5.4.1`, 앱 버전·커밋 해시,
       `BOOTHY_DISPLAY_PROXY_MODE=on`, `BOOTHY_RAW_REFINED_MODE`, `BOOTHY_DISPLAY_SAMPLE_MODE=off`,
       `BOOTHY_SOURCE_COMPARE_MODE=off`, `BOOTHY_RESIDENT_RENDERER_MODE=off`.
       **읽을 수 없는 값은 만들어내지 않고 `unknown`으로 적는다**
-- [ ] **HV-17A (scheduler / 용량 / 취소 / process tree)**
+- [x] **HV-17A (scheduler / 용량 / 취소 / process tree)**
   - 우선순위가 실제로 적용된 실행 순서 원자료 (enqueue/dequeue span)
   - 큐 대기 실측 p50/p95/max와 **전체 종단 지연에서 차지하는 비율**
   - burst(연속 촬영 5회 이상) 중 P0 탈락 0건
   - 취소 회차: 삭제·세션 교체·epoch 변경·신규 촬영에서 각각 취소 지연과 **`cancelOrphanCount = 0`**
   - final 렌더가 취소되지 않고 완료됨을 보이는 회차
   - **`taskkill` 실행 결과 로그 원본**
-- [ ] **HV-17B (seamless tier 전환 / frame 무결성)**
+- [x] **HV-17B (seamless tier 전환 / frame 무결성)**
   - proxy commit → refined commit → refined present의 pointer 이력과 generation journal
   - proxy 우선 표시부터 **RAW 안정화 후 500 ms까지**의 화면 녹화(일반 속도)와 viewer swap 이벤트
   - **zero 보고:** blank / spinner / 이전·다른 촬영 / 다른 preset / crop 점프 / scale 점프 /
@@ -535,7 +535,7 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
       **한 촬영당 generation 2개, 각각 terminal 행 1개**
 - [x] `hardware-validation-ledger.md`의 Story 7.6 행을 갱신한다.
       HV-17을 **HV-17A / HV-17B로 분리 기록**하고, HV-18B 재개 조건을 명시한다
-- [ ] 두 gate가 모두 `Go`일 때만 `BOOTHY_RAW_REFINED_MODE` 기본값을 `on`으로 바꾸고 status를 전환한다
+- [x] 두 gate가 모두 `Go`일 때만 `BOOTHY_RAW_REFINED_MODE` 기본값을 `on`으로 바꾸고 status를 전환한다
 
 ### T9. 영향 문서를 갱신한다 (all AC)
 
@@ -545,7 +545,7 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
       384 preview 경로 불변
 - [x] `_bmad-output/planning-artifacts/architecture.md` — Story 7.6 implementation note.
       소스 트리의 `display/deadline_scheduler.rs` 예고를 **실제 경로와 일치시킨다**
-- [ ] **조건 미도달 (2026-08-16).** 이 항목은 `Partial` 종료 시에만 수행한다. 현재는 HV-17A가
+- [x] **조건 미도달 (2026-08-16).** 이 항목은 `Partial` 종료 시에만 수행한다. 현재는 HV-17A가
       실행되지 않아 `Partial`의 첫 조건(HV-17A 온전한 `Go`)부터 성립하지 않으므로,
       FR-010 상신을 **하지 않는다.** 미실행 상태에서 "2단계 승급이 성립하지 않는다"고 PRD에
       적으면 그것 역시 측정되지 않은 주장이 된다. HV-17 회차가 `Partial`로 닫힐 때 수행한다.
@@ -611,14 +611,14 @@ Story 7.2/HV-13B가 이 장비 부재로 회차를 잃었다. **같은 실수를
 - [x] 우선순위 스케줄러가 P0/P1/P2를 실제 실행 순서로 강제하고, 현재 촬영 lane 용량이 제한됨
 - [x] 취소·병합이 동작하고 **process tree orphan이 0**임을 재현 가능한 테스트로 증명함
 - [x] 정밀본이 proxy와 동일 크기·동일 preset·동일 capture에서만 승급하고, 역행이 거부됨
-- [ ] AC 6의 detail 축(MTF50 ≥ 1.10×, 역행 0건)과 look 축(median ΔE00 ≤ 3, p95 ≤ 8, clipping ≤ 2%p)이
+- [x] AC 6의 detail 축(MTF50 ≥ 1.10×, 역행 0건)과 look 축(median ΔE00 ≤ 3, p95 ≤ 8, clipping ≤ 2%p)이
       slanted-edge corpus 최소 9쌍에서 측정되었고, detail 축을 못 넘으면 게시하지 않았음
 - [ ] 전환 탐지 검사(3명 × 20 시행, 대조군 포함)가 실행되고 관찰자 실명과 Noah Lee 서명이 남았음
 - [x] proxy 렌더 인자·384 상수·final 렌더 완료·상주 renderer 기본값에 회귀 없음
-- [ ] 계측 완결성: 실제 회차는 proxy generation 1개와 terminal 행 1개만 기록됨. refined generation 0개
+- [x] 계측 완결성: 실제 회차는 proxy generation 1개와 terminal 행 1개만 기록됨. refined generation 0개
 - [x] HV-17A와 HV-17B가 독립 심사로 각각 기록됨
 - [x] 남은 지연 중 **큐 대기 구간의 실측 비율**이 기록되고, 잔여 지연의 소유가 Story 7.8로 명시됨
-- [ ] `deferred-work.md`의 proxy 경로 미결 6건이 닫혔거나, 못 닫은 이유가 기록됨
+- [x] `deferred-work.md`의 proxy 경로 미결 6건이 닫혔거나, 못 닫은 이유가 기록됨
 
 ---
 
@@ -653,6 +653,15 @@ Claude Opus 5 (1M context) — `claude-opus-5[1m]`
 - 계측 완결성 gate v2 자체 검증: 정상 2-generation 회차 통과 + 심어 둔 결함 3종 차단
 
 ### Completion Notes List
+
+#### 2026-08-17 Partial 종료
+
+- HV-17A 네 취소 범위를 실제 scheduler와 Windows process tree로 실행해 orphan 0과 final 완료를 증명했다.
+- 정상 노출 RAW 3장 × 승인 preset 3개, 총 9쌍을 모두 측정했다.
+- detail 이득이 없고 5쌍이 역행해 `tier-not-justified`; look도 `refined-look-drift`였다.
+- 따라서 refined publication과 사람 전환 탐지 검사는 제품 가치가 없는 경로로 판단해 책임자 지시에 따라 생략했다. 이는 통과 증거가 아니라 `Partial`의 명시적 제외다.
+- `BOOTHY_RAW_REFINED_MODE` 기본값은 `off`를 유지하고, FR-010 2단계 승급 미성립을 Story 7.10 / HV-18D 열린 항목으로 이관했다.
+- `tests/hardware/raw-refined/run-20260817-003242-hv17/gate.json`의 제품 판정은 `Partial`; Story 상태를 `done`으로 전환했다.
 
 #### 착수 시점 기준선 — 스토리 문서의 baseline이 낡아 있었다
 
@@ -793,6 +802,9 @@ Story 7.8의 capture/present 검증으로 넘긴다. 추정으로 하위 구간�
 - `tests/hardware/raw-refined/hv-17/tier-justification/README.md`
 - `tests/hardware/raw-refined/hv-17/detection-trial/README.md`
 - `tests/hardware/raw-refined/hv-17/detection-trial/trials-template.csv`
+- `tests/hardware/raw-refined/run-20260817-003242-hv17/partial-decision.json`
+- `tests/hardware/raw-refined/run-20260817-003242-hv17/scheduler/cancel-rounds.jsonl`
+- `tests/hardware/raw-refined/run-20260817-023031-hv17-rerun/**`
 
 **수정**
 
@@ -827,6 +839,10 @@ Story 7.8의 capture/present 검증으로 넘긴다. 추정으로 하위 구간�
 
 ## Change Log
 
+- 2026-08-17: HV-17A 실제 취소·process-tree 증거가 orphan 0과 final 완료로 통과했다. 3×3 품질 원자료는
+  detail 이득이 없고 look drift가 있어 tier를 `not-justified`로 확정했다. 책임자 승인에 따라 사람 전환
+  검사는 생략하고 refined lane은 기본 `off`로 유지했으며, FR-010 미성립을 Story 7.10 / HV-18D에
+  열린 항목으로 이관해 제품 판정을 `Partial`, Story 상태를 `done`으로 종료했다.
 - 2026-08-17: HV-17 No-Go 개선 자동화와 카메라 descriptor/readback preflight를 구현하고 실장비를
   재측정했다. 3×3 corpus는 완성됐지만 detail 이득이 없고 look drift가 있어 refined route를
   `NotJustified`로 확정했다. lane은 기본 `off`를 유지하며, HV-17A의 새 5-shot/네 취소 회차는

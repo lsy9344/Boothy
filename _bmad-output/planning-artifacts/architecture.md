@@ -98,7 +98,7 @@ trusted capture input -> immediate request acknowledgement
 4. Build the physical display-fit immutable preset proxy path.
 5. Implement a working resident-renderer spike and decide Go/No-Go from latency, parity, and stability evidence.
 6. Add RAW-refined seamless replacement and deadline scheduling.
-7. Prove the signed complete installer and clean offline Windows reproduction.
+7. Prove the complete installer lifecycle on the owner-approved Windows test PC; record signing, Canon redistribution, and clean/offline environment as explicit owner waivers for MVP internal validation.
 8. Prove warm 100-shot performance plus cold, idle, reconnect, burst, and failure recovery.
 9. Prove staged rollout, active-session protection, old-session compatibility, and rollback.
 10. Aggregate every required gate into one final MVP Go/No-Go decision.
@@ -160,6 +160,23 @@ trusted capture input -> immediate request acknowledgement
 - **`final` is not a display tier and will not become one.** The full-resolution handoff artifact placed in a 1429×953 photo area would be downscaled by the browser — lower quality than darktable's downscale at a far higher decode cost — and it contradicts the `--upscale false` display-fit contract. The contract comment that once announced it has been replaced with this rationale rather than quietly deleted.
 - **The refined present is a second terminal row, not a KPI endpoint.** It carries no `qualifyingLatencyMicros`; mixing promotion latency into the first-frame distribution would silently falsify NFR-003. The completeness gate enforces this and counts the KPI denominator over first-frame generations only.
 - Contract: `docs/contracts/viewer-display.md`, `docs/contracts/render-worker.md`. Hardware evidence procedure: `tests/hardware/raw-refined/hv-17/README.md`.
+
+#### Story 7.7 implementation note (2026-08-17)
+
+- **The build before this story could not boot on a clean offline PC.** Not "was slow", not "was untested" — could not boot. `bundle.windows` did not exist, so WebView2 defaulted to `downloadBootstrapper` and the installer tried to fetch a runtime with no internet. The camera helper was not bundled at all and was framework-dependent besides. darktable was resolved from `ProgramFiles` or assumed to be on `PATH`. Nine such gaps were found by reading the configuration and the path-resolution code, and closing them is what this story is.
+- **The inventory is a compared file, not a written table.** A hand-maintained list of what ships goes stale at the next build and nobody notices. So `release/inventory-spec.json` (source, human-maintained) and `release/dist/inventory.json` (generated, with digests) are separate, and `release/verify-inventory.ps1` compares them plus the disk. The generator never adjudicates its own output; a generator that also gates is a gate that always passes.
+- **Missing, changed and unexpected are three different failures.** They carry `inventory-component-missing`, `inventory-digest-mismatch` and `inventory-unexpected-component` and exit with different codes, joined later by `inventory-not-staged`, `inventory-manifest-unreadable` and `inventory-pin-missing`. One undifferentiated "verification failed" tells an operator nothing about what to do, which AC 2's "actionable operator result" specifically rules out.
+- **Bundling darktable without changing the resolution order would have been worse than not bundling it.** The old order looked at `ProgramFiles` first, so a booth PC with any darktable installed would have drawn customer photos with it while the inventory claimed 5.4.1. The bundled tree is now the first candidate, labelled `bundled-resource`, and existing candidates are kept below it so the development loop is unaffected. `DarktableBinaryResolution.source` already rides on telemetry, so HV-18A can assert the pin mechanically.
+- **The camera helper ships through `resources`, not `externalBin`.** `externalBin` demands a `-$TARGET_TRIPLE` filename and carries no companion files, while a self-contained publish is a folder of .NET assemblies plus `EDSDK.dll` and `EdsImage.dll`. Placing the tree at `sidecar/canon-helper/` means the **existing** candidate in `resolve_helper_launch_target()` already points at it, so no capture code changed.
+- **Every payload component says which files are its own.** `camera-helper` and `edsdk-runtime` live in one directory and own different parts of it, and the installed app does not carry `inventory-spec.json`. So the inventory itself records an `entrySelection` (`all` / `only` / `allExcept`) per component; without it the runtime self-check could not know what to hash. No globs anywhere — what a component contains must be decidable by reading the document.
+- **One digest definition, three implementations, one golden vector.** The tree digest is sha256 over the UTF-8-byte-sorted `<relative-path>:<sha256>` lines. TypeScript generates it, PowerShell re-derives it, Rust re-derives it again at runtime, and a shared golden vector is asserted in two of the three test suites while the gate's own self-test proves the third end to end. The first version of the Rust implementation disagreed, and the golden vector is what caught it.
+- **No new Rust crate.** sha256 comes from `%SystemRoot%\System32\certutil.exe` called by absolute path — the same rule and the same reason as Story 7.6's `taskkill`. Direct dependencies stay at five. Hashing thousands of darktable files that way is only viable in parallel, so the self-check fans the work across a small bounded pool of std threads.
+- **`--self-check` speaks in a file and an exit code, never a console or a window.** Release builds are `windows_subsystem = "windows"`, so stdout reaches nobody, and attaching a console would mean a new Windows API dependency. It is handled before the Tauri builder is constructed, because clean-offline automation has no way to close a window it did not expect. Exit `2` (could not check) is deliberately not merged into exit `1` (did not match): only one of them says anything about the installed payload.
+- **The identifier changed now because it could not change later.** `com.tauri.dev` was the starter default and feeds the app-data root, the WebView2 user-data folder, and NSIS upgrade identity. After a signed candidate reaches a branch, changing it makes every upgrade a separate installation. Customer photos are unaffected — they live under `Pictures\dabi_shoot`, and `app_local_data_dir` is only the fallback root — but the fallback move is written into the README rather than made silently.
+- **A build without vendor payloads declares itself instead of failing to compile.** `tauri-build` validates every `bundle.resources` path at compile time, so an absent `release/vendor/` would break `cargo test` on a fresh clone. `build.rs` creates the directory with a `PAYLOAD-NOT-STAGED.md` marker and a `staging: "not-staged"` inventory. It never overwrites a real payload, and the resulting build is loudly not a release candidate: the marker ships inside it, `release:verify` stops the release, and `--self-check` exits `1` with `inventory-not-staged`.
+- **Licensing evidence is part of the inventory, not a document beside it.** Every component carries a `license`, and staged ones carry a `licenseEvidencePath` into `release/licenses/`, which is version-controlled and bundled into the installer. Two gaps are recorded as gaps rather than rounded up: the Canon EDSDK redistribution clause is not evidenced, and the darktable GPL notice wording awaits approval.
+- **Nothing customer-facing changed.** No new copy, no new booth-readiness reason code, no new operator screen. A missing camera helper already has a name (`helper-binary-missing`) and the self-check reuses it. Startup runs a structural comparison only and projects failures into the existing `release-governance` audit taxonomy; it returns nothing, so it cannot block a session, a capture, or a render.
+- Contract: `docs/contracts/release-inventory.md`. Release baseline: `docs/release-baseline.md` (the root copy is now a pointer). Procurement and staging: `release/README.md`. Hardware evidence procedure: `tests/hardware/installer/hv-18a/README.md`.
 
 ### Readiness-12 Ownership Corrections
 
@@ -402,7 +419,9 @@ This section locks which darktable capabilities Boothy adopts as product truth, 
 
 - **Runtime hosting:** Approved Windows booth PCs run the same packaged app with the booth surface visible by default; admin authentication can unlock operator controls, and approved internal machines may additionally enable the authoring surface.
 - **Package strategy:** One package family and one codebase ship every deployment, while capability/profile differences and admin authentication together determine which privileged surfaces are enabled on a given machine and for a given session.
-- **Build and release:** GitHub Actions plus `tauri-action` handle a signed Windows release inventory containing the app, self-contained camera helper, approved EDSDK runtime, display renderer or shader bundle, color profile, proxy recipes, and pinned darktable dependency.
+- **Build and release:** GitHub Actions builds a signed Windows NSIS installer whose contents are declared in a machine-compared inventory (`release-inventory/v1`) covering the app, self-contained camera helper, approved EDSDK runtime, source adapter, display renderer or shader bundle, colour profile, proxy recipes, pinned darktable dependency, and the embedded WebView2 runtime. Components that do not exist are recorded as `not-applicable` with a rationale rather than omitted. The workflow stages payloads, verifies the inventory, builds, then seals the installer's own name, size and hash into `inventory.release.json`.
+- **Offline completeness:** A booth PC needs Windows and nothing else. WebView2 ships as an embedded offline installer, darktable 5.4.1 ships as a bundled tree resolved ahead of any installed copy, and the camera helper ships self-contained with the .NET runtime included.
+- **Install-time truth:** `boothy.exe --self-check` re-derives every component digest from disk, compares it against the bundled manifest, writes an `install-self-check/v1` report and exits `0` / `1` / `2` — where `2` means the check could not be performed, which is not the same fact as a mismatch.
 - **Release safety:** Branch rollout is staged, rollback-capable, and must preserve last-approved installers plus active-session compatibility.
 - **Update policy:** No forced update may interrupt an active booth session.
 - **Environment configuration:** Branch-local configuration stays minimal, explicit, and auditable.
@@ -616,9 +635,22 @@ boothy/
 │   │   ├── session-manifest.md
 │   │   ├── preset-bundle.md
 │   │   ├── error-envelope.md
+│   │   ├── release-inventory.md    # Story 7.7. release-inventory/v1 + install-self-check/v1
 │   │   └── sidecar-protocol.md
+│   ├── release-baseline.md         # 정본. 루트 release-baseline.md는 포인터다
 │   ├── architecture/
 │   └── runbooks/
+├── release/                        # Story 7.7. 릴리스 조달·staging·검증 도구
+│   ├── README.md                   # 벤더 페이로드 조달 절차 + 빌드 런북
+│   ├── inventory-spec.json         # 소스: 필수 구성요소·핀 버전·라이선스
+│   ├── build-inventory.ts          # staging 트리 → release/dist/inventory.json (+ --seal)
+│   ├── build-inventory.test.ts
+│   ├── stage.ps1                   # helper publish → 실행 검증 → darktable 확인 → 인벤토리
+│   ├── verify-inventory.ps1        # 기계식 게이트: spec vs inventory vs 디스크
+│   ├── test-verify-inventory.ps1   # 게이트 자체의 테스트
+│   ├── licenses/                   # 라이선스 증거. 설치본에 함께 실린다
+│   ├── vendor/                     # .gitignore. 조달된 원본 (darktable-5.4.1/)
+│   └── dist/                       # .gitignore. staging 산출물 (canon-helper/, inventory.json)
 ├── src/
 │   ├── main.tsx
 │   ├── app/
@@ -763,6 +795,10 @@ boothy/
 │       ├── render/
 │       │   ├── mod.rs
 │       │   └── scheduler.rs        # 예고했던 display/deadline_scheduler.rs가 여기로 왔다 (Story 7.6)
+│       ├── release/                # Story 7.7. 설치본이 자기 인벤토리와 일치하는지 본다
+│       │   ├── mod.rs
+│       │   ├── inventory.rs        # 매니페스트 읽기 + 디스크 대조 (certutil, 새 crate 없음)
+│       │   └── self_check.rs       # --self-check 진입점, install-self-check/v1 보고서
 │       ├── preset/
 │       │   ├── preset_bundle.rs
 │       │   ├── preset_catalog.rs

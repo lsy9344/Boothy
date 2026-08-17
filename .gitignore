@@ -29,10 +29,27 @@ Thumbs.db
 
 # Local Canon SDK payload and helper-generated runtime files
 sidecar/canon-helper/vendor/canon-edsdk/
-sidecar/canon-helper/src/**/bin/
-sidecar/canon-helper/src/**/obj/
+sidecar/canon-helper/**/bin/
+sidecar/canon-helper/**/obj/
 sidecar/canon-helper/.tmp-runtime/
 sidecar/canon-helper/.tmp-runtime-publish/
+
+# Story 7.7 release payloads. Procurement is documented in release/README.md;
+# the payloads themselves never enter the repository.
+release/vendor/
+release/dist/
+
+# Hardware evidence keeps hashes, reports, and screenshots in git. Large camera
+# originals, generated render intermediates, and installer binaries stay local.
+tests/hardware/installer/run-*/installer/*.exe
+tests/hardware/installer/run-*/pipeline/artifacts/
+tests/hardware/raw-refined/run-*/.darktable/
+tests/hardware/raw-refined/run-*/tools/**/bin/
+tests/hardware/raw-refined/run-*/tools/**/obj/
+tests/hardware/raw-refined/run-*/tier-justification/sources/
+tests/hardware/raw-refined/run-*/tier-justification/**/*.ppm
+tests/hardware/raw-refined/run-*/tier-justification/**/proxy.jpg
+tests/hardware/raw-refined/run-*/tier-justification/**/refined.jpg
 
 # Local Rust/Tauri build outputs
 src-tauri/target/

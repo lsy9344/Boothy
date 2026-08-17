@@ -129,6 +129,32 @@ fn emit_viewer_readiness(app: &tauri::AppHandle, snapshot: ViewerReadinessSnapsh
     );
 }
 
+fn should_refresh_capture_readiness(
+    previous_viewer_ready: bool,
+    next_viewer_ready: bool,
+    next_session_id: Option<&str>,
+) -> bool {
+    !previous_viewer_ready && next_viewer_ready && next_session_id.is_some()
+}
+
+fn refresh_capture_readiness_if_viewer_became_ready(
+    app: &tauri::AppHandle,
+    previous_viewer_ready: bool,
+    snapshot: &ViewerReadinessSnapshotDto,
+) {
+    if !should_refresh_capture_readiness(
+        previous_viewer_ready,
+        snapshot.viewer_ready,
+        snapshot.session_id.as_deref(),
+    ) {
+        return;
+    }
+
+    if let Some(session_id) = snapshot.session_id.as_deref() {
+        crate::commands::capture_commands::emit_current_capture_readiness(app, session_id);
+    }
+}
+
 fn read_snapshot(app: &tauri::AppHandle) -> ViewerReadinessSnapshotDto {
     let handle = app.state::<ViewerStateHandle>();
     let state = handle.0.lock().expect("viewer state lock poisoned");
@@ -576,19 +602,24 @@ pub fn report_viewer_listener_ready(
     app: tauri::AppHandle,
     input: ViewerListenerReportDto,
 ) -> Result<ViewerReadinessSnapshotDto, HostErrorEnvelope> {
-    let outcome = {
+    let (outcome, previous_viewer_ready) = {
         let handle = app.state::<ViewerStateHandle>();
         let mut state = handle.0.lock().expect("viewer state lock poisoned");
-        state.apply_listener_report_with_clock(
+        let previous_viewer_ready = state
+            .snapshot_with_clock(current_epoch_ms(), current_monotonic_ms())
+            .viewer_ready;
+        let outcome = state.apply_listener_report_with_clock(
             input.viewer_epoch,
             current_epoch_ms(),
             current_monotonic_ms(),
-        )
+        );
+        (outcome, previous_viewer_ready)
     };
     let snapshot = read_snapshot(&app);
 
     if matches!(outcome, crate::viewer::viewer_state::ReportOutcome::Applied) {
         emit_viewer_readiness(&app, snapshot.clone());
+        refresh_capture_readiness_if_viewer_became_ready(&app, previous_viewer_ready, &snapshot);
     }
 
     Ok(snapshot)
@@ -601,16 +632,50 @@ pub fn report_viewer_layout(
 ) -> Result<ViewerReadinessSnapshotDto, HostErrorEnvelope> {
     validate_viewer_layout_report(&input)?;
 
-    let outcome = {
+    let (outcome, previous_viewer_ready) = {
         let handle = app.state::<ViewerStateHandle>();
         let mut state = handle.0.lock().expect("viewer state lock poisoned");
-        state.apply_layout_report_with_clock(&input, current_epoch_ms(), current_monotonic_ms())
+        let previous_viewer_ready = state
+            .snapshot_with_clock(current_epoch_ms(), current_monotonic_ms())
+            .viewer_ready;
+        let outcome = state.apply_layout_report_with_clock(
+            &input,
+            current_epoch_ms(),
+            current_monotonic_ms(),
+        );
+        (outcome, previous_viewer_ready)
     };
     let snapshot = read_snapshot(&app);
 
     if matches!(outcome, crate::viewer::viewer_state::ReportOutcome::Applied) {
         emit_viewer_readiness(&app, snapshot.clone());
+        refresh_capture_readiness_if_viewer_became_ready(&app, previous_viewer_ready, &snapshot);
     }
 
     Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_readiness_refreshes_only_when_a_bound_viewer_becomes_ready() {
+        assert!(should_refresh_capture_readiness(
+            false,
+            true,
+            Some("session_01hzzzzzzzzzzzzzzzzzzzzz")
+        ));
+        assert!(!should_refresh_capture_readiness(
+            true,
+            true,
+            Some("session_01hzzzzzzzzzzzzzzzzzzzzz")
+        ));
+        assert!(!should_refresh_capture_readiness(false, true, None));
+        assert!(!should_refresh_capture_readiness(
+            false,
+            false,
+            Some("session_01hzzzzzzzzzzzzzzzzzzzzz")
+        ));
+    }
 }

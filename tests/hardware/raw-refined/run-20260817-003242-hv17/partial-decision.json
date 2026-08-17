@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "hv17-partial-decision/v1",
+  "decision": "Partial",
+  "implementationComplete": true,
+  "tierEvidenceRoot": "../run-20260817-023031-hv17-rerun",
+  "laneDefaultEnabled": false,
+  "fr010OpenItem": "Story 7.10 / HV-18D",
+  "approvedBy": "Noah Lee",
+  "approvedAt": "2026-08-17T14:12:34+09:00"
+}

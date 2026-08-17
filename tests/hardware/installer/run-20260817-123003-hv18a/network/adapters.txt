@@ -1,0 +1,5 @@
+OpenVPN Data Channel Offload for Surfshark: Disconnected
+vEthernet (Default Switch): Up
+Ethernet / Intel(R) Ethernet Connection (7) I219-V: Up
+vEthernet (WSL (Hyper-V firewall)): Up
+Tailscale: Up

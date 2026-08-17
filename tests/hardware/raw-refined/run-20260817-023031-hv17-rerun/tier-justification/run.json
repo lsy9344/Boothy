@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "hv17-tier-run/v1",
+  "measuredAt": "2026-08-16T18:15:02.267Z",
+  "inputManifest": {
+    "schemaVersion": "hv17-tier-run/v1",
+    "evidenceRoot": "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun",
+    "darktableCli": "C:\\Program Files\\darktable\\bin\\darktable-cli.exe",
+    "targetWidthPx": 1429,
+    "targetHeightPx": 953,
+    "jpegQuality": 95,
+    "outputColorSpace": "sRGB",
+    "iccIntent": "PERCEPTUAL",
+    "samples": [
+      {
+        "sampleId": "normal-01",
+        "rawPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc59e9f76c5488\\captures\\originals\\capture_20260816175349397_61d5c4f2c6.CR2",
+        "edgeRoi": {
+          "x": 250,
+          "y": 300,
+          "widthPx": 380,
+          "heightPx": 240
+        },
+        "exposureConfirmed": true
+      },
+      {
+        "sampleId": "normal-02",
+        "rawPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc5b2aefceddf8\\captures\\originals\\capture_20260816180317929_2140a3de81.CR2",
+        "edgeRoi": {
+          "x": 250,
+          "y": 300,
+          "widthPx": 380,
+          "heightPx": 240
+        },
+        "exposureConfirmed": true
+      },
+      {
+        "sampleId": "normal-03",
+        "rawPath": "C:\\Users\\dltnd\\Pictures\\dabi_shoot\\sessions\\session_000000000018cc5b4bf8ed513c\\captures\\originals\\capture_20260816180654056_3f8442acb2.CR2",
+        "edgeRoi": {
+          "x": 250,
+          "y": 300,
+          "widthPx": 380,
+          "heightPx": 240
+        },
+        "exposureConfirmed": true
+      }
+    ],
+    "presets": [
+      {
+        "presetId": "preset-daylight",
+        "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-daylight.xmp"
+      },
+      {
+        "presetId": "preset-soft-glow",
+        "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-soft-glow.xmp"
+      },
+      {
+        "presetId": "preset-mono-pop",
+        "xmpPath": "C:\\Code\\Boothy\\src-tauri\\src\\preset\\default_catalog_assets\\preset-mono-pop.xmp"
+      }
+    ]
+  },
+  "pairCount": 9,
+  "exposureUnconfirmedSamples": [],
+  "verdictPath": "tier-justification/verdict.json",
+  "customerPointerAdvanced": false
+}

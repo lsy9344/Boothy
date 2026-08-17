@@ -73,7 +73,7 @@ NFR6: 제품은 선택된 지점 집합에 대한 단계적 배포와 단일 승
 - 공식 성능 종료점은 실제 qualifying monitor frame이며 file-ready, renderer-ready, event receipt, decode, `<img onLoad>`, review rail thumbnail은 진단 span으로만 사용한다.
 - LibRaw embedded JPEG와 capability-gated RAW+JPEG는 Story 7.3 실장비 비교 전까지 후보이며 어느 하나도 기본 경로로 가정하지 않는다.
 - darktable은 RAW 정밀본, final, parity oracle, exact fallback으로 유지하고 resident display renderer는 Story 7.5 구현 spike와 화질·안정성 gate를 통과한 경우에만 production 경로로 승격한다.
-- signed complete installer, clean offline VM, warm 100-shot, cold, 10-minute idle, reconnect, canary, rollback evidence와 Story 7.10 최종 Go 전에는 Epic 7과 MVP release를 `done`으로 처리하지 않는다.
+- complete installer의 현재 승인 PC lifecycle, warm 100-shot, cold, 10-minute idle, reconnect, canary, rollback evidence와 Story 7.10 최종 Go 전에는 Epic 7과 MVP release를 `done`으로 처리하지 않는다. Story 7.7의 signing, Canon EDSDK 재배포, clean/offline 환경은 2026-08-17 책임자 승인으로 `waived-by-owner`이며 검증 통과로 주장하지 않는다.
 - UX-DR16은 `UX-EV-01` 접근성 release evidence로, 실제 터치 반응성·standing usability·고대비·무가이드 촬영 성공률은 `UX-EV-02` 실부스 사용성 evidence로 추적한다. QA/Release가 evidence package를 소유하고 Story 7.10/HV-18D가 최종 집계한다.
 
 ### UX Design Requirements
@@ -1115,10 +1115,10 @@ So that speed does not reduce the visual confidence of the final viewing experie
 **And** scheduler/capacity/cancellation/process-tree evidence is reviewed independently from seamless tier-transition/frame-integrity evidence
 **And** both review gates must pass; one gate cannot inherit the result of the other
 
-### Story 7.7: 완전한 installer와 clean offline 재현
+### Story 7.7: 완전한 installer와 현재 PC lifecycle 재현
 
 As a owner / brand operator,
-I want one verifiable installer that reproduces the complete viewing path on a clean offline machine,
+I want one verifiable installer that reproduces the complete viewing path on the owner-approved test PC,
 So that branch installation truth is proven before performance or rollout approval.
 
 **Acceptance Criteria:**
@@ -1126,16 +1126,16 @@ So that branch installation truth is proven before performance or rollout approv
 **Given** an approved release candidate
 **When** its signed inventory is inspected
 **Then** it includes the app, self-contained camera helper, approved EDSDK runtime, selected source adapter, display renderer or shader bundle, color profile, proxy recipes, and pinned darktable dependency with exact versions and hashes
-**And** licensing, signing, and integrity evidence is attached
+**And** integrity evidence is attached; signing and Canon EDSDK redistribution evidence are recorded as owner-approved waivers for MVP internal validation
 
-**Given** a clean offline Windows VM without Node, Rust, .NET SDK, or a separately installed renderer
+**Given** the owner-approved current Windows test PC
 **When** install, launch, self-check, fixture display, upgrade, rollback, and uninstall are exercised
 **Then** the complete viewer/camera/proxy/RAW/final runtime is reproducible
 **And** missing or mismatched inventory blocks release with an actionable operator result
 
 **Given** Story 7.7 implementation and automated packaging tests are complete
 **When** the story is reviewed for closure
-**Then** it remains in `review` until HV-18A records Go for signed inventory, clean offline install lifecycle, and complete runtime reproduction
+**Then** it remains in `review` until HV-18A records `Go-candidate-with-waivers` or Go for inventory integrity, the complete install lifecycle, and complete runtime reproduction; signing, Canon redistribution, and clean/offline environment remain explicitly unproven waivers
 
 ### Story 7.8: 100-shot 성능과 장애 복구 검증
 

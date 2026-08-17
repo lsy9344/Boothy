@@ -1,0 +1,163 @@
+{
+  "corpus": {
+    "uniqueSamples": 3,
+    "uniquePresets": 3,
+    "uniquePairs": 9,
+    "duplicatePairs": [],
+    "complete": true
+  },
+  "detail": {
+    "verdict": "tier-not-justified",
+    "measuredPairs": 9,
+    "unmeasuredPairs": [],
+    "medianProxyMtf50": 0.000985804822567109,
+    "medianRefinedMtf50": 0.0009852828511604087,
+    "ratio": 0.9994705124231986,
+    "regressions": [
+      "normal-01/preset-daylight",
+      "normal-01/preset-soft-glow",
+      "normal-02/preset-soft-glow",
+      "normal-03/preset-daylight",
+      "normal-03/preset-soft-glow"
+    ],
+    "perSample": [
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-daylight",
+        "proxyMtf50": 0.0009889685549408823,
+        "refinedMtf50": 0.0009849530915821186,
+        "ratio": 0.9959397461742313
+      },
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-soft-glow",
+        "proxyMtf50": 0.000984422769252937,
+        "refinedMtf50": 0.000983934848940255,
+        "ratio": 0.9995043589726677
+      },
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-mono-pop",
+        "proxyMtf50": 0.0009868045616928092,
+        "refinedMtf50": 0.000989153348335745,
+        "ratio": 1.002380194350649
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-daylight",
+        "proxyMtf50": 0.0009850017775066661,
+        "refinedMtf50": 0.0009887460105483135,
+        "ratio": 1.0038012449592986
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-soft-glow",
+        "proxyMtf50": 0.000996647808257599,
+        "refinedMtf50": 0.000989570043691989,
+        "ratio": 0.9928984296087665
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-mono-pop",
+        "proxyMtf50": 0.0009829269917903862,
+        "refinedMtf50": 0.0009832798881625143,
+        "ratio": 1.0003590260264248
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-daylight",
+        "proxyMtf50": 0.000985804822567109,
+        "refinedMtf50": 0.0009852828511604087,
+        "ratio": 0.9994705124231986
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-soft-glow",
+        "proxyMtf50": 0.0009869815200607417,
+        "refinedMtf50": 0.0009823967101881559,
+        "ratio": 0.9953547155854512
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-mono-pop",
+        "proxyMtf50": 0.0009839697326059123,
+        "refinedMtf50": 0.0009857924206135209,
+        "ratio": 1.0018523821894212
+      }
+    ]
+  },
+  "look": {
+    "verdict": "refined-look-drift",
+    "measuredPairs": 9,
+    "unmeasuredPairs": [],
+    "medianDeltaE": 4.521298977542509,
+    "p95DeltaE": 15.005579744819695,
+    "maxClippingIncreasePercentagePoints": 0.17477598551477816,
+    "offenders": [
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-daylight",
+        "reason": "median ΔE00 4.52 > 3"
+      },
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-daylight",
+        "reason": "p95 ΔE00 14.97 > 8"
+      },
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-soft-glow",
+        "reason": "median ΔE00 4.93 > 3"
+      },
+      {
+        "sampleId": "normal-01",
+        "presetId": "preset-soft-glow",
+        "reason": "p95 ΔE00 18.88 > 8"
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-daylight",
+        "reason": "median ΔE00 4.51 > 3"
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-daylight",
+        "reason": "p95 ΔE00 15.01 > 8"
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-soft-glow",
+        "reason": "median ΔE00 4.92 > 3"
+      },
+      {
+        "sampleId": "normal-02",
+        "presetId": "preset-soft-glow",
+        "reason": "p95 ΔE00 18.95 > 8"
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-daylight",
+        "reason": "median ΔE00 4.55 > 3"
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-daylight",
+        "reason": "p95 ΔE00 15.13 > 8"
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-soft-glow",
+        "reason": "median ΔE00 4.94 > 3"
+      },
+      {
+        "sampleId": "normal-03",
+        "presetId": "preset-soft-glow",
+        "reason": "p95 ΔE00 19.06 > 8"
+      }
+    ]
+  },
+  "dimensionMismatchedPairs": [],
+  "underexposedExcludedPairs": [],
+  "laneDefaultEligible": false,
+  "transitionDefect": "refined-look-drift"
+}

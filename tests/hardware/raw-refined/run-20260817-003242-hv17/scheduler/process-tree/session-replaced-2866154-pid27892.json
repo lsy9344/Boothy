@@ -1,0 +1,13 @@
+{
+  "cancelCompletedAtMicros": 4228599,
+  "cancelOrphanCount": 0,
+  "cancelRequestedAtMicros": 2866154,
+  "cancellationReason": "session-replaced",
+  "directKillFallback": false,
+  "killOutcome": "exit=0",
+  "orphanProbeAvailable": true,
+  "processId": 27892,
+  "round": "session-replaced",
+  "schemaVersion": "hv17-process-tree-termination/v1",
+  "taskkillLogPath": "logs/taskkill-session-replaced-2866154-pid27892.log"
+}

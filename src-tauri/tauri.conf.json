@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Boothy",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.boothy.booth",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -33,10 +33,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": false,
     "resources": {
       "../storage/fixtures/display-sample/sample-a.jpg": "fixtures/display-sample/sample-a.jpg",
-      "../storage/fixtures/display-sample/sample-b.jpg": "fixtures/display-sample/sample-b.jpg"
+      "../storage/fixtures/display-sample/sample-b.jpg": "fixtures/display-sample/sample-b.jpg",
+      "../release/dist/canon-helper/": "sidecar/canon-helper/",
+      "../release/vendor/darktable-5.4.1/": "darktable/",
+      "../release/licenses/": "licenses/",
+      "../release/dist/inventory.json": "inventory.json"
     },
     "icon": [
       "icons/32x32.png",
@@ -44,6 +51,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "certificateThumbprint": null,
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "startMenuFolder": "Boothy"
+      }
+    }
   }
 }

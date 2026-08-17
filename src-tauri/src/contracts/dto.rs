@@ -2703,3 +2703,477 @@ pub struct SourceComparisonSampleDto {
     pub is_preset_applied: bool,
     pub recorded_at_host_micros: u64,
 }
+
+// ---------------------------------------------------------------------------
+// Story 7.7 — release-inventory/v1 / install-self-check/v1
+//
+// TS(Zod) 정의와 **한 쌍**이다. 세 번째 정의를 만들지 않는다.
+// 서술 계약은 `docs/contracts/release-inventory.md`가 소유한다.
+// ---------------------------------------------------------------------------
+
+pub const RELEASE_INVENTORY_SCHEMA_VERSION: &str = "release-inventory/v1";
+pub const INSTALL_SELF_CHECK_SCHEMA_VERSION: &str = "install-self-check/v1";
+
+/// AC 1이 열거한 구성요소 종류. **인벤토리는 이 아홉 개를 전부 담아야 한다.**
+pub const RELEASE_INVENTORY_ROLES: [&str; 9] = [
+    "app",
+    "camera-helper",
+    "edsdk-runtime",
+    "source-adapter",
+    "display-renderer",
+    "color-profile",
+    "proxy-recipes",
+    "raw-renderer",
+    "webview2-runtime",
+];
+
+/// 인벤토리 대조 실패 사유. **한 덩어리로 뭉치지 않는다** — 운영자 조치가 사유마다 다르다.
+pub const RELEASE_INVENTORY_REASON_CODES: [&str; 12] = [
+    "inventory-not-staged",
+    "inventory-component-missing",
+    "inventory-digest-mismatch",
+    "inventory-unexpected-component",
+    "digest-tool-unavailable",
+    "darktable-not-bundled",
+    "darktable-tree-incomplete",
+    "helper-binary-missing",
+    "helper-version-check-failed",
+    "webview2-runtime-unreadable",
+    "inventory-manifest-unreadable",
+    "session-manifest-unreadable",
+];
+
+/// `bundled-resource`가 아니면 **그 회차는 핀이 깨진 회차다.**
+pub const DARKTABLE_RESOLUTION_SOURCES: [&str; 6] = [
+    "env-override",
+    "bundled-resource",
+    "program-files-bin",
+    "program-w6432-bin",
+    "localappdata-programs-bin",
+    "path",
+];
+
+const RELEASE_COMPONENT_STATUSES: [&str; 4] = ["present", "embedded", "not-applicable", "missing"];
+const RELEASE_SIGNING_STATUSES: [&str; 3] = ["signed", "unsigned", "not-applicable"];
+const SELF_CHECK_COMPONENT_STATUSES: [&str; 3] = ["pass", "fail", "skipped"];
+
+pub fn is_valid_sha256_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .chars()
+            .all(|char| char.is_ascii_digit() || ('a'..='f').contains(&char))
+}
+
+/// 어떤 파일이 이 구성요소의 것인가.
+///
+/// **설치된 앱이 인벤토리만 보고 해시를 다시 계산할 수 있어야 한다.** 명세(`inventory-spec.json`)는
+/// 설치본에 들어가지 않으므로, 파일 선택 규칙이 인벤토리 안에 있어야 한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum ComponentEntrySelectionDto {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "only")]
+    Only { entries: Vec<String> },
+    #[serde(rename = "allExcept")]
+    AllExcept { entries: Vec<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInventoryComponentDto {
+    pub name: String,
+    pub role: String,
+    pub status: String,
+    pub version: Option<String>,
+    pub origin: String,
+    pub entry_selection: Option<ComponentEntrySelectionDto>,
+    /// AC 1의 licensing 증거는 별도 문서가 아니라 **인벤토리 자체의 일부**다.
+    pub license: String,
+    pub license_evidence_path: Option<String>,
+    pub source_archive_sha256: Option<String>,
+    /// 정렬된 `<상대경로>:<sha256>` 목록을 다시 sha256 한 값. 파일 하나만 바뀌어도 달라진다.
+    pub staged_tree_digest: Option<String>,
+    pub install_relative_path: Option<String>,
+    pub signing_status: String,
+    pub rationale: Option<String>,
+    pub file_count: Option<u64>,
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInstallerIdentityDto {
+    pub file_name: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedReleaseInventoryDto {
+    pub schema_version: String,
+    pub generated_at: String,
+    pub app_version: String,
+    pub identifier: String,
+    pub installer_file_name: String,
+    pub signing_status: String,
+    /// **봉인 단계에서만 채워진다.** 설치본 안의 사본은 자기 자신의 해시를 담을 수 없다.
+    pub installer: Option<ReleaseInstallerIdentityDto>,
+    pub components: Vec<ReleaseInventoryComponentDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotStagedReleaseInventoryDto {
+    pub schema_version: String,
+    pub reason: String,
+}
+
+/// **결손을 스스로 신고하는 문서를 계약 안에 둔다.** 자리를 비워 두지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "staging")]
+pub enum ReleaseInventoryDto {
+    #[serde(rename = "staged")]
+    Staged(StagedReleaseInventoryDto),
+    #[serde(rename = "not-staged")]
+    NotStaged(NotStagedReleaseInventoryDto),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallSelfCheckComponentDto {
+    pub name: String,
+    pub expected_digest: Option<String>,
+    pub actual_digest: Option<String>,
+    pub status: String,
+    pub reason_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DarktableResolutionDto {
+    pub binary: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallSelfCheckReportDto {
+    pub schema_version: String,
+    pub checked_at: String,
+    pub app_version: String,
+    pub identifier: String,
+    pub install_root: String,
+    pub components: Vec<InstallSelfCheckComponentDto>,
+    pub webview2_version: Option<String>,
+    pub darktable_resolution: Option<DarktableResolutionDto>,
+    pub helper_version: Option<String>,
+    pub overall: String,
+}
+
+fn require_release_text(value: &str, message: &str) -> Result<(), HostErrorEnvelope> {
+    if is_non_blank(value) {
+        return Ok(());
+    }
+
+    Err(HostErrorEnvelope::validation_message(message.to_string()))
+}
+
+fn require_optional_digest(value: Option<&String>, message: &str) -> Result<(), HostErrorEnvelope> {
+    match value {
+        Some(digest) if !is_valid_sha256_digest(digest) => {
+            Err(HostErrorEnvelope::validation_message(message.to_string()))
+        }
+        _ => Ok(()),
+    }
+}
+
+pub fn validate_release_inventory_component(
+    component: &ReleaseInventoryComponentDto,
+) -> Result<(), HostErrorEnvelope> {
+    require_release_text(
+        &component.name,
+        "인벤토리 구성요소 이름을 다시 확인해 주세요.",
+    )?;
+    require_release_text(
+        &component.origin,
+        "인벤토리 구성요소 출처를 다시 확인해 주세요.",
+    )?;
+    require_release_text(
+        &component.license,
+        "인벤토리 구성요소 라이선스를 다시 확인해 주세요.",
+    )?;
+
+    if !RELEASE_INVENTORY_ROLES.contains(&component.role.as_str()) {
+        return Err(HostErrorEnvelope::validation_message(
+            "인벤토리 구성요소 종류를 다시 확인해 주세요.",
+        ));
+    }
+
+    if !RELEASE_COMPONENT_STATUSES.contains(&component.status.as_str()) {
+        return Err(HostErrorEnvelope::validation_message(
+            "인벤토리 구성요소 상태를 다시 확인해 주세요.",
+        ));
+    }
+
+    if !RELEASE_SIGNING_STATUSES.contains(&component.signing_status.as_str()) {
+        return Err(HostErrorEnvelope::validation_message(
+            "인벤토리 구성요소 서명 상태를 다시 확인해 주세요.",
+        ));
+    }
+
+    require_optional_digest(
+        component.staged_tree_digest.as_ref(),
+        "인벤토리 트리 해시 형식을 다시 확인해 주세요.",
+    )?;
+    require_optional_digest(
+        component.source_archive_sha256.as_ref(),
+        "인벤토리 원본 아카이브 해시 형식을 다시 확인해 주세요.",
+    )?;
+
+    if component.status == "present" {
+        if component.staged_tree_digest.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "동봉된 구성요소에는 트리 해시가 있어야 해요.",
+            ));
+        }
+
+        if component.install_relative_path.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "동봉된 구성요소에는 설치 경로가 있어야 해요.",
+            ));
+        }
+
+        if component.license_evidence_path.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "동봉된 구성요소에는 라이선스 증거 경로가 있어야 해요.",
+            ));
+        }
+
+        if component.version.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "동봉된 구성요소에는 버전이 있어야 해요.",
+            ));
+        }
+
+        if component.file_count.is_none() || component.total_bytes.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "동봉된 구성요소에는 파일 수와 크기가 있어야 해요.",
+            ));
+        }
+
+        if component.entry_selection.is_none() {
+            return Err(HostErrorEnvelope::validation_message(
+                "설치된 앱이 해시를 다시 계산하려면 파일 선택 규칙이 있어야 해요.",
+            ));
+        }
+
+        return Ok(());
+    }
+
+    if component.entry_selection.is_some() {
+        return Err(HostErrorEnvelope::validation_message(
+            "동봉하지 않은 구성요소에 파일 선택 규칙을 적을 수 없어요.",
+        ));
+    }
+
+    if component.rationale.as_deref().map(is_non_blank) != Some(true) {
+        return Err(HostErrorEnvelope::validation_message(
+            "동봉하지 않은 구성요소에는 그 이유가 있어야 해요.",
+        ));
+    }
+
+    if component.staged_tree_digest.is_some() {
+        return Err(HostErrorEnvelope::validation_message(
+            "동봉하지 않은 구성요소에 트리 해시를 적을 수 없어요.",
+        ));
+    }
+
+    if component.status == "embedded" && component.install_relative_path.is_none() {
+        return Err(HostErrorEnvelope::validation_message(
+            "앱 바이너리에 내장된 구성요소도 어느 실행 파일에 있는지 적어야 해요.",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_release_inventory(
+    inventory: &ReleaseInventoryDto,
+) -> Result<(), HostErrorEnvelope> {
+    match inventory {
+        ReleaseInventoryDto::NotStaged(not_staged) => {
+            if not_staged.schema_version != RELEASE_INVENTORY_SCHEMA_VERSION {
+                return Err(HostErrorEnvelope::validation_message(
+                    "인벤토리 스키마 버전을 다시 확인해 주세요.",
+                ));
+            }
+
+            require_release_text(&not_staged.reason, "staged 되지 않은 이유를 적어야 해요.")
+        }
+        ReleaseInventoryDto::Staged(staged) => {
+            if staged.schema_version != RELEASE_INVENTORY_SCHEMA_VERSION {
+                return Err(HostErrorEnvelope::validation_message(
+                    "인벤토리 스키마 버전을 다시 확인해 주세요.",
+                ));
+            }
+
+            require_release_text(
+                &staged.generated_at,
+                "인벤토리 생성 시각을 다시 확인해 주세요.",
+            )?;
+            require_release_text(
+                &staged.app_version,
+                "인벤토리 앱 버전을 다시 확인해 주세요.",
+            )?;
+            require_release_text(
+                &staged.identifier,
+                "인벤토리 identifier를 다시 확인해 주세요.",
+            )?;
+            require_release_text(
+                &staged.installer_file_name,
+                "인벤토리 설치본 파일명을 다시 확인해 주세요.",
+            )?;
+
+            if !RELEASE_SIGNING_STATUSES.contains(&staged.signing_status.as_str()) {
+                return Err(HostErrorEnvelope::validation_message(
+                    "인벤토리 서명 상태를 다시 확인해 주세요.",
+                ));
+            }
+
+            if let Some(installer) = staged.installer.as_ref() {
+                require_release_text(&installer.file_name, "설치본 파일명을 다시 확인해 주세요.")?;
+
+                if !is_valid_sha256_digest(&installer.sha256) || installer.size_bytes == 0 {
+                    return Err(HostErrorEnvelope::validation_message(
+                        "설치본 해시와 크기를 다시 확인해 주세요.",
+                    ));
+                }
+            }
+
+            for component in &staged.components {
+                validate_release_inventory_component(component)?;
+            }
+
+            for role in RELEASE_INVENTORY_ROLES {
+                let occurrences = staged
+                    .components
+                    .iter()
+                    .filter(|component| component.role == role)
+                    .count();
+
+                if occurrences != 1 {
+                    return Err(HostErrorEnvelope::validation_message(format!(
+                        "인벤토리에 `{role}` 항목이 정확히 하나 있어야 해요."
+                    )));
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+pub fn validate_install_self_check_report(
+    report: &InstallSelfCheckReportDto,
+) -> Result<(), HostErrorEnvelope> {
+    if report.schema_version != INSTALL_SELF_CHECK_SCHEMA_VERSION {
+        return Err(HostErrorEnvelope::validation_message(
+            "self-check 보고서 스키마 버전을 다시 확인해 주세요.",
+        ));
+    }
+
+    require_release_text(&report.checked_at, "self-check 시각을 다시 확인해 주세요.")?;
+    require_release_text(
+        &report.app_version,
+        "self-check 앱 버전을 다시 확인해 주세요.",
+    )?;
+    require_release_text(
+        &report.identifier,
+        "self-check identifier를 다시 확인해 주세요.",
+    )?;
+    require_release_text(
+        &report.install_root,
+        "self-check 설치 경로를 다시 확인해 주세요.",
+    )?;
+
+    if report.components.is_empty() {
+        return Err(HostErrorEnvelope::validation_message(
+            "self-check 보고서에는 검사 항목이 있어야 해요.",
+        ));
+    }
+
+    for component in &report.components {
+        require_release_text(
+            &component.name,
+            "self-check 항목 이름을 다시 확인해 주세요.",
+        )?;
+
+        if !SELF_CHECK_COMPONENT_STATUSES.contains(&component.status.as_str()) {
+            return Err(HostErrorEnvelope::validation_message(
+                "self-check 항목 상태를 다시 확인해 주세요.",
+            ));
+        }
+
+        require_optional_digest(
+            component.expected_digest.as_ref(),
+            "self-check 기대 해시 형식을 다시 확인해 주세요.",
+        )?;
+        require_optional_digest(
+            component.actual_digest.as_ref(),
+            "self-check 실제 해시 형식을 다시 확인해 주세요.",
+        )?;
+
+        match component.reason_code.as_deref() {
+            Some(reason_code) => {
+                if !RELEASE_INVENTORY_REASON_CODES.contains(&reason_code) {
+                    return Err(HostErrorEnvelope::validation_message(
+                        "self-check 사유 코드를 다시 확인해 주세요.",
+                    ));
+                }
+
+                if component.status == "pass" {
+                    return Err(HostErrorEnvelope::validation_message(
+                        "통과 항목에는 사유 코드를 적지 않아요.",
+                    ));
+                }
+            }
+            None => {
+                if component.status == "fail" {
+                    return Err(HostErrorEnvelope::validation_message(
+                        "실패 항목에는 사유 코드가 있어야 해요.",
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(resolution) = report.darktable_resolution.as_ref() {
+        require_release_text(&resolution.binary, "darktable 경로를 다시 확인해 주세요.")?;
+
+        if !DARKTABLE_RESOLUTION_SOURCES.contains(&resolution.source.as_str()) {
+            return Err(HostErrorEnvelope::validation_message(
+                "darktable 해석 출처를 다시 확인해 주세요.",
+            ));
+        }
+    }
+
+    let has_failure = report
+        .components
+        .iter()
+        .any(|component| component.status == "fail");
+
+    match report.overall.as_str() {
+        "pass" if has_failure => Err(HostErrorEnvelope::validation_message(
+            "실패 항목이 있으면 전체 결과를 통과로 적을 수 없어요.",
+        )),
+        "fail" if !has_failure => Err(HostErrorEnvelope::validation_message(
+            "실패 항목이 없는데 전체 결과만 실패로 적을 수 없어요.",
+        )),
+        "pass" | "fail" => Ok(()),
+        _ => Err(HostErrorEnvelope::validation_message(
+            "self-check 전체 결과를 다시 확인해 주세요.",
+        )),
+    }
+}

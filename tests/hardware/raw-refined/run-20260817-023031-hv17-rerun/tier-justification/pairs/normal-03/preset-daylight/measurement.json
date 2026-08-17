@@ -1,0 +1,46 @@
+{
+  "sample": {
+    "sampleId": "normal-03",
+    "presetId": "preset-daylight",
+    "proxySize": {
+      "widthPx": 634,
+      "heightPx": 953
+    },
+    "refinedSize": {
+      "widthPx": 634,
+      "heightPx": 953
+    },
+    "proxyMtf50": 0.000985804822567109,
+    "refinedMtf50": 0.0009852828511604087,
+    "look": {
+      "medianDeltaE": 4.550147350735384,
+      "p95DeltaE": 15.128452793474898,
+      "clippingIncreasePercentagePoints": -0.7696101634883699
+    },
+    "underexposed": false
+  },
+  "parity": {
+    "widthPx": 634,
+    "heightPx": 953,
+    "ssim": 0.879028551257167,
+    "deltaE": {
+      "sampleCount": 604202,
+      "median": 4.550147350735384,
+      "p95": 15.128452793474898,
+      "max": 39.602184403082894
+    },
+    "skinRoiDeltaE": null,
+    "candidateClippedFraction": 0.010708339264020972,
+    "referenceClippedFraction": 0.01840444089890467,
+    "clippingIncreasePercentagePoints": -0.7696101634883699,
+    "upscaled": false
+  },
+  "sourceRawPath": "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\tier-justification\\sources\\normal-03-capture_20260816180654056_3f8442acb2.CR2",
+  "xmpPath": "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\tier-justification\\presets\\preset-daylight-preset-daylight.xmp",
+  "edgeRoi": {
+    "x": 250,
+    "y": 300,
+    "widthPx": 380,
+    "heightPx": 240
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "cancelCompletedAtMicros": 6006932,
+  "cancelOrphanCount": 0,
+  "cancelRequestedAtMicros": 4809584,
+  "cancellationReason": "viewer-epoch-changed",
+  "directKillFallback": false,
+  "killOutcome": "exit=0",
+  "orphanProbeAvailable": true,
+  "processId": 30800,
+  "round": "viewer-epoch-changed",
+  "schemaVersion": "hv17-process-tree-termination/v1",
+  "taskkillLogPath": "logs/taskkill-viewer-epoch-changed-4809584-pid30800.log"
+}

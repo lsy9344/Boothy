@@ -1,5 +1,5 @@
 # generated: 2026-03-20 09:44:49 +09:00
-# last_updated: 2026-08-17 01:00 +09:00
+# last_updated: 2026-08-17 (Story 7.6 approved Partial close; Story 7.7 internal Go with owner waivers)
 # project: Boothy
 # project_key: NOKEY
 # tracking_system: file-system
@@ -22,7 +22,7 @@
 #   - in-progress: Developer actively working on implementation
 #   - review: Ready for code review (via Dev's code-review workflow)
 #   - done: Story completed
-#           (truth-critical stories also require `hardware_validation_ledger` to record `Go`)
+#           (truth-critical stories require the ledger to record `Go` or an explicit owner-approved product disposition that removes the failed lane from release scope)
 #
 # Retrospective Status:
 #   - optional: Can be completed but not required
@@ -34,10 +34,10 @@
 # - Stories can be worked in parallel if team capacity allows
 # - SM typically creates next story after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
-# - truth-critical stories stay in `review` or another pre-close state until the hardware_validation_ledger records `Go`; automated pass alone is not product-done
+# - truth-critical stories stay in `review` or another pre-close state until the ledger records `Go` or an explicit owner-approved product disposition; automated pass alone is not product-done
 
 generated: "2026-03-20 09:44:49 +09:00"
-last_updated: "2026-08-16 23:45 +09:00"
+last_updated: "2026-08-17 16:00 +09:00"
 project: "Boothy"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -96,8 +96,8 @@ development_status:
   7-3-libraw-embedded-jpeg와-raw-jpeg-source-비교: done
   7-4-화면-적합-immutable-preset-proxy: done
   7-5-상주-renderer-검증-spike: done
-  7-6-raw-정밀본-무중단-교체: in-progress
-  7-7-완전한-installer와-clean-offline-재현: backlog
+  7-6-raw-정밀본-무중단-교체: done
+  7-7-완전한-installer와-clean-offline-재현: done
   7-8-100-shot-성능과-복구-검증: backlog
   7-9-단계적-배포와-rollback-호환성-검증: backlog
   7-10-최종-mvp-출시-판정: backlog

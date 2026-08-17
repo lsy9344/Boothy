@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "hv-18a-network/v1",
+  "verifiedAt": "2026-08-17T04:09:50.2262323Z",
+  "adaptersDisabled": false,
+  "probes": [],
+  "reason": "No clean VM was available. Host networking was not disabled because this would not constitute clean-VM evidence and would disrupt the workstation."
+}

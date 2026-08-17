@@ -1,0 +1,13 @@
+{
+  "cancelCompletedAtMicros": 7660516,
+  "cancelOrphanCount": 0,
+  "cancelRequestedAtMicros": 6521976,
+  "cancellationReason": "superseded-by-newer-capture",
+  "directKillFallback": false,
+  "killOutcome": "exit=0",
+  "orphanProbeAvailable": true,
+  "processId": 12900,
+  "round": "newer-capture",
+  "schemaVersion": "hv17-process-tree-termination/v1",
+  "taskkillLogPath": "logs/taskkill-newer-capture-6521976-pid12900.log"
+}

@@ -1,0 +1,16 @@
+{
+    "schemaVersion":  "hv-18a-data-preservation/v1",
+    "sessionRootPath":  "C:\\Users\\dltnd\\Pictures\\dabi_shoot",
+    "sessionRootSurvivesUninstall":  true,
+    "customerPhotoCountBeforeUninstall":  1152,
+    "customerPhotoCountAfterUninstall":  1152,
+    "customerPhotoBytesBeforeUninstall":  4579062341,
+    "customerPhotoBytesAfterUninstall":  4579062341,
+    "sessionReadableAfterUpgrade":  true,
+    "sessionReadableAfterRollback":  true,
+    "programFilesRemoved":  true,
+    "bundledDarktableRemoved":  true,
+    "helperTreeRemoved":  true,
+    "startMenuEntryRemoved":  true,
+    "reason":  "현재 승인된 PC의 current-user 설치 루트에서 검증했다. 동일한 종료 세션을 0.1.1과 롤백한 0.1.0이 각각 제품 self-check로 직접 읽었고, 제거 전후 파일 수가 같았다."
+}

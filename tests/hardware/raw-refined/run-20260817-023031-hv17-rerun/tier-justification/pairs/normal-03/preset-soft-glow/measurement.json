@@ -1,0 +1,46 @@
+{
+  "sample": {
+    "sampleId": "normal-03",
+    "presetId": "preset-soft-glow",
+    "proxySize": {
+      "widthPx": 634,
+      "heightPx": 953
+    },
+    "refinedSize": {
+      "widthPx": 634,
+      "heightPx": 953
+    },
+    "proxyMtf50": 0.0009869815200607417,
+    "refinedMtf50": 0.0009823967101881559,
+    "look": {
+      "medianDeltaE": 4.942689141675732,
+      "p95DeltaE": 19.06048349983001,
+      "clippingIncreasePercentagePoints": -1.8710629888679615
+    },
+    "underexposed": false
+  },
+  "parity": {
+    "widthPx": 634,
+    "heightPx": 953,
+    "ssim": 0.8689531168318255,
+    "deltaE": {
+      "sampleCount": 604202,
+      "median": 4.942689141675732,
+      "p95": 19.06048349983001,
+      "max": 47.32750306572906
+    },
+    "skinRoiDeltaE": null,
+    "candidateClippedFraction": 0.012375000413768905,
+    "referenceClippedFraction": 0.03108563030244852,
+    "clippingIncreasePercentagePoints": -1.8710629888679615,
+    "upscaled": false
+  },
+  "sourceRawPath": "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\tier-justification\\sources\\normal-03-capture_20260816180654056_3f8442acb2.CR2",
+  "xmpPath": "C:\\Code\\Boothy\\tests\\hardware\\raw-refined\\run-20260817-023031-hv17-rerun\\tier-justification\\presets\\preset-soft-glow-preset-soft-glow.xmp",
+  "edgeRoi": {
+    "x": 250,
+    "y": 300,
+    "widthPx": 380,
+    "heightPx": 240
+  }
+}
