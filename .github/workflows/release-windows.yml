@@ -1,5 +1,5 @@
 name: release-windows
-# 이 컴퓨터가 켜져 있으면 자체 러너에서 돌고, 꺼져 있으면 원래 GitHub 호스트에서 돈다.
+# 외부 러너 PC가 온라인이면 거기서 돌고, 꺼져 있거나 없으면 원래 GitHub 호스트에서 돈다.
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ on:
 
 jobs:
   windows-baseline:
-    runs-on: ${{ case(vars.CI_SELF_HOSTED == 'true' && github.event_name != 'pull_request', fromJSON('["self-hosted","Windows","X64","noah-ci"]'), vars.CI_SELF_HOSTED == 'true' && github.event.pull_request.head.repo.full_name == github.repository, fromJSON('["self-hosted","Windows","X64","noah-ci"]'), 'windows-latest') }}
+    runs-on: ${{ case(vars.CI_WINDOWS_RUNNER == 'self-hosted' && github.event_name != 'pull_request', fromJSON('["self-hosted","Windows","X64","erp-dabi"]'), vars.CI_WINDOWS_RUNNER == 'self-hosted' && github.event.pull_request.head.repo.full_name == github.repository, fromJSON('["self-hosted","Windows","X64","erp-dabi"]'), 'windows-latest') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
